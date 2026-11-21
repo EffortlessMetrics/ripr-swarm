@@ -5,7 +5,7 @@
 //! Classification mirrors the `detect-docs-only` allowlist in
 //! `.github/workflows/routed-rust.yml` and fails closed: an empty or
 //! unavailable diff, a manifest/lockfile/release surface, a capability
-//! registry document, or any unrecognized path widens to full proof
+//! registry document, changed release-note command inputs, or any unrecognized path widens to full proof
 //! (reported as a refusal, never as a pass).
 //!
 //! Retained product obligations NOT covered by this gate (run the full
@@ -14,6 +14,10 @@
 //! `check-identity-registry`, `capability-docs --check`,
 //! `check-capability-producers`, goldens, and the not-yet-ported
 //! product-free gates listed in [`RETAINED_PRODUCT_FREE_GATES`].
+
+// The public-guide contract executes these same parsed command paths and flags against ripr.
+#[path = "../../../crates/ripr/tests/common/doc_invocations.rs"]
+mod invocation_parser;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -794,6 +798,15 @@ fn check_disposition(root: &Path, violations: &mut Vec<String>) -> Result<(), St
 /// Returns `Err` (widen/refusal) before running any gate when the plan
 /// widens, and `Err` listing violations when a scoped gate fails.
 pub fn run_docs_gate(root: &Path, changed: &[String]) -> Result<DocsGateReport, String> {
+    if changed.iter().any(|path| release_notes(&normalize(path))) {
+        return Ok(widen_report(changed, vec![
+            "release-note CLI contract requires committed before/after inputs; use --base and --head or run full proof".into(),
+        ]));
+    }
+    check_scoped_tree(root, changed)
+}
+
+fn check_scoped_tree(root: &Path, changed: &[String]) -> Result<DocsGateReport, String> {
     let plan = plan(changed);
     if !plan.is_docs_eligible() {
         return Ok(DocsGateReport {
@@ -885,7 +898,7 @@ pub fn run_docs_gate_at_revision(
     };
     let result = verify_archived_roles(checkout, &head_id, &tree).map_or_else(
         |reason| Ok(widen_report(&changed, vec![reason])),
-        |()| run_docs_gate(&tree, &changed),
+        |()| check_scoped_tree(&tree, &changed),
     );
     let _ = std::fs::remove_dir_all(&tree);
     result
@@ -1173,6 +1186,21 @@ fn verify_checkout_at(checkout: &Path, head_id: &str, head_label: &str) -> Resul
     Ok(())
 }
 
+fn release_notes(path: &str) -> bool {
+    path.starts_with("docs/releases/") && path.ends_with("-release-notes.md")
+}
+
+/// The line number locates a failure in prose. Only command paths and flags
+/// reach the public-guide contract's candidate help lookup.
+fn same_documented_commands(before: &str, after: &str) -> bool {
+    fn commands(text: &str) -> impl Iterator<Item = invocation_parser::DocInvocation> {
+        invocation_parser::doc_invocations(text)
+            .into_iter()
+            .map(|(_, invocation)| invocation)
+    }
+    commands(before).eq(commands(after))
+}
+
 /// Read before/after blob identities from the same three-dot diff as the path roster.
 fn revision_changes(
     checkout: &Path,
@@ -1221,18 +1249,32 @@ fn revision_changes(
         }
         // Unchanged referrers may name a removed destination or heading.
         match (*status, *old_mode, *new_mode) {
+            ("A", "000000", "100644") if release_notes(path) => {
+                match markdown_blob(checkout, new_blob) {
+                    Ok(new) if !same_documented_commands("", &new) => {
+                        risks.push(format!("{path}: new documented command paths or flags; candidate CLI proof required"));
+                    }
+                    Err(reason) => risks.push(format!("{path}: {reason}; full proof required")),
+                    Ok(_) => (),
+                }
+            }
             ("A", "000000", "100644") => (),
             ("M", "100644", "100644") if !path.to_ascii_lowercase().ends_with(".md") => (),
             ("M", "100644", "100644") => {
-                let anchors = blob_headings(checkout, old_blob)
-                    .and_then(|old| blob_headings(checkout, new_blob).map(|new| (old, new)));
-                match anchors {
+                let blobs = markdown_blob(checkout, old_blob)
+                    .and_then(|old| markdown_blob(checkout, new_blob).map(|new| (old, new)));
+                match blobs {
                     Ok((old, new)) => {
-                        if let Some(missing) = old.difference(&new).next() {
+                        let old_headings = crate::markdown_headings::heading_slugs(&old);
+                        let new_headings = crate::markdown_headings::heading_slugs(&new);
+                        if let Some(missing) = old_headings.difference(&new_headings).next() {
                             risks.push(format!("{path}: removed Markdown anchor #{missing}; full incoming-link check required"));
                         }
+                        if release_notes(path) && !same_documented_commands(&old, &new) {
+                            risks.push(format!("{path}: documented command paths or flags changed; candidate CLI proof required"));
+                        }
                     }
-                    Err(reason) => risks.push(format!("{path}: {reason}; full incoming-link check required")),
+                    Err(reason) => risks.push(format!("{path}: {reason}; full proof required")),
                 }
             }
             _ => risks.push(format!(
@@ -1243,7 +1285,7 @@ fn revision_changes(
     Ok((paths, risks))
 }
 
-fn blob_headings(checkout: &Path, oid: &str) -> Result<BTreeSet<String>, String> {
+fn markdown_blob(checkout: &Path, oid: &str) -> Result<String, String> {
     let output = offline_git()
         .args(["cat-file", "blob", oid])
         .current_dir(checkout)
@@ -1255,9 +1297,8 @@ fn blob_headings(checkout: &Path, oid: &str) -> Result<BTreeSet<String>, String>
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let text = std::str::from_utf8(&output.stdout)
-        .map_err(|e| format!("docs-gate: Markdown blob {oid} is not UTF-8: {e}"))?;
-    Ok(crate::markdown_headings::heading_slugs(text))
+    String::from_utf8(output.stdout)
+        .map_err(|e| format!("docs-gate: Markdown blob {oid} is not UTF-8: {e}"))
 }
 
 #[cfg(test)]

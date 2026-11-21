@@ -548,6 +548,71 @@ fn forbidden_static_language_and_broken_link_fail() -> TestResult {
     Ok(())
 }
 #[test]
+fn release_note_command_deltas_require_candidate_cli_proof() -> TestResult {
+    let note = "docs/releases/0.11.0-release-notes.md";
+    let old = "# Release\nUse `ripr check --diff \"old file\" --json`.\n";
+    let root = fixture(&[(note, old)])?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "original commands"])?;
+    fs::write(
+        root.join(note),
+        "# Release\n\nRun `ripr check --diff \"new file\" --json` here.\n",
+    )?;
+    git(&root, &["commit", "-qam", "reword prose and example value"])?;
+    let safe = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !safe.plan.is_docs_eligible() || !safe.violations.is_empty() {
+        return Err(safe.render().into());
+    }
+    for (label, command) in [
+        ("new flag", "ripr check --diff path --not-a-ripr-flag"),
+        ("different command", "ripr gate check --diff path --json"),
+        ("command removed", "regular prose"),
+    ] {
+        fs::write(root.join(note), format!("# Release\n`{command}`\n"))?;
+        git(&root, &["commit", "-qam", label])?;
+        // A repaired worktree must not mask a change in the selected Git blobs.
+        fs::write(root.join(note), old)?;
+        let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+        if !report
+            .plan
+            .widen_reasons
+            .iter()
+            .any(|r| r.contains("candidate CLI proof required"))
+        {
+            return Err(format!("{label}: {}", report.render()).into());
+        }
+    }
+    for (name, body, requires_cli) in [
+        ("prose-release-notes.md", "# Release\nJust prose.\n", false),
+        (
+            "cli-release-notes.md",
+            "# Release\n`ripr check --new-flag`\n",
+            true,
+        ),
+    ] {
+        let path = format!("docs/releases/{name}");
+        fs::write(root.join(&path), body)?;
+        git(&root, &["add", "--", &path])?;
+        git(&root, &["commit", "-qm", name])?;
+        let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+        if report.plan.is_docs_eligible() == requires_cli || !report.violations.is_empty() {
+            return Err(format!("added {name}: {}", report.render()).into());
+        }
+    }
+    let unbound = run_docs_gate(&root, &changed(&[note]))?;
+    if !unbound
+        .plan
+        .widen_reasons
+        .iter()
+        .any(|r| r.contains("before/after"))
+    {
+        return Err(unbound.render().into());
+    }
+    Ok(())
+}
+
+#[test]
 fn revision_mode_widens_when_unchanged_markdown_can_lose_its_destination() -> TestResult {
     let note = "docs/releases/0.11.0-release-notes.md";
     let root = fixture(&[
