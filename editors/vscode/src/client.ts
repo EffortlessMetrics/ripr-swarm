@@ -232,7 +232,9 @@ const RIPR_RELATED_TEST_LANGUAGE_BY_EXTENSION = new Map<string, 'rust' | 'typesc
 ]);
 const RIPR_CONFIG_RELATIVE_PATH = 'ripr.toml';
 
-function lspConfigurationForResource(scopeUri: string | undefined): Record<string, unknown> {
+/** The `ripr` section answer to a server `workspace/configuration` pull.
+ * Exported so the wire values are testable without a live server. */
+export function lspConfigurationForResource(scopeUri: string | undefined): Record<string, unknown> {
   const resource = scopeUri ? vscode.Uri.parse(scopeUri) : undefined;
   const config = vscode.workspace.getConfiguration('ripr', resource);
   return {

@@ -800,6 +800,14 @@ download), see
 The editor default matches the CLI and direct LSP missing-config default:
 `draft`.
 
+The four settings forwarded "only when set" (`ripr.check.mode`,
+`ripr.includeUnchangedTests`, `ripr.seamDiagnostics`,
+`ripr.diagnosticProfile`) have one consequence in the Settings editor: choosing
+the value shown as the default there removes the setting instead of saving it,
+so the `ripr.toml` value applies. To hold the default value against a different
+`ripr.toml` value, write it in `settings.json`, for example
+`"ripr.check.mode": "draft"` (#15930).
+
 ### Diagnostics
 
 | Setting | Type | Default | Effect |

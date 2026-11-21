@@ -8,11 +8,13 @@ import {
   RiprClientRuntime,
   RiprAgentLoopCommandTarget,
   RiprWorkspaceRootState,
+  lspConfigurationForResource,
   readActionableGapQueueStatus,
   readFirstPrPacketStatus,
   validatedAgentLoopCommand
 } from '../../src/client';
 import { explicitSetting, getConfig } from '../../src/config';
+import { configurationChangeRequiresRestart } from '../../src/extension';
 import { hasUnsafeShellMetacharacter, redirectStaysInWorkspace, redirectTargetMatches, serverShellArg } from '../../src/packetJson';
 import {
   NO_RUNNING_SERVER_MESSAGE,
@@ -417,6 +419,23 @@ suite('Extension Smoke', () => {
     });
   });
 
+  test('restarts for a removed session setting but not for a changed one', () => {
+    const affecting = (...sections: string[]) => (section: string) => sections.includes(section);
+    const unset = () => true;
+    const stillSet = () => false;
+    for (const section of ['ripr.includeUnchangedTests', 'ripr.seamDiagnostics', 'ripr.diagnosticProfile']) {
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), unset), true, section);
+      // A changed value reaches the server through the configuration pull.
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), stillSet), false, section);
+    }
+    for (const section of ['ripr.enabled', 'ripr.server', 'ripr.check', 'ripr.baseRef']) {
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), stillSet), true, section);
+    }
+    // An unrelated change never restarts, whatever the session state.
+    assert.strictEqual(configurationChangeRequiresRestart(affecting('ripr.trace'), unset), false);
+    assert.strictEqual(configurationChangeRequiresRestart(affecting('editor.fontSize'), unset), false);
+  });
+
   test('reads check mode and unchanged-test settings only from a settings layer', async () => {
     const manifestDefault = (key: string, defaultValue: unknown) =>
       ({ inspect: () => ({ key, defaultValue }) }) as unknown as vscode.WorkspaceConfiguration;
@@ -443,6 +462,23 @@ suite('Extension Smoke', () => {
       assert.strictEqual(getConfig(uri).includeUnchangedTests, inspect()?.globalValue);
       await update(false);
       assert.strictEqual(getConfig(uri).includeUnchangedTests, false);
+
+      // The configuration pull as the server receives it: a set value is on
+      // the wire, and removing it drops the key instead of sending the
+      // manifest default.
+      const pulled = () =>
+        JSON.parse(JSON.stringify(lspConfigurationForResource(uri.toString()))) as Record<string, unknown>;
+      assert.strictEqual(pulled().includeUnchangedTests, false);
+      await update(true);
+      assert.strictEqual(pulled().includeUnchangedTests, true);
+      await update(undefined);
+      assert.strictEqual(pulled().includeUnchangedTests, inspect()?.globalValue);
+      assert.strictEqual('includeUnchangedTests' in pulled(), inspect()?.globalValue !== undefined);
+      const mode = vscode.workspace.getConfiguration('ripr', uri).inspect<string>('check.mode');
+      assert.strictEqual(
+        pulled().checkMode,
+        mode?.workspaceFolderValue ?? mode?.workspaceValue ?? mode?.globalValue
+      );
     } finally {
       await update(previous);
     }
@@ -511,9 +547,7 @@ suite('Extension Smoke', () => {
       assert.deepStrictEqual(delegatedSections, ['other.setting']);
       assert.strictEqual((result[1] as string), 'delegated:other.setting');
       assert.strictEqual(typeof (result[0] as Record<string, unknown>).diagnosticProfile, 'string');
-      assert.ok('includeUnchangedTests' in (result[0] as Record<string, unknown>));
       assert.strictEqual(typeof (result[2] as Record<string, unknown>).diagnosticProfile, 'string');
-      assert.ok('includeUnchangedTests' in (result[2] as Record<string, unknown>));
     });
   });
 
