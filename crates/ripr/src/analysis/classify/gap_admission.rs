@@ -1721,7 +1721,7 @@ mod tests {
                 true,
             ),
             (
-                r#"assert_eq!(Decoder::parse("Ã©").unwrap_err(), Fault::Odd)"#,
+                r#"assert_eq!(Decoder::parse("é").unwrap_err(), Fault::Odd)"#,
                 false,
             ),
             (

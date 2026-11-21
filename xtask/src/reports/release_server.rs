@@ -203,8 +203,8 @@ pub(crate) fn release_server_manifest(args: &[String]) -> Result<(), String> {
     // The content format is unchanged (`<sha256>  <file_name>` per line).
     let sha256sums_path = dist_dir.join("SHA256SUMS");
     // Also remove any legacy `checksums.txt` left in a reused `dist/` from a
-    // pre-rename run so the stale sidecar cannot linger beside â€” or be hashed
-    // into â€” the new `SHA256SUMS`.
+    // pre-rename run so the stale sidecar cannot linger beside — or be hashed
+    // into — the new `SHA256SUMS`.
     let legacy_checksums_path = dist_dir.join("checksums.txt");
     let manifest_path = dist_dir.join(format!("ripr-server-manifest-v{version}.json"));
     let assembly_receipt_path =
@@ -453,7 +453,7 @@ pub(crate) fn editor_distribution_descriptor_source(
  *
  * A generation without an admitted descriptor has no fallback row: stable
  * absence stays terminal and no RC manifest is fetched (#3798, control 7).
- * Never edit a digest by hand â€” regenerate the module from the built
+ * Never edit a digest by hand — regenerate the module from the built
  * distribution so the digest names real manifest bytes.
  */
 export interface ServerDistributionDescriptor {{
