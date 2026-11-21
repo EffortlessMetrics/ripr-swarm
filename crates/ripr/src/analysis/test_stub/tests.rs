@@ -78,7 +78,7 @@ fn boundary_stub_inserts_into_the_existing_inline_module_and_stops_at_the_expect
         use super::*;
         let amount: u32 = 100;
         let threshold: u32 = 100;
-        let expected: u32 = todo!(\"ripr: write the value `price` should return for amount = 100, threshold = 100\");
+        let expected: u32 = todo!(\"ripr: write the value `price` should return for amount = 100, threshold = 100 before the predicate change\");
         assert_eq!(price(amount, threshold), expected);
     }
 ";
@@ -1177,6 +1177,88 @@ fn trait_impl_method_is_called_through_its_trait_path() -> Result<(), String> {
     assert_eq!(
         variant_pattern("Self::Err::Bad", Some("Unit"), PathScope::ChildModule),
         None
+    );
+    Ok(())
+}
+
+#[test]
+fn trait_projection_requires_the_owning_impl_and_expected_value_precedes_the_change()
+-> Result<(), String> {
+    for (declaration, assignment, buffer_type, can_name) in [
+        ("", "", "Self::Buffer", false),
+        ("", "", "ty!(Self::Buffer)", false),
+        (
+            "",
+            "#[cfg(any())] type Buffer = u32;",
+            "Self::Buffer",
+            false,
+        ),
+        ("type Buffer;", "type Buffer = u32;", "Self::Buffer", true),
+        ("type Buffer;", "type Buffer = u32;", "Self::r#Buffer", true),
+        (
+            "type r#Buffer;",
+            "type r#Buffer = u32;",
+            "Self::Buffer",
+            true,
+        ),
+    ] {
+        for condition in ["self == 0", "self != 0"] {
+            let sealed_type = if can_name { "" } else { "type Buffer;" };
+            let sealed_impl = if can_name { "" } else { "type Buffer = u32;" };
+            let source = format!("macro_rules! ty {{ ($t:ty) => {{ $t }}; }}
+mod private {{ pub trait Sealed {{ {sealed_type} }} impl Sealed for u128 {{ {sealed_impl} }} }}
+trait Number: private::Sealed {{ {declaration} fn score(self, buf: &mut {buffer_type}) -> u32; }}
+trait Other {{ type Buffer; }} impl Other for i64 {{ type Buffer = u32; }}
+impl Number for u128 {{ {assignment}
+    fn score(self, buf: &mut {buffer_type}) -> u32 {{ if {condition} {{ *buf + 4 }} else {{ *buf }} }}
+}}");
+            let seam = seam_at(
+                "src/lib.rs",
+                &source,
+                condition,
+                SeamKind::PredicateBoundary,
+                boundary(condition),
+            )?;
+            let result = rust_test_stub(&seam, None, &source, None);
+            if can_name {
+                let stub = result.map_err(|e| e.reason().to_string())?;
+                assert!(
+                    stub.text
+                        .contains("let mut buf: <u128 as Number>::Buffer =")
+                        || stub
+                            .text
+                            .contains("let mut buf: <u128 as Number>::r#Buffer =")
+                );
+                assert!(stub.fill_ins.iter().any(|line| line == "ripr: write the value `score` should return for these inputs before the predicate change"));
+            } else {
+                assert_eq!(result, Err(TestStubRefusal::ParameterUnsupported));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inherited_result_can_still_use_the_untyped_assertion() -> Result<(), String> {
+    let source = "mod private { pub trait Sealed { type Buffer; } impl Sealed for u128 { type Buffer = u32; } }
+trait Number: private::Sealed { fn score(self) -> Self::Buffer; }
+impl Number for u128 { fn score(self) -> Self::Buffer { if self != 0 { 7 } else { 3 } } }";
+    let seam = seam_at(
+        "src/lib.rs",
+        source,
+        "self != 0",
+        SeamKind::PredicateBoundary,
+        boundary("self != 0"),
+    )?;
+    let stub = rust_test_stub(&seam, None, source, None).map_err(|e| e.reason().to_string())?;
+    assert!(
+        stub.text
+            .contains("let actual = <u128 as Number>::score(subject);")
+    );
+    assert!(!stub.text.contains(">::Buffer"));
+    assert!(
+        stub.text
+            .contains("for these inputs before the predicate change")
     );
     Ok(())
 }

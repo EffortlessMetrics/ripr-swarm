@@ -206,7 +206,7 @@ impl TestStubRefusal {
                 "the owner's impl has type or const generics (its own parameters or its self type's arguments) the stub cannot choose; lifetime-only generics are supported"
             }
             Self::ParameterUnsupported => {
-                "a parameter or the return type uses `impl Trait`, an unnamed pattern, or a module-relative path the test cannot reach"
+                "a parameter or the return type uses `impl Trait`, an unnamed pattern, a module-relative path the test cannot reach, or an associated type the stub cannot name through this impl"
             }
             Self::NoReturnValue => "the owner returns no value to assert on",
             Self::OpaqueReturn => "the owner returns `impl Trait`, which cannot be compared",
@@ -627,10 +627,11 @@ fn check_signature(signature: &OwnerSignature) -> Result<(), TestStubRefusal> {
     if signature.has_type_generics {
         return Err(TestStubRefusal::OwnerGeneric);
     }
-    if signature
-        .params
-        .iter()
-        .any(|param| param.ty.trim().is_empty() || is_unsupported_impl(&param.ty))
+    if signature.has_unnameable_parameter_projection
+        || signature
+            .params
+            .iter()
+            .any(|param| param.ty.trim().is_empty() || is_unsupported_impl(&param.ty))
     {
         return Err(TestStubRefusal::ParameterUnsupported);
     }
@@ -1065,11 +1066,7 @@ fn stub_body(
         // A value seam, or an error seam whose variant is not a nameable
         // path: assert the whole value the developer writes.
         None => {
-            let hint = if derived_inputs.is_empty() {
-                discriminator_hint(seam)
-            } else {
-                format!(" for {}", derived_inputs.join(", "))
-            };
+            let hint = expected_value_hint(seam, &derived_inputs);
             let traits = value_traits(&return_type, source);
             let label = match traits {
                 ValueTraits::Unknown => format!(
@@ -1124,11 +1121,7 @@ fn stub_body(
             .ok_or(TestStubRefusal::ParameterUnsupported)?;
             targets.push((binding, ty));
         }
-        let hint = if derived_inputs.is_empty() {
-            discriminator_hint(seam)
-        } else {
-            format!(" for {}", derived_inputs.join(", "))
-        };
+        let hint = expected_value_hint(seam, &derived_inputs);
         for (binding, ty) in targets {
             let label = if pushed.as_ref().is_some_and(|(name, _)| name == &binding) {
                 format!(
@@ -1861,16 +1854,32 @@ fn relational_boundary(seam: &RepoSeam) -> Option<String> {
     })
 }
 
+fn expected_value_hint(seam: &RepoSeam, inputs: &[String]) -> String {
+    let predicate = seam.kind() == SeamKind::PredicateBoundary;
+    let witness = if !inputs.is_empty() {
+        format!(" for {}", inputs.join(", "))
+    } else if predicate {
+        relational_boundary(seam).map_or_else(
+            || " for these inputs".to_string(),
+            |boundary| format!(" when {boundary}"),
+        )
+    } else {
+        discriminator_hint(seam)
+    };
+    if predicate {
+        format!("{witness} before the predicate change")
+    } else {
+        witness
+    }
+}
+
 fn discriminator_hint(seam: &RepoSeam) -> String {
     match seam.required_discriminator() {
         RequiredDiscriminator::BoundaryValue { description }
         | RequiredDiscriminator::ReturnValue { description }
             if !description.trim().is_empty() =>
         {
-            match relational_boundary(seam) {
-                Some(boundary) => format!(" when {boundary}"),
-                None => format!(" when {}", one_line(description)),
-            }
+            format!(" when {}", one_line(description))
         }
         RequiredDiscriminator::MatchArmTaken { arm } if !arm.trim().is_empty() => {
             format!(" when the `{}` arm runs", one_line(arm))

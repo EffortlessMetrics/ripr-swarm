@@ -18,6 +18,27 @@ pub fn price(amount: u32, threshold: u32) -> u32 {
     if amount >= threshold { amount - 10 } else { amount }
 }
 
+mod sealed {
+    pub trait Sealed { type Buffer; }
+    impl Sealed for u128 { type Buffer = u32; }
+}
+
+trait Number: sealed::Sealed {
+    type Output;
+    fn inherited(self, buf: &mut Self::Buffer) -> u32;
+    fn declared(self, buf: &mut Self::Output) -> u32;
+}
+
+impl Number for u128 {
+    type Output = u32;
+    fn inherited(self, buf: &mut Self::Buffer) -> u32 {
+        if self != 71 { *buf + 4 } else { *buf }
+    }
+    fn declared(self, buf: &mut Self::Output) -> u32 {
+        if self != 72 { *buf + 4 } else { *buf }
+    }
+}
+
 pub struct Opaque(u32);
 
 pub fn wrap(n: u32) -> Opaque {
@@ -414,6 +435,8 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // A trait method with a `&self` receiver is called through
         // `<Parser as std::fmt::Display>::fmt(&subject, ..)`.
         ("self.max > 3", Expect::StopsAtRiprTodo),
+        ("self != 71", Expect::Refused("parameter_unsupported")),
+        ("self != 72", Expect::StopsAtRiprTodo),
     ]
     .map(|(needle, expect)| (FIXTURE, needle, expect));
     let cases_5471 = [
