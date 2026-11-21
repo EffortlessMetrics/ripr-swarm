@@ -75,7 +75,7 @@ official SDK transport:
   be a string when present; `ripr_list_gaps`'s `offset` and `limit` must
   be integers within their advertised ranges. Explicit null returns a
   correlated `-32602` Invalid Params error naming the field before session
-  lookup. Omitted fields retain their defaults, valid values reach session
+  lookup, and the refusal says to omit the field. Omitted fields retain their defaults, valid values reach session
   lookup, and a subsequent request can recover on the same connection.
 - The `tools/call` `arguments` member is also omittable, but when present
   must be an object. Explicit null is Invalid Params (`-32602`), including
@@ -438,6 +438,10 @@ official SDK transport:
   the stored selection by conjunction before paging; they never re-run
   analysis or widen the shared budget. File matching removes a leading `./`
   and accepts exact paths, segment-bounded prefixes, and trailing segments.
+  An absolute `file` under the workspace root is applied as its
+  root-relative form and echoed that way; any other absolute path is
+  refused as an invalid argument without echoing the host path, never
+  answered with an empty page.
   Class/language are exact wire tokens. An unknown `class` is Invalid
   Params (`-32602`) naming the seven exposure-class tokens, with the echoed
   token truncated so the error stays bounded; an unknown `language` is

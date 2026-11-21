@@ -2389,7 +2389,13 @@ fn scalar_argument_parsers_refuse_coercion_and_name_the_argument() -> Result<(),
         let error = optional_string_argument(&arguments, "file")
             .err()
             .ok_or_else(|| format!("{wrong} must not coerce to a string"))?;
-        assert_eq!(error.message, "file must be a string");
+        // Null is the one wrong value whose fix is to send nothing.
+        let expected = if wrong.is_null() {
+            "file must be a string, not null; omit file to use its default"
+        } else {
+            "file must be a string"
+        };
+        assert_eq!(error.message, expected);
         let data = invalid_params_data(&error)?;
         assert_eq!(data["argument"], serde_json::json!("file"));
         assert_eq!(data["expected"], serde_json::json!("string"));
@@ -2408,10 +2414,132 @@ fn scalar_argument_parsers_refuse_coercion_and_name_the_argument() -> Result<(),
         let error = optional_bool_argument(&arguments, "repair_ready")
             .err()
             .ok_or_else(|| format!("{wrong} must not coerce to a boolean"))?;
-        assert_eq!(error.message, "repair_ready must be a boolean");
+        let expected = if wrong.is_null() {
+            "repair_ready must be a boolean, not null; omit repair_ready to use its default"
+        } else {
+            "repair_ready must be a boolean"
+        };
+        assert_eq!(error.message, expected);
         let data = invalid_params_data(&error)?;
         assert_eq!(data["argument"], serde_json::json!("repair_ready"));
         assert_eq!(data["expected"], serde_json::json!("boolean"));
+    }
+    Ok(())
+}
+
+/// A fresh canonical directory for one file-filter test, removed on drop.
+struct FilterRoot(std::path::PathBuf);
+impl FilterRoot {
+    fn new(name: &str) -> Result<Self, String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ripr-mcp-file-filter-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+        std::fs::canonicalize(&path)
+            .map(Self)
+            .map_err(|error| error.to_string())
+    }
+}
+impl Drop for FilterRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// An agent usually holds the absolute path its editor gave it, while items
+/// are keyed by repository-relative paths. An absolute filter under the root
+/// narrows as its relative form; one outside the root is refused instead of
+/// matching nothing, which would read as "no gaps in that file".
+#[test]
+fn absolute_file_filter_is_relativized_under_the_root_and_refused_outside() -> Result<(), String> {
+    let temp = FilterRoot::new("lexical")?;
+    let root = temp.0.clone();
+    let nested = root.join("src").join("lib.rs");
+    let spell = |path: &std::path::Path| -> Result<String, String> {
+        path.to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("fixture path is not UTF-8: {path:?}"))
+    };
+
+    // Relative filters pass through untouched, with or without a root.
+    for relative in ["src/lib.rs", "./src/lib.rs", "lib.rs", "src/"] {
+        assert_eq!(
+            workspace_relative_file_filter(relative.to_string(), Some(&root)),
+            Ok(relative.to_string())
+        );
+        assert_eq!(
+            workspace_relative_file_filter(relative.to_string(), None),
+            Ok(relative.to_string())
+        );
+    }
+
+    // Under the root: the relative form, whether or not the file exists.
+    assert_eq!(
+        workspace_relative_file_filter(spell(&nested)?, Some(&root)),
+        Ok("src/lib.rs".to_string())
+    );
+    assert_eq!(
+        workspace_relative_file_filter(spell(&root.join("src"))?, Some(&root)),
+        Ok("src".to_string())
+    );
+
+    // Outside the root, a sibling sharing the root's name as a string prefix,
+    // a `..` escape, the root itself and a rootless server are all refused.
+    let sibling = std::path::PathBuf::from(format!("{}-sibling", spell(&root)?)).join("lib.rs");
+    let escape = root.join("..").join("lib.rs");
+    let outside = "does not resolve below this workspace root";
+    for (path, root, needle) in [
+        (spell(&sibling)?, Some(root.as_path()), outside),
+        (spell(&escape)?, Some(root.as_path()), outside),
+        (spell(&nested)?, None, outside),
+        (
+            spell(&root)?,
+            Some(root.as_path()),
+            "omit file to list every item",
+        ),
+    ] {
+        let error = workspace_relative_file_filter(path.clone(), root)
+            .err()
+            .ok_or_else(|| format!("{path} must be refused"))?;
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(error.message.contains(needle), "{}", error.message);
+        // The refusal never echoes a host path.
+        assert!(!error.message.contains(path.as_str()), "{}", error.message);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("file"));
+    }
+    Ok(())
+}
+
+/// A symlinked spelling of the canonical root still resolves when the file
+/// exists, which is the macOS `/tmp` versus `/private/tmp` case.
+#[cfg(unix)]
+#[test]
+fn absolute_file_filter_resolves_a_symlinked_root_spelling() -> Result<(), String> {
+    let temp = FilterRoot::new("symlink")?;
+    let base = temp.0.clone();
+    let root = base.join("real");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src").join("lib.rs"), "").map_err(|error| error.to_string())?;
+    let alias = base.join("alias");
+    std::os::unix::fs::symlink(&root, &alias).map_err(|error| error.to_string())?;
+    let through_alias = alias.join("src").join("lib.rs");
+    let through_alias = through_alias.to_str().ok_or("fixture path is not UTF-8")?;
+    assert_eq!(
+        workspace_relative_file_filter(through_alias.to_string(), Some(&root)),
+        Ok("src/lib.rs".to_string())
+    );
+    // The same spelling for a file that does not exist cannot be resolved and
+    // is refused rather than matched against nothing.
+    let missing = alias.join("src").join("missing.rs");
+    let missing = missing.to_str().ok_or("fixture path is not UTF-8")?;
+    if let Ok(applied) = workspace_relative_file_filter(missing.to_string(), Some(&root)) {
+        return Err(format!("an unresolvable spelling was applied as {applied}"));
     }
     Ok(())
 }
