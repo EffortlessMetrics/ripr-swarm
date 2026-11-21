@@ -2486,12 +2486,60 @@ fn ts_is_padded_string_literal(value: &str) -> bool {
     if inner.is_empty() {
         return false;
     }
-    // Whitespace written as an escape (`\t`, `\n`, `\r`) pads the value
-    // exactly like a literal space.
-    inner.trim() != inner
-        || ["\\t", "\\n", "\\r"]
-            .iter()
-            .any(|escape| inner.starts_with(escape) || inner.ends_with(escape))
+    // Whitespace written as an escape (`\t`, `\n`, `\r`, `\u0020`,
+    // `\x09`, ...) pads the value exactly like a literal space.
+    if inner.trim() != inner {
+        return true;
+    }
+    let decoded = ts_decode_simple_escapes(inner);
+    decoded.trim() != decoded
+}
+
+/// Decode simple whitespace escapes in a string-literal body; any other
+/// escape keeps its backslash so non-whitespace content is untouched.
+fn ts_decode_simple_escapes(inner: &str) -> String {
+    let bytes = inner.as_bytes();
+    let mut out = String::with_capacity(inner.len());
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if bytes[at] == b'\\' && at + 1 < bytes.len() {
+            match bytes[at + 1] {
+                b't' => {
+                    out.push('\t');
+                    at += 2;
+                    continue;
+                }
+                b'n' => {
+                    out.push('\n');
+                    at += 2;
+                    continue;
+                }
+                b'r' => {
+                    out.push('\r');
+                    at += 2;
+                    continue;
+                }
+                b'u' | b'x' => {
+                    let digits = if bytes[at + 1] == b'u' { 4 } else { 2 };
+                    let hex = inner.get(at + 2..at + 2 + digits);
+                    if let Some(hex) = hex
+                        && let Ok(code) = u32::from_str_radix(hex, 16)
+                        && let Some(ch) = char::from_u32(code)
+                        && ch.is_whitespace()
+                    {
+                        out.push(ch);
+                        at += 2 + digits;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let ch_len = inner[at..].chars().next().map_or(1, char::len_utf8);
+        out.push_str(&inner[at..at + ch_len]);
+        at += ch_len;
+    }
+    out
 }
 
 /// The call-argument target read by the trailing operand of `text` (the
