@@ -2116,9 +2116,19 @@ fn assign_severity(
 /// the load, and without this the error lists every accepted value but does
 /// not say which one was meant. The hint is built from the fixed accepted
 /// names, never from file text.
+///
+/// A value that differs from an accepted one only in its word separator
+/// (`perl_lsp`, `perl lsp`) names that one before edit distance is consulted.
+/// `perl_lsp` is one edit from both `perllsp` and `perl-lsp`, and the distance
+/// tie would otherwise go to whichever is listed first.
 fn near_value_hint(value: &str, accepted: &[&'static str]) -> String {
     let normalized = value.trim().to_ascii_lowercase();
-    suggest::did_you_mean(&normalized, accepted)
+    let hyphenated = normalized.replace(['_', ' '], "-");
+    accepted
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == hyphenated)
+        .or_else(|| suggest::did_you_mean(&normalized, accepted))
         .map(|nearest| format!(" ({})", suggest::suggestion_line(nearest)))
         .unwrap_or_default()
 }

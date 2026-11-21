@@ -1225,7 +1225,9 @@ Enumerated values (`mode`, the oracle strengths, the severities,
 lowercase and case-sensitive: `mode = "Draft"` is
 an error, not `draft`. When a rejected value is an accepted one in another
 case, padded with spaces, or a small typo, the error ends with
-`(did you mean ...?)` naming the accepted spelling.
+`(did you mean ...?)` naming the accepted spelling. A value that differs only
+in its word separator names the hyphenated spelling: `producer = "perl_lsp"`
+suggests `perl-lsp`, not the equally close `perllsp`.
 
 The example file ([`ripr.toml.example`](../ripr.toml.example)) is kept in sync
 with the supported v1 shape.
