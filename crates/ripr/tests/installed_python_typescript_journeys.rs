@@ -1414,6 +1414,126 @@ fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {
 /// finish. Negative control: the same fixture with an evaluable test, and so a
 /// complete analysis, still prints its start.
 #[cfg(feature = "lang-typescript")]
+/// #15902: an installed dependency tree that `.gitignore` does not cover is
+/// not unanalyzed source. `ripr check` keeps offering the repair start and
+/// stops advising `git add -N` for files no adapter would read. An untracked
+/// hand-written source file is the control and still withholds the start.
+/// When the unignored tree is too large for the edit cage to snapshot, the
+/// before phase names that cause and the `.gitignore` fix; a small tree gets
+/// no such line.
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn typescript_unignored_dependency_tree_keeps_the_start_and_names_an_oversized_capture()
+-> Result<(), String> {
+    let write = |path: &Path, text: &str| -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| format!("mkdir: {error}"))?;
+        }
+        std::fs::write(path, text).map_err(|error| format!("write {}: {error}", path.display()))
+    };
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_typescript", "head", "tsnm", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    write(
+        &root.join("node_modules/dep/index.ts"),
+        "export const one = 1;\n",
+    )?;
+    write(
+        &root.join("node_modules/dep/lib/util.js"),
+        "exports.two = 2;\n",
+    )?;
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check with an unignored dependency tree")?;
+    let (gap, base) = gap_start_tokens(&check).ok_or_else(|| {
+        format!("an unignored dependency tree withheld the repair start:\n{check}")
+    })?;
+    if check.contains("git add -N") || check.contains("untracked:") {
+        return Err(format!(
+            "check named dependency files as unanalyzed source:\n{check}"
+        ));
+    }
+
+    // Small tree: the start is scorable and no oversized-capture line prints.
+    let (ok, start) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "start beside a small unignored dependency tree")?;
+    if start.contains("likely cause of the ambiguous baseline") || start.contains("ambiguous: true")
+    {
+        return Err(format!(
+            "a small dependency tree read as oversized:\n{start}"
+        ));
+    }
+
+    // Control: an untracked hand-written source file is still unanalyzed
+    // working-tree source, so the start stays withheld and the note stays.
+    let (_control_guard, control_root, control_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-src",
+        None,
+    )?;
+    let control_arg = control_root.to_string_lossy().into_owned();
+    write(
+        &control_root.join("src/extra.ts"),
+        "export const extra = 1;\n",
+    )?;
+    let (ok, control) = ripr(
+        &control_decoy,
+        &["check", "--root", &control_arg, "--base", "HEAD~1"],
+    )?;
+    expect_exit(ok, true, "check with an untracked source file")?;
+    if gap_start_tokens(&control).is_some() || !control.contains("src/extra.ts") {
+        return Err(format!(
+            "an untracked source file no longer withholds the start or lost its note:\n{control}"
+        ));
+    }
+
+    // Oversized: one untracked file past the per-file capture budget (sparse,
+    // so the test writes no real data) makes the baseline ambiguous, and the
+    // before phase names the directory and the fix.
+    let (_big_guard, big_root, big_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-big",
+        None,
+    )?;
+    let big_arg = big_root.to_string_lossy().into_owned();
+    let native = big_root.join("node_modules/dep/native.node");
+    write(&native, "")?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&native)
+        .and_then(|file| file.set_len(16 * 1024 * 1024 + 1))
+        .map_err(|error| format!("grow {}: {error}", native.display()))?;
+    let (ok, big) = ripr(
+        &big_decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &big_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(
+        ok,
+        true,
+        "start beside an oversized unignored dependency tree",
+    )?;
+    for needle in [
+        "ambiguous: true",
+        "likely cause of the ambiguous baseline",
+        "`node_modules/`",
+        ".gitignore",
+    ] {
+        need(&big, needle, "oversized unignored dependency tree")?;
+    }
+    decoy_untouched(&decoy)?;
+    decoy_untouched(&big_decoy)
+}
+
 #[test]
 fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), String> {
     let toml = "[languages]\nenabled = [\"typescript\"]\n";

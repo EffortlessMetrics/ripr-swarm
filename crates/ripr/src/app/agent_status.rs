@@ -3869,6 +3869,12 @@ pub(crate) fn render_agent_attempt_status_json(
         .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
+/// The re-check an unreadable attempt's status points at (#15903): the
+/// selected root only, because nothing the attempt recorded is trusted.
+fn unreadable_attempt_recheck_command(root_display: &str) -> String {
+    format!("ripr check --root {}", shell_arg(root_display))
+}
+
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
     let attempt = &report.attempt;
     let mut rendered = String::new();
@@ -3948,6 +3954,16 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         }
     } else {
         rendered.push_str("\nStatus names no next action; the claim boundary below says why.\n");
+        // #15903: an attempt status cannot validate (a missing before
+        // snapshot, a broken manifest) has no gap status may trust, so no
+        // restart is named. `ripr check` trusts nothing from the attempt and
+        // reads the tree as it is now, so it is the one honest way forward.
+        if report.attempt.unreadable_reason.is_some() {
+            rendered.push_str(&format!(
+                "\nThis attempt cannot be finished and cannot produce a receipt. To read the current state without it, run `{}`. If the gap is still open, that prints a new repair start; set any test edit aside before you start it, then reapply the edit. If the gap already reads as noticed, the test is in place and only the receipt is missing.\n",
+                unreadable_attempt_recheck_command(&report.root)
+            ));
+        }
     }
 
     if let Some(reading) = &report.test_run {
@@ -4905,6 +4921,16 @@ mod tests {
                 .map_err(|err| format!("parse attempt status JSON: {err}"))?;
             if value["attempt"]["status_class"] != "corrupt_or_unavailable" {
                 return Err(format!("JSON dropped the corrupt class: {value}"));
+            }
+            // #15903: the human status still invents no restart, but it no
+            // longer ends in a dead end: it names the one command that reads
+            // the current state without trusting the unreadable attempt.
+            let human = render_agent_attempt_status_markdown(&report);
+            let recheck = format!("ripr check --root {}", shell_arg(&report.root));
+            if !human.contains(&recheck) || !human.contains("cannot produce a receipt") {
+                return Err(format!(
+                    "unreadable attempt status named no way forward:\n{human}"
+                ));
             }
             Ok(())
         })();
@@ -8774,6 +8800,13 @@ mod tests {
             if !human.contains("Status names no next action") {
                 return Err(format!(
                     "{label}: human lost the empty next action:\n{human}"
+                ));
+            }
+            // #15903 control: the re-check sentence belongs to an attempt
+            // status could not read, never to a readable one.
+            if human.contains("cannot produce a receipt") {
+                return Err(format!(
+                    "{label}: a readable attempt got the unreadable-attempt recovery:\n{human}"
                 ));
             }
         }

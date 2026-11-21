@@ -2470,6 +2470,63 @@ fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|err| format!("git {args:?} emitted non-UTF-8 output: {err}"))
 }
 
+/// Name the likely cause of an ambiguous baseline when untracked files that
+/// `.gitignore` does not cover exceed the exact-capture budget (#15902).
+///
+/// The cage snapshots untracked, unignored files exactly, bounded by
+/// [`MAX_CAPTURE_FILE_BYTES`] per file and [`MAX_CAPTURE_TOTAL_FILE_BYTES`] in
+/// total. An installed dependency tree such as `node_modules/` that the
+/// repository forgot to ignore runs past that budget, and the attempt can then
+/// never be scored. This is diagnostic text only: it reads sizes after the
+/// baseline was captured, changes no verdict, and returns `None` whenever the
+/// untracked files alone do not explain the ambiguity or Git cannot answer.
+pub(crate) fn oversized_untracked_cause(root: &Path) -> Option<String> {
+    let untracked = git_bytes(root, &["ls-files", "--others", "--exclude-standard", "-z"]).ok()?;
+    let mut total_bytes = 0u64;
+    let mut files = 0usize;
+    let mut oversized_file = false;
+    let mut by_directory: BTreeMap<String, u64> = BTreeMap::new();
+    for record in nul_records(&untracked).take(MAX_CAPTURE_PATHS) {
+        let path = record.ok()?;
+        let Ok(metadata) = std::fs::symlink_metadata(root.join(path)) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        files += 1;
+        total_bytes = total_bytes.saturating_add(metadata.len());
+        oversized_file |= metadata.len() > MAX_CAPTURE_FILE_BYTES;
+        if let Some((directory, _)) = path.split_once('/') {
+            let bytes = by_directory.entry(directory.to_string()).or_default();
+            *bytes = bytes.saturating_add(metadata.len());
+        }
+    }
+    if total_bytes <= MAX_CAPTURE_TOTAL_FILE_BYTES && !oversized_file {
+        return None;
+    }
+    const MIB: u64 = 1024 * 1024;
+    let size = format!("{} MiB", total_bytes.div_ceil(MIB));
+    let budget = MAX_CAPTURE_TOTAL_FILE_BYTES / MIB;
+    let per_file = MAX_CAPTURE_FILE_BYTES / MIB;
+    let largest = by_directory
+        .into_iter()
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)));
+    let (place, fix) = match largest {
+        Some((directory, _)) => (
+            format!(", the largest share under `{directory}/`"),
+            format!("add `{directory}/` to .gitignore (or commit those files)"),
+        ),
+        None => (
+            String::new(),
+            "add those files to .gitignore (or commit them)".to_string(),
+        ),
+    };
+    Some(format!(
+        "likely cause of the ambiguous baseline: {files} untracked file(s) that .gitignore does not cover hold {size}{place}. ripr snapshots untracked files exactly, up to {budget} MiB in total and {per_file} MiB per file. To get a scorable attempt, {fix}, then run the same --phase before command again."
+    ))
+}
+
 fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = crate::git::run_git_output_with_deadline_and_limit(
         root,

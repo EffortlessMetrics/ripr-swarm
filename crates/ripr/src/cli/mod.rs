@@ -861,6 +861,15 @@ fn persist_before_repair_attempt(
                 crate::output::human::terminal_safe(format!("ripr: {line}"))
             );
         }
+        // #15902: when unignored untracked files alone exceed the capture
+        // budget, say so and name the fix instead of leaving the generic
+        // "resolve the workspace condition" text as the only guidance.
+        if let Some(cause) = crate::edit_cage::oversized_untracked_cause(root) {
+            eprintln!(
+                "{}",
+                crate::output::human::terminal_safe(format!("ripr: {cause}"))
+            );
+        }
     } else if options.gap_id.is_some() {
         // #9103: the gap-bound after phase enforces this cage, so the
         // guidance matches the seam-bound one except for the committed test.

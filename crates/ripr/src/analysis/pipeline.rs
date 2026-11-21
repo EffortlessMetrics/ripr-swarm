@@ -431,6 +431,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             result.uncommitted_source_paths = overlay.dirty_source_paths();
             result.untracked_source_paths = overlay.untracked_source_paths();
             result.ignored_source_paths = overlay.ignored_source_paths();
+            drop_never_analyzed_untracked_paths(&mut result, language_config);
         }
         result.analyzed_revisions = analyzed_revisions;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -634,6 +635,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         let (untracked, ignored) = excluded?;
         result.untracked_source_paths = untracked;
         result.ignored_source_paths = ignored;
+        drop_never_analyzed_untracked_paths(&mut result, language_config);
         result.analyzed_revisions = analyzed;
         bind_effective_base(&mut result, loaded.effective_base)?;
         Ok(result)
@@ -3376,6 +3378,53 @@ fn ripr_artifact_disclosure(
          `.gitignore` to keep ripr's reports and caches out of commits.",
         count = own_artifact_files.len()
     )
+}
+
+/// Drop untracked paths no adapter would analyze from the working-tree
+/// disclosures (#15902).
+///
+/// An installed `node_modules/` tree that `.gitignore` does not cover shows up
+/// as hundreds of untracked routed files. The adapter's own excluded-path
+/// authority never analyzes them, tracked or not, so naming them as
+/// unanalyzed working-tree source is wrong twice: `git add -N` cannot make
+/// them analyzable, and the "unanalyzed working tree" state it sets withholds
+/// the repair start without a reason. The decision is the same
+/// [`is_excluded_from_preview_analysis`] authority the diff loop applies, so
+/// a path declared in `handwritten_files` stays disclosed. Rust has no such
+/// authority and keeps every untracked path. Tracked dirty files are never
+/// dropped: `--worktree` does read those.
+fn drop_never_analyzed_untracked_paths(
+    result: &mut AnalysisResult,
+    language_config: &crate::config::LanguagesConfig,
+) {
+    let never_analyzed =
+        never_analyzed_untracked_paths(&result.untracked_source_paths, language_config);
+    if never_analyzed.is_empty() {
+        return;
+    }
+    result
+        .untracked_source_paths
+        .retain(|path| !never_analyzed.contains(path));
+    result
+        .uncommitted_source_paths
+        .retain(|path| !never_analyzed.contains(path));
+}
+
+/// The untracked routed paths their own language adapter refuses to analyze.
+fn never_analyzed_untracked_paths(
+    untracked: &[String],
+    language_config: &crate::config::LanguagesConfig,
+) -> std::collections::BTreeSet<String> {
+    untracked
+        .iter()
+        .filter(|path| {
+            let path = std::path::Path::new(path.as_str());
+            route(path).is_some_and(|language| {
+                is_excluded_from_preview_analysis(language, path, language_config)
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 /// Whether a changed preview-language path is refused by its adapter's own
@@ -8358,6 +8407,35 @@ index 0000000..1111111 100644
                 )
             })
             .collect()
+    }
+
+    /// #15902: an untracked file inside a tree the adapter never analyzes
+    /// (an unignored `node_modules/`) is not unanalyzed working-tree source.
+    /// The controls keep the disclosure honest: an untracked hand-written
+    /// source file, a path the repository declared hand-written, and a Rust
+    /// file (Rust has no excluded-path authority) all stay disclosed.
+    #[test]
+    fn untracked_paths_the_adapter_never_analyzes_are_not_disclosed_as_source() {
+        let untracked = [
+            "node_modules/dep/index.ts",
+            "node_modules/dep/lib/util.js",
+            "node_modules/kept/handwritten.ts",
+            "node_modules/tool/build.rs",
+            "src/extra.ts",
+        ]
+        .map(str::to_string);
+        let mut config = crate::config::LanguagesConfig::default();
+        config
+            .typescript
+            .handwritten_files
+            .push("node_modules/kept/handwritten.ts".to_string());
+        let dropped: Vec<String> = never_analyzed_untracked_paths(&untracked, &config)
+            .into_iter()
+            .collect();
+        assert_eq!(
+            dropped,
+            ["node_modules/dep/index.ts", "node_modules/dep/lib/util.js"]
+        );
     }
 
     /// #4372: the enabled preview advisory ("N TypeScript files analyzed under
