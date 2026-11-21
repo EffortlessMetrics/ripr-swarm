@@ -40,6 +40,7 @@ include = [
   "!src/**/*_kani.rs",
   "!src/kani_smoke.rs",
   "!src/app/kani_import/fixtures/**",
+  "!src/analysis/classification_properties.rs",
   "!src/analysis/classify/activation/method_hop_rows.rs",
   "!src/analysis/classify/activation/rebinding_scan.rs",
   "!src/analysis/classify/stop_reason_contract.rs",
