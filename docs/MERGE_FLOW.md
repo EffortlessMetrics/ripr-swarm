@@ -12,8 +12,8 @@ no-queue and conditional-activation prose below is retained only as history.
 
 Steven selected native queue-time qualification on October 21, 2026 under
 [#4984](https://github.com/EffortlessMetrics/ripr-swarm/issues/4984#issuecomment-6308919863).
-That target is now live; it does not weaken review, proof, protected squash, or
-separate release authority.
+The native queue is live. Replacing the full PR product run with bounded
+admission still requires a protected migration.
 Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
 `merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
 earned once per queue entry on the exact queued merge commit (see
@@ -36,11 +36,53 @@ as permission to skip checks or merge directly. Current user rulings and control
 decisions supersede older no-queue target prose; source, rehearsed, active and
 accepted remain separate states.
 
+On November 21, 2026, active default-branch [ruleset 18845973](https://github.com/EffortlessMetrics/ripr-swarm/rules/18845973)
+used SQUASH and ALLGREEN, with build concurrency 20 and at most 20 entries per
+landing. These limits allow concurrent builds and grouped landings. They do
+not share a compiled artifact or select one build for the whole cohort.
+
+## Staged admission and group qualification
+
+Keep using the installed procedure within its authorized budget. The proposed
+route gives one read-only job five minutes to verify a deliberate `merge-ready`
+request on a Ready PR, the current head H, and its source review. It receives no
+credentials, executes no PR code and has no write permissions. Ordinary Draft,
+Ready and sync events start no repository-owned product CI. Product CI runs on the actual native group G,
+with at most twenty minutes elapsed and under twenty aggregate runner-minutes
+per accepted change including preparation, transfers, failed attempts and retries.
+
+Before switching, use an authorized synthetic-only repository to observe the
+Actions issuer and check-run ID on H. Have a maintainer explicitly apply
+`merge-ready` to the selected Ready PR. GitHub suppresses `labeled` workflow
+events originating from a workflow's `GITHUB_TOKEN`. [GitHub trigger semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow). After a successful admission, remove the
+label at the same SHA, edit the title at that SHA, and replace H in separate
+controls. Record whether GitHub allows enqueue in each case. A retained SHA
+check can outlive its inputs. Before product allocation and again at final
+Result, G must verify each queued entry, current head, request label, review,
+and applicable title condition. Preserve native review-thread enforcement.
+The installed reader uses authenticated GraphQL for thread resolution. The
+credential-free check needs a supported source for any state it claims.
+
+Freeze the trunk and three independent, ordered heads. Verify one real
+qualification on the full group's exact checkout and tree. Inspect the
+canonical product result on each prefix. Verify it is absent or pending
+and that no skipped, neutral or legacy result satisfies the requirement. A
+failing middle must be ejected and the recomposed group must earn its own
+qualification. On full G, independently fail, conditionally skip and omit a
+required product job. In each case the terminal Result must refuse and the
+group must stay unmerged. A conditionally skipped job can itself report success.
+[GitHub required-check behavior](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks). Preserve the installed
+protected route until the replacement passes and enforcement is read back.
+First installation must itself fit the authorized budget. A longer legacy run
+requires a separate decision. Keep other Ready PRs out of the migration. For
+rollback, pause new requests and restore the protected H/G producer before
+reopening intake.
+
 ## Who owns the change
 
 Development publication, updates and review use no Actions workflow after the
-#4842 auxiliary-trigger retirement. Label cutover and hosted App activation remain
-open. Main replay is retired with full H/G protection, opportunistic caches and
+#4842 auxiliary-trigger retirement. Bounded native admission remains
+staged. Main replay is retired with full H/G protection, opportunistic caches and
 mandatory cold recomputation; no recurring warmer is introduced (#7827).
 See [the event inventory](CI.md#development-events-and-retained-bootstrap-route).
 
@@ -49,8 +91,7 @@ requires that check before enqueue, each delivery owner may request its
 `merge-ready` qualification for the selected, reviewed candidate. Native queue
 activation alone does not replace H qualification with cheap admission. The
 final caller cutover must qualify and enforce that replacement before retiring
-the label route; later publisher or control-profile prerequisites do not block
-this independently landable auxiliary-event retirement.
+the full PR product run. Keep the explicit label as the staged admission request.
 
 The PR's owning lead carries review, repair, qualification and landing through
 the applicable protected route without asking for routine repo permission again.
@@ -274,8 +315,8 @@ route; a normal direct merge is not permitted.
 The former profile was not a new pull_request-triggered CI lane: it rode the
 merge-ready-requested run and added no workflow trigger. Queue landing now runs
 product CI on `merge_group`; the explicit `merge-ready` request and manual
-dispatch remain installed until the label route retires, and history-preserving
-syncs and release transactions remain a
+dispatch remain installed. The staged cutover retires label-triggered product
+qualification. History-preserving syncs and release transactions remain a
 separate exceptional profile. Any successor must keep the S/B/H/G identity
 binding, privileged authorization and typed diff-scoped
 `not_applicable: history_sync` semantics described here.

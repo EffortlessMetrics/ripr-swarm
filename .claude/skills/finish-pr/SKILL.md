@@ -88,9 +88,9 @@ cause; never bypass enforcement or change settings.
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. Applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a merge authorization. Never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue.
+12. For the installed full-qualification route, select the applicable procedure in [merge flow](../../../docs/MERGE_FLOW.md). Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. Applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a merge authorization. Never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
-14. Follow [merge flow](../../../docs/MERGE_FLOW.md): applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a landing authorization. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue; do not substitute generic auto-merge. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
+14. When using the installed full-qualification route, follow [merge flow](../../../docs/MERGE_FLOW.md): applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a landing authorization. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue; do not substitute generic auto-merge. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
 17. After deliberate closure or supersession, record the winning candidate and preserved residual work.
@@ -138,11 +138,18 @@ passive waiting; genuine remote waits name their owner and decision-changing eve
 without an idle polling worker. Batch related findings into one repair wave, preserve
 unaffected review, and do not force branch churn or a global intake freeze. These
 instructions govern agent decisions; they do not install branch protection.
-Applying `merge-ready` is the request for the required PR qualification
+On the installed route, applying `merge-ready` requests the required PR qualification
 (`Ripr Rust Small Result`); it does not enqueue and is not a landing
 authorization. Enqueue through the native merge queue after that qualification
 is green. Being Ready for review is not REVIEW_READY or permission to arm
 auto-merge.
+
+The [staged admission route](../../../docs/MERGE_FLOW.md#staged-admission-and-group-qualification)
+requires protected installation and readback before use. Its deliberate Ready-PR
+label requests one five-minute read-only metadata check. Product work waits for
+the selected native group. Check the [installed CI events](../../../docs/CI.md#what-starts-what-in-this-source-stage)
+before applying a label. Leave the request pending when the installed run
+exceeds the authorized budget.
 
 # Release-scope law
 
