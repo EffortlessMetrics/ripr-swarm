@@ -5,15 +5,28 @@
 
 use crate::domain::{ExposureClass, Finding, SourceCurrentness};
 
+/// The `State:` words for a run where nothing is selected and every omitted
+/// finding is a removed line. "no gap selected for repair" read as "nothing
+/// to look at"; this names why nothing is selected. The state id
+/// (`no_actionable_gap`) is unchanged.
+pub(super) const REMOVAL_ONLY_STATE: &str =
+    "the diff only removes code, and removed code is never an edit target";
+
+/// True when the omitted set is non-empty and every finding in it is a
+/// removed line (`base_deleted`). Moved or renamed code, unresolved
+/// currentness, candidate findings and an empty set are not removal-only.
+pub(super) fn is_removal_only(omitted: &[&Finding]) -> bool {
+    !omitted.is_empty()
+        && omitted
+            .iter()
+            .all(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+}
+
 /// The line when every omitted finding is a removed line (`base_deleted`);
 /// `None` for any other mix (moved or renamed code, unresolved currentness,
 /// candidate findings, or an empty set), which keeps its earlier wording.
 pub(super) fn removal_only_safe_action_line(omitted: &[&Finding]) -> Option<String> {
-    if omitted.is_empty()
-        || !omitted
-            .iter()
-            .all(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
-    {
+    if !is_removal_only(omitted) {
         return None;
     }
     Some(format!(

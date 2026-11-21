@@ -4228,10 +4228,14 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(findings));
 
+        // #15335: a removal-only run names why nothing is selected.
         assert!(
-            rendered.contains("State: no gap selected for repair"),
+            rendered.contains(
+                "  State: the diff only removes code, and removed code is never an edit target\n"
+            ),
             "{rendered}"
         );
+        assert!(!rendered.contains("no gap selected for repair"), "{rendered}");
         assert!(
             rendered.contains(
                 "  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 2 partly noticed. Rerun with --format human-full for the evidence on each removed line\n"

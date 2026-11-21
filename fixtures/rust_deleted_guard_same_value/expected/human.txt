@@ -8,7 +8,7 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
 
 Start here:
-  State: no gap selected for repair
+  State: the diff only removes code, and removed code is never an edit target
   Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 appear noticed by tests, 1 partly noticed, 2 unclear. Rerun with --format human-full for the evidence on each removed line
 
 Hidden:

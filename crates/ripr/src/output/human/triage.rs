@@ -381,6 +381,12 @@ pub(crate) fn render_human_triage(
         "  State: {}\n",
         if all_noticed {
             "no test gap found"
+        } else if triage.selected.is_none()
+            && triage.state == HumanTriageState::NoActionableGap
+            && removal_action::is_removal_only(&triage.omitted)
+        {
+            // #15335: name why nothing is selected for a removal-only run.
+            removal_action::REMOVAL_ONLY_STATE
         } else {
             triage.state.plain_label()
         }

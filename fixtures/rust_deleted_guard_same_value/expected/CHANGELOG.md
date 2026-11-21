@@ -22,3 +22,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_deleted_guard_same_value (3)
+
+Reason:
+RIPR-SPEC-0122: removal-only runs name why nothing is selected in the State line (#15335)
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/human.txt`
