@@ -1019,7 +1019,12 @@ withheld, skip its three blocks and the Open VSX dispatch becomes that first
 dispatch. The second channel's dispatch must pass the attached
 VSIX's digest as `vsix_sha256` (recorded below before that dispatch); it
 downloads the attached bytes, checks them against it, and each publish job
-re-checks their SHA-256 against the Release asset. The workflow cannot prove
+re-checks their SHA-256 against the Release asset. The attach job re-checks the
+VSIX digest and the embedded `manifest_sha256` before its Release write. A
+publish job treats a version already on its channel as published only when the
+channel serves this release's exact bytes; other bytes, an unexpected status or
+a failed fetch fail the job (see
+[RELEASE_MARKETPLACE.md](RELEASE_MARKETPLACE.md#ci-publish)). The workflow cannot prove
 equivalence with the swarm qualification archives, whose commit and URLs
 differ; that remains outside this control (#3807 R8-F2).
 
