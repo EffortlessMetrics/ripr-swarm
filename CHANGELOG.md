@@ -3199,6 +3199,17 @@ entries below are the complete record.
   `repair` refusals keep their exit codes, stderr prose and empty stdout.
   An unknown flag under `--json` keeps exit 2 and its stderr prose and
   writes the standalone `cli_refusal` document to stdout (#11584).
+- Reject malformed event head refs and duplicate JSON keys in both source-promotion
+  sidecars before binding composition identities. Python 3 is required only for
+  promotion validation; valid ordinary routing remains independent of Python (#1893).
+
+- Add base-owned read-only `pull_request_target` source-promotion composition gate
+  and staged `P`/`S`/`T`/`K`/`A` admission contract with explicit cross-repo
+  issuer/instrument verification and survivor/nested-import inventory digests;
+  live canary verification and required-check ruleset activation remain
+  owner-gated (#1893, #1627).
+
+- `cargo xtask source-promotion verify` now verifies the staged public-to-swarm return preview (a `fast_forward` preflight: ordered parents `[P, S]`, tree equal to S's tree) and records the preflight `mode` in its receipt; `two_parent_join` verification is unchanged (#1627).
 
 [Full development diff since v0.10.0](https://github.com/EffortlessMetrics/ripr/compare/v0.10.0...main).
 
