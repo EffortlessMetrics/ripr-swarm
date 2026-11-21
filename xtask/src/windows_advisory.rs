@@ -1566,6 +1566,81 @@ mod tests {
         .all(|required| lines.iter().any(|line| line.contains(required)))
     }
 
+    /// Lines the packaged lane needs so that the crate it installs is the
+    /// publish-stage archive of the candidate (#14198), bound to this run's
+    /// rehearsal receipt. Each one is load-bearing: see
+    /// `packaged_qualification_stage_contract_rejects_each_missing_binding`.
+    const PACKAGED_STAGE_BINDINGS: [&str; 9] = [
+        "New-Item -ItemType Directory -Force -Path 'target' | Out-Null",
+        "cargo --config $env:CARGO_TEMP_CONFIG xtask publish-dry-run",
+        "if ($LASTEXITCODE -ne 0) { throw \"publish-stage packaging failed with exit $LASTEXITCODE\" }",
+        "if ($publishReceipt.verification -ne 'packaged-check-passed') { throw",
+        "if ($publishReceipt.stage_commit -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw",
+        "if ($publishReceipt.ripr_sha256 -ne $crateHash) { throw",
+        "if ($publishReceipt.contract_sha256 -ne $contractHash) { throw",
+        "Copy-Item -LiteralPath $publishReceiptPath -Destination (Join-Path $root 'publish-receipt.json')",
+        "$contractPatch = \"patch.crates-io.ripr-contract.path='$($contractDir.FullName)'\"",
+    ];
+
+    const PACKAGED_STAGE_VERSION_BINDING: &str = "if ($LASTEXITCODE -ne 0 -or \"$reportedVersion\" -notmatch [regex]::Escape($env:CANDIDATE_SHA.ToLowerInvariant())) { throw";
+
+    /// The packaged lane installs the publish-stage archive: every binding is
+    /// present, in workflow order, before the install, and nothing packages the
+    /// checkout's own crate.
+    fn packaged_stage_contract(workflow: &str) -> Result<(), String> {
+        let lines = workflow
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect::<Vec<_>>();
+        let install = lines
+            .iter()
+            .position(|line| line.contains(" install --target-dir"))
+            .ok_or_else(|| "workflow must install the extracted crate".to_string())?;
+        let mut previous = None;
+        for binding in PACKAGED_STAGE_BINDINGS {
+            let at = lines
+                .iter()
+                .position(|line| line.contains(binding))
+                .ok_or_else(|| format!("workflow must contain {binding:?}"))?;
+            if at >= install {
+                return Err(format!("{binding:?} must precede the install"));
+            }
+            if previous.is_some_and(|before| at <= before) {
+                return Err(format!("{binding:?} is out of order"));
+            }
+            previous = Some(at);
+        }
+        let install_tokens = lines[install].split_whitespace().collect::<Vec<_>>();
+        if !install_tokens
+            .windows(2)
+            .any(|pair| pair == ["--config", "$contractPatch"])
+        {
+            return Err("install must resolve ripr-contract from the packaged crate".to_string());
+        }
+        if !install_tokens.contains(&"--locked") {
+            return Err("install must keep the packaged lockfile".to_string());
+        }
+        // The stage marker makes the build report the plain commit; a binary
+        // that does not name the candidate was not built from its stage.
+        let reported = lines
+            .iter()
+            .position(|line| line.contains(PACKAGED_STAGE_VERSION_BINDING))
+            .ok_or_else(|| format!("workflow must contain {PACKAGED_STAGE_VERSION_BINDING:?}"))?;
+        if reported <= install {
+            return Err("the installed binary must be asked for its commit".to_string());
+        }
+        // `cargo package` from the checkout produces the unstripped crate the
+        // release never uploads; only the stage producer may package.
+        if let Some(bare) = lines.iter().find(|line| {
+            let tokens = line.split_whitespace().collect::<Vec<_>>();
+            tokens.first() == Some(&"cargo") && tokens.contains(&"package")
+        }) {
+            return Err(format!("workflow must not package the checkout: {bare:?}"));
+        }
+        Ok(())
+    }
+
     use super::*;
 
     fn isolated_log(row: &str, result: &str) -> String {
@@ -3292,8 +3367,8 @@ mod tests {
             .ok_or_else(|| "workflow must isolate package installation".to_string())?;
         let package_line = lines
             .iter()
-            .position(|line| line.contains(" package --target-dir"))
-            .ok_or_else(|| "workflow must package the exact crate".to_string())?;
+            .position(|line| !line.starts_with('#') && line.contains(" xtask publish-dry-run"))
+            .ok_or_else(|| "workflow must package the publish stage".to_string())?;
         let install_line = lines
             .iter()
             .position(|line| line.contains(" install --target-dir"))
@@ -3309,19 +3384,21 @@ mod tests {
                 .position(|candidate| *candidate == token)
                 .ok_or_else(|| format!("command must contain {token:?}"))
         };
-        let package_command = position(&package, "package")?;
-        let package_target = position(&package, "--target-dir")?;
-        let package_name = position(&package, "-p")?;
-        let package_locked = position(&package, "--locked")?;
-        if !(package_command < package_target
-            && package_target < package_name
-            && package_name < package_locked
-            && package.get(package_name + 1) == Some(&"ripr"))
+        // The stage producer is an xtask alias, so the external temp config
+        // must be on its own Cargo invocation, before the subcommand.
+        let package_config = position(&package, "--config")?;
+        let package_command = position(&package, "xtask")?;
+        if !(package.first() == Some(&"cargo")
+            && package_config < package_command
+            && package.get(package_config + 1) == Some(&"$env:CARGO_TEMP_CONFIG")
+            && package.get(package_command + 1) == Some(&"publish-dry-run"))
         {
             return Err(
-                "package command must order package, target-dir, -p ripr, and locked".to_string(),
+                "package command must be cargo --config <temp config> xtask publish-dry-run"
+                    .to_string(),
             );
         }
+        packaged_stage_contract(workflow)?;
         let install_command = position(&install, "install")?;
         let install_target = position(&install, "--target-dir")?;
         let install_path = position(&install, "--path")?;
@@ -3443,5 +3520,54 @@ mod tests {
                 "contract must reject missing {missing:?}"
             );
         }
+    }
+
+    #[test]
+    fn packaged_qualification_stage_contract_rejects_each_missing_binding() -> Result<(), String> {
+        let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");
+        packaged_stage_contract(workflow)?;
+        for missing in PACKAGED_STAGE_BINDINGS {
+            let mutated = workflow.replacen(missing, "", 1);
+            if mutated.contains(missing) {
+                return Err(format!("negative fixture retained {missing:?}"));
+            }
+            if packaged_stage_contract(&mutated).is_ok() {
+                return Err(format!("contract must reject missing {missing:?}"));
+            }
+        }
+        let mutated = workflow.replacen(PACKAGED_STAGE_VERSION_BINDING, "", 1);
+        if mutated == workflow || packaged_stage_contract(&mutated).is_ok() {
+            return Err("contract must reject a binary whose commit is not checked".to_string());
+        }
+        // The lane this replaced: packaging the checkout's own crate.
+        let stage = "cargo --config $env:CARGO_TEMP_CONFIG xtask publish-dry-run";
+        let bare = "cargo --config $env:CARGO_TEMP_CONFIG package --target-dir $env:CARGO_TARGET_DIR -p ripr --locked";
+        for mutated in [
+            workflow.replacen(stage, bare, 1),
+            workflow.replacen(stage, &format!("{bare}\n          {stage}"), 1),
+        ] {
+            if !mutated.contains(bare) {
+                return Err("negative fixture did not package the checkout".to_string());
+            }
+            if packaged_stage_contract(&mutated).is_ok() {
+                return Err("contract must reject packaging the checkout crate".to_string());
+            }
+        }
+        // An install that drops the packaged contract or the lockfile.
+        for (present, absent) in [
+            (" --config $contractPatch install", " install"),
+            (" --locked --root", " --root"),
+        ] {
+            let mutated = workflow.replacen(present, absent, 1);
+            if mutated == workflow {
+                return Err(format!("negative fixture did not find {present:?}"));
+            }
+            if packaged_stage_contract(&mutated).is_ok() {
+                return Err(format!(
+                    "contract must reject an install without {present:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 }
