@@ -1052,6 +1052,16 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
     )
 }
 
+/// Configuration every isolated fixture invocation carries so a returned
+/// `git` leaves nothing running in the fixture. Since Git 2.47 a `commit`
+/// detaches `git maintenance run --auto`, which holds
+/// `.git/objects/maintenance.lock` after the commit has returned; a test that
+/// walks the tree right after setup can list the lock and lose it before the
+/// read (#9142). The `tests/common` mirror carries the same list.
+#[cfg(test)]
+const FIXTURE_GIT_NO_BACKGROUND_CONFIG: &[(&str, &str)] =
+    &[("maintenance.auto", "false"), ("gc.auto", "0")];
+
 #[cfg(test)]
 pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
     root: &Path,
@@ -1073,6 +1083,15 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE");
+    for (index, (key, value)) in FIXTURE_GIT_NO_BACKGROUND_CONFIG.iter().enumerate() {
+        command
+            .env(format!("GIT_CONFIG_KEY_{index}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+    }
+    command.env(
+        "GIT_CONFIG_COUNT",
+        FIXTURE_GIT_NO_BACKGROUND_CONFIG.len().to_string(),
+    );
     collect_output_with_deadline_and_limit(command, timeout, max_output_bytes, &describe)
 }
 
