@@ -97,6 +97,31 @@ pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt
         .collect()
 }
 
+/// The module-scope names that may not hold their single binding: bound
+/// more than once at module scope (an import plus an assignment, `def`,
+/// `del`, loop/`with`/`except` target), bound by a walrus or a `global`
+/// declaration, or written as a module attribute in this file. `*` alone
+/// when the module's bindings cannot be enumerated (a star import, a
+/// module-scope `match`, or a dynamic namespace writer), so no imported
+/// name is trusted (#14150).
+pub(super) fn module_rebound_names(source: &str, statements: &[Stmt]) -> Vec<String> {
+    let facts = ModuleBindingFacts::of(source, statements);
+    if facts.opaque {
+        return vec!["*".to_string()];
+    }
+    let mut names: Vec<String> = facts
+        .counts
+        .iter()
+        .filter(|(_, count)| **count != 1)
+        .map(|(name, _)| name.clone())
+        .collect();
+    names.extend(facts.rebound.iter().cloned());
+    names.extend(facts.attributes.iter().cloned());
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// A module-scope `NAME = <value>` binding nothing in the module rebinds,
 /// with the byte offset where its statement starts.
 #[derive(Clone, Copy, Debug)]

@@ -675,8 +675,10 @@ fn helper_owner_is_unique_top_level_function(owner: &PythonOwner, owners: &[Pyth
 /// binding is exact (#12955): a `from M import <owner>` (aliased or not) whose
 /// `M` is the owner's module by [`import_source_module_matches_owner`], the
 /// only import in scope that binds that local name, and no top-level `def` or
-/// `class` of the caller's file of the same name. Anything else, including a
-/// plain `import M` read as `M.owner(...)` or a star import, makes no edge.
+/// `class` of the caller's file of the same name and no module-level binding
+/// that may rebind it (`is_adult = lambda ...` after the import, #14150).
+/// Anything else, including a plain `import M` read as `M.owner(...)` or a
+/// star import, makes no edge.
 fn cross_module_owner_binding<'o>(
     caller: &'o PythonOwner,
     owner: &PythonOwner,
@@ -700,6 +702,11 @@ fn cross_module_owner_binding<'o>(
         .filter(|other| other.alias == local)
         .count()
         != 1
+        || caller
+            .class_facts
+            .module_rebound_names
+            .iter()
+            .any(|name| name == "*" || name == local)
         || owners.iter().any(|other| {
             other.file == caller.file
                 && other.name == local

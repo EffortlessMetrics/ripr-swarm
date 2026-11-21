@@ -231,3 +231,47 @@ fn given_a_handler_that_does_not_directly_call_the_owner_then_no_route_reach() -
     assert!(finding.related_tests.is_empty(), "{finding:?}");
     Ok(())
 }
+
+#[test]
+fn given_a_handler_module_that_rebinds_the_imported_helper_then_no_route_reach()
+-> Result<(), String> {
+    // The handler module imports the helper, then rebinds the name at module
+    // level: runtime calls the lambda, not the imported helper.
+    for (label, handler) in [
+        (
+            "plain lambda rebind",
+            "from routepkg.rules import is_adult\n\nis_adult = lambda age: age > 99\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": is_adult(30)}\n",
+        ),
+        (
+            "aliased lambda rebind",
+            "from routepkg.rules import is_adult as adult\n\nadult = lambda age: age > 99\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": adult(30)}\n",
+        ),
+        (
+            "rebind after the handler",
+            "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": is_adult(30)}\n\nis_adult = lambda age: age > 99\n",
+        ),
+    ] {
+        let files = [
+            ("routepkg/rules.py", RULES),
+            ("routepkg/ages.py", handler),
+            ("tests/conftest.py", CONFTEST),
+            ("tests/test_ages.py", ROUTE_TEST),
+        ];
+        let finding = classify_files(&files)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::NoStaticPath,
+            "{label}: {finding:?}"
+        );
+        assert!(finding.related_tests.is_empty(), "{label}: {finding:?}");
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("route_helper_call")),
+            "{label}: {:?}",
+            finding.evidence
+        );
+    }
+    Ok(())
+}
