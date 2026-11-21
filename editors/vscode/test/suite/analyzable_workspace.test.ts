@@ -177,13 +177,29 @@ suite('Analyzable workspace markers', () => {
   test('the nested project search stops at its folder budget', async () => {
     const root = tempWorkspaceDir('ripr-analyzable-nested-budget-');
     try {
-      // One folder more than the budget at the first level: the search gives
-      // up there, in whatever order the folders are listed.
+      // More first-level folders than the read budget, counting the root's
+      // own read: the budget runs out before any second-level folder is read,
+      // in whatever order the folders are listed.
       for (let index = 0; index < NESTED_PROJECT_MARKER_MAX_DIRS; index++) {
         fs.mkdirSync(path.join(root, `a${String(index).padStart(4, '0')}`));
       }
       writeNestedFile(root, 'zz/inner/Cargo.toml');
       assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('a wide sibling does not use up the budget before a queued marker folder is read', async () => {
+    const root = tempWorkspaceDir('ripr-analyzable-nested-wide-');
+    try {
+      // `assets` lists before `backend` and holds more folders than the
+      // budget. Queuing them must not stop the walk before `backend` is read.
+      for (let index = 0; index <= NESTED_PROJECT_MARKER_MAX_DIRS; index++) {
+        fs.mkdirSync(path.join(root, 'assets', `a${String(index).padStart(4, '0')}`), { recursive: true });
+      }
+      writeNestedFile(root, 'backend/Cargo.toml');
+      assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), true);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }

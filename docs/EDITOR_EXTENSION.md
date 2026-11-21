@@ -104,7 +104,7 @@ A project below the root also starts analysis when one of its files opens:
 `backend/Cargo.toml` or `packages/app/tsconfig.json`). Hidden folders and
 `target`, `node_modules`, `vendor`, `dist`, `build`, `venv`, `env`,
 `site-packages` and `__pycache__` are not searched, and the search stops after
-512 folders. With no marker at either level the extension stays idle.
+512 folders read. With no marker at either level the extension stays idle.
 
 When `ripr.server.version` is empty, the expected server version is the
 extension's own version from its manifest.

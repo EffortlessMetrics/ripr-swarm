@@ -192,11 +192,17 @@ const NESTED_PROJECT_MARKER_SKIPPED_DIRS: ReadonlySet<string> = new Set([
 
 async function folderHasNestedAnalyzableProjectMarker(folderUri: vscode.Uri): Promise<boolean> {
   let level = [folderUri];
-  let visited = 0;
+  // The budget counts directory reads, so a wide folder early in the walk
+  // cannot use it up before its queued siblings are read.
+  let reads = 0;
   // Depth 0 is the folder root, whose own markers the caller already checked.
   for (let depth = 0; depth <= NESTED_PROJECT_MARKER_MAX_DEPTH && level.length > 0; depth++) {
     const next: vscode.Uri[] = [];
     for (const dir of level) {
+      if (reads >= NESTED_PROJECT_MARKER_MAX_DIRS) {
+        return false;
+      }
+      reads += 1;
       let entries: [string, vscode.FileType][];
       try {
         entries = await vscode.workspace.fs.readDirectory(dir);
@@ -207,18 +213,17 @@ async function folderHasNestedAnalyzableProjectMarker(folderUri: vscode.Uri): Pr
         if (depth > 0 && (type & vscode.FileType.File) !== 0 && NESTED_PROJECT_MARKERS.has(name)) {
           return true;
         }
+        // Folders at the last depth are never read, so they are not queued.
         // A symlinked folder is not entered: it can point back up the tree.
         if (
+          depth === NESTED_PROJECT_MARKER_MAX_DEPTH ||
+          next.length >= NESTED_PROJECT_MARKER_MAX_DIRS ||
           type !== vscode.FileType.Directory ||
           name.startsWith('.') ||
           NESTED_PROJECT_MARKER_SKIPPED_DIRS.has(name)
         ) {
           continue;
         }
-        if (visited >= NESTED_PROJECT_MARKER_MAX_DIRS) {
-          return false;
-        }
-        visited += 1;
         next.push(vscode.Uri.joinPath(dir, name));
       }
     }
