@@ -695,7 +695,8 @@ fn classify_stub_choices(
     }
 }
 
-#[cfg(test)]
+/// One finding's route through the same batched completion `ripr check`
+/// uses; `stub_route_seam_choice` is the production caller.
 fn stub_route_for_finding(
     root: &Path,
     config: &RiprConfig,
