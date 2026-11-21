@@ -24,7 +24,11 @@ pub mod codes {
     /// The schema version, kind, implementation state or study phase is not the
     /// supported one.
     pub const UNSUPPORTED_SCHEMA: &str = "unsupported_schema";
-    /// A required field or list is empty.
+    /// Something the protocol must declare is missing: an empty required field
+    /// or list, a condition other than exactly `control` and `ripr_assisted`,
+    /// a condition without a budget overlay, an assisted surface that names no
+    /// RIPR evidence, a task outside every assignment pair, a required outcome
+    /// cell or axis, or a claim ceiling not bounded to this study.
     pub const MISSING_FIELD: &str = "missing_field";
     /// An identity is malformed, duplicated or names something unknown, such as
     /// a task in an unknown stratum.
@@ -46,9 +50,12 @@ pub mod codes {
     pub const DROP_INVALID_FROM_DENOMINATOR: &str = "drop_timeouts_or_invalid_from_denominator";
     /// The study may stop on a favorable interim estimate.
     pub const STOPPING_ON_FAVORABLE_INTERIM: &str = "stopping_on_favorable_interim";
-    /// The grader identity or rubric version is missing.
+    /// Adjudication is not independent: no grader identity, no rubric id or
+    /// version, a zero minimum grader count, or grading that is not blind to
+    /// the condition.
     pub const GRADER_OR_RUBRIC_ABSENT: &str = "grader_or_rubric_absent";
-    /// A started protocol was changed under the same `study_id`.
+    /// The protocol lock is weakened, or a study with a recorded first attempt
+    /// changes its protocol or clears that record under the same `study_id`.
     pub const PROTOCOL_MUTATION_REQUIRES_NEW_STUDY_ID: &str =
         "protocol_mutation_requires_new_study_id";
     /// Outcome axes are combined into a score where one axis can make up for
@@ -289,8 +296,9 @@ pub enum AssignmentFreezeRule {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PairingLaw {
-    /// Each task runs under both conditions, with condition order
-    /// counterbalanced across matched strata.
+    /// Each task runs under both conditions, and both condition orders occur.
+    /// Validation checks order balance across the whole study, not within each
+    /// stratum.
     MatchedStratumCounterbalanced,
 }
 
@@ -354,7 +362,8 @@ pub struct InterventionSurface {
     /// The control surface; must not allow any RIPR receipt, view, command,
     /// or output.
     pub control: ConditionEvidenceSurface,
-    /// The assisted surface; must name exact receipts, views, or commands.
+    /// The assisted surface; must list at least one receipt, view, or
+    /// command. Validation does not check that each listed name is non-empty.
     pub ripr_assisted: ConditionEvidenceSurface,
 }
 
