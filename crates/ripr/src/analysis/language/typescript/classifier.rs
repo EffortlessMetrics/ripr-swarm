@@ -2631,13 +2631,9 @@ fn ts_remove_char_span(text: &str, at: usize, len: usize) -> Option<String> {
     ts_replace_char_span(text, at, len, "")
 }
 
-/// Char position of `needle` in `masked` (literals blanked), mapped back to
-/// the original text by char count, so operators inside strings never match.
-fn ts_masked_find(masked: &str, needle: &str) -> Option<usize> {
-    ts_masked_find_from(masked, needle, 0)
-}
-
-/// [`ts_masked_find`] starting at char position `char_from`.
+/// Char position of `needle` in `masked` (literals blanked) at or after
+/// `char_from`, mapped back to the original text by char count, so
+/// operators inside strings never match.
 fn ts_masked_find_from(masked: &str, needle: &str, char_from: usize) -> Option<usize> {
     let tail: String = masked.chars().skip(char_from).collect();
     tail.find(needle)
