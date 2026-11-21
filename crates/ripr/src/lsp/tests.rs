@@ -27730,6 +27730,179 @@ fn framed_push_diagnostics_bind_the_observed_document_version() -> Result<(), St
 
 #[test]
 #[serial]
+fn framed_push_external_revert_publishes_one_saved_content_marker_per_version() -> Result<(), String>
+{
+    // #15316: a push-only client reloads a file that `git checkout` reverted
+    // on disk. The buffer change and the save it implies are one lifecycle
+    // step, so the client receives one withdrawal marker for that version,
+    // and the marker names the saved-content state: the buffer equals the
+    // file on disk, so "save the file" is not the recovery.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-external-revert")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err("fixture no longer carries the equality boundary".to_string());
+        }
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // Analyze the boundary edit as saved content so findings are served.
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("write dirty lib.rs failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 5,
+                        "text": dirty_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        let opened = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let served_findings = opened.iter().any(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"].as_str() == Some(text_uri.as_str())
+                && message["params"]["diagnostics"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+        });
+        if !served_findings {
+            return Err(format!(
+                "fixture must serve diagnostics before the revert: {opened:?}"
+            ));
+        }
+
+        // `git checkout` reverts the file on disk; the client reloads it.
+        std::fs::write(&lib_path, &saved_text)
+            .map_err(|err| format!("revert lib.rs failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 6 },
+                    "contentChanges": [{ "text": saved_text }]
+                }
+            }),
+        )
+        .await?;
+        let reverted = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let markers = reverted
+            .iter()
+            .filter(|message| {
+                message["method"] == "textDocument/publishDiagnostics"
+                    && message["params"]["uri"].as_str() == Some(text_uri.as_str())
+            })
+            .flat_map(|message| {
+                let version = message["params"]["version"].clone();
+                message["params"]["diagnostics"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|diagnostic| {
+                        diagnostic["code"] == "ripr-diagnostic-quarantine-withdrawn"
+                    })
+                    .map(move |diagnostic| (version.clone(), diagnostic))
+            })
+            .collect::<Vec<_>>();
+        let [(version, marker)] = markers.as_slice() else {
+            return Err(format!(
+                "one withdrawal marker per version expected, got {}: {markers:?}",
+                markers.len()
+            ));
+        };
+        if version.as_i64() != Some(6)
+            || marker["data"]["reason"] != "saved_content_not_yet_analyzed"
+            || marker["data"]["recovery"] != "await_analysis_or_refresh"
+        {
+            return Err(format!(
+                "marker must name the saved-content state: {marker}"
+            ));
+        }
+        let message = marker["message"].as_str().unwrap_or_default();
+        if message.contains("diverges") || message.contains("Save the file") {
+            return Err(format!(
+                "a saved buffer must not be told to save: {message}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -> Result<(), String>
 {
     // #8732: a push-only client used to see permanent silence before the

@@ -3288,6 +3288,17 @@ fn empty_catch_all(item: &ast::MacroRules) -> bool {
 }
 
 fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
+    empty_macros_defined_in(root, false)
+}
+
+/// The empty catch-all `macro_rules!` defined once in `root`: at file or
+/// item-list level, and with `in_blocks` also as a statement in a block
+/// (a test-local `macro_rules! discard { ($($t:tt)*) => {}; }`, #15539),
+/// whose textual scope [`resolves_empty_local`] still checks.
+fn empty_macros_defined_in(
+    root: &SyntaxNode,
+    in_blocks: bool,
+) -> BTreeMap<String, ast::MacroRules> {
     let mut counts = BTreeMap::<String, usize>::new();
     let mut candidates = BTreeMap::new();
     for node in root.descendants() {
@@ -3305,7 +3316,9 @@ fn local_empty_macros(root: &SyntaxNode) -> BTreeMap<String, ast::MacroRules> {
             && let Some(rule) = rule
             && empty_catch_all(&rule)
             && rule.syntax().parent().is_some_and(|parent| {
-                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+                ast::SourceFile::can_cast(parent.kind())
+                    || ast::ItemList::can_cast(parent.kind())
+                    || (in_blocks && ast::StmtList::can_cast(parent.kind()))
             })
         {
             candidates.insert(name, rule);
@@ -3366,12 +3379,13 @@ fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::Mac
 }
 
 /// Discarded call-argument spans from the same bounded local resolver used by
-/// execution admission. This only removes evidence; workspace macro ambiguity
-/// still independently refuses positive assertion admission.
+/// execution admission, widened to empty macros a block defines (#15539).
+/// This only removes evidence; workspace macro ambiguity still independently
+/// refuses positive assertion admission.
 pub(crate) fn empty_local_macro_invocation_ranges(
     root: &SyntaxNode,
 ) -> Vec<std::ops::Range<usize>> {
-    let empty = local_empty_macros(root);
+    let empty = empty_macros_defined_in(root, true);
     if empty.is_empty() {
         return Vec::new();
     }
