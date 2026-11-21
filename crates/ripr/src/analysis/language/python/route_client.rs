@@ -617,6 +617,28 @@ pub(super) fn client_app_name(body_text: &str, receiver: &str) -> Option<String>
     None
 }
 
+/// The value an exit statement carries: `Some(Some(value))` for
+/// `return value` / `yield value` under any spacing Python allows
+/// (`return\tvalue`, `return(value)`), `Some(None)` for a bare exit, and
+/// `None` when the line is not an exit. Every exit counts, so one the
+/// reader cannot use fails the whole read closed instead of being skipped
+/// while another branch's application is accepted.
+fn exit_value(line: &str) -> Option<Option<&str>> {
+    for keyword in ["return", "yield"] {
+        let Some(rest) = line.strip_prefix(keyword) else {
+            continue;
+        };
+        if rest.is_empty() {
+            return Some(None);
+        }
+        if rest.starts_with(|ch: char| ch.is_whitespace()) || rest.starts_with('(') {
+            let value = rest.trim();
+            return Some((!value.is_empty()).then_some(value));
+        }
+    }
+    None
+}
+
 /// The application name a client fixture builds its client over: every
 /// `return` / `yield` of the fixture body is a client construction over the
 /// same plain name, directly or through one bound name (`with TestClient(app)
@@ -627,12 +649,11 @@ pub(super) fn fixture_client_app_name(fixture_body: &str) -> Option<String> {
     let mut found: Option<String> = None;
     for line in lines.iter().flat_map(|line| line.split(';')) {
         let line = exit_statement(line.trim());
-        let Some(value) = line
-            .strip_prefix("return ")
-            .or_else(|| line.strip_prefix("yield "))
-        else {
+        let Some(value) = exit_value(line) else {
             continue;
         };
+        // A bare exit supplies no client on that path.
+        let value = value?;
         let value = value.trim();
         let app = if let Some(arguments) = client_construction(value) {
             application_argument(arguments)
@@ -664,12 +685,11 @@ pub(super) fn fixture_returned_name(fixture_body: &str) -> Option<String> {
     let mut found: Option<String> = None;
     for line in lines.iter().flat_map(|line| line.split(';')) {
         let line = exit_statement(line.trim());
-        let Some(value) = line
-            .strip_prefix("return ")
-            .or_else(|| line.strip_prefix("yield "))
-        else {
+        let Some(value) = exit_value(line) else {
             continue;
         };
+        // A bare exit returns no application name on that path.
+        let value = value?;
         let value = value.trim();
         if !is_plain_name(value) {
             return None;
@@ -686,17 +706,20 @@ pub(super) fn fixture_returned_name(fixture_body: &str) -> Option<String> {
 /// suite (`if flag: return TestClient(other_app)`) counts as an exit of the
 /// fixture rather than being skipped.
 fn exit_statement(line: &str) -> &str {
-    if line.starts_with("return ") || line.starts_with("yield ") {
+    if exit_value(line).is_some() {
         return line;
     }
-    ["return ", "yield "]
+    ["return", "yield"]
         .iter()
         .filter_map(|keyword| {
-            line.match_indices(keyword).map(|(at, _)| at).find(|at| {
-                line[..*at]
+            line.match_indices(*keyword).map(|(at, _)| at).find(|at| {
+                let before_ok = line[..*at]
                     .chars()
                     .next_back()
-                    .is_some_and(|before| before == ':' || before.is_whitespace())
+                    .is_some_and(|before| before == ':' || before.is_whitespace());
+                let after = line[at + keyword.len()..].chars().next();
+                let after_ok = after.is_none_or(|ch| ch.is_whitespace() || ch == '(');
+                before_ok && after_ok
             })
         })
         .min()

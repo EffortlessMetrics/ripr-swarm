@@ -990,25 +990,52 @@ pub(super) fn attach_fixture_defs(
             }
         }
         for def in &mut attached {
-            def.client_fixture_chain = client_fixture_chain(def, &test.file, defs_by_file);
+            def.client_fixture_chain =
+                client_fixture_chain(def, &test.file, defs_by_file, &test.direct_parametrized);
         }
         test.fixture_defs = attached;
     }
+}
+
+/// Whether `name` is a parameter pytest injects into the fixture whose
+/// definition text is `body_text`: a parameter without a default. pytest
+/// leaves a defaulted parameter (`def client(items_app=other)`) at its
+/// default, so it never requests a fixture of that name.
+fn fixture_injects_parameter(body_text: &str, name: &str) -> bool {
+    let Ok(Mod::Module(module)) = parse(body_text, Mode::Module, "<python-fixture-signature>")
+    else {
+        return false;
+    };
+    let args = match module.body.first() {
+        Some(Stmt::FunctionDef(function)) => &function.args,
+        Some(Stmt::AsyncFunctionDef(function)) => &function.args,
+        _ => return false,
+    };
+    args.posonlyargs
+        .iter()
+        .chain(&args.args)
+        .chain(&args.kwonlyargs)
+        .any(|arg| arg.def.arg.as_str() == name && arg.default.is_none())
 }
 
 /// The fixture definitions a route-client fixture's application parameter
 /// resolves through, in order (#14141): the client fixture's unrebound
 /// parameter names another fixture, that fixture's returned name may name
 /// a further fixture, and so on, capped at
-/// [`super::route_client::MAX_CLIENT_FIXTURE_CHAIN`]. Resolution is
-/// anchored at the requesting fixture's file (its own file, then the
-/// conftest chain from there), falling back to the test's resolution.
-/// An unresolved, cyclic or over-cap link ends the chain; the reader in
+/// [`super::route_client::MAX_CLIENT_FIXTURE_CHAIN`]. Dependencies resolve
+/// from the requesting test's scope first (its module, then the conftest
+/// chain from there), as pytest resolves a fixture dependency for the test
+/// that ultimately requests it, falling back to the requesting fixture's
+/// file and its conftest chain. A dependency the test directly parametrizes
+/// is supplied by pytest rather than by its fixture, and a parameter with
+/// a default is never injected, so either ends the chain. An unresolved,
+/// cyclic or over-cap link ends the chain; the reader in
 /// `related_tests.rs` then fails closed.
 fn client_fixture_chain(
     start: &PythonFixtureDef,
     test_file: &Path,
     defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+    direct_parametrized: &[String],
 ) -> Vec<PythonFixtureDef> {
     let mut chain: Vec<PythonFixtureDef> = Vec::new();
     let mut current = start.clone();
@@ -1023,11 +1050,14 @@ fn client_fixture_chain(
         let Some(candidate) = candidate else {
             break;
         };
-        if !super::route_client::is_unrebound_parameter(&current.body_text, &candidate) {
+        if direct_parametrized.iter().any(|name| name == &candidate)
+            || !fixture_injects_parameter(&current.body_text, &candidate)
+            || !super::route_client::is_unrebound_parameter(&current.body_text, &candidate)
+        {
             break;
         }
-        let Some(next) = resolve_from_fixture(&current.file, &candidate, defs_by_file)
-            .or_else(|| resolve(test_file, &candidate, defs_by_file))
+        let Some(next) = resolve(test_file, &candidate, defs_by_file)
+            .or_else(|| resolve_from_fixture(&current.file, &candidate, defs_by_file))
         else {
             break;
         };
