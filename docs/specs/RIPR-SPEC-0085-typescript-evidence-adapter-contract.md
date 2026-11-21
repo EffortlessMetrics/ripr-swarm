@@ -200,6 +200,12 @@ the package root. Each launcher runs only the installed binary: `npx` without
 `--no-install` and `bunx` fetch a missing package from the registry (npx skips
 its prompt in a non-interactive shell), which would run an unlocked version.
 
+Choose the verification route from package runner evidence. An import in a
+related test cannot establish that the entire file runs directly under Node.
+File startup still evaluates skipped registration calls, which may rely on a
+package script to supply their runner. Retain the package route when test
+extraction is the only evidence for a direct Node command.
+
 An unresolved or ambiguous runner becomes the named limitation
 `typescript_test_runner_unresolved`. No command is ever synthesized from
 the file extension alone.

@@ -15267,6 +15267,161 @@ fn node_direct_file_script_resolves_framework_hint_and_verify_command() -> Resul
     Ok(())
 }
 
+#[test]
+fn verify_command_keeps_package_route_for_node_imports_in_test_files() -> Result<(), String> {
+    let root = ts_unique_tempdir("node-test-import-verify")?;
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"workspace","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    ts_write_file(&root.join("package-lock.json"), "{}")?;
+    for (name, script, import, expected_command) in [
+        (
+            "node",
+            "node test/pricing.test.mjs",
+            "import { test } from 'node:test';",
+            Some("node --test test/pricing.test.mjs"),
+        ),
+        (
+            "opaque",
+            "node suite.mjs",
+            "import { test } from 'node:test';",
+            Some("npm test -- test/pricing.test.mjs"),
+        ),
+        (
+            "angular",
+            "ng test app --code-coverage",
+            "// import { test } from 'node:test';",
+            None,
+        ),
+        (
+            "mocha",
+            "mocha",
+            "import { it as test } from 'mocha';",
+            None,
+        ),
+        (
+            "incidental",
+            "ng test app --code-coverage",
+            "import { mock, test as nodeCheck } from 'node:test';\nnodeCheck('unrelated', () => {});",
+            None,
+        ),
+        (
+            "mixed",
+            "node suite.mjs",
+            "import { test as nodeCheck } from 'node:test';\ntest('unrelated wrapper registration', () => {});",
+            Some("npm test -- test/pricing.test.mjs"),
+        ),
+        (
+            "skipped",
+            "node suite.mjs",
+            "import { test as nodeCheck } from 'node:test';\ntest('unrelated wrapper registration', { skip: true }, () => { throw new Error('skipped callback ran'); });",
+            Some("npm test -- test/pricing.test.mjs"),
+        ),
+        (
+            "nested",
+            "node suite.mjs",
+            "import { test } from 'node:test';",
+            Some("npm test -- child/test/pricing.test.mjs"),
+        ),
+    ] {
+        let package = root.join("packages").join(name);
+        ts_write_file(
+            &package.join("package.json"),
+            &serde_json::json!({"name": name, "scripts": {"test": script}}).to_string(),
+        )?;
+        ts_write_file(
+            &package.join("src/pricing.ts"),
+            "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+        )?;
+        let (test_package, price_import) = if name == "nested" {
+            let test_package = package.join("child");
+            ts_write_file(&test_package.join("package.json"), r#"{"name":"child"}"#)?;
+            (test_package, "../../src/pricing.ts")
+        } else {
+            (package, "../src/pricing.ts")
+        };
+        let test_file = test_package.join("test/pricing.test.mjs");
+        let needs_wrapper_global = matches!(name, "mixed" | "skipped");
+        if needs_wrapper_global || name == "opaque" {
+            let setup = if needs_wrapper_global {
+                "import { test } from 'node:test';\nglobalThis.test = test;\n"
+            } else {
+                ""
+            };
+            ts_write_file(
+                &test_package.join("suite.mjs"),
+                &format!("{setup}await import('./test/pricing.test.mjs');\n"),
+            )?;
+        }
+        let callee = if needs_wrapper_global {
+            "nodeCheck"
+        } else {
+            "test"
+        };
+        let source = format!(
+            "{import}\nimport assert from 'node:assert';\nimport {{ applyDiscount }} from '{price_import}';\n{callee}('applies discount', () => {{ assert.equal(applyDiscount(100, 50), 90); }});\n"
+        );
+        ts_write_file(&test_file, &source)?;
+        if name == "skipped" {
+            let indexed = extract_tests(&test_file, &source);
+            assert_eq!(
+                indexed
+                    .iter()
+                    .map(|test| test.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["applies discount"],
+                "the skipped wrapper call does not contribute an assertion row"
+            );
+            assert!(
+                try_detect_partial_test_extraction_expanded(&test_file, &source, &indexed, None)?
+                    .is_none(),
+                "partial extraction also leaves the skipped registration out"
+            );
+        }
+
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[ChangedFile {
+                path: PathBuf::from(format!("packages/{name}/src/pricing.ts")),
+                added_lines: vec![crate::analysis::diff::ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "  if (amount >= threshold) {".to_string(),
+                }],
+                removed_lines: Vec::new(),
+            }],
+        )?;
+        let expected_test = test_file
+            .strip_prefix(&root)
+            .map_err(|err| err.to_string())?;
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| {
+                crate::domain::typescript_script_preview_related_test(finding).is_some_and(
+                    |related| related.file == expected_test && related.name == "applies discount",
+                )
+            })
+            .ok_or_else(|| format!("expected a finding targeting {expected_test:?}"))?;
+        let verify = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix("typescript_verify_command: "));
+        if expected_command.is_some() {
+            assert_eq!(verify, expected_command, "{name} verification evidence");
+        } else {
+            assert!(
+                verify.is_none_or(|command| !command.starts_with("node --test ")),
+                "{name} must retain its own verification route, got {verify:?}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 /// Control 2 (cockpit delta #5, issue #1245 — fail-closed):
 /// When the test runner is NOT resolved (no package.json, no framework), the
 /// emitted evidence MUST NOT carry `typescript_verify_command` and MUST still
