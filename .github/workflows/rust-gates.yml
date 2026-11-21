@@ -613,7 +613,7 @@ jobs:
       # is a supported configuration, and between Nov 11 and Nov 18 main added
       # seven preview-only items that warned there because nothing failed. Lint
       # its library here on routes that run tests in this job; with
-      # `test-shards: 2` shard 2 of rust-test-shards.yml runs the same command,
+      # `test-shards: 2` the packed rust-test-shards.yml job runs the same command,
       # off this job's critical path. Library only: test helpers still warn.
       - name: Strict Rust-only ripr library Clippy
         id: rust_only_clippy

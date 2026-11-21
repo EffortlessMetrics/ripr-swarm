@@ -124,12 +124,39 @@ pub fn require_success(output: Output, label: &str) -> Result<Output, String> {
     Ok(output)
 }
 
-fn cargo() -> Command {
+fn cargo() -> Result<Command, String> {
+    cargo_for(
+        &workspace(),
+        std::env::var_os("RIPR_PACKED_TEST_PARTITION").as_deref(),
+    )
+}
+
+pub(super) fn cargo_for(
+    root: &Path,
+    partition: Option<&std::ffi::OsStr>,
+) -> Result<Command, String> {
     let mut command = Command::new(env!("CARGO"));
-    command
-        .current_dir(workspace())
-        .env("RUSTUP_AUTO_INSTALL", "0");
-    command
+    command.current_dir(root).env("RUSTUP_AUTO_INSTALL", "0");
+    // Nextest's Cargo configuration is command-local. Nested builds and
+    // packaging otherwise re-read the workspace's forced shared temp paths.
+    if let Some(partition) = partition {
+        let config = match partition.to_str() {
+            Some("1") => "target/nextest/ci/packed-partition-1.toml",
+            Some("2") => "target/nextest/ci/packed-partition-2.toml",
+            _ => return Err("RIPR_PACKED_TEST_PARTITION must be 1 or 2".into()),
+        };
+        let path = root.join(config);
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("packed Cargo config {}: {error}", path.display()))?;
+        if !metadata.is_file() {
+            return Err(format!(
+                "packed Cargo config is not a regular file: {}",
+                path.display()
+            ));
+        }
+        command.arg("--config").arg(path);
+    }
+    Ok(command)
 }
 
 pub fn candidate_binary() -> Result<PathBuf, String> {
@@ -143,7 +170,7 @@ pub fn candidate_binary() -> Result<PathBuf, String> {
             // is done by then, so repeat the link step for about a minute.
             let mut attempt = 1;
             let output = loop {
-                let mut command = cargo();
+                let mut command = cargo()?;
                 command.args([
                     "build",
                     "-p",
@@ -221,7 +248,7 @@ pub fn extracted_package(root: &Path) -> Result<PathBuf, String> {
     let bytes = ARCHIVE
         .get_or_init(|| {
             let scratch = Scratch::new("help-package")?;
-            let mut command = cargo();
+            let mut command = cargo()?;
             // ADR 0027: `ripr` depends on the lockstep support crate
             // `ripr-contract`, which is not on crates.io yet, so packaging
             // `ripr` alone cannot resolve it offline. Package both crates

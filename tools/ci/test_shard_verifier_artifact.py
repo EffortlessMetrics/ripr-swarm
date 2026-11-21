@@ -328,5 +328,65 @@ else:
             with self.assertRaises(ValueError): MODULE.select(pages,self.expected,'proof',self.run)
 
 
+class PackedPartitionReceipts(unittest.TestCase):
+    def test_script_stages_each_native_status_and_continues_after_failure(self):
+        for case, first_status, expected in [
+            ("success", 0, 0), ("signal", 143, 1), ("missing-junit", 0, 1)
+        ]:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "checkout"
+                bin_dir = root / "bin"
+                repo.mkdir()
+                bin_dir.mkdir()
+                runner = root / "runner"
+                runner.mkdir()
+                output = root / "output"
+                for name in ["Cargo.lock", ".config/nextest.toml", ".github/workflows/rust-gates.yml",
+                             ".github/workflows/rust-test-shards.yml"]:
+                    path = repo / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.touch()
+                script = Path("tools/ci/run-packed-partitions.sh")
+                (repo / script.parent).mkdir(parents=True)
+                shutil.copyfile(ROOT / script, repo / script)
+                (repo / ".gitignore").write_text("/target/\n")
+                env = {"PATH": f"{bin_dir}:{os.defpath}", "HOME": str(root),
+                       "RUNNER_TEMP": str(runner), "GITHUB_OUTPUT": str(output),
+                       "GITHUB_REPOSITORY": "fixture/repo", "GITHUB_RUN_ID": "17",
+                       "GITHUB_RUN_ATTEMPT": "2", "CASE": case}
+                for args in [["init", "-q"], ["add", "."], ["-c", "user.name=fixture", "-c",
+                             "user.email=fixture@localhost", "commit", "-qm", "fixture"]]:
+                    subprocess.run(["git", *args], cwd=repo, env=env, check=True)
+                (bin_dir / "rustc").write_text("#!/bin/sh\necho rustc-fixture\n")
+                (bin_dir / "cargo").write_text('''#!/usr/bin/env bash
+set -eu
+case "$*" in
+  *--version) echo version-fixture ;;
+  "nextest list "*) echo 'bin test' ;;
+  "nextest run "*)
+    n=$RIPR_PACKED_TEST_PARTITION
+    [[ "$*" == *"--partition hash:$n/2 --config target/nextest/ci/packed-partition-$n.toml" ]]
+    [[ "$CASE:$n" != signal:1 ]] || kill -TERM "$$"
+    if [[ "$CASE:$n" != missing-junit:1 ]]; then
+      echo '<testsuites name="test" tests="1"/>' > target/nextest/ci/junit.xml
+    fi ;;
+  *) exit 99 ;;
+esac
+''')
+                for tool in bin_dir.iterdir():
+                    tool.chmod(0o755)
+                result = subprocess.run(["bash", script], cwd=repo, env=env, capture_output=True,
+                                        text=True, timeout=20)
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                stage = Path(output.read_text().strip().removeprefix("path="))
+                self.assertEqual(stage.parent, runner)
+                for shard, status in [(1, first_status), (2, 0)]:
+                    receipts = stage / f"shard-{shard}/nextest/ci"
+                    self.assertEqual((receipts / f"shard-{shard}.status").read_text(), f"{status}\n")
+                    self.assertIn(f"nextest_exit={status}\n", (receipts / "run-context.txt").read_text())
+                    self.assertEqual((receipts / "junit.xml").exists(), shard == 2 or case == "success")
+
+
 if __name__ == '__main__':
     unittest.main()

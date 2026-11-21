@@ -3,6 +3,7 @@
 
 const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
 const SHARDS: &str = include_str!("../../.github/workflows/rust-test-shards.yml");
+const PACKED_SCRIPT: &str = include_str!("../../tools/ci/run-packed-partitions.sh");
 const ROUTED: &str = include_str!("../../.github/workflows/routed-rust.yml");
 const POLICY_SOURCE: &str = include_str!("../src/main.rs");
 const COLLECT_ALL_SOURCE: &str = include_str!("../src/policy/all.rs");
@@ -17,10 +18,9 @@ mod matcher_replay;
 /// The only condition the required test step may carry: the hosted caller passes
 /// `test-shards: 2` and runs the same tests in `rust-test-shards.yml` instead (#10507).
 const SHARDED_TEST_CONDITION: &str = "        if: inputs.test-shards == 1";
-const SHARDED_TEST_COMMAND: &str =
-    "cargo nextest run --workspace --profile ci --partition hash:${{ matrix.shard }}/2";
-const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${{ matrix.shard }}/2 --color never --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${{ matrix.shard }}.txt";
-const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/2\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/2\\n' \"${{ matrix.shard }}\" \"${{ matrix.shard }}\"";
+const SHARDED_TEST_COMMAND: &str = "cargo nextest run --workspace --profile ci --partition hash:${partition}/2 --config \"$partition_config\"";
+const SHARDED_LIST_COMMAND: &str = "cargo nextest list --workspace --profile ci --partition hash:${partition}/2 --color never --config \"$partition_config\" --message-format oneline 2> /dev/null | sort > target/nextest/ci/list-${partition}.txt";
+const SHARDED_RECEIPT_COMMAND: &str = "printf 'profile=ci\\nshard=%s/2\\ncommand=cargo nextest run --workspace --profile ci --partition hash:%s/2 --config target/nextest/ci/packed-partition-%s.toml\\n' \"${partition}\" \"${partition}\" \"${partition}\"";
 const COMBINED_PR_EVIDENCE_PRINTF: &str = "printf '| pr_evidence | %s |\\n| pr_evidence scope | %s |\\n' \"${PR_EVIDENCE_RESULT:-not_reported}\" \"${PR_EVIDENCE_SCOPE:-not_reported}\"";
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
@@ -948,7 +948,7 @@ fn rust_gate_workflow_rejects_missing_unlocked_suppressed_or_duplicate_property_
     }
 }
 
-fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
+fn shard_contract_violations(shards: &str, script: &str, routed: &str) -> Vec<String> {
     let mut findings = Vec::new();
     let count = |text: &str, needle: &str| {
         text.lines()
@@ -961,7 +961,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
         ("list", SHARDED_LIST_COMMAND),
         ("receipt", SHARDED_RECEIPT_COMMAND),
     ] {
-        if shards.lines().filter(|line| line.trim() == command).count() != 1 {
+        if script.lines().filter(|line| line.trim() == command).count() != 1 {
             findings.push(format!(
                 "shards: expected exactly one {label} hash-partition command"
             ));
@@ -969,7 +969,7 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     }
     // The partition lists come from the prepared binaries before the run. Taken after
     // it, one shard spent four to six minutes in the listing on every run (#12915).
-    let line_of = |needle: &str| shards.lines().position(|line| line.trim() == needle);
+    let line_of = |needle: &str| script.lines().position(|line| line.trim() == needle);
     match (line_of(SHARDED_LIST_COMMAND), line_of(SHARDED_TEST_COMMAND)) {
         (Some(list), Some(test)) if list < test => {}
         _ => findings.push("shards: the partition list must precede the test run".to_string()),
@@ -985,24 +985,29 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     if count(shards, "continue-on-error") != 0 {
         findings.push("shards: no step may continue on error".to_owned());
     }
-    if !shards.contains("        shard: [1, 2]\n") {
-        findings.push("shards: the matrix must stay shards 1 to 2".to_owned());
+    if !script
+        .lines()
+        .any(|line| line == "for partition in 1 2; do")
+    {
+        findings
+            .push("shards: the packed producer must execute native partitions 1 and 2".to_owned());
     }
     // `verify` is what makes two partitions equal the one command: a missing,
     // cancelled or red shard and a non-disjoint or incomplete cover must all fail.
     for required in [
+        "        id: packed-partitions\n        timeout-minutes: 45\n        run: exec bash tools/ci/run-packed-partitions.sh\n\n      - name: Upload partition 1 results",
         "    needs: rust-test-shard\n    if: ${{ !cancelled() }}\n",
         "python3 tools/ci/shard-verifier-artifact.py launch \\\n",
         "            --prefix \"$ARTIFACT_PREFIX\" --runner-temp \"$RUNNER_TEMP\" \\\n",
         "            --provenance target/nextest/ci/verifier-artifact.json \\\n",
         "            -- verify-test-shards \\\n",
         "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: ${{ steps.xtask-artifact.outputs.path }}\n",
-        "        id: xtask-artifact\n        if: matrix.shard == 1\n        run: |\n          staging=\"$(mktemp -d \"$RUNNER_TEMP/ripr-xtask-upload.XXXXXX\")\"\n",
+        "        id: xtask-artifact\n        run: |\n          staging=\"$(mktemp -d \"$RUNNER_TEMP/ripr-xtask-upload.XXXXXX\")\"\n",
         "          strip --strip-debug -o \"$stripped\" target/debug/xtask\n",
         "          python3 tools/ci/shard-verifier-artifact.py retain \\\n            --binary \"$stripped\" --destination \"$staging/payload\" \\\n",
         "          printf 'path=%s\\n' \"$staging/payload\" >> \"$GITHUB_OUTPUT\"\n",
         "if-no-files-found: error\n          retention-days: 1\n",
-        "            --shards 2 \\\n",
+        "            --shards 2 --packed \\\n",
         "            --sha \"$(git rev-parse HEAD)\" \\\n",
         "            --run-id \"$GITHUB_RUN_ID\" \\\n",
         "name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}\n          path: |\n            target/nextest/ci/junit.xml\n            target/nextest/ci/run-context.txt\n",
@@ -1047,8 +1052,23 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
 }
 
 #[test]
+fn packed_partition_selector_reaches_the_native_runner() -> Result<(), String> {
+    let lines: Vec<_> = PACKED_SCRIPT.lines().map(str::trim).collect();
+    let run = lines
+        .iter()
+        .position(|line| *line == SHARDED_TEST_COMMAND)
+        .ok_or("missing native run")?;
+    let previous = run.checked_sub(1).ok_or("missing selector export")?;
+    assert_eq!(
+        lines[previous],
+        "export RIPR_PACKED_TEST_PARTITION=\"$partition\""
+    );
+    Ok(())
+}
+
+#[test]
 fn sharded_hosted_tests_keep_the_one_command_selection() {
-    let findings = shard_contract_violations(SHARDS, ROUTED);
+    let findings = shard_contract_violations(SHARDS, PACKED_SCRIPT, ROUTED);
     assert!(findings.is_empty(), "{findings:?}");
 }
 
@@ -1061,25 +1081,25 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
             ("receipt", SHARDED_RECEIPT_COMMAND),
         ] {
             let replacement = command.replace("--partition hash:", &format!("--partition {mode}:"));
-            let changed = SHARDS.replace(command, &replacement);
+            let changed = PACKED_SCRIPT.replace(command, &replacement);
             assert_ne!(
-                changed, SHARDS,
+                changed, PACKED_SCRIPT,
                 "{label}/{mode} did not change the workflow"
             );
             let expected = format!("shards: expected exactly one {label} hash-partition command");
             assert!(
-                shard_contract_violations(&changed, ROUTED).contains(&expected),
+                shard_contract_violations(SHARDS, &changed, ROUTED).contains(&expected),
                 "{label}/{mode} was not rejected"
             );
             let decoy = format!("{changed}\n# {command}\n");
             assert!(
-                shard_contract_violations(&decoy, ROUTED).contains(&expected),
+                shard_contract_violations(SHARDS, &decoy, ROUTED).contains(&expected),
                 "a comment hid the {label}/{mode} drift"
             );
         }
-        let changed = SHARDS.replace("--partition hash:", &format!("--partition {mode}:"));
-        assert_ne!(changed, SHARDS);
-        let findings = shard_contract_violations(&changed, ROUTED);
+        let changed = PACKED_SCRIPT.replace("--partition hash:", &format!("--partition {mode}:"));
+        assert_ne!(changed, PACKED_SCRIPT);
+        let findings = shard_contract_violations(SHARDS, &changed, ROUTED);
         for label in ["test", "list", "receipt"] {
             assert!(findings.contains(&format!(
                 "shards: expected exactly one {label} hash-partition command"
@@ -1091,15 +1111,15 @@ fn sharded_hosted_tests_reject_legacy_and_mixed_partition_commands() {
 #[test]
 fn sharded_hosted_tests_list_the_partition_before_the_run() {
     let expected = "shards: the partition list must precede the test run".to_string();
-    assert!(!shard_contract_violations(SHARDS, ROUTED).contains(&expected));
+    assert!(!shard_contract_violations(SHARDS, PACKED_SCRIPT, ROUTED).contains(&expected));
     // Swap the two commands: the run then precedes the listing again.
-    let swapped = SHARDS
+    let swapped = PACKED_SCRIPT
         .replace(SHARDED_LIST_COMMAND, "\u{0}")
         .replace(SHARDED_TEST_COMMAND, SHARDED_LIST_COMMAND)
         .replace('\u{0}', SHARDED_TEST_COMMAND);
-    assert_ne!(swapped, SHARDS);
+    assert_ne!(swapped, PACKED_SCRIPT);
     assert!(
-        shard_contract_violations(&swapped, ROUTED).contains(&expected),
+        shard_contract_violations(SHARDS, &swapped, ROUTED).contains(&expected),
         "a listing after the run was not rejected"
     );
 }
@@ -1110,12 +1130,12 @@ fn sharded_hosted_tests_reject_a_changed_nextest_version() {
         let changed = SHARDS.replace("tool: nextest@0.9.149", replacement);
         assert_ne!(changed, SHARDS);
         assert!(
-            shard_contract_violations(&changed, ROUTED)
+            shard_contract_violations(&changed, PACKED_SCRIPT, ROUTED)
                 .contains(&"shards: nextest must remain pinned to 0.9.149".to_owned())
         );
         let decoy = format!("{changed}\n# tool: nextest@0.9.149\n");
         assert!(
-            shard_contract_violations(&decoy, ROUTED)
+            shard_contract_violations(&decoy, PACKED_SCRIPT, ROUTED)
                 .contains(&"shards: nextest must remain pinned to 0.9.149".to_owned())
         );
     }
@@ -1154,8 +1174,18 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             SHARDED_TEST_COMMAND,
             "cargo nextest run --workspace --profile ci",
         ),
-        ("fail-fast: false", "continue-on-error: true"),
-        ("shard: [1, 2]", "shard: [1]"),
+        ("for partition in 1 2; do", "for partition in 1; do"),
+    ] {
+        let changed = PACKED_SCRIPT.replace(from, to);
+        assert_ne!(changed, PACKED_SCRIPT);
+        assert!(!shard_contract_violations(SHARDS, &changed, ROUTED).is_empty());
+    }
+    for (from, to) in [
+        ("exec bash tools/ci/run-packed-partitions.sh", "true"),
+        (
+            "id: packed-partitions",
+            "id: packed-partitions\n        continue-on-error: true",
+        ),
         ("-- verify-test-shards", "-- other-command"),
         (
             "python3 tools/ci/shard-verifier-artifact.py launch",
@@ -1190,7 +1220,10 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             "-xtask-${{ github.run_attempt }}\n          path:",
             "-xtask-0\n          path:",
         ),
-        ("            --shards 2 \\\n", "            --shards 3 \\\n"),
+        (
+            "            --shards 2 --packed \\\n",
+            "            --shards 3 --packed \\\n",
+        ),
         ("            --sha \"$(git rev-parse HEAD)\" \\\n", ""),
         (
             "    if: ${{ !cancelled() }}\n    runs-on",
@@ -1203,10 +1236,32 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
             "fixture must change the shard workflow: {from}"
         );
         assert!(
-            !shard_contract_violations(&changed, ROUTED).is_empty(),
+            !shard_contract_violations(&changed, PACKED_SCRIPT, ROUTED).is_empty(),
             "softening `{from}` was not rejected"
         );
     }
+}
+
+#[test]
+fn packed_verifier_downloads_only_the_current_pair() -> Result<(), String> {
+    let job = workflow_job(SHARDS, "rust-test-shards-verify").ok_or("missing verifier")?;
+    let downloads: Vec<_> = job
+        .split("\n      - ")
+        .filter(|step| step.starts_with("uses: actions/download-artifact@"))
+        .collect();
+    let [download] = downloads.as_slice() else {
+        return Err("expected a single receipt download before verification".into());
+    };
+    let block = download.split("\n\n").next().ok_or("empty download step")?;
+    let (_, inputs) = block
+        .trim_end()
+        .split_once("\n        with:\n")
+        .ok_or("missing download inputs")?;
+    assert_eq!(
+        inputs,
+        "          pattern: ${{ inputs.artifact-name }}-nextest-shard-[12]-${{ github.run_attempt }}\n          path: shards"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1217,7 +1272,7 @@ fn sharded_verifier_rejects_obsolete_download_or_selector_beside_bound_handoff()
     ] {
         let changed = format!("{SHARDS}\n{obsolete}\n");
         assert!(
-            shard_contract_violations(&changed, ROUTED)
+            shard_contract_violations(&changed, PACKED_SCRIPT, ROUTED)
                 .iter()
                 .any(|finding| finding.contains("obsolete executable selection")),
             "obsolete executable selection was not rejected: {obsolete}"
@@ -1245,7 +1300,7 @@ fn routed_result_cannot_pass_without_the_hosted_shards() {
         let changed = ROUTED.replace(from, to);
         assert_ne!(changed, ROUTED, "fixture must change the caller: {from}");
         assert!(
-            !shard_contract_violations(SHARDS, &changed).is_empty(),
+            !shard_contract_violations(SHARDS, PACKED_SCRIPT, &changed).is_empty(),
             "weakening `{from}` was not rejected"
         );
     }
@@ -1275,7 +1330,7 @@ fn checks_with_prepared_xtask(workflow: &str) -> bool {
         "          build_phase workspace cargo test --no-run --locked --workspace",
         "        run: target/debug/xtask check-covered-by",
         "          strip --strip-debug -o \"$stripped\" target/debug/xtask",
-        "      - name: Required Rust tests (shard ${{ matrix.shard }} of 2)",
+        "      - name: Execute two native partitions on the prepared workspace",
     ];
     let mut previous = None;
     for command in commands {
@@ -1371,7 +1426,9 @@ fn hosted_build_metrics_keep_commands_and_the_existing_artifact_root() -> Result
         "GNU time's exit field is not native status"
     );
     assert!(!script.contains("$RUNNER_TEMP"));
-    assert!(SHARDS.contains("            target/nextest/ci/build-metrics/\n"));
+    assert!(
+        PACKED_SCRIPT.contains("cp -R -- target/nextest/ci/build-metrics \"$stage/nextest/ci/\"")
+    );
     assert!(SHARDS.contains("            target/nextest/ci/junit.xml\n"));
     assert!(SHARDS.contains("            target/nextest/ci/run-context.txt\n"));
     Ok(())
@@ -1443,9 +1500,7 @@ exit "$status"
         assert_eq!(script.matches("time_tool=/usr/bin/time").count(), 1);
         // Only the instrument's path and Actions' shard expression are supplied
         // by the fixture; the production Bash, Cargo argv and reporters are real.
-        let script = script
-            .replace("time_tool=/usr/bin/time", "time_tool=\"$TEST_TIMER\"")
-            .replace("${{ matrix.shard }}", "2");
+        let script = script.replace("time_tool=/usr/bin/time", "time_tool=\"$TEST_TIMER\"");
         for (name, first, second, mode, reporter_fails) in [
             ("success", 0, 0, "valid", false),
             ("first-fails", 17, 0, "valid", false),
@@ -1528,7 +1583,7 @@ exit "$status"
                 "checkout_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "run_id=123",
                 "run_attempt=4",
-                "shard=2/2",
+                "packing=same-runner-v1",
                 "sample_period_seconds=5",
             ] {
                 assert!(context.contains(field), "{name}: missing {field}");
@@ -1608,14 +1663,69 @@ exit "$status"
 const RUST_ONLY_CLIPPY_COMMAND: &str =
     "cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings";
 const RUST_ONLY_CLIPPY_GATES_CONDITION: &str = "if: inputs.test-shards == 1";
-const RUST_ONLY_CLIPPY_SHARD_CONDITION: &str = "if: ${{ matrix.shard == 2 && !cancelled() }}";
+const RUST_ONLY_CLIPPY_SHARD_CONDITION: &str = "if: ${{ !cancelled() }}";
+
+fn workflow_job<'a>(workflow: &'a str, id: &str) -> Option<&'a str> {
+    let (_, tail) = workflow.split_once(&format!("\n  {id}:\n"))?;
+    let end = tail
+        .match_indices('\n')
+        .map(|(i, _)| i)
+        .find(|&i| {
+            let line = tail[i + 1..].lines().next().unwrap_or_default();
+            !line.trim().is_empty() && !line.starts_with("    ")
+        })
+        .unwrap_or(tail.len());
+    Some(&tail[..end])
+}
 
 fn rust_only_clippy_violations(workflow: &str, shards: &str) -> Vec<String> {
     let mut findings = Vec::new();
-    for (label, text, condition) in [
-        ("rust-gates", workflow, RUST_ONLY_CLIPPY_GATES_CONDITION),
-        ("shards", shards, RUST_ONLY_CLIPPY_SHARD_CONDITION),
+    for (label, text, job_id, condition) in [
+        (
+            "rust-gates",
+            workflow,
+            "rust-gates",
+            RUST_ONLY_CLIPPY_GATES_CONDITION,
+        ),
+        (
+            "shards",
+            shards,
+            "rust-test-shard",
+            RUST_ONLY_CLIPPY_SHARD_CONDITION,
+        ),
     ] {
+        let Some(job) = workflow_job(text, job_id) else {
+            findings.push(format!(
+                "{label}: missing Rust-only library Clippy job {job_id}"
+            ));
+            continue;
+        };
+        if job.lines().any(|line| line.starts_with("    strategy:")) {
+            findings.push(format!(
+                "{label}: Rust-only library Clippy job must run as a singleton"
+            ));
+        }
+        if job
+            .lines()
+            .any(|line| line.starts_with("    if:") || line.starts_with("    continue-on-error:"))
+        {
+            findings.push(format!(
+                "{label}: Rust-only library Clippy job must be unconditional and required"
+            ));
+        }
+        if label == "shards"
+            && !job
+                .lines()
+                .any(|line| line.trim() == "components: llvm-tools-preview, clippy")
+        {
+            findings.push("shards: packed runner must install Clippy".to_owned());
+        }
+        let command = format!("run: {RUST_ONLY_CLIPPY_COMMAND}");
+        if !job.lines().any(|line| line.trim() == command) {
+            findings.push(format!(
+                "{label}: Rust-only library Clippy must run in {job_id}"
+            ));
+        }
         // A step ends at the next step or at the next job/top-level key.
         let steps: Vec<Vec<&str>> = text
             .split("\n      - ")
@@ -1625,10 +1735,7 @@ fn rust_only_clippy_violations(workflow: &str, shards: &str) -> Vec<String> {
                 head.chain(lines.take_while(|line| line.is_empty() || line.starts_with("      ")))
                     .collect()
             })
-            .filter(|step: &Vec<&str>| {
-                step.iter()
-                    .any(|line| line.trim() == format!("run: {RUST_ONLY_CLIPPY_COMMAND}"))
-            })
+            .filter(|step: &Vec<&str>| step.iter().any(|line| line.trim() == command))
             .collect();
         let [step] = steps.as_slice() else {
             findings.push(format!(
@@ -1666,7 +1773,7 @@ fn rust_only_library_lint_runs_once_on_each_test_route() {
 fn rust_only_library_lint_rejects_removal_weakening_and_condition_drift() {
     let run_line = format!("run: {RUST_ONLY_CLIPPY_COMMAND}");
     let without_deny = RUST_ONLY_CLIPPY_COMMAND.replace(" -- -D warnings", "");
-    let cases: [(&str, String, String, &str); 5] = [
+    let cases: [(&str, String, String, &str); 9] = [
         (
             "removed from rust-gates",
             WORKFLOW.replace(&run_line, "run: true"),
@@ -1691,17 +1798,53 @@ fn rust_only_library_lint_rejects_removal_weakening_and_condition_drift() {
             "rust-gates: the Rust-only library Clippy step must carry only `if: inputs.test-shards == 1`, found []",
         ),
         (
-            "both shards run it",
+            "stale matrix predicate selects no packed lint",
             WORKFLOW.to_owned(),
-            SHARDS.replace(RUST_ONLY_CLIPPY_SHARD_CONDITION, "if: ${{ !cancelled() }}"),
-            "shards: the Rust-only library Clippy step must carry only `if: ${{ matrix.shard == 2 && !cancelled() }}`, found [\"if: ${{ !cancelled() }}\"]",
+            SHARDS.replace(
+                &format!("id: rust-only-clippy\n        {RUST_ONLY_CLIPPY_SHARD_CONDITION}"),
+                "id: rust-only-clippy\n        if: ${{ matrix.shard == 2 && !cancelled() }}",
+            ),
+            "shards: the Rust-only library Clippy step must carry only `if: ${{ !cancelled() }}`, found [\"if: ${{ matrix.shard == 2 && !cancelled() }}\"]",
+        ),
+        (
+            "packed producer duplicates lint in a matrix",
+            WORKFLOW.to_owned(),
+            SHARDS.replace(
+                "  rust-test-shard:\n",
+                "  rust-test-shard:\n    strategy:\n      matrix:\n        shard: [1, 2]\n",
+            ),
+            "shards: Rust-only library Clippy job must run as a singleton",
+        ),
+        (
+            "packed job itself is skipped",
+            WORKFLOW.to_owned(),
+            SHARDS.replace(
+                "  rust-test-shard:\n",
+                "  rust-test-shard:\n    if: false\n",
+            ),
+            "shards: Rust-only library Clippy job must be unconditional and required",
+        ),
+        (
+            "packed toolchain does not install Clippy",
+            WORKFLOW.to_owned(),
+            SHARDS.replace("components: llvm-tools-preview, clippy", "components: llvm-tools-preview"),
+            "shards: packed runner must install Clippy",
+        ),
+        (
+            "packed lint moved out of its owning producer",
+            WORKFLOW.to_owned(),
+            SHARDS.replace(
+                "  rust-test-shard:\n",
+                "  rust-test-shard:\n    runs-on: ubuntu-latest\n  unrelated:\n",
+            ),
+            "shards: Rust-only library Clippy must run in rust-test-shard",
         ),
         (
             "shard step made advisory",
             WORKFLOW.to_owned(),
             SHARDS.replace(
-                &format!("{RUST_ONLY_CLIPPY_SHARD_CONDITION}\n"),
-                &format!("{RUST_ONLY_CLIPPY_SHARD_CONDITION}\n        continue-on-error: true\n"),
+                &format!("id: rust-only-clippy\n        {RUST_ONLY_CLIPPY_SHARD_CONDITION}\n"),
+                &format!("id: rust-only-clippy\n        {RUST_ONLY_CLIPPY_SHARD_CONDITION}\n        continue-on-error: true\n"),
             ),
             "shards: the Rust-only library Clippy step must not continue on error",
         ),

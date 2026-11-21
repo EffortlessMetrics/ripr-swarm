@@ -22865,6 +22865,11 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if path == "tools/ci/run-packed-partitions.sh" {
+        return Some(
+            "The packed Actions step uses Bash wait and native exit statuses to retain each Nextest partition's receipts before reporting failure. The Rust workflow contract and Linux shard_verifier_artifact tests cover this runner entry point (#8194).",
+        );
+    }
     if matches!(
         path,
         "tools/ci/main-qualification.py" | "tools/ci/test_main_qualification.py"
