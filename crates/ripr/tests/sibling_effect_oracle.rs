@@ -273,6 +273,54 @@ fn changed_effect(source: &str, expression: &str) -> String {
 }
 
 #[test]
+fn implicit_observer_distinguishes_an_unrelated_drop_from_receiver_cleanup() -> Result<(), String> {
+    let expression = "self.sink.set(1)";
+    let unrelated = "struct Marker; impl Drop for Marker { fn drop(&mut self) {} }";
+    // The generated destructor writes the expected value even with the changed
+    // call removed. The loop and assertion alone cannot distinguish the call.
+    let cleanup = r#"
+macro_rules! impl_cleanup {
+    ($ty:ty) => { impl Drop for $ty { fn drop(&mut self) { self.sink.set(1); } } };
+}
+impl_cleanup!(super::Counter);
+"#;
+    for (suffix, classification, discrimination) in [
+        ("", "exposed", "yes"),
+        ("mod cleanup;", "weakly_exposed", "weak"),
+        (unrelated, "weakly_exposed", "weak"),
+    ] {
+        let mut files = vec![
+            ("src/sensors/mod.rs", "mod ripr_limits; mod bookkeeping;"),
+            ("src/sensors/bookkeeping.rs", unrelated),
+        ];
+        if suffix == "mod cleanup;" {
+            files.push(("src/sensors/ripr_limits/cleanup.rs", cleanup));
+        }
+        let source = format!("{ITERATOR_OBSERVER}\n{suffix}");
+        let row = finding_with_files(
+            &source,
+            &changed_effect(&source, expression),
+            expression,
+            "call_deletion",
+            &files,
+        )?;
+        assert_eq!(row["classification"], classification, "{row}");
+        assert_eq!(
+            row["ripr"]["discriminate"]["state"], discrimination,
+            "{row}"
+        );
+        let observer = row["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?
+            .iter()
+            .find(|test| test["name"] == "implicit_observer")
+            .ok_or("missing observer")?;
+        assert_eq!(observer["miss"].is_null(), discrimination == "yes", "{row}");
+    }
+    Ok(())
+}
+
+#[test]
 fn implicit_trait_effect_observers_retain_strong_credit() -> Result<(), String> {
     for source in [
         ITERATOR_OBSERVER.to_string(),
