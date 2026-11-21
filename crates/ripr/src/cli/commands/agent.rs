@@ -3929,7 +3929,7 @@ fn run_agent_repair_phase(
             // `repair_after_failure` envelope, because a success-shaped
             // verify document beside a terminal attempt is exactly the green
             // repair story the driver cannot trust.
-            let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<String, String> {
+            let after_tail = |refusal: &mut AfterPhaseRefusalContext| -> Result<_, String> {
                 // A failure past this point leaves the phase's fresh
                 // projections standing when the attempt stays retryable
                 // (the outcome resolver keys on this flag).
@@ -4414,10 +4414,12 @@ fn run_agent_repair_phase(
                     );
                 }
 
-                Ok(status_rendered)
+                let restart = open_attempt_restart(&status_report, attempt.attempt_id.as_str())
+                    .map(str::to_owned);
+                Ok((status_rendered, restart))
             };
-            let status_rendered = match after_tail(&mut *refusal) {
-                Ok(status_rendered) => status_rendered,
+            let (status_rendered, restart) = match after_tail(&mut *refusal) {
+                Ok(finish) => finish,
                 Err(error) => {
                     // #6033: a cage-refused attempt must not read as a green
                     // repair on the documented stdout channel. The typed
@@ -4479,6 +4481,7 @@ fn run_agent_repair_phase(
             summary_lines.extend(repair_after_summary_lines(
                 &receipt_path,
                 reported_run.as_ref(),
+                restart.as_deref(),
             ));
             // The movement summary goes to stdout when stdout is the human
             // channel, and to stderr as narration beside the `--json`
@@ -4660,15 +4663,29 @@ fn publish_agent_snapshot(
     })
 }
 
+/// Use the same admitted restart as status, scoped to the attempt that just finished.
+fn open_attempt_restart<'a>(
+    report: &'a app::agent_status::AgentStatusReport,
+    attempt_id: &str,
+) -> Option<&'a str> {
+    report
+        .repair_attempts
+        .iter()
+        .find(|attempt| attempt.attempt_id == attempt_id && attempt.disposition == "gap_open")?
+        .command
+        .as_deref()
+}
+
 /// Narration for the repair after phase: the receipt's summary, or a line
 /// naming the receipt that could not be read so the gap is visible rather
 /// than silently empty.
 fn repair_after_summary_lines(
     receipt_path: &Path,
     reported_run: Option<&crate::output::agent_receipt::ReportedTestRun>,
+    restart: Option<&str>,
 ) -> Vec<String> {
     match std::fs::read_to_string(receipt_path) {
-        Ok(receipt) => repair_receipt_summary_lines(&receipt, reported_run),
+        Ok(receipt) => repair_receipt_summary_lines(&receipt, reported_run, restart),
         Err(error) => vec![format!(
             "could not read {} to summarize the result: {error}",
             crate::output::path::human_path(receipt_path)
@@ -5632,6 +5649,7 @@ fn recovered_focused_after_output(
     summary.extend(repair_after_summary_lines(
         &receipt_path,
         reported_run.as_ref(),
+        open_attempt_restart(&status, manifest.repair_attempt_id.as_str()),
     ));
     let document = if json {
         let envelope = serde_json::json!({"schema_version": REPAIR_AFTER_RESULT_SCHEMA_VERSION,
@@ -5775,6 +5793,7 @@ fn short_head(head: &str) -> &str {
 fn repair_receipt_summary_lines(
     receipt: &str,
     reported_run: Option<&crate::output::agent_receipt::ReportedTestRun>,
+    restart: Option<&str>,
 ) -> Vec<String> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(receipt) else {
         return Vec::new();
@@ -5827,7 +5846,23 @@ fn repair_receipt_summary_lines(
     // `advisory` receipt recommends including it in review, and any other
     // status states that it is not review evidence and how to recover. A
     // receipt without a status is not vouched for, so nothing is forwarded.
-    if text("/status").is_some()
+    if let Some(restart) = restart
+        && text("/status") == Some(crate::output::agent_receipt::AGENT_RECEIPT_STATUS_ADVISORY)
+        && text("/provenance/movement") == Some("unchanged")
+        && let Some(target) = text("/test_changed")
+    {
+        if let Some(note) = text("/seam/guidance_note") {
+            lines.push(crate::terminal_text::single_line(note));
+        }
+        let target = crate::terminal_text::single_line(target);
+        lines.push(format!(
+            "next: this attempt has ended. If `{target}` has uncommitted changes, stash only that file so it matches HEAD (use --include-untracked for a new file). Start a new attempt for the same gap with the command below. Restore any stashed edit, add a focused test that asserts the changed behavior, then run the new attempt's printed command."
+        ));
+        lines.push(format!("restart: {restart}"));
+        if let Some(variant) = crate::output::markdown::powershell_text_variant(restart) {
+            lines.push(format!("restart (PowerShell): {variant}"));
+        }
+    } else if text("/status").is_some()
         && let Some(action) = text("/summary/next_action/recommended_action")
     {
         lines.push(format!("next: {action}"));
@@ -7452,7 +7487,7 @@ mod repair_summary_tests {
         let missing = std::env::temp_dir()
             .join(format!("ripr-missing-receipt-{}", std::process::id()))
             .join("agent-receipt.json");
-        let lines = repair_after_summary_lines(&missing, None);
+        let lines = repair_after_summary_lines(&missing, None, None);
         assert_eq!(lines.len(), 1, "expected one read-failure line: {lines:?}");
         // Diagnostics print through human_path: `/` separators on Windows,
         // the native spelling on Unix.
@@ -7479,7 +7514,7 @@ mod repair_summary_tests {
             "summary": {"next_action": {"summary": "Static grip improved.", "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."}}
         }"#;
         assert_eq!(
-            repair_receipt_summary_lines(receipt, None),
+            repair_receipt_summary_lines(receipt, None, None),
             vec![
                 "result for gap `67fc764ba37d77bd`: weak -> exposed (weakly_gripped -> strongly_gripped, improved). Static grip improved.".to_string(),
                 "next: Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review.".to_string(),
@@ -7505,7 +7540,7 @@ mod repair_summary_tests {
             failed,
         };
         let line = |run: Option<&ReportedTestRun>| {
-            repair_receipt_summary_lines(receipt, run)
+            repair_receipt_summary_lines(receipt, run, None)
                 .into_iter()
                 .find(|line| line.starts_with("test run: "))
         };
@@ -7536,7 +7571,7 @@ mod repair_summary_tests {
             "provenance": {"before_class": "weakly_gripped", "after_class": "weakly_gripped", "movement": "unchanged"}
         }"#;
         assert_eq!(
-            repair_receipt_summary_lines(receipt, None),
+            repair_receipt_summary_lines(receipt, None, None),
             vec![
                 "result for gap `s`: weak -> weak (weakly_gripped -> weakly_gripped, unchanged)."
                     .to_string()
@@ -7556,7 +7591,7 @@ mod repair_summary_tests {
             r#"{{"status": "invalid", {movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "{step}"}}}}}}"#
         );
         assert_eq!(
-            repair_receipt_summary_lines(&invalid, None),
+            repair_receipt_summary_lines(&invalid, None, None),
             vec![result.clone(), format!("next: {step}")]
         );
         // Without a status nothing vouches for the receipt, so its
@@ -7564,13 +7599,18 @@ mod repair_summary_tests {
         let unstated = format!(
             r#"{{{movement}, "summary": {{"next_action": {{"summary": "Static grip improved.", "recommended_action": "Run the focused test and keep it only if it passes; ripr did not run it. Then include this receipt in review."}}}}}}"#
         );
-        assert_eq!(repair_receipt_summary_lines(&unstated, None), vec![result]);
+        assert_eq!(
+            repair_receipt_summary_lines(&unstated, None, None),
+            vec![result]
+        );
     }
 
     #[test]
     fn repair_summary_is_empty_when_the_receipt_lacks_movement() {
-        assert!(repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#, None).is_empty());
-        assert!(repair_receipt_summary_lines("not json", None).is_empty());
+        assert!(
+            repair_receipt_summary_lines(r#"{"seam": {"seam_id": "s"}}"#, None, None).is_empty()
+        );
+        assert!(repair_receipt_summary_lines("not json", None, None).is_empty());
     }
 
     fn temp_root(label: &str) -> Result<std::path::PathBuf, String> {
