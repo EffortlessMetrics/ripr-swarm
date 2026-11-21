@@ -22780,11 +22780,16 @@ tests = [
   "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::a_renamed_function_and_its_callers_seed_no_probe",
   "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::renaming_an_entry_point_is_never_proven",
   "crates/ripr/src/analysis/probes/identifier_rename_tests.rs::a_rename_that_may_not_mean_the_same_item_stays_probed",
+  "crates/ripr/tests/self_type_respelling.rs::self_for_the_implementing_type_seeds_no_probe_in_either_direction",
+  "crates/ripr/tests/self_type_respelling.rs::a_real_change_beside_the_respelling_keeps_its_probe",
+  "crates/ripr/tests/self_type_respelling.rs::a_spelling_the_files_do_not_prove_equivalent_stays_probed",
+  "crates/ripr/tests/self_type_respelling.rs::a_generic_type_keeps_its_respelling_probed",
 ]
 fixtures = []
 code = [
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/analysis/probes/identifier_rename.rs",
+  "crates/ripr/src/analysis/probes/self_type_respelling.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0348-pure-reformats-seed-no-probes.md",

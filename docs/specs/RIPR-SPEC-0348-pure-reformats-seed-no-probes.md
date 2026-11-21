@@ -22,6 +22,7 @@ Linked issues:
 
 - #9450 (ux(check): formatting-only rewraps and reindents seed probes and lead Start-here)
 - #14760 (Start here picks a line that only uses a table renamed in the diff)
+- #15931 (writing `Self` for the implementing type is reported as changed behavior)
 
 Linked PRs:
 
@@ -162,6 +163,37 @@ established rename and the rest of the raw line is byte-identical. A
 rename whose declaration and use sites sit in different files stays
 probed.
 
+### Rule 5: `Self` written for the implementing type's own name is neutral
+
+Inside `impl Shell { .. }` or `impl Generator for Shell { .. }`, `Shell::Bash`
+and `Self::Bash` name the same item (the `clippy::use_self` cleanup). A 1:1
+replaced pair whose only differences trade `Self` with one type name seeds
+no probe on either side, in both directions.
+`crates/ripr/src/analysis/probes/self_type_respelling.rs` owns the decision
+and reads both files with the syntax parser. The pair is neutral only when
+all of these hold on each side:
+
+- the two lines are byte-identical apart from the traded identifiers, and
+  every trade on the line uses the same type name;
+- the token is code, not comment, string or macro input (`dbg!(Shell::new())`
+  prints its tokens), and is the unqualified first segment of a path with no
+  generic arguments;
+- the innermost enclosing `impl` implements exactly that bare name: not
+  `Shell<T>`, `&Shell`, `Box<Shell>` or a qualified path;
+- only the associated item that holds the token sits between it and that
+  `impl`, no enclosing block declares an item or `use`, no generic
+  parameter or binding pattern in that item spells the type name, and the
+  item and the `impl` carry only token-blind attributes (`inline`, `cfg`,
+  `allow`, `doc`, ...), so no attribute macro receives the spelling;
+- neither file declares the type with generic parameters (a defaulted
+  parameter lets `Wrap::new()` infer what `Self::new()` fixes);
+- both files parse without error and neither line holds a position macro.
+
+Known residual: a type declared with generic parameters in another file is
+not seen. `impl Wrap` for such a type is legal only when every parameter has
+a default, and the two spellings then differ only where inference picks a
+non-default argument.
+
 ## Required Evidence
 
 - Unit: `is_behavior_neutral_rewrap` accepts `["let a = b;"]` against
@@ -196,6 +228,13 @@ probed.
 7. The same rename with a changed body, a pre-existing new name, a remaining
    old-name use, a name-observing attribute, a same-spelled field, method,
    variant or macro token: the use site keeps its probe.
+8. `Shell::Bash =>` respelled `Self::Bash =>` inside `impl Generator for
+   Shell`, and the reverse: no probe on either line; a real change in the
+   same diff keeps its probe.
+9. The same respelling for another type's name, with another token changed,
+   inside `dbg!`, in an `impl` for `&Shell`, in a nested `impl`, under a
+   shadowing generic parameter, under an attribute macro, outside any
+   `impl`, or for a type declared with generic parameters: still probed.
 
 ## Test Mapping
 
@@ -225,6 +264,12 @@ probed.
   `the_same_use_site_edit_without_a_proven_rename_is_probed` and
   `a_rename_that_may_not_mean_the_same_item_stays_probed` (example 7),
   `renaming_an_entry_point_is_never_proven`.
+- `crates/ripr/tests/self_type_respelling.rs` (Rule 5,
+  real Git fixtures):
+  `self_for_the_implementing_type_seeds_no_probe_in_either_direction` and
+  `a_real_change_beside_the_respelling_keeps_its_probe` (example 8),
+  `a_spelling_the_files_do_not_prove_equivalent_stays_probed` and
+  `a_generic_type_keeps_its_respelling_probed` (example 9).
 
 ## Implementation Mapping
 
@@ -236,6 +281,9 @@ probed.
 - `crates/ripr/src/analysis/probes/identifier_rename.rs`:
   `rename_only_lines` (Rule 4), applied in `probes_for_file_with_relations`
   beside the respelling and whitespace replacement-pair filters.
+- `crates/ripr/src/analysis/probes/self_type_respelling.rs`:
+  `self_type_respelled_lines` (Rule 5), applied in
+  `probes_for_file_with_relations` after the rename filter.
 
 ## Metrics
 
