@@ -898,10 +898,19 @@ fn widen_report(changed: &[String], reasons: Vec<String>) -> DocsGateReport {
     }
 }
 
+/// Newer Git honors the no-lazy-fetch setting. Older Git may start a fetch
+/// subprocess, so deny every transport as well. Both settings are local to
+/// this child and leave the user's repository and Git configuration untouched.
+fn offline_git() -> std::process::Command {
+    let mut git = std::process::Command::new("git");
+    git.env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "");
+    git
+}
+
 fn materialize_tree(checkout: &Path, head_id: &str) -> Result<PathBuf, String> {
     let tree = create_staging_dir(head_id)?;
-    let mut archive = std::process::Command::new("git")
-        .arg("--no-lazy-fetch")
+    let mut archive = offline_git()
         .args(["archive", "--format=tar", head_id])
         .current_dir(checkout)
         .stdout(std::process::Stdio::piped())
@@ -1060,8 +1069,7 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
 /// resolved once here and used by ID afterwards, so a symbolic or mutable name
 /// cannot denote different commits at selection time and at read time.
 fn resolve_commit(checkout: &Path, rev: &str) -> Result<String, String> {
-    let output = std::process::Command::new("git")
-        .arg("--no-lazy-fetch")
+    let output = offline_git()
         .args(["rev-parse", &format!("{rev}^{{commit}}")])
         .current_dir(checkout)
         .output()
@@ -1101,8 +1109,7 @@ fn revision_changes(
     head: &str,
 ) -> Result<(Vec<String>, Vec<String>), String> {
     // Fail closed on any git error: an unavailable diff widens, never passes.
-    let output = std::process::Command::new("git")
-        .arg("--no-lazy-fetch")
+    let output = offline_git()
         .args([
             "diff",
             "--no-renames",
@@ -1166,8 +1173,7 @@ fn revision_changes(
 }
 
 fn blob_headings(checkout: &Path, oid: &str) -> Result<BTreeSet<String>, String> {
-    let output = std::process::Command::new("git")
-        .arg("--no-lazy-fetch")
+    let output = offline_git()
         .args(["cat-file", "blob", oid])
         .current_dir(checkout)
         .output()

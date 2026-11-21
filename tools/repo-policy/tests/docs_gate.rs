@@ -562,13 +562,7 @@ fn missing_promised_heading_blob_widens_without_hydrating_it() -> TestResult {
     let missing = || -> Result<bool, Box<dyn std::error::Error>> {
         let out = git_output(
             &clone,
-            &[
-                "--no-lazy-fetch",
-                "rev-list",
-                "--objects",
-                "--all",
-                "--missing=print",
-            ],
+            &["rev-list", "--objects", "--all", "--missing=print"],
         )?;
         Ok(String::from_utf8(out.stdout)?
             .lines()
