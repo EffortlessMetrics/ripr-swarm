@@ -1,4 +1,4 @@
-<!-- section: Fixed -->
+<!-- section: Internal / CI -->
 - `cargo xtask dx-scoreboard` still loads a mutation spot-check receipt
   against a `--config` written before the generated recall rows existed: the
   three #12900 rows are projected only when the configuration declares them,
