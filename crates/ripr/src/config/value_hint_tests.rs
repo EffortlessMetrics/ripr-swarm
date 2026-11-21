@@ -129,13 +129,13 @@ fn wrong_shape_values_name_the_toml_shape_and_how_to_write_it() -> Result<(), St
     for (text, reason, next) in [
         (
             "[reports]\nmax_related_tests = -1\n",
-            "invalid value: integer `-1`, expected a whole number of 0 or more",
-            "write a whole number of 0 or more with no quotes, for example `5`",
+            "invalid value: integer `-1`, expected a whole number of 1 or more",
+            "write a whole number of 1 or more with no quotes, for example `5`",
         ),
         (
             "[reports]\nmax_related_tests = \"five\"\n",
-            "invalid type: string \"five\", expected a whole number of 0 or more",
-            "write a whole number of 0 or more with no quotes, for example `5`",
+            "invalid type: string \"five\", expected a whole number of 1 or more",
+            "write a whole number of 1 or more with no quotes, for example `5`",
         ),
         (
             "[lsp]\nseam_diagnostics = \"yes\"\n",
@@ -150,12 +150,25 @@ fn wrong_shape_values_name_the_toml_shape_and_how_to_write_it() -> Result<(), St
         (
             "[languages]\nenabled = \"rust\"\n",
             "invalid type: string \"rust\", expected a list",
-            "write a list in square brackets, for example `[\"value\"]`",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
         ),
         (
             "[overrides]\npath = \"src\"\n",
-            "invalid type: map, expected a list of tables",
-            "write each entry under a double-bracket header, for example `[[overrides]]`",
+            "invalid type: map, expected a list",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
+        ),
+        // The parser names a list without its entry type, so a scalar where
+        // a list of tables belongs and a table where a list of strings
+        // belongs get the same two-spelling line.
+        (
+            "overrides = \"src\"\n",
+            "invalid type: string \"src\", expected a list",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
+        ),
+        (
+            "[languages]\nenabled = { rust = true }\n",
+            "invalid type: map, expected a list",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
         ),
         (
             "analysis = 5\n",

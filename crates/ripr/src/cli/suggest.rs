@@ -73,7 +73,7 @@ fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
     if let Some(switch) = switch_given_value(command, arg) {
         return format!(
             "unknown {command} argument {arg:?}. `{switch}` is a switch and takes no value: \
-             pass `{switch}` alone to turn it on, or leave it out to keep it off. Run `{pointer}`."
+             write `{switch}` alone; a switch is on when present and off when absent. Run `{pointer}`."
         );
     }
     match closest_flag(command, arg) {
@@ -177,8 +177,14 @@ pub(crate) fn flag_placement(command: &str, arg: &str) -> FlagPlacement {
     }
 }
 
-/// The switch `arg` names when it is `--switch=value` and `command`'s help
-/// documents `--switch` as taking no value, or the global `--verbose`.
+/// The switch `arg` names when it is `--switch=value` and `--switch` is one
+/// `command` itself accepts bare: the global `--verbose`, or a flag the
+/// command's own help section lists and documents as taking no value.
+///
+/// A help body shared by a family (`baseline`) documents sibling flags, so
+/// the name must also be in [`known_flags`], which is scoped to this
+/// command's section and usage lines. A help-only modifier (`--all`) is not
+/// accepted on its own, so it is never offered as a bare spelling.
 fn switch_given_value<'a>(command: &str, arg: &'a str) -> Option<&'a str> {
     let (name, _) = arg.split_once('=')?;
     if !name.starts_with("--") {
@@ -187,12 +193,16 @@ fn switch_given_value<'a>(command: &str, arg: &'a str) -> Option<&'a str> {
     if name == "--verbose" {
         return Some(name);
     }
+    if HELP_ONLY_FLAGS.contains(&name) {
+        return None;
+    }
     let command = flag_owner(command);
     let help_text = help::help_text_for(command)?;
-    super::help_flags::flags_for(command, help_text)
+    let own = known_flags(command, help_text).contains(&name);
+    let is_switch = super::help_flags::flags_for(command, help_text)
         .iter()
-        .any(|flag| flag.name == name && !flag.takes_value)
-        .then_some(name)
+        .any(|flag| flag.name == name && !flag.takes_value);
+    (own && is_switch).then_some(name)
 }
 
 /// Flags on a bare `ripr gate` are `gate evaluate`'s (#7740), and its
@@ -528,6 +538,13 @@ mod tests {
                 "--json",
                 "ripr agent status --help",
             ),
+            // The owning sibling of the shared baseline help still gets it.
+            (
+                "baseline create",
+                "--dry-run=true",
+                "--dry-run",
+                "ripr baseline create --help",
+            ),
             (
                 "check",
                 "--verbose=1",
@@ -539,7 +556,7 @@ mod tests {
                 unknown_argument(command, arg),
                 format!(
                     "unknown {command} argument {arg:?}. `{switch}` is a switch and takes no value: \
-                     pass `{switch}` alone to turn it on, or leave it out to keep it off. Run `{pointer}`."
+                     write `{switch}` alone; a switch is on when present and off when absent. Run `{pointer}`."
                 ),
             );
         }
@@ -555,6 +572,11 @@ mod tests {
             ("check", "--bogus=1"),
             ("check", "--format=json"),
             ("check", "-q=1"),
+            // `--dry-run` is `baseline create`'s; the family shares one help
+            // body, and `baseline diff` refuses the bare spelling too.
+            ("baseline diff", "--dry-run=true"),
+            // `--all` only modifies `--help`; `check --all` is refused.
+            ("check", "--all=true"),
         ] {
             let message = unknown_argument(command, arg);
             assert!(

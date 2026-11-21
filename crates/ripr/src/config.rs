@@ -895,9 +895,12 @@ struct ValueShape {
     next: &'static str,
 }
 
+// `reports.max_related_tests` is the only whole-number key, and its own
+// validation refuses 0, so the wording gives the range the loader accepts
+// rather than the deserializer's.
 const WHOLE_NUMBER_SHAPE: ValueShape = ValueShape {
-    plain: "a whole number of 0 or more",
-    next: "write a whole number of 0 or more with no quotes, for example `5`",
+    plain: "a whole number of 1 or more",
+    next: "write a whole number of 1 or more with no quotes, for example `5`",
 };
 const BOOLEAN_SHAPE: ValueShape = ValueShape {
     plain: "true or false",
@@ -907,13 +910,11 @@ const STRING_SHAPE: ValueShape = ValueShape {
     plain: "a quoted string",
     next: "write the value in double quotes, for example `\"value\"`",
 };
+// The parser reports a list without saying what its entries are, so the line
+// covers both spellings instead of guessing from the rejected value.
 const LIST_SHAPE: ValueShape = ValueShape {
     plain: "a list",
-    next: "write a list in square brackets, for example `[\"value\"]`",
-};
-const TABLE_LIST_SHAPE: ValueShape = ValueShape {
-    plain: "a list of tables",
-    next: "write each entry under a double-bracket header, for example `[[overrides]]`",
+    next: "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
 };
 const TABLE_SHAPE: ValueShape = ValueShape {
     plain: "a table",
@@ -924,7 +925,6 @@ const VALUE_SHAPES: &[&ValueShape] = &[
     &BOOLEAN_SHAPE,
     &STRING_SHAPE,
     &LIST_SHAPE,
-    &TABLE_LIST_SHAPE,
     &TABLE_SHAPE,
 ];
 
@@ -940,8 +940,6 @@ fn expected_value_shape(error: &str) -> Option<(&str, &'static ValueShape)> {
         "usize" => &WHOLE_NUMBER_SHAPE,
         "a boolean" => &BOOLEAN_SHAPE,
         "a string" => &STRING_SHAPE,
-        // A `[name]` table where a `[[name]]` array of tables belongs.
-        "a sequence" if found == "invalid type: map" => &TABLE_LIST_SHAPE,
         "a sequence" => &LIST_SHAPE,
         _ if is_serde_struct_name(expected) => &TABLE_SHAPE,
         _ => return None,

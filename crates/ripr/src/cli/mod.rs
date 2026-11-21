@@ -1396,7 +1396,7 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "check", "--quiet=false"])),
             Err(CommandError::Failure(
-                "unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: pass `--quiet` alone to turn it on, or leave it out to keep it off. Run `ripr check --help --all`."
+                "unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: write `--quiet` alone; a switch is on when present and off when absent. Run `ripr check --help --all`."
                     .to_string()
             ))
         );

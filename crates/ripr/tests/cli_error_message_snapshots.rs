@@ -234,12 +234,24 @@ const CASES: &[Case] = &[
     Case {
         args: &["check", "--quiet=false"],
         exit: 2,
-        stderr: "ripr: unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: pass `--quiet` alone to turn it on, or leave it out to keep it off. Run `ripr check --help --all`.\n",
+        stderr: "ripr: unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: write `--quiet` alone; a switch is on when present and off when absent. Run `ripr check --help --all`.\n",
     },
     Case {
         args: &["cache", "status", "--json=true"],
         exit: 2,
-        stderr: "ripr: unknown cache status argument \"--json=true\". `--json` is a switch and takes no value: pass `--json` alone to turn it on, or leave it out to keep it off. Run `ripr cache status --help`.\n",
+        stderr: "ripr: unknown cache status argument \"--json=true\". `--json` is a switch and takes no value: write `--json` alone; a switch is on when present and off when absent. Run `ripr cache status --help`.\n",
+    },
+    // A sibling's switch in a shared help body is not offered: `baseline
+    // diff` has no `--dry-run`. Its owner, `baseline create`, is told.
+    Case {
+        args: &["baseline", "diff", "--dry-run=true"],
+        exit: 2,
+        stderr: "ripr: unknown baseline diff argument \"--dry-run=true\". Run `ripr baseline diff --help`.\n",
+    },
+    Case {
+        args: &["baseline", "create", "--dry-run=true"],
+        exit: 2,
+        stderr: "ripr: unknown baseline create argument \"--dry-run=true\". `--dry-run` is a switch and takes no value: write `--dry-run` alone; a switch is on when present and off when absent. Run `ripr baseline create --help`.\n",
     },
     // A value-taking flag still splits at `=` and reaches its own validation.
     Case {
@@ -347,13 +359,13 @@ fn wrong_shape_config_values_say_what_to_write() -> Result<(), String> {
     const CONFIGS: &[(&str, &str, &str)] = &[
         (
             "[reports]\nmax_related_tests = \"five\"\n",
-            "invalid type: string \"five\", expected a whole number of 0 or more",
-            "write a whole number of 0 or more with no quotes, for example `5`",
+            "invalid type: string \"five\", expected a whole number of 1 or more",
+            "write a whole number of 1 or more with no quotes, for example `5`",
         ),
         (
             "[languages]\nenabled = \"rust\"\n",
             "invalid type: string \"rust\", expected a list",
-            "write a list in square brackets, for example `[\"value\"]`",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
         ),
         (
             "analysis = 5\n",
@@ -384,6 +396,20 @@ fn wrong_shape_config_values_say_what_to_write() -> Result<(), String> {
             failures.push(format!(
                 "config validate for {config:?}: exit {:?}\n{stderr}",
                 validate.status.code()
+            ));
+        }
+        // The JSON refusal carries the same next step in its message.
+        let json = ripr_in(&dir)
+            .args(["check", "--root", ".", "--json"])
+            .env("GIT_CEILING_DIRECTORIES", &ceiling)
+            .output()
+            .map_err(|error| format!("run ripr check --json: {error}"))?;
+        let document = String::from_utf8_lossy(&json.stdout);
+        let escaped = next.replace('"', "\\\"");
+        if json.status.code() != Some(2) || !document.contains(&escaped) {
+            failures.push(format!(
+                "check --json for {config:?}: exit {:?}\n{document}",
+                json.status.code()
             ));
         }
         let doctor = ripr_in(&dir)
