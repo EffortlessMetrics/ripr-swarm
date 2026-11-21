@@ -177,6 +177,9 @@ fn context_artifact_navigation_preserves_mode_precedence() -> Result<(), String>
 /// packets, structured failures and plain selector misses (#13356).
 #[test]
 fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
+    // The shared smoke helper opts into wall-clock progress heartbeats.
+    // Compare the command's ordinary piped diagnostics on both runs.
+    let run_json = |args: &[&str]| run_ripr_with_env(args, &[("RIPR_PROGRESS", "0")]);
     let schema = published_schema::read("schemas/ripr/context-refusal.schema.json")?;
     let unsupported = published_schema::unsupported_keywords(&schema);
     if !unsupported.is_empty() {
@@ -188,7 +191,7 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
     let root = fixture.0.display().to_string();
     let diff = fixture.0.join("example.diff").display().to_string();
     let artifact = fixture.0.join("compact-check.json").display().to_string();
-    let check = run_ripr(&[
+    let check = run_json(&[
         "check",
         "--root",
         &root,
@@ -216,13 +219,13 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
             "--at",
             SAMPLE_DIFF_SELECTOR,
         ];
-        let pretty = run_ripr(&args);
+        let pretty = run_json(&args);
         let mut explicit = args.to_vec();
         explicit.push("--json");
-        let explicit = run_ripr(&explicit);
+        let explicit = run_json(&explicit);
         let mut compact_args = args.to_vec();
         compact_args.extend(["--format", "json-compact"]);
-        let compact = run_ripr(&compact_args);
+        let compact = run_json(&compact_args);
         assert_success(&pretty);
         assert_success(&explicit);
         assert_success(&compact);
@@ -236,8 +239,7 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
         let packet = serde_json::from_slice(&compact.stdout).map_err(|error| error.to_string())?;
         if published_schema::check(&packet, &schema, &schema, "packet").is_ok() {
             return Err(format!(
-                "the operational refusal schema accepted a {} success packet",
-                source[0]
+                "the operational refusal schema accepted a success packet from {source:?}"
             ));
         }
     }
@@ -250,10 +252,10 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
         "--at",
         SAMPLE_DIFF_SELECTOR,
     ];
-    let pretty = run_ripr(&args);
+    let pretty = run_json(&args);
     let mut compact_args = args.to_vec();
     compact_args.extend(["--format", "json-compact"]);
-    let compact = run_ripr(&compact_args);
+    let compact = run_json(&compact_args);
     assert_eq!(pretty.status.code(), Some(2));
     assert_eq!(compact.status.code(), pretty.status.code());
     assert_eq!(pretty.stderr, compact.stderr);
@@ -265,7 +267,7 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
     ] {
         let mut args = vec!["context", "--root", &root, "--at", SAMPLE_DIFF_SELECTOR];
         args.extend(flags);
-        let refused = run_ripr(&args);
+        let refused = run_json(&args);
         assert_eq!(refused.status.code(), Some(2));
         assert!(refused.stdout.is_empty());
     }
@@ -284,10 +286,10 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
         "--at",
         SAMPLE_DIFF_SELECTOR,
     ];
-    let pretty = run_ripr(&args);
+    let pretty = run_json(&args);
     let mut compact_args = args.to_vec();
     compact_args.extend(["--format", "json-compact"]);
-    let compact = run_ripr(&compact_args);
+    let compact = run_json(&compact_args);
     assert_eq!(pretty.status.code(), Some(2));
     assert_eq!(compact.status.code(), pretty.status.code());
     assert_eq!(pretty.stderr, compact.stderr);
@@ -312,15 +314,15 @@ fn context_compact_preserves_packets_and_refusals() -> Result<(), String> {
     // explicit JSON request (either presentation) also receives the typed
     // `selector_miss` refusal on stdout (#14980), and compaction changes only
     // its whitespace.
-    let plain = run_ripr(&args);
+    let plain = run_json(&args);
     assert_eq!(plain.status.code(), Some(2));
     assert!(plain.stdout.is_empty());
     let mut pretty_args = args.to_vec();
     pretty_args.push("--json");
-    let pretty = run_ripr(&pretty_args);
+    let pretty = run_json(&pretty_args);
     let mut compact_args = args.to_vec();
     compact_args.extend(["--format", "json-compact"]);
-    let compact = run_ripr(&compact_args);
+    let compact = run_json(&compact_args);
     assert_eq!(pretty.status.code(), Some(2));
     assert_eq!(compact.status.code(), pretty.status.code());
     assert_eq!(pretty.stderr, compact.stderr);
