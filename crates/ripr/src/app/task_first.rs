@@ -2377,6 +2377,10 @@ pub(crate) struct RepairStartGate {
     state: std::cell::OnceCell<GateState>,
     /// Build the inventory without mutating the seam cache (#13945).
     cache_read_only: bool,
+    /// Apply the exact-Git-top-level attempt-root gate (#15488). Test gates
+    /// over a fixed inventory (`preloaded`) skip it: their roots are fixture
+    /// directories, not attempt roots.
+    apply_root_gate: bool,
     /// Unit-test builds only: seam ids admitted regardless of the inventory.
     #[cfg(test)]
     admitted: Vec<String>,
@@ -2405,6 +2409,7 @@ impl RepairStartGate {
             root: root.to_path_buf(),
             state: std::cell::OnceCell::new(),
             cache_read_only: false,
+            apply_root_gate: true,
             #[cfg(test)]
             admitted: Vec::new(),
         }
@@ -2442,7 +2447,8 @@ impl RepairStartGate {
     /// real verdict.
     #[cfg(test)]
     pub(crate) fn preloaded(root: &Path, classified: Vec<crate::analysis::ClassifiedSeam>) -> Self {
-        let gate = Self::real(root);
+        let mut gate = Self::real(root);
+        gate.apply_root_gate = false;
         let _ = gate.state.set(GateState::Loaded {
             config: Box::default(),
             classified,
@@ -2481,7 +2487,7 @@ impl RepairStartGate {
         let state = self
             .state
             .get_or_init(|| load_gate_state(&self.root, self.cache_read_only));
-        check_state(&self.root, state, seam_id)
+        check_state(&self.root, state, seam_id, self.apply_root_gate)
     }
 
     /// Like [`Self::check`] for a recorded start that names no seam id: it
@@ -2556,7 +2562,12 @@ fn load_gate_state(root: &Path, cache_read_only: bool) -> GateState {
     }
 }
 
-fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairStartRefusal> {
+fn check_state(
+    root: &Path,
+    state: &GateState,
+    seam_id: &str,
+    apply_root_gate: bool,
+) -> Option<RepairStartRefusal> {
     let (config, classified, truncated) = match state {
         GateState::Loaded {
             config,
@@ -2567,6 +2578,18 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
         #[cfg(test)]
         GateState::Open => return None,
     };
+    // #15488: a start under a subdirectory root refuses at the before
+    // phase (the attempt exists only at the exact Git top-level), so the
+    // gate refuses it here instead of admitting a start that cannot run.
+    if apply_root_gate
+        && let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(root)
+    {
+        return Some(RepairStartRefusal {
+            reason: format!("{refusal}; rerun the start from the Git top-level"),
+            related_test: None,
+            kind: RefusalKind::Other,
+        });
+    }
     // The explicit-subject resolver refuses every start from a truncated
     // inventory, so no seam in one can be verified as startable.
     if truncated {
@@ -3046,6 +3069,15 @@ pub(crate) fn check_repair_route(
     // "missing evidence" or "no seam" refusal beside an exposed finding.
     if finding.class == crate::domain::ExposureClass::Exposed && !static_limited {
         return CheckRepairRoute::Refused(RepairRouteRefusal::FindingAlreadyExposed);
+    }
+    // #15488: a repair attempt starts only at the exact Git top-level, so
+    // every start this route could print (gap-bound or seam-bound) under a
+    // subdirectory root would refuse at the before phase. Withhold it here
+    // and name the top-level; the attempt's own refusal stays the backstop.
+    if let Some(top) = crate::edit_cage::enclosing_git_top_level_above(root) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SubdirectoryRoot {
+            top_level: crate::output::path::display_path(&top),
+        });
     }
     // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
     // canonical gap, but its GapRecord validates through the shared
@@ -6036,7 +6068,7 @@ pub(crate) mod tests {
         use crate::analysis::seams::SeamGripClass;
         let root = Path::new("/repo");
         let unverified = |state: &GateState, seam: &str| {
-            check_state(root, state, seam)
+            check_state(root, state, seam, false)
                 .filter(|refusal| refusal.kind == RefusalKind::Unverified)
                 .ok_or_else(|| format!("seam `{seam}` must be unverified, not admitted"))
         };
@@ -6091,7 +6123,8 @@ pub(crate) mod tests {
         );
         // A seam the inventory does name gets the gate's own verdict, not
         // the unverified one.
-        let refused = check_state(root, &loaded, &known).ok_or("known seam must be refused")?;
+        let refused =
+            check_state(root, &loaded, &known, false).ok_or("known seam must be refused")?;
         assert_eq!(refused.kind, RefusalKind::RouteNotReady);
         assert!(
             refused
