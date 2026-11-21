@@ -1412,8 +1412,9 @@ fn python_status_after_pilot_names_the_gap_bound_start() -> Result<(), String> {
 /// stops advising `git add -N` for files no adapter would read. An untracked
 /// hand-written source file is the control and still withholds the start.
 /// When the unignored tree is too large for the edit cage to snapshot, the
-/// before phase names that cause and the `.gitignore` fix; a small tree gets
-/// no such line.
+/// before phase names that cause and the ignore fix, and following that fix
+/// yields a scorable baseline; a small tree gets no such line. An untracked
+/// test under `docs/` stays disclosed, because the workspace walk reads it.
 #[cfg(feature = "lang-typescript")]
 #[test]
 fn typescript_unignored_dependency_tree_keeps_the_start_and_names_an_oversized_capture()
@@ -1486,6 +1487,31 @@ fn typescript_unignored_dependency_tree_keeps_the_start_and_names_an_oversized_c
         ));
     }
 
+    // Control: an untracked test under `docs/` is skipped as changed scope
+    // but still indexed as test evidence, so it stays disclosed and the
+    // start stays withheld.
+    let (_docs_guard, docs_root, docs_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-docs",
+        None,
+    )?;
+    let docs_arg = docs_root.to_string_lossy().into_owned();
+    write(
+        &docs_root.join("docs/pricing.test.ts"),
+        "import { test, expect } from \"vitest\";\ntest(\"one\", () => { expect(1).toBe(1); });\n",
+    )?;
+    let (ok, docs) = ripr(
+        &docs_decoy,
+        &["check", "--root", &docs_arg, "--base", "HEAD~1"],
+    )?;
+    expect_exit(ok, true, "check with an untracked docs test")?;
+    if gap_start_tokens(&docs).is_some() || !docs.contains("docs/pricing.test.ts") {
+        return Err(format!(
+            "an untracked docs test no longer withholds the start or lost its note:\n{docs}"
+        ));
+    }
+
     // Oversized: one untracked file past the per-file capture budget (sparse,
     // so the test writes no real data) makes the baseline ambiguous, and the
     // before phase names the directory and the fix.
@@ -1519,9 +1545,46 @@ fn typescript_unignored_dependency_tree_keeps_the_start_and_names_an_oversized_c
         "ambiguous: true",
         "likely cause of the ambiguous baseline",
         "`node_modules/`",
-        ".gitignore",
+        ".git/info/exclude",
     ] {
         need(&big, needle, "oversized unignored dependency tree")?;
+    }
+    if big.contains("or commit") && big.contains("those files") {
+        return Err(format!(
+            "the start advised committing files the snapshot would still refuse:\n{big}"
+        ));
+    }
+
+    // Follow the printed recovery in a fresh copy: with the directory in
+    // .git/info/exclude the same start gets a scorable baseline.
+    let (_fixed_guard, fixed_root, fixed_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsnm-fixed",
+        None,
+    )?;
+    let fixed_arg = fixed_root.to_string_lossy().into_owned();
+    let fixed_native = fixed_root.join("node_modules/dep/native.node");
+    write(&fixed_native, "")?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&fixed_native)
+        .and_then(|file| file.set_len(16 * 1024 * 1024 + 1))
+        .map_err(|error| format!("grow {}: {error}", fixed_native.display()))?;
+    write(&fixed_root.join(".git/info/exclude"), "node_modules/\n")?;
+    let (ok, fixed) = ripr(
+        &fixed_decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &fixed_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "start after the printed recovery")?;
+    if fixed.contains("ambiguous: true") || fixed.contains("likely cause of the ambiguous baseline")
+    {
+        return Err(format!(
+            "the printed recovery did not yield a scorable baseline:\n{fixed}"
+        ));
     }
     decoy_untouched(&decoy)?;
     decoy_untouched(&big_decoy)

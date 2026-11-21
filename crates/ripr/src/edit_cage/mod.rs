@@ -2484,8 +2484,8 @@ pub(crate) fn oversized_untracked_cause(root: &Path) -> Option<String> {
     let untracked = git_bytes(root, &["ls-files", "--others", "--exclude-standard", "-z"]).ok()?;
     let mut total_bytes = 0u64;
     let mut files = 0usize;
-    let mut oversized_file = false;
-    let mut by_directory: BTreeMap<String, u64> = BTreeMap::new();
+    // Top-level entry (`dir/` or a root-level file) -> (bytes, largest file).
+    let mut by_entry: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     for record in nul_records(&untracked).take(MAX_CAPTURE_PATHS) {
         let path = record.ok()?;
         let Ok(metadata) = std::fs::symlink_metadata(root.join(path)) else {
@@ -2496,34 +2496,37 @@ pub(crate) fn oversized_untracked_cause(root: &Path) -> Option<String> {
         }
         files += 1;
         total_bytes = total_bytes.saturating_add(metadata.len());
-        oversized_file |= metadata.len() > MAX_CAPTURE_FILE_BYTES;
-        if let Some((directory, _)) = path.split_once('/') {
-            let bytes = by_directory.entry(directory.to_string()).or_default();
-            *bytes = bytes.saturating_add(metadata.len());
-        }
+        let entry = match path.split_once('/') {
+            Some((directory, _)) => format!("{directory}/"),
+            None => path.to_string(),
+        };
+        let (bytes, largest_file) = by_entry.entry(entry).or_default();
+        *bytes = bytes.saturating_add(metadata.len());
+        *largest_file = (*largest_file).max(metadata.len());
     }
-    if total_bytes <= MAX_CAPTURE_TOTAL_FILE_BYTES && !oversized_file {
-        return None;
-    }
+    // Over the total budget, the entry holding the most bytes is the one to
+    // ignore. Within it, only a single file past the per-file limit can be
+    // the cause, so name the entry that holds that file: ignoring a larger
+    // but harmless directory would leave the baseline ambiguous.
+    let over_total = total_bytes > MAX_CAPTURE_TOTAL_FILE_BYTES;
+    let (entry, _) = by_entry
+        .into_iter()
+        .map(|(entry, (bytes, largest_file))| {
+            (entry, if over_total { bytes } else { largest_file })
+        })
+        .filter(|(_, weight)| over_total || *weight > MAX_CAPTURE_FILE_BYTES)
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))?;
     const MIB: u64 = 1024 * 1024;
     let size = format!("{} MiB", total_bytes.div_ceil(MIB));
     let budget = MAX_CAPTURE_TOTAL_FILE_BYTES / MIB;
     let per_file = MAX_CAPTURE_FILE_BYTES / MIB;
-    let largest = by_directory
-        .into_iter()
-        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)));
-    let (place, fix) = match largest {
-        Some((directory, _)) => (
-            format!(", the largest share under `{directory}/`"),
-            format!("add `{directory}/` to .gitignore (or commit those files)"),
-        ),
-        None => (
-            String::new(),
-            "add those files to .gitignore (or commit them)".to_string(),
-        ),
+    let place = if over_total {
+        format!(", the largest share under `{entry}`")
+    } else {
+        format!(", and `{entry}` holds a file over the per-file limit")
     };
     Some(format!(
-        "likely cause of the ambiguous baseline: {files} untracked file(s) that .gitignore does not cover hold {size}{place}. ripr snapshots untracked files exactly, up to {budget} MiB in total and {per_file} MiB per file. To get a scorable attempt, {fix}, then run the same --phase before command again."
+        "likely cause of the ambiguous baseline: {files} untracked file(s) that .gitignore does not cover hold {size}{place}. ripr snapshots tracked and untracked files exactly, up to {budget} MiB in total and {per_file} MiB per file, so committing them does not help. To get a scorable attempt, make Git ignore `{entry}`: add it to .git/info/exclude, or commit a .gitignore rule for it (an uncommitted .gitignore edit would itself be refused as a change outside the test). Then run the same --phase before command again."
     ))
 }
 

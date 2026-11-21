@@ -3966,7 +3966,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         // reads the tree as it is now, so it is the one honest way forward.
         if report.attempt.unreadable_reason.is_some() {
             rendered.push_str(&format!(
-                "\nThis attempt cannot be finished and cannot produce a receipt. To read the current state without it, run `{}`. If the gap is still open, that prints a new repair start; set any test edit aside before you start it, then reapply the edit. If the gap already reads as noticed, the test is in place and only the receipt is missing.\n",
+                "\nThis attempt cannot be finished and cannot produce a receipt. To read the current state without it, run `{}`. If the gap is still open and the check can offer a repair, it prints a new start; set any test edit aside before you run that start, then reapply the edit. If it prints no start, it says why. If the gap already reads as noticed, the test is in place and only the receipt is missing.\n",
                 unreadable_attempt_recheck_command(&report.root)
             ));
         }

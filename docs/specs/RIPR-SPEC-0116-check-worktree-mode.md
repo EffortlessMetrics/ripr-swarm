@@ -85,6 +85,14 @@ head it analyzed.
   working-tree diff, and give the repair (`git add -N <path>` or stage them).
   The note never suggests `--worktree`, which is already in effect. An
   untracked test file is still read as test evidence on a working-tree run.
+  The disclosure leaves out an untracked file that neither the adapter's diff
+  loop nor its workspace walk would read even when tracked (an installed
+  `node_modules/` tree, a generated name, a configured excluded pattern):
+  `git add -N` cannot make it analyzable, so it does not count as unanalyzed
+  working-tree source and does not withhold the repair start. A path declared
+  in `handwritten_files` stays disclosed, and so does an untracked
+  TypeScript/JavaScript file under `docs/`, which is skipped as changed scope
+  but still indexed as test evidence.
 - **Empty working-tree read.** When a working-tree read finds no changed
   files, the no-scope note, safe next action and GitHub warning describe the
   working-tree read (the merge base of the base and `HEAD` to the working
