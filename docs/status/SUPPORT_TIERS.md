@@ -39,7 +39,7 @@ adequacy, coverage adequacy, or general correctness.
 cell for that language (language × mode × family in the Capability Registry
 Projection below) has all six pipeline stages present — detection, parsing,
 probe generation, classification, test-grip evidence, and output — and every
-one of the seven static verdict classes (`exposed`, `weakly_exposed`,
+static verdict class the adapter emits (`exposed`, `weakly_exposed`,
 `reachable_unrevealed`, `no_static_path`, `infection_unknown`,
 `propagation_unknown`, `static_unknown`) is pinned by all three of:
 
