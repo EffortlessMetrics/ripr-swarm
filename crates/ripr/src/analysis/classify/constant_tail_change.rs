@@ -182,6 +182,10 @@ impl DeletedGuardReturn {
         self.before_value == self.after_value
     }
 
+    pub(in crate::analysis) fn established_agreement(&self) -> bool {
+        self.trusted_source && self.values_agree()
+    }
+
     pub(in crate::analysis) fn supports_pin(
         &self,
         index: &RustIndex,
@@ -316,10 +320,10 @@ impl DeletedGuardReturn {
 /// assertion on the owner's return can tell the guard's deletion apart on the
 /// inputs it handled, so an exact pin is no discriminator for it.
 ///
-/// This only ever withholds credit, so it reads more loosely than the
-/// admission in [`constant_tail_change`]: `Vec::new()` and `String::new()`
-/// read as empty values, and a possibly rebound `vec!` is not refused. It
-/// fails closed (keeps today's reading) on everything else:
+/// Equal folded values may withhold credit. A positive discriminator also
+/// requires trusted constructor, type and macro identities in both revisions,
+/// an input that takes the old guard and consistent exact comparisons on the
+/// resolved owner. The source shape refuses:
 ///
 /// - a probe that is not removed-only, or whose owner or file differ;
 /// - a candidate body that is not one constant tail (any statement, early
@@ -330,7 +334,7 @@ impl DeletedGuardReturn {
 /// - a deleted line that is not the base body's first statement, not a
 ///   guard with no `else` whose block is exactly one `return <constant>`,
 ///   or not the removed line the probe stands on;
-/// - constants that do not fold to the same value.
+/// - differing constants without a provable guard input and distinct values.
 pub(in crate::analysis) fn deleted_guard_return(
     probe: &Probe,
     owner: &FunctionSummary,
@@ -390,7 +394,11 @@ pub(in crate::analysis) fn deleted_guard_return(
     }
     let trusted_source = !base_may_rebind
         && !super::activation::macro_names_rebound(index, &TRUSTED_MACROS)
-        && base.old_text.split_once('{')?.0.trim() == base.new_text.split_once('{')?.0.trim();
+        && base.old_text.split_once('{')?.0.trim() == base.new_text.split_once('{')?.0.trim()
+        && (owner.file.ends_with("src/lib.rs") || owner.file.ends_with("src/main.rs"))
+        && guard_prelude_identity(new_source, base.new_first_line, &owner.name)
+        && crate::analysis::diff::reconstruct_old_source(new_source, changed)
+            .is_some_and(|old| guard_prelude_identity(&old, base.old_first_line, &owner.name));
     Some(DeletedGuardReturn {
         tail: tail_text,
         before_value: guard_value,
@@ -398,6 +406,43 @@ pub(in crate::analysis) fn deleted_guard_return(
         taken_argument,
         return_type,
         trusted_source,
+    })
+}
+
+/// The returned type and its constructor are resolved in each full source
+/// revision. A matching function signature alone does not give the old
+/// `Vec::new()` the candidate's prelude binding. External module bodies can
+/// export a macro into the root, even without `#[macro_use]`. A removed
+/// module body need not have a ChangedFile, so this proof stops at that edge.
+fn guard_prelude_identity(source: &str, line: usize, owner: &str) -> bool {
+    let Some(scopes) = crate::analysis::syntax::name_scopes_for_fn(source, line, owner) else {
+        return false;
+    };
+    let names = ["std", "Vec", "String", "vec", "bool"];
+    if scopes.scopes.iter().any(|scope| {
+        !scope.globs.is_empty()
+            || scope.block_globs
+            || names.iter().chain(INTEGER_SUFFIXES.iter()).any(|name| {
+                scope.defines.contains(*name)
+                    || scope.child_modules.contains(*name)
+                    || scope.block_binds(name)
+                    || scope.imports_of(name).any(|binding| {
+                        !matches!(binding, crate::analysis::syntax::UseBinding::Path(path)
+                            if (*name == "Vec" && path == &["std", "vec", "Vec"])
+                                || (*name == "String" && path == &["std", "string", "String"]))
+                    })
+            })
+    }) {
+        return false;
+    }
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    !parsed.tree().syntax().descendants().any(|node| {
+        ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_none())
+            || ast::Attr::can_cast(node.kind())
+            || ast::MacroCall::cast(node)
+                .is_some_and(|call| call.path().is_none_or(|path| path.syntax().text() != "vec"))
     })
 }
 
@@ -488,7 +533,8 @@ fn first_statement_return_guard(
 }
 
 /// [`fold`], plus a bare `Vec::new()` or `String::new()` read as the empty
-/// value. Used only where a match withholds credit.
+/// value. A positive comparison separately verifies the prelude bindings in
+/// both revisions before trusting these syntactic spellings.
 fn fold_agreement_value(expr: &ast::Expr) -> Option<Const> {
     if let ast::Expr::CallExpr(call) = expr
         && call.arg_list()?.args().next().is_none()
@@ -1658,7 +1704,7 @@ mod tests {
         };
         Ok(
             deleted_guard_return(&probe, &function, &changed_file, &index, &modules, false)
-                .filter(DeletedGuardReturn::values_agree),
+                .filter(DeletedGuardReturn::established_agreement),
         )
     }
 
@@ -1742,7 +1788,56 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn deleted_guard_prelude_names_are_resolved_in_the_whole_owner_module() -> Result<(), String> {
+        let owner = "pub fn pick(x: u32) -> Vec<u8> { vec![9] }";
+        for (prefix, trusted) in [
+            ("", true),
+            (
+                "struct Unrelated; fn other() {} mod sibling { pub struct Other; }",
+                true,
+            ),
+            ("use std::fmt::Debug;", true),
+            ("use std::vec::Vec;", true),
+            (
+                "mod std { pub mod vec { pub struct Vec; } } use std::vec::Vec;",
+                false,
+            ),
+            ("struct Vec<T>(T);", false),
+            ("type Vec<T> = pretend::Container<T>;", false),
+            ("use pretend::Container as Vec;", false),
+            ("use pretend::*;", false),
+            ("mod removed; use removed::Container as Vec;", false),
+            ("mod external;", false),
+            (
+                "mod sibling { #[macro_export] macro_rules! vec { () => {} } }",
+                false,
+            ),
+            ("include!(\"bindings.rs\");", false),
+        ] {
+            let source = format!("{prefix}\n{owner}");
+            if guard_prelude_identity(&source, 2, "pick") != trusted {
+                return Err(format!("unexpected guard prelude binding for {prefix:?}"));
+            }
+        }
+        Ok(())
+    }
+
     const GUARD: &str = "if x == 0 { return Vec::new(); }";
+
+    #[test]
+    fn deleted_guard_agreement_refuses_a_removed_nominal_empty_constructor() -> Result<(), String> {
+        let new = "pub fn pick(x: u32) -> Vec<u8> {\n    vec![]\n}\n";
+        let old = format!(
+            "pub fn pick(x: u32) -> Vec<u8> {{\n    {GUARD}\n    Vec::new()\n}}\nstruct Vec<T>(std::vec::Vec<T>);\nimpl Vec<u8> {{ fn new() -> Self {{ Self(vec![9]) }} }}\n"
+        );
+        if read_deleted_guard(&old, new, "pick", GUARD)?.is_some() {
+            return Err(
+                "the removed constructor returned [9], not the candidate's empty vector".into(),
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn deleted_guard_returning_the_remaining_tail_value_agrees() -> Result<(), String> {

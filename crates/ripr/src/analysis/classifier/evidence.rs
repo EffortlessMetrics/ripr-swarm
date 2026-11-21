@@ -2468,7 +2468,7 @@ impl ClassifiedProbeEvidence {
             && let Some(agreement) = context
                 .deleted_guard_return
                 .as_ref()
-                .filter(|guard| guard.values_agree())
+                .filter(|guard| guard.established_agreement())
         {
             StageEvidence::new(StageState::Weak, Confidence::Medium, agreement.summary())
         } else {
