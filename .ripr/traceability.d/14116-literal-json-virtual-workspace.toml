@@ -1,0 +1,10 @@
+# A virtual workspace whose literal member declares serde_json is eligible for the literal-JSON identity (#14116).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/workspace/assertion_dependency/json_eligibility_tests.rs::virtual_workspace_member_declaration_makes_the_root_eligible",
+]
+code = [
+  "crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs",
+  "crates/ripr/src/analysis/workspace/assertion_dependency.rs",
+]

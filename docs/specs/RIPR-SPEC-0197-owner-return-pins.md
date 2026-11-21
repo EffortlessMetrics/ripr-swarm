@@ -3929,7 +3929,11 @@ release is added by re-reading `src/macros.rs` at that version and extending
 `AUDITED_JSON_RELEASES`; persisted classifications key on the analyzer build
 identity, so no cache generation bump is needed.
 The analysis root must declare this dependency directly or in its workspace
-package table. Offline locked Cargo metadata must resolve one canonical package
+package table, or (#14116) be a workspace whose `members` list holds at most 64
+literal paths (no glob, no `..`, not absolute) and one of those members' own
+manifest declares it in `[dependencies]` or `[dev-dependencies]`. This only
+admits the metadata probe for a virtual workspace such as ripr's own; a member
+edit is re-read on every query. Offline locked Cargo metadata must resolve one canonical package
 and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
 conditional, path/git/alternate-registry and ambiguous edges refuse. This uses
 rule 7a's existing bounded metadata process and strict configuration snapshot;

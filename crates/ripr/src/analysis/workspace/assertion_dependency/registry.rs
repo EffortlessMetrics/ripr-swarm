@@ -648,8 +648,12 @@ impl RegistryIdentity {
     }
 }
 
-/// Initial scope: the analysis root declares serde_json itself or through its
-/// workspace dependency table. Other layouts remain unestablished.
+/// The analysis root declares serde_json itself or through its workspace
+/// dependency table, or (#14116) the root is a workspace whose literal
+/// `members` list names a package that declares it directly. Other layouts
+/// remain unestablished. Eligibility only admits the metadata probe; the
+/// per-file proof (`admits_file`) still reads the owning package's resolved
+/// edge.
 pub(crate) fn eligible_json_root(root: &Path) -> bool {
     eligible_root(root, "serde_json")
 }
@@ -662,7 +666,61 @@ pub(super) fn eligible_json_manifest_bytes(bytes: &[u8]) -> bool {
 fn eligible_root(root: &Path, crate_name: &str) -> bool {
     read_optional(&root.join("Cargo.toml"))
         .flatten()
-        .is_some_and(|b| eligible_manifest_bytes(&b, crate_name))
+        .is_some_and(|b| {
+            eligible_manifest_bytes(&b, crate_name) || member_declares(root, &b, crate_name)
+        })
+}
+
+/// Most workspace members a root's eligibility reads (#14116). A larger
+/// literal list stays unestablished rather than reading every manifest.
+const ELIGIBLE_MEMBER_LIMIT: usize = 64;
+
+/// Whether `root_manifest` is a `[workspace]` whose `members` list holds only
+/// literal paths (no glob character, no `..`), at most
+/// [`ELIGIBLE_MEMBER_LIMIT`] of them, and one of those members' own
+/// `Cargo.toml` declares `crate_name` in its `[dependencies]` or
+/// `[dev-dependencies]` (#14116). A virtual workspace such as ripr's own,
+/// whose root names no dependency, otherwise never reaches the metadata
+/// proof that `admits_file` reads per package.
+pub(super) fn member_declares(root: &Path, root_manifest: &[u8], crate_name: &str) -> bool {
+    let Some(members) = parse(root_manifest).and_then(|manifest| {
+        manifest
+            .get("workspace")?
+            .get("members")?
+            .as_array()
+            .cloned()
+    }) else {
+        return false;
+    };
+    if members.len() > ELIGIBLE_MEMBER_LIMIT {
+        return false;
+    }
+    let mut paths = Vec::with_capacity(members.len());
+    for member in &members {
+        let Some(member) = member.as_str() else {
+            return false;
+        };
+        if member.is_empty()
+            || member.contains(['*', '?', '[', ']', '{', '}', '\\'])
+            || Path::new(member).is_absolute()
+            || Path::new(member)
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return false;
+        }
+        paths.push(root.join(member).join("Cargo.toml"));
+    }
+    paths.iter().any(|manifest| {
+        read_optional(manifest)
+            .flatten()
+            .and_then(|bytes| parse(&bytes))
+            .is_some_and(|manifest| {
+                ["dependencies", "dev-dependencies"]
+                    .iter()
+                    .any(|key| manifest.get(key).and_then(|t| t.get(crate_name)).is_some())
+            })
+    })
 }
 
 fn eligible_manifest_bytes(bytes: &[u8], crate_name: &str) -> bool {

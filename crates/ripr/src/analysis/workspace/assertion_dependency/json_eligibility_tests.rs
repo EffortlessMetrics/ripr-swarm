@@ -163,3 +163,45 @@ fn memo_preserves_root_eligibility_boundaries() -> Result<(), Box<dyn std::error
     // ambient authority still belongs to verified_json_identity and its callers.
     Ok(())
 }
+
+/// #14116: a virtual workspace whose root names no dependency is eligible
+/// when a literal member declares `serde_json` directly, through both the
+/// memo and the plain root check. Globbed, escaping and non-declaring
+/// members, and a member edited away from the declaration, stay ineligible.
+#[test]
+fn virtual_workspace_member_declaration_makes_the_root_eligible()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let member = fixture.0.join("crates").join("app");
+    std::fs::create_dir_all(&member)?;
+    std::fs::write(member.join("Cargo.toml"), ELIGIBLE)?;
+    let memo = JsonRootEligibilityMemo::default();
+    // Premise: the root alone declares nothing.
+    fixture.write(b"[workspace]\nmembers = []\n")?;
+    assert!(!memo.eligible(&fixture.0));
+    assert!(!eligible_json_root(&fixture.0));
+    fixture.write(b"[workspace]\nmembers = [\"crates/app\"]\n")?;
+    assert!(memo.eligible(&fixture.0));
+    assert!(eligible_json_root(&fixture.0));
+    for root in [
+        &b"[workspace]\nmembers = [\"crates/*\"]\n"[..],
+        b"[workspace]\nmembers = [\"crates/../crates/app\"]\n",
+        b"[workspace]\nmembers = [\"crates/missing\"]\n",
+        b"[package]\nname = \"root\"\nversion = \"0.1.0\"\n",
+    ] {
+        fixture.write(root)?;
+        assert!(
+            !memo.eligible(&fixture.0),
+            "{}",
+            String::from_utf8_lossy(root)
+        );
+        assert!(!eligible_json_root(&fixture.0));
+    }
+    // A member edit is read on the next query although the root is unchanged.
+    fixture.write(b"[workspace]\nmembers = [\"crates/app\"]\n")?;
+    assert!(memo.eligible(&fixture.0));
+    std::fs::write(member.join("Cargo.toml"), INELIGIBLE)?;
+    assert!(!memo.eligible(&fixture.0));
+    assert!(!eligible_json_root(&fixture.0));
+    Ok(())
+}

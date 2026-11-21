@@ -27,16 +27,19 @@ impl JsonRootEligibilityMemo {
             return false;
         };
         let Ok(mut previous) = self.previous.lock() else {
-            return Self::counted_parse(&bytes);
+            return Self::counted_parse(&bytes)
+                || registry::member_declares(root, &bytes, "serde_json");
         };
         if let Some((old, verdict)) = previous.as_ref()
             && old == &bytes
         {
-            return *verdict;
+            return *verdict || registry::member_declares(root, &bytes, "serde_json");
         }
         let verdict = Self::counted_parse(&bytes);
-        *previous = Some((bytes, verdict));
-        verdict
+        *previous = Some((bytes.clone(), verdict));
+        // A member's manifest is outside the memo's key, so it is read on
+        // every query instead of reused (#14116).
+        verdict || registry::member_declares(root, &bytes, "serde_json")
     }
 
     fn counted_parse(bytes: &[u8]) -> bool {
