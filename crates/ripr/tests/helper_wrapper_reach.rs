@@ -1551,13 +1551,46 @@ fn unindexed_same_named_test_module_fn_is_caught_by_shadow_fallback() -> Result<
     Ok(())
 }
 
+const BYTESIZE_FORMATTER: &str = r#"pub const KB: u64 = 1_000;
+pub const KIB: u64 = 1_024;
+
+#[derive(Clone, Copy)]
+pub struct ByteSize(pub u64);
+
+impl ByteSize {
+    pub const fn kib(size: u64) -> Self {
+        ByteSize(size * KIB)
+    }
+
+    pub fn to_string_as(&self, si_unit: bool) -> String {
+        to_string(self.0, si_unit)
+    }
+}
+
+impl std::fmt::Display for ByteSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(&to_string(self.0, false))
+    }
+}
+
+pub fn to_string(bytes: u64, si_prefix: bool) -> String {
+    let unit = if si_prefix { KIB } else { KB };
+    if bytes <= unit {
+        format!("{} B", bytes)
+    } else {
+        format!("{} big", bytes / unit)
+    }
+}
+
+"#;
+
 // #9329: the bytesize shape. The owner has two direct callers (the method a
 // test helper reaches and a `Display::fmt` no test calls), the helper asserts
 // the method's result unchanged, and the boundary row arrives as a
 // const-constructor receiver.
 fn bytesize_source(helper_body: &str) -> String {
     format!(
-        "pub const KB: u64 = 1_000;\npub const KIB: u64 = 1_024;\n\n#[derive(Clone, Copy)]\npub struct ByteSize(pub u64);\n\nimpl ByteSize {{\n    pub const fn kib(size: u64) -> Self {{\n        ByteSize(size * KIB)\n    }}\n\n    pub fn to_string_as(&self, si_unit: bool) -> String {{\n        to_string(self.0, si_unit)\n    }}\n}}\n\nimpl std::fmt::Display for ByteSize {{\n    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {{\n        f.pad(&to_string(self.0, false))\n    }}\n}}\n\npub fn to_string(bytes: u64, si_prefix: bool) -> String {{\n    let unit = if si_prefix {{ KIB }} else {{ KB }};\n    if bytes <= unit {{\n        format!(\"{{}} B\", bytes)\n    }} else {{\n        format!(\"{{}} big\", bytes / unit)\n    }}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn assert_to_string(expected: &str, b: ByteSize, si: bool) {{\n        {helper_body}\n    }}\n\n    #[test]\n    fn test_to_string() {{\n        assert_to_string(\"215 B\", ByteSize(215), true);\n        assert_to_string(\"1 big\", ByteSize::kib(1), true);\n        assert_to_string(\"1 big\", ByteSize::kib(1), false);\n    }}\n}}\n"
+        "{BYTESIZE_FORMATTER}#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    fn assert_to_string(expected: &str, b: ByteSize, si: bool) {{\n        {helper_body}\n    }}\n\n    #[test]\n    fn test_to_string() {{\n        assert_to_string(\"215 B\", ByteSize(215), true);\n        assert_to_string(\"1 big\", ByteSize::kib(1), true);\n        assert_to_string(\"1 big\", ByteSize::kib(1), false);\n    }}\n}}\n"
     )
 }
 
@@ -1569,8 +1602,47 @@ fn bytesize_shape_asserting_the_method_result_is_exposed() -> Result<(), String>
     let finding = predicate_finding(&source, BYTESIZE_DIFF)?;
     assert_eq!(finding["classification"], "exposed", "{finding}");
     assert_eq!(
+        finding["ripr"]["infect"]["summary"], "Detected related test input at the changed boundary",
+        "{finding}"
+    );
+    assert_eq!(
         relation_of(&finding, "test_to_string"),
         Some("helper_owner_call"),
+        "{finding}"
+    );
+    Ok(())
+}
+
+#[test]
+fn bytesize_computed_input_diagnostic_names_bytes() -> Result<(), String> {
+    // Both calls select KIB. The caller computes the boundary-sized byte
+    // count in the second call.
+    let source = [
+        BYTESIZE_FORMATTER,
+        r#"#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_computed_bytes() {
+        assert_eq!(to_string(215, true), "215 B");
+        assert_eq!(to_string(512 * 2, true), "1 big");
+    }
+}
+"#,
+    ]
+    .concat();
+    let finding = predicate_finding(&source, BYTESIZE_DIFF)?;
+    assert_eq!(finding["probe"]["expression"], "bytes <= unit", "{finding}");
+    assert_eq!(
+        relation_of(&finding, "test_computed_bytes"),
+        Some("direct_owner_call"),
+        "{finding}"
+    );
+    assert_eq!(finding["classification"], "infection_unknown", "{finding}");
+    assert_eq!(
+        finding["ripr"]["infect"]["summary"],
+        "Changed boundary input is unresolved: a related test passes a computed argument for `bytes`, which is not an exact input value, so ripr cannot tell which side of the boundary that call reaches; activation/infection is unknown",
         "{finding}"
     );
     Ok(())
