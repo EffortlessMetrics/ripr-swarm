@@ -1478,6 +1478,81 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 }
 
 #[test]
+fn genre_keys_do_not_change_mutation_spot_check_ingest() -> Result<(), String> {
+    // Additive-v2 genre retention: a v2 receipt with genre cross-tabs ingests
+    // to exactly the same input (and samples) as the same receipt without them.
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+    });
+    let mut with_genre = receipt.clone();
+    with_genre["outcomes_by_disposition_and_genre"] =
+        json!({"canonical_precise": {"BinaryOperator": {"caught": 2}}});
+    with_genre["outcomes_by_grip_class_and_genre"] =
+        json!({"strongly_gripped": {"BinaryOperator": {"caught": 2}}});
+    with_genre["genre_outcomes_by_language"] = json!({"rust": {
+        "outcomes_by_disposition_and_genre": with_genre["outcomes_by_disposition_and_genre"].clone(),
+        "outcomes_by_grip_class_and_genre": with_genre["outcomes_by_grip_class_and_genre"].clone(),
+    }});
+    with_genre["repos"][0]["outcomes_by_disposition_and_genre"] =
+        json!({"canonical_precise": {"BinaryOperator": {"caught": 2}}});
+    with_genre["repos"][0]["outcomes_by_grip_class_and_genre"] =
+        json!({"strongly_gripped": {"BinaryOperator": {"caught": 2}}});
+    with_genre["synthetic_diff_verdict"] = json!({
+        "outcomes_by_disposition_and_genre": {"canonical_precise": {"EqualityOperator": {"caught": 1}}},
+        "outcomes_by_grip_class_and_genre": {"strongly_gripped": {"EqualityOperator": {"caught": 1}}},
+    });
+    assert_eq!(
+        mutation_spot_check_to_input(&with_genre)?,
+        mutation_spot_check_to_input(&receipt)?
+    );
+    let config = load_config(&committed_config())?;
+    let without = parse_ingest(&receipt, &config)?;
+    let with = parse_ingest(&with_genre, &config)?;
+    assert_eq!(with.len(), without.len());
+    for (a, b) in with.iter().zip(&without) {
+        assert_eq!(a.metric, b.metric);
+        assert_eq!(a.detail, b.detail);
+    }
+    Ok(())
+}
+
+#[test]
+fn checked_in_spot_check_receipt_still_yields_its_recorded_figures() -> Result<(), String> {
+    let receipt: Value = serde_json::from_str(include_str!(
+        "../../../../metrics/public-proof/mutation-spot-check.json"
+    ))
+    .map_err(|err| err.to_string())?;
+    assert_eq!(receipt["schema_version"], "ripr-mutation-spot-check-v2");
+    // Genre keys are additive in v2: whether the checked-in receipt has
+    // been refreshed to carry them or not, its recorded figures stand.
+    assert_eq!(receipt["recall_of_missed"]["ungripped_missed"], 34);
+    assert_eq!(receipt["recall_of_missed"]["missed_total"], 322);
+    assert_eq!(
+        receipt["recall_of_missed"]["flagged_or_unknown_missed"],
+        189
+    );
+    assert_eq!(receipt["seam_coverage"]["no_containing_seam"], 843);
+    assert_eq!(receipt["seam_coverage"]["mutants_total"], 1745);
+    // It still ingests, and adding genre keys changes no ingested metric.
+    let plain = mutation_spot_check_to_input(&receipt)?;
+    let mut with_genre = receipt.clone();
+    with_genre["outcomes_by_disposition_and_genre"] =
+        json!({"canonical_precise": {"BinaryOperator": {"caught": 1}}});
+    assert_eq!(mutation_spot_check_to_input(&with_genre)?, plain);
+    Ok(())
+}
+
+#[test]
 fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<(), String> {
     // Slack is max(baseline * regression_pct/100, regression_floor) from the
     // committed first_run.install_seconds row. Hard-coding 158 s / 170 s here
