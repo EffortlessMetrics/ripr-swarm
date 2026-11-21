@@ -18,6 +18,15 @@ through the TypeScript-family adapter.
 Run `cargo xtask fixtures javascript_mock_count_arguments` to exercise the analyzer.
 The honesty corpus must reject a contradictory re-bless.
 
+Runtime truth was executed with Node v26.5.0, using
+`node --test test/notify.test.js` from `input/`.
+Both equivalent spellings pass. Replacing the send argument with `id + 1`
+gives 5 for `notify(4)` and fails the argument assertion, after the module
+loads and the test runs.
+This is an executed wrong-value control, separate from RIPR static evidence.
+It is where the 5 in 8 versus 5 comes from: neither committed spelling
+(`id * 2` or `2 * id`) sends 5.
+
 ## Then
 
 The one anchored SideEffect finding remains `exposed`: the recorded argument
