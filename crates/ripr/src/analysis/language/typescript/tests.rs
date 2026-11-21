@@ -22024,13 +22024,31 @@ fn alias_load_gap_types_distinguish_flag_on_failures() -> Result<(), String> {
         })
     );
 
-    // Parsed config but no baseUrl is incomplete, not unparseable.
+    // `paths` without `baseUrl` is a valid config (#12760).
     ts_write_file(
         &root.join("tsconfig.json"),
         "{ \"compilerOptions\": { \"paths\": { \"@/*\": [\"./src/*\"] } } }\n",
     )?;
     let (map, err, gap) = load_alias_map_with_read_error(&root);
+    assert!(map.is_some() && err.is_none() && gap.is_none());
+
+    // A parsed config with neither `paths` nor `baseUrl` is incomplete, not
+    // unparseable, and its advice does not ask for a `baseUrl`.
+    ts_write_file(
+        &root.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"strict\": true } }\n",
+    )?;
+    let (map, err, gap) = load_alias_map_with_read_error(&root);
     assert!(map.is_none() && err.is_none());
+    let (why, recovery) = TsAliasMapLoadGap::IncompleteConfig {
+        config: "tsconfig.json",
+    }
+    .parts();
+    assert!(why.contains("sets no compilerOptions.paths"), "{why}");
+    assert!(
+        recovery.contains("add a compilerOptions.paths entry") && recovery.contains("`./`"),
+        "{recovery}"
+    );
     assert_eq!(
         gap,
         Some(TsAliasMapLoadGap::IncompleteConfig {

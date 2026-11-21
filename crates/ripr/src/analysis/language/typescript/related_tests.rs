@@ -7745,8 +7745,8 @@ mod module_extension_tests {
 mod nested_config_withhold_tests {
     //! Per-package resolution (#12754): an importer whose nearest
     //! `tsconfig.json` / `jsconfig.json` declares its own `paths` resolves
-    //! through that config, never the workspace-root map; a `paths` config
-    //! without `baseUrl` stays withheld until #12760 lands. No expect/unwrap: every fallible step maps its error
+    //! through that config, never the workspace-root map, with or without a
+    //! `baseUrl` (#12760). No expect/unwrap: every fallible step maps its error
     //! into the `String` verdict (no-panic-family policy).
     use super::super::tsconfig::load_alias_map;
     use super::*;
@@ -8009,7 +8009,11 @@ mod nested_config_withhold_tests {
     /// the root map does not own still resolves through the package table.
     #[test]
     fn unavailable_package_config_keeps_workspace_package_names() -> Result<(), String> {
-        let root = disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#)?;
+        // A package-name base could supply the `baseUrl` that anchors these
+        // templates, so the config cannot be compiled exactly.
+        let root = disagreeing_fixture(
+            r#"{"extends":"@acme/tsconfig","compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        )?;
         write(
             &root,
             "packages/util/package.json",
@@ -8043,8 +8047,9 @@ mod nested_config_withhold_tests {
         }
         // A package-name key in the unusable package config shadows the
         // workspace package: the import stays unresolved.
-        let root =
-            disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@acme/*":["./local/*"]}}}"#)?;
+        let root = disagreeing_fixture(
+            r#"{"extends":"@acme/tsconfig","compilerOptions":{"paths":{"@acme/*":["./local/*"]}}}"#,
+        )?;
         write(
             &root,
             "packages/util/package.json",
@@ -8097,12 +8102,12 @@ mod nested_config_withhold_tests {
         }
     }
 
-    /// A nested config with `paths` but NO `baseUrl` still declares (TS 4.1+,
-    /// #12760: `./`-relative templates resolve against the declaring config),
-    /// so the withhold applies there too — no reintroduced `baseUrl`
-    /// requirement.
+    /// A nested config with `paths` but NO `baseUrl` (TS 4.1+, #12760)
+    /// resolves its `./`-relative templates against its own directory, so
+    /// `@/owner` from package a names the package's file, never the
+    /// same-named root `shared/owner`.
     #[test]
-    fn root_map_withheld_under_nested_config_without_base_url() -> Result<(), String> {
+    fn nested_config_without_base_url_resolves_to_the_package_owner() -> Result<(), String> {
         let root = disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#)?;
         let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
         // Absolute importer spelling exercises the same walk as the
@@ -8111,15 +8116,33 @@ mod nested_config_withhold_tests {
         let resolved =
             normalized_relative_import_module(&importer, "@/owner", Some(&map), Some(&root));
         cleanup(&root);
-        match resolved {
-            Some(module) if module == "packages/a/src/owner" => Err(
-                "full per-package resolution is out of scope: the safeguard withholds, never remaps"
-                    .to_string(),
-            ),
-            Some(module) => Err(format!(
-                "@/owner from package a must not resolve through the root map, got {module} (wrong owner)"
+        match resolved.as_deref() {
+            Some("packages/a/src/owner") => Ok(()),
+            other => Err(format!(
+                "@/owner from package a must resolve to the package owner, got {other:?}"
             )),
+        }
+    }
+
+    /// `tsc` rejects a non-relative template when no `baseUrl` is set
+    /// (TS5090). The nested key still owns the import: it stays unresolved
+    /// and is never handed to the root map.
+    #[test]
+    fn nested_non_relative_template_without_base_url_stays_withheld() -> Result<(), String> {
+        let root = disagreeing_fixture(r#"{"compilerOptions":{"paths":{"@/*":["src/*"]}}}"#)?;
+        let map = load_alias_map(&root).ok_or("root tsconfig must load")?;
+        let resolved = normalized_relative_import_module(
+            Path::new("packages/a/src/consumer.test.ts"),
+            "@/owner",
+            Some(&map),
+            Some(&root),
+        );
+        cleanup(&root);
+        match resolved {
             None => Ok(()),
+            Some(module) => Err(format!(
+                "a template tsc rejects must not resolve anywhere, got {module}"
+            )),
         }
     }
 

@@ -73,11 +73,28 @@ OFF preserved the existing conservative behavior; the amendment above flips it t
 `root/tsconfig.json` then `root/jsconfig.json`. It is **fail-closed** on
 every ambiguity:
 
-- Missing file, JSONC parse error, or missing `compilerOptions.baseUrl` â†’ `None`.
+- Missing file, JSONC parse error, or a config chain that sets neither `compilerOptions.baseUrl` nor `compilerOptions.paths` â†’ `None`.
 - `references` present fails closed. `extends` chains are followed up to 8 hops when every target is a relative (`./`, `../`) path naming a regular, non-symlinked file inside the workspace root (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration, anchored at the directory of the config that declares it (as `tsc` resolves an inherited `baseUrl`). `paths` templates resolve against that anchored `baseUrl`. A `baseUrl` with `..` segments is accepted when its anchored location stays inside the workspace; one that escapes it or is absolute keeps the named limitation. A target without a `.json` suffix tries `<target>.json` first, as `tsc` does. An explicit `null` `baseUrl` or `paths` clears the inherited value. Package-name bases, bases outside the root or reached through a symlinked file or directory, cycles (at any depth), over-deep chains, and missing or invalid targets fail closed, except that an unfollowable base (never a cycle) is ignored when the extending config itself declares a non-null `baseUrl` and `paths`, because nothing it could inherit changes alias resolution.
 - Empty or multi-entry `paths` value array, or a template with more than one
   `*` â†’ retain the literal/single-wildcard key as an unresolved blocker. A
   broader alias must not take over the blocked key's imports.
+
+Amendment (#12760): `paths` without an effective `baseUrl` is a valid config
+(`tsc` 4.1 and later; the create-next-app default). Its templates resolve
+against the directory of the config that DECLARES `paths`, the selected config
+or the `extends` base it was inherited from. `tsc` rejects a template that is
+not relative in that case (TS5090), so a template that does not start with
+`./` or `../` retains its key as an unresolved blocker: the import stays
+unresolved and cannot fall through to a broader alias or a workspace package.
+An explicit `baseUrl`, own or inherited, anchors the templates exactly as
+before. A config that declares `paths` without `baseUrl` is not
+self-sufficient: an `extends` base the loader cannot follow could supply the
+`baseUrl`, so that chain still fails closed. The map records the config files
+it was compiled from (the selected config and the bases it followed, minus a
+base whose own `paths` were replaced); extraction-gap scoping in
+`gap_reach.rs` exempts only those, so a sibling `tsconfig.spec.json` or the
+unselected `jsconfig.json` that remaps resolution keeps
+`typescript_test_extraction_partial` disclosed.
 
 `TsAliasMap::resolve(specifier) -> Option<PathBuf>` returns a workspace-
 relative path ONLY when ALL of:
@@ -125,8 +142,7 @@ through a relative in-root `extends` chain, or cannot be read or parsed. The
 package map follows the same rules as the root map (single-`*`, one candidate,
 unique file, no `..`/absolute), anchors `baseUrl` at the directory of the config that declares it (#11204),
 and shares the workspace-package table. It fails closed (unresolved, with the
-existing `typescript_path_alias_unresolved` disclosure, whose cause names the package config) when the config has no
-`baseUrl` (own or inherited) (#12760), uses `references` or an `extends`
+existing `typescript_path_alias_unresolved` disclosure, whose cause names the package config) when the config uses `references` or an `extends`
 form the loader cannot follow, is unreadable or invalid, or when `tsconfig.json` and
 `jsconfig.json` in one directory both own `paths`; a specifier that neither the root map
 nor the unusable package config's own `paths` keys claim (a workspace package
@@ -228,7 +244,7 @@ The longest-prefix rule follows the TypeScript
 ### Alias resolution scope
 
 Resolution is file-only: `load_alias_map` reads
-`compilerOptions.baseUrl` and `compilerOptions.paths` from the first of
+`compilerOptions.baseUrl` (optional, #12760) and `compilerOptions.paths` from the first of
 `tsconfig.json` / `jsconfig.json` found at the workspace root, merged
 over its `extends` chain under the limits above. It does
 NOT follow `references`; per-package configs are resolved per importer as described in the #12754 amendment above.
