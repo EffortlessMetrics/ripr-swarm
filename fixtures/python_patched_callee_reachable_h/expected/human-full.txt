@@ -1,7 +1,7 @@
 ripr static RIPR exposure analysis
 mode: fast
-root: fixtures/python_patched_callee_reachable_unrevealed/input
-config: <cwd>/fixtures/python_patched_callee_reachable_unrevealed/input/ripr.toml
+root: fixtures/python_patched_callee_reachable_h/input
+config: <cwd>/fixtures/python_patched_callee_reachable_h/input/ripr.toml
 
 Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 1 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
@@ -50,7 +50,7 @@ Weakness
   - Every related Python test replaces `rate_for` with a stand-in (patch or monkeypatch), so none of them runs the changed code; add a test that calls `rate_for` without patching it and asserts its result
 Drill in:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/python_patched_callee_reachable_unrevealed/input --diff <cwd>/fixtures/python_patched_callee_reachable_unrevealed/diff.patch --mode fast probe:src_subject.py:python_preview:e11cb804
-  ripr context --root <cwd>/fixtures/python_patched_callee_reachable_unrevealed/input --diff <cwd>/fixtures/python_patched_callee_reachable_unrevealed/diff.patch --mode fast --at probe:src_subject.py:python_preview:e11cb804
+  ripr explain --root <cwd>/fixtures/python_patched_callee_reachable_h/input --diff <cwd>/fixtures/python_patched_callee_reachable_h/diff.patch --mode fast probe:src_subject.py:python_preview:e11cb804
+  ripr context --root <cwd>/fixtures/python_patched_callee_reachable_h/input --diff <cwd>/fixtures/python_patched_callee_reachable_h/diff.patch --mode fast --at probe:src_subject.py:python_preview:e11cb804
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
