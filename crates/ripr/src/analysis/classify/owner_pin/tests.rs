@@ -14487,6 +14487,22 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
         ),
         ("container-glob", format!("{glob}use super::*;\n{bare}")),
         ("qualified-with-prelude", format!("{glob}{qualified}")),
+        // A plain trait import inside the property binds only for its body.
+        (
+            "plain-use-in-body",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use std::ops::Add; assert_eq!(x.add(0), x); }} }}\n"
+            ),
+        ),
+        // Nested audited wrappers spelled under the verified `proptest` root.
+        (
+            "qualified-nested-wrapper",
+            "proptest::proptest! { #[test] fn p(v in proptest::collection::vec(proptest::prop_oneof![proptest::strategy::Just(vec![1u8])], 0..3)) { proptest::prop_assert!(v.len() < 3); assert_eq!(v.len(), v.len()); } }\n".to_string(),
+        ),
+        (
+            "external-nested-wrapper",
+            "::proptest::proptest! { #[test] fn p(v in ::proptest::prop_oneof![::proptest::strategy::Just(vec![1u8])]) { ::proptest::prop_assert_eq!(v, vec![1u8]); } }\n".to_string(),
+        ),
         (
             "inert-attributes",
             format!(
@@ -14595,6 +14611,35 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
             ),
         ),
         ("imported-attribute", format!("use other::test;\n{glob}{bare}")),
+        // A `use` in the body that globs, or names a wrapper, can redirect a
+        // nested call the confinement trusts by name.
+        (
+            "glob-use-in-body",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use other::*; prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "wrapper-use-in-body",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use other::prop_assert; prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "unterminated-use-in-body",
+            format!("{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ assert_eq!(x, x) }} use other::m }}\n"),
+        ),
+        // Only the `proptest` root is the audited crate's path.
+        (
+            "crate-qualified-nested-wrapper",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ crate::prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "nested-qualified-root-imported",
+            "use other::proptest;\n::proptest::proptest! { #[test] fn p(x in 0u8..3) { proptest::prop_assert!(assert_eq); } }\n".to_string(),
+        ),
     ] {
         assert!(
             prelude_rebound(at(label, &audited, &sibling)?),
