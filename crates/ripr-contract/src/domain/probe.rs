@@ -712,22 +712,37 @@ pub const MISSING_DISCRIMINATOR_VALUE_PREFIX: &str = "Missing check value: ";
 /// [`Finding::is_unreferenced_no_static_path`] reads it back (#14820).
 pub const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
 
+/// The identity parts behind a finding's `canonical_gap_id`: a stable,
+/// language-qualified name for a behavioral gap that does not rely on line
+/// numbers alone. The parts are an identity, not a claim that the gap is
+/// established.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FindingCanonicalGap {
+    /// The canonical gap id, such as
+    /// `gap:<language>:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`.
     pub id: String,
+    /// The language token in the id, such as `rust` or `python`.
     pub language: String,
+    /// The file the gap is in, as the id spells it.
     pub file: String,
+    /// The owner the gap belongs to.
     pub owner: String,
+    /// The kind of behavior the gap is about.
     pub behavior_kind: String,
+    /// The kind of probe the gap was found by.
     pub probe_kind: String,
+    /// The discriminator the gap is keyed on, in normalized form.
     pub normalized_discriminator: String,
 }
 
+/// Values related tests were seen to use, and discriminators no related test
+/// was seen to supply. Static evidence about test inputs, not execution.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActivationEvidence {
     /// Historical field name for source values; see ValueFact's non-execution
     /// contract. Oracle observation remains a separate admitted stage.
     pub observed_values: Vec<ValueFact>,
+    /// Discriminating values or checks no related test was seen to supply.
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
 }
 
@@ -736,13 +751,22 @@ pub struct ActivationEvidence {
 /// and the preview card reads it, so both stay in step (#12463).
 pub const STRONG_CHECK_UNTIED_NEXT_STEP: &str = "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.";
 
+/// One test ripr related to a finding's changed behavior, with the oracle it
+/// uses. Relating a test is static evidence; it does not mean the test runs
+/// the changed code.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedTest {
+    /// The test's name.
     pub name: String,
+    /// The file the test is in.
     pub file: PathBuf,
+    /// The line the test starts on.
     pub line: usize,
+    /// The assertion text ripr read as this test's oracle, when it found one.
     pub oracle: Option<String>,
+    /// What kind of oracle the assertion is.
     pub oracle_kind: OracleKind,
+    /// How strongly the oracle could discriminate the change.
     pub oracle_strength: OracleStrength,
     /// Why this test was related to the probe. `None` when the match origin
     /// is unknown (legacy callers). `Some` for all diff-check findings that
@@ -819,6 +843,7 @@ pub enum RelatedTestRole {
 }
 
 impl RelatedTestRole {
+    /// The snake_case wire token for this role.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Contributing => "contributing",
@@ -937,6 +962,7 @@ pub enum RelatedTestMiss {
 }
 
 impl RelatedTestMiss {
+    /// The snake_case wire token for this miss.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NoCallPath => "no_call_path",
@@ -1270,10 +1296,16 @@ impl Finding {
             .max(self.related_tests.len())
     }
 
+    /// Whether this finding meets the stop-reason rule: true when its class
+    /// needs no stop reason (only the `*_unknown` classes do), or when at
+    /// least one stop reason is recorded.
     pub fn unknown_has_stop_reason(&self) -> bool {
         !self.class.requires_stop_reason() || !self.stop_reasons.is_empty()
     }
 
+    /// The stop reasons to report: the recorded ones, or the generic reason
+    /// from [`StopReason::for_unknown_class`] when an unknown-class finding
+    /// has none recorded.
     pub fn effective_stop_reasons(&self) -> Vec<StopReason> {
         if self.unknown_has_stop_reason() {
             return self.stop_reasons.clone();
