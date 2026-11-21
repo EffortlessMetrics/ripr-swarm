@@ -197,6 +197,10 @@ pub(in crate::analysis) fn missing_evidence(
 /// match is on the written text only; anything else keeps its generic reason.
 pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
     let text = expression.trim_start();
+    // #15933: `compile_error!(..)` is the build-time refusal itself.
+    if crate::analysis::probes::is_compile_error_line(text) {
+        return true;
+    }
     if let Some(rest) = text.strip_prefix("const _") {
         let Some((_, value)) = rest.split_once('=') else {
             return false;
@@ -331,6 +335,7 @@ pub(in crate::analysis) fn stop_reasons(
         }
     } else if probe.family == ProbeFamily::StaticUnknown
         && (crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+            || crate::analysis::probes::is_compile_error_line(&probe.expression)
             || (probe.after.is_some()
                 && owner_fn
                     .is_some_and(|owner| in_owner_const_assertion(owner, probe.location.line))))

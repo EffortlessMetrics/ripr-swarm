@@ -24,6 +24,11 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if is_inline_const_assertion(text, &masked) {
         return vec![ProbeFamily::StaticUnknown];
     }
+    // #15933: `compile_error!(..)` stops the build. No test runs past it, so
+    // it is no call to delete and writes no log line.
+    if is_compile_error_invocation(&masked) {
+        return vec![ProbeFamily::StaticUnknown];
+    }
     if is_constant_declaration(&masked) {
         return classify_constant_declaration(&masked);
     }
@@ -977,6 +982,111 @@ pub(crate) fn is_inline_const_assertion_line(text: &str) -> bool {
     is_inline_const_assertion(text, &mask_comments_and_strings(text))
 }
 
+/// #15933: whether a changed line starts with a `compile_error!` invocation
+/// and holds nothing else, the same reading `classify_changed_line` uses to
+/// withhold runtime families.
+pub(crate) fn is_compile_error_line(text: &str) -> bool {
+    is_compile_error_invocation(&mask_comments_and_strings(text.trim_start()))
+}
+
+/// Masked text that is one `compile_error!` invocation: the macro, bare or
+/// under `core::`/`std::`, its arguments in any delimiter, and at most a
+/// closing `;`. The arguments may still be open at the end of the text (a
+/// message split over lines). Code after the invocation (`compile_error!("x");
+/// f(a) > 3;`) keeps the line's ordinary reading.
+fn is_compile_error_invocation(masked: &str) -> bool {
+    let Some(tail) = compile_error_arguments(masked.trim()) else {
+        return false;
+    };
+    match closing_delimiter(tail) {
+        Some(close) => {
+            let rest = tail[close + 1..].trim();
+            rest.is_empty() || rest == ";"
+        }
+        None => true,
+    }
+}
+
+/// The text from the opening delimiter of a `compile_error!` invocation that
+/// starts `masked`, or `None` when `masked` starts with anything else
+/// (`my::compile_error!`, `compile_errors!`).
+fn compile_error_arguments(masked: &str) -> Option<&str> {
+    let name = ["::core::", "::std::", "core::", "std::"]
+        .iter()
+        .find_map(|path| masked.strip_prefix(path))
+        .map_or(masked, str::trim_start);
+    let call = name
+        .strip_prefix("compile_error")?
+        .trim_start()
+        .strip_prefix('!')?
+        .trim_start();
+    call.starts_with(['(', '[', '{']).then_some(call)
+}
+
+/// Byte offset of the delimiter that closes the one `text` opens with.
+fn closing_delimiter(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// #15933: 1-based lines of `source` taken up by a `compile_error!`
+/// invocation, on one line or split over several. The invocation must start
+/// its line and nothing but `;` may follow it on its last line, so code
+/// sharing either line keeps its own reading.
+pub(crate) fn compile_error_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let mut lines = std::collections::BTreeSet::new();
+    if !source.contains("compile_error") {
+        return lines;
+    }
+    let masked = mask_comments_and_strings(source);
+    let mut offset = 0;
+    let mut open_until: Option<usize> = None;
+    for (index, line) in masked.split('\n').enumerate() {
+        let start = offset;
+        offset += line.len() + 1;
+        if let Some(end) = open_until {
+            lines.insert(index + 1);
+            if end < offset {
+                open_until = None;
+            }
+            continue;
+        }
+        let trimmed = line.trim_start();
+        let Some(arguments) = compile_error_arguments(trimmed) else {
+            continue;
+        };
+        let arguments_at = start + line.len() - arguments.len();
+        let Some(close) = closing_delimiter(&masked[arguments_at..]) else {
+            continue;
+        };
+        let close = arguments_at + close;
+        let close_line_end = masked[close..]
+            .find('\n')
+            .map_or(masked.len(), |newline| close + newline);
+        let rest = masked[close + 1..close_line_end].trim();
+        if !(rest.is_empty() || rest == ";") {
+            continue;
+        }
+        lines.insert(index + 1);
+        if close >= offset {
+            open_until = Some(close);
+        }
+    }
+    lines
+}
+
 /// #14181: 1-based lines of `source` inside an inline const block that holds
 /// only an assertion macro, on one line or split by rustfmt
 /// (`const {` / `assert!(N <= 249);` / `};`, its arguments split too). The
@@ -1155,6 +1265,60 @@ fn is_inline_const_assertion(text: &str, masked: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compile_error_selects_no_runtime_family() {
+        for line in [
+            "compile_error!(\"Features process,signal are not supported.\");",
+            "    compile_error!(\"no\")",
+            "core::compile_error!(\"no\");",
+            "::std::compile_error!{\"no\"}",
+            "compile_error ! [\"a > b\"];",
+            "compile_error!(",
+            "compile_error!(concat!(\"a\", \"b\"));",
+        ] {
+            assert_eq!(
+                classify_changed_line(line),
+                vec![ProbeFamily::StaticUnknown],
+                "{line}"
+            );
+            assert!(is_compile_error_line(line), "{line}");
+        }
+        // Another macro, or code sharing the line, keeps its ordinary reading.
+        for line in [
+            "my::compile_error!(\"no\");",
+            "compile_errors!(\"no\");",
+            "compile_error!(\"no\"); notify(user);",
+            "notify(user); compile_error!(\"no\");",
+        ] {
+            assert_ne!(
+                classify_changed_line(line),
+                vec![ProbeFamily::StaticUnknown],
+                "{line}"
+            );
+            assert!(!is_compile_error_line(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn compile_error_lines_cover_a_split_invocation_only() {
+        let source = "\
+#[cfg(feature = \"a\")]
+compile_error!(\"one line\");
+fn keep() { notify(user); }
+#[cfg(feature = \"b\")]
+compile_error!(
+    \"split ) over\",
+    \" lines\"
+);
+compile_error!(\"shared\"); notify(user);
+// compile_error!(\"comment\");
+";
+        assert_eq!(
+            compile_error_lines(source).into_iter().collect::<Vec<_>>(),
+            vec![2, 5, 6, 7, 8]
+        );
+    }
 
     #[test]
     fn inline_const_assertion_selects_no_runtime_family() {
