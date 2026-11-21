@@ -1,6 +1,6 @@
 # PyPI and npm distribution plan
 
-Status: implementation proposal, not an installation or release announcement.
+Status: packaging and qualification plan for the selected 0.11 alpha adapters.
 The live acceptance graph is [swarm #4487](https://github.com/EffortlessMetrics/ripr-swarm/issues/4487).
 For account and namespace setup, use the
 [registry claim guide](how-to/claim-package-registries.md).
@@ -18,18 +18,20 @@ next step, not merely pass `--version`.
 | PyPI distribution | `ripr-rs` |
 | npm launcher | `@effortlessmetrics/ripr` |
 
-These names are design inputs, not verified reservations. Python/npm packages
-are distribution adapters, not new Rust crates or language-specific analyzers.
+The [0.11 scope decision](https://github.com/EffortlessMetrics/ripr-swarm/issues/2766#issuecomment-7039260840)
+selects both packages as alpha distribution adapters for the native CLI.
+Confirm package availability and supported targets from each public channel
+before documenting an install command.
 No Python SDK or `import ripr` API is proposed.
 
 Development and credential-free rehearsal belong in `ripr-swarm`. Public
 publication belongs only in `EffortlessMetrics/ripr`, following the existing
 [release authority](RELEASE.md) and [release transaction](RELEASE_TRANSACTION.md).
-This work selects no release version and adds no automatic 0.11 release blocker.
-A merged planning document does not authorize settings, staging, publication,
-credentials, tags or support-tier promotion.
+The [0.11 selection packet](../policy/release-selection.json) requires
+frozen-candidate qualification for both adapters (#4493, #4624, #4627, #4632,
+#9274). Publication requires a separate source-owner decision.
 
-## Work to implement
+## Implementation and qualification owners
 
 | Work | Issue | Dependency |
 | --- | --- | --- |

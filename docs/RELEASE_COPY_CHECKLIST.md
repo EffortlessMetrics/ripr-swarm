@@ -118,8 +118,18 @@ questions, not new wording, heading, or badge-count gates.
 - [ ] Server archive checksums match the manifest.
 - [ ] Trigger dependent marketplace and crates.io publication only after verifying
       the GitHub Release assets. Dependent workflows must consume the right set.
-- [ ] `publish-extension.yml` uses the rebuilt VSIX, not an older artifact attached
-      to the same release.
+- [ ] For the first marketplace channel, check the release VSIX's catalog and
+      record the digest of the file attached to the release. For the second
+      channel, verify the attached bytes against that digest and the same
+      catalog. See the [release transaction](RELEASE_TRANSACTION.md).
+- [ ] The 0.11 draft names both selected alpha adapters, PyPI `ripr-rs` and npm
+      `@effortlessmetrics/ripr`. Check the frozen-candidate installs, wheelhouse,
+      isolated npm registry, and same-target archive/wheel/npm payloads in the
+      [selection packet](../policy/release-selection.json) against the actual
+      candidate and advertised targets. Keep analyzer support claims separate.
+- [ ] Before adding a registry install command, confirm its package name,
+      published version or dist-tag, and installed result on that channel under
+      the [source release authority](RELEASE_TRANSACTION.md#channels-outside-channel_order).
 
 ## When something slips
 
