@@ -4847,6 +4847,95 @@ fn loop_boundary_none_seeded_selector_is_infection_unknown() -> Result<(), Strin
 }
 
 #[test]
+fn loop_boundary_infinity_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = float("-inf")` (`"inf"` for a minimum) takes the first finite
+    // element under either operator, then compares the rest like the `xs[0]`
+    // forms, so equal integers select an equal value under either operator.
+    for (seed, before, after, expected) in [
+        (
+            "    best = float(\"-inf\")",
+            "        if x > best:",
+            "        if x >= best:",
+            5,
+        ),
+        (
+            "    best = float('-inf')",
+            "        if x >= best:",
+            "        if x > best:",
+            5,
+        ),
+        (
+            "    best = float(\"inf\")",
+            "        if x < best:",
+            "        if x <= best:",
+            1,
+        ),
+    ] {
+        let source = format!(
+            "def largest(xs):\n{seed}\n    for x in xs:\n{after}\n            best = x\n    return best\n"
+        );
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 4, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{seed}: {before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_infinity_seed_needs_its_own_sign_and_shape() -> Result<(), String> {
+    let edit = ("        if x > best:", "        if x >= best:");
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    for (label, source) in [
+        // Shapes outside the matcher keep their prior reading: a maximum
+        // seeded with `+inf`,
+        (
+            "wrong sign",
+            "def largest(xs):\n    best = float(\"inf\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
+        // a finite float seed, which can equal an element,
+        (
+            "finite seed",
+            "def largest(xs):\n    best = float(\"0\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
+        // and an infinity seed with a sliced loop that skips `xs[0]`.
+        (
+            "sliced loop",
+            "def largest(xs):\n    best = float(\"-inf\")\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
+        // A space inside the literal is not an infinity (`float("- inf")`
+        // raises), so the seed line is matched exactly.
+        (
+            "spaced literal",
+            "def largest(xs):\n    best = float(\"- inf\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
+    ] {
+        let finding = classify_edit_case(source, tests, 4, edit.0, edit.1)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // Identity still tells `>` from `>=` on equal keys.
+    let source = "def largest(xs):\n    best = float(\"-inf\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > getattr(other, 'key', other)\n    def __ge__(self, other):\n        return self.key >= getattr(other, 'key', other)\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(source, identity, 4, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "identity: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_none_guard_needs_its_own_seed_and_shape() -> Result<(), String> {
     let edit = (
         "        if best is None or x > best:",
