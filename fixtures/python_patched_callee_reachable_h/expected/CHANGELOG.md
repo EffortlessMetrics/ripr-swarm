@@ -22,3 +22,13 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending - python_patched_callee_reachable_h (3)
+
+Reason:
+RIPR-SPEC-0108 rename to avoid collision with the standalone reachable_unrevealed golden; root paths only, classification unchanged
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
