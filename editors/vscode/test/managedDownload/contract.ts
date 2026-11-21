@@ -1,10 +1,31 @@
 import * as assert from 'assert';
+import * as fs from 'fs';
+import * as path from 'path';
 import { createHash } from 'crypto';
 
 export const TARGET = 'x86_64-unknown-linux-gnu';
 export const CASES = ['valid', 'manifest_tampered', 'archive_tampered'] as const;
 export type DownloadCase = typeof CASES[number];
 export const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+
+// On Linux VS Code builds its main IPC socket under --user-data-dir. The
+// kernel allows 107 pathname bytes plus the trailing NUL in sockaddr_un.
+export function checkHostSocketPath(userData: string): void {
+  const socket = path.join(userData, '1.14-main.sock');
+  assert.ok(Buffer.byteLength(socket, 'utf8') <= 107, `VS Code IPC path exceeds 107 bytes: ${socket}`);
+}
+
+export async function withHostUserData(action: (userData: string) => Promise<void>): Promise<void> {
+  // The rehearsal is Linux-only. A shared temp parent is safe here because
+  // mkdtemp atomically creates a new private (0700) directory for every case.
+  const userData = fs.mkdtempSync('/tmp/ripr-vsc-');
+  try {
+    checkHostSocketPath(userData);
+    await action(userData);
+  } finally {
+    fs.rmSync(userData, { recursive: true });
+  }
+}
 
 export async function retainHostCase(record: any, action: () => Promise<void>, readHost: () => any): Promise<void> {
   record.attempted = true;
