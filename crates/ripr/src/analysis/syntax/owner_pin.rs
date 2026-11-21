@@ -5518,7 +5518,7 @@ fn builtin_name_holds(name: &str, module: &SyntaxNode, allow_unresolved_globs: b
 
 /// An item in a reconstructed source revision has no workspace provider for
 /// glob imports. Follow parent globs in the actual syntax tree and refuse
-/// other globs that could introduce this name from outside the proven source.
+/// other globs that could introduce this name from outside the established source.
 pub(crate) fn source_item_builtin_name_holds(name: &str, item: &SyntaxNode) -> bool {
     item.parent().is_some_and(|scope| {
         (ast::ItemList::can_cast(scope.kind()) || ast::SourceFile::can_cast(scope.kind()))
