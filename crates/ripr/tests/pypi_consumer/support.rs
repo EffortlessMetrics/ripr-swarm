@@ -20,11 +20,15 @@ pub(crate) struct TempRoot {
 
 impl TempRoot {
     pub(crate) fn new(label: &str) -> Result<Self, String> {
+        Self::new_in(&std::env::temp_dir(), label)
+    }
+
+    pub(crate) fn new_in(parent: &Path, label: &str) -> Result<Self, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        let path = std::env::temp_dir().join(format!(
+        let path = parent.join(format!(
             "ripr-pypi-consumer-{label}-{}-{}-{}",
             std::process::id(),
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed),
