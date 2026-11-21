@@ -1,0 +1,8 @@
+# Registers the review-guidance cooperative-cancellation regressions (#12940) under RIPR-SPEC-0012.
+[[extend]]
+id = "RIPR-SPEC-0012"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::direct_candidate_walk_observes_cancellation",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::evidence_pass_discards_seam_when_deadline_expires_during_relation_walk",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::compact_classification_refuses_deadline_before_publication",
+]

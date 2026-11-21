@@ -67,17 +67,21 @@ fn default_receipt_checks_cwd_even_with_a_different_root() -> TestResult {
             } else {
                 ""
             };
-            // Both an existing foreign root and a missing root must not hide
-            // the link in the actual cwd-relative default output tree.
-            for root in [&selected, &slot.join("missing")] {
+            // Neither an existing foreign root nor a missing root may hide
+            // the link in the actual cwd-relative default output tree. An
+            // existing root reaches the link check; a missing root is refused
+            // earlier by the shared root refusal (#15249). Both write nothing.
+            for (root, refusal) in [
+                (&selected, "resolves outside the workspace"),
+                (&slot.join("missing"), "is not a directory"),
+            ] {
                 let output = receipt(&repo, root, cache, None)?;
                 assert!(
                     !output.status.success(),
                     "escaping default write succeeded: {output:?}"
                 );
                 assert!(
-                    String::from_utf8_lossy(&output.stderr)
-                        .contains("resolves outside the workspace"),
+                    String::from_utf8_lossy(&output.stderr).contains(refusal),
                     "wrong refusal: {output:?}"
                 );
                 assert_eq!(std::fs::read(outside.join("g.json"))?, sentinel);

@@ -1,0 +1,7 @@
+# Suppressions manifest and identity-scan config reads stay inside the repository root (#15546).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/output/suppressions.rs::root_loader_refuses_a_manifest_link_that_leaves_the_root",
+  "crates/ripr/src/analysis/seam_inventory.rs::identity_read_ignores_a_config_link_that_leaves_the_root",
+]

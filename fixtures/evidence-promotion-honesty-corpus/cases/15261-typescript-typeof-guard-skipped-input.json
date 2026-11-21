@@ -1,0 +1,24 @@
+{
+  "id": "typescript_typeof_guard_skipped_input",
+  "language": "typescript",
+  "tier": "pure",
+  "source_fixture": "fixtures/typescript_typeof_guard_skipped_input",
+  "vector": "literal_input_provably_skips_the_changed_guard_arm",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "reachable_unrevealed"
+    }
+  ]
+}

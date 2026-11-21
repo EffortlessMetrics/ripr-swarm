@@ -58,13 +58,6 @@ fn step_id(block: &str) -> Option<&str> {
         .find_map(|line| line.strip_prefix("        id: "))
 }
 
-/// The step's single-line `run:` command, or `|` for a block scalar.
-fn step_run(block: &str) -> Option<&str> {
-    block
-        .lines()
-        .find_map(|line| line.strip_prefix("        run: "))
-}
-
 fn contract_violations(workflow: &str) -> Vec<String> {
     let blocks: Vec<_> = workflow.split("\n      - ").skip(1).collect();
     let mut findings = Vec::new();
@@ -1602,9 +1595,153 @@ exit "$status"
     }
 }
 
+/// The Rust-only library lint (#14263). The supported Rust-only build decayed to
+/// 38 warnings in a week because nothing failed on it; one step per workflow,
+/// conditioned so exactly one of them runs for each `test-shards` route.
+const RUST_ONLY_CLIPPY_COMMAND: &str =
+    "cargo clippy -p ripr --lib --locked --no-default-features --features lang-rust -- -D warnings";
+const RUST_ONLY_CLIPPY_GATES_CONDITION: &str = "if: inputs.test-shards == 1";
+const RUST_ONLY_CLIPPY_SHARD_CONDITION: &str = "if: ${{ matrix.shard == 2 && !cancelled() }}";
+
+fn rust_only_clippy_violations(workflow: &str, shards: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    for (label, text, condition) in [
+        ("rust-gates", workflow, RUST_ONLY_CLIPPY_GATES_CONDITION),
+        ("shards", shards, RUST_ONLY_CLIPPY_SHARD_CONDITION),
+    ] {
+        // A step ends at the next step or at the next job/top-level key.
+        let steps: Vec<Vec<&str>> = text
+            .split("\n      - ")
+            .map(|step| {
+                let mut lines = step.lines();
+                let head = lines.next().into_iter();
+                head.chain(lines.take_while(|line| line.is_empty() || line.starts_with("      ")))
+                    .collect()
+            })
+            .filter(|step: &Vec<&str>| {
+                step.iter()
+                    .any(|line| line.trim() == format!("run: {RUST_ONLY_CLIPPY_COMMAND}"))
+            })
+            .collect();
+        let [step] = steps.as_slice() else {
+            findings.push(format!(
+                "{label}: expected exactly one Rust-only library Clippy step, found {}",
+                steps.len()
+            ));
+            continue;
+        };
+        let conditions: Vec<&str> = step
+            .iter()
+            .map(|line| line.trim())
+            .filter(|line| line.starts_with("if:"))
+            .collect();
+        if conditions != [condition] {
+            findings.push(format!(
+                "{label}: the Rust-only library Clippy step must carry only `{condition}`, found {conditions:?}"
+            ));
+        }
+        if step.iter().any(|line| line.contains("continue-on-error")) {
+            findings.push(format!(
+                "{label}: the Rust-only library Clippy step must not continue on error"
+            ));
+        }
+    }
+    findings
+}
+
+#[test]
+fn rust_only_library_lint_runs_once_on_each_test_route() {
+    let findings = rust_only_clippy_violations(WORKFLOW, SHARDS);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn rust_only_library_lint_rejects_removal_weakening_and_condition_drift() {
+    let run_line = format!("run: {RUST_ONLY_CLIPPY_COMMAND}");
+    let without_deny = RUST_ONLY_CLIPPY_COMMAND.replace(" -- -D warnings", "");
+    let cases: [(&str, String, String, &str); 5] = [
+        (
+            "removed from rust-gates",
+            WORKFLOW.replace(&run_line, "run: true"),
+            SHARDS.to_owned(),
+            "rust-gates: expected exactly one Rust-only library Clippy step, found 0",
+        ),
+        (
+            "warnings allowed in shards",
+            WORKFLOW.to_owned(),
+            SHARDS.replace(RUST_ONLY_CLIPPY_COMMAND, &without_deny),
+            "shards: expected exactly one Rust-only library Clippy step, found 0",
+        ),
+        (
+            "rust-gates runs it on every route",
+            WORKFLOW.replace(
+                &format!(
+                    "{RUST_ONLY_CLIPPY_GATES_CONDITION}\n        run: cargo clippy -p ripr --lib"
+                ),
+                "run: cargo clippy -p ripr --lib",
+            ),
+            SHARDS.to_owned(),
+            "rust-gates: the Rust-only library Clippy step must carry only `if: inputs.test-shards == 1`, found []",
+        ),
+        (
+            "both shards run it",
+            WORKFLOW.to_owned(),
+            SHARDS.replace(RUST_ONLY_CLIPPY_SHARD_CONDITION, "if: ${{ !cancelled() }}"),
+            "shards: the Rust-only library Clippy step must carry only `if: ${{ matrix.shard == 2 && !cancelled() }}`, found [\"if: ${{ !cancelled() }}\"]",
+        ),
+        (
+            "shard step made advisory",
+            WORKFLOW.to_owned(),
+            SHARDS.replace(
+                &format!("{RUST_ONLY_CLIPPY_SHARD_CONDITION}\n"),
+                &format!("{RUST_ONLY_CLIPPY_SHARD_CONDITION}\n        continue-on-error: true\n"),
+            ),
+            "shards: the Rust-only library Clippy step must not continue on error",
+        ),
+    ];
+    for (label, workflow, shards, expected) in cases {
+        assert!(
+            workflow != WORKFLOW || shards != SHARDS,
+            "{label}: the mutation did not change either workflow"
+        );
+        let findings = rust_only_clippy_violations(&workflow, &shards);
+        assert!(
+            findings.iter().any(|finding| finding == expected),
+            "{label}: expected {expected:?}, got {findings:?}"
+        );
+    }
+    let duplicated = format!("{WORKFLOW}\n      - name: Again\n        {run_line}\n");
+    assert!(rust_only_clippy_violations(&duplicated, SHARDS).contains(
+        &"rust-gates: expected exactly one Rust-only library Clippy step, found 2".to_owned()
+    ));
+    let decoy = format!(
+        "{}\n# {run_line}\n",
+        WORKFLOW.replace(&run_line, "run: true")
+    );
+    assert!(
+        !rust_only_clippy_violations(&decoy, SHARDS).is_empty(),
+        "a comment hid the removal"
+    );
+}
+
 #[test]
 fn goldens_fresh_base_merge_brackets_goldens_step() -> Result<(), String> {
-    let blocks: Vec<_> = WORKFLOW.split("\n      - ").skip(1).collect();
+    check_fresh_golden_steps(WORKFLOW)?;
+    for condition in [PREPARE_GOLDENS_IF, CLEANUP_GOLDENS_IF] {
+        let disabled = WORKFLOW.replace(condition, &format!("{condition} && false"));
+        if check_fresh_golden_steps(&disabled).is_ok() {
+            return Err(format!("disabled workflow condition passed: {condition}"));
+        }
+    }
+    Ok(())
+}
+
+const PREPARE_GOLDENS_IF: &str =
+    "if: github.event_name == 'pull_request' && inputs.subject-sha == ''";
+const CLEANUP_GOLDENS_IF: &str = "if: always() && steps.goldens_fresh_merge.outputs.worktree != ''";
+
+fn check_fresh_golden_steps(source: &str) -> Result<(), String> {
+    let blocks: Vec<_> = source.split("\n      - ").skip(1).collect();
     let idx = |id: &str| -> Result<usize, String> {
         blocks
             .iter()
@@ -1612,53 +1749,28 @@ fn goldens_fresh_base_merge_brackets_goldens_step() -> Result<(), String> {
             .ok_or_else(|| format!("missing step id `{id}`"))
     };
     let prep_idx = idx("goldens_fresh_merge")?;
-    // Anchor on the gate's command, not its step id: the id is renamed as the
-    // gate grows (`goldens` -> `goldens_fixtures`), and a stale id here would
-    // fail on the PR merge ref while passing on the branch.
-    let goldens_matches: Vec<usize> = blocks
-        .iter()
-        .enumerate()
-        .filter(|(_, block)| {
-            step_run(block).is_some_and(|run| run.starts_with("cargo xtask goldens check"))
-        })
-        .map(|(index, _)| index)
-        .collect();
-    let [goldens_idx] = goldens_matches[..] else {
-        return Err(format!(
-            "expected one goldens gate step running `cargo xtask goldens check`, found {}",
-            goldens_matches.len()
-        ));
-    };
-    let restore_idx = idx("goldens_restore_checkout")?;
-    assert!(
-        prep_idx < goldens_idx && goldens_idx < restore_idx,
-        "goldens_fresh_merge ({prep_idx}) < goldens gate ({goldens_idx}) < goldens_restore_checkout ({restore_idx})"
-    );
-    let prep = blocks[prep_idx];
-    assert!(
-        prep.contains(
-            "        if: github.event_name == 'pull_request' && inputs.subject-sha == ''"
-        ),
-        "fresh base merge must run only on pull_request legacy merge-ref checkouts:\n{prep}"
-    );
-    assert!(
-        prep.contains("git merge-tree --write-tree --no-messages"),
-        "fresh base merge must check mergeability before switching:\n{prep}"
-    );
-    assert!(
-        prep.contains("git -c user.name=ci -c user.email=ci@invalid merge --no-ff --no-edit"),
-        "fresh base merge must create a clean merge commit:\n{prep}"
-    );
-    let restore = blocks[restore_idx];
-    assert!(
-        restore.contains(
-            "        if: always() && steps.goldens_fresh_merge.outputs.switched == 'true'"
-        ),
-        "restore step must always run when goldens_fresh_merge switched HEAD:\n{restore}"
-    );
-    assert!(
-        restore.contains("git checkout --detach \"$ORIG_HEAD\""),
-        "restore step must restore ORIG_HEAD:\n{restore}"
-    );
+    let goldens_idx = idx("goldens_fixtures")?;
+    let cleanup_idx = idx("goldens_cleanup")?;
+    if !(prep_idx < goldens_idx && goldens_idx < cleanup_idx) {
+        return Err("the fresh worktree must bracket the unconditional golden gate".into());
+    }
+    let prep = blocks
+        .get(prep_idx)
+        .ok_or("missing fresh merge preparation")?;
+    let gate = blocks.get(goldens_idx).ok_or("missing golden gate")?;
+    let cleanup = blocks
+        .get(cleanup_idx)
+        .ok_or("missing fresh worktree cleanup")?;
+    if !prep.lines().any(|line| line.trim() == PREPARE_GOLDENS_IF)
+        || !prep.contains("git merge-tree --write-tree --no-messages")
+        || !gate.contains("FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}")
+        || !cleanup
+            .lines()
+            .any(|line| line.trim() == CLEANUP_GOLDENS_IF)
+        || !cleanup.contains("FRESH_TREE: ${{ steps.goldens_fresh_merge.outputs.worktree }}")
+        || !cleanup.contains("ORIG_HEAD: ${{ steps.goldens_fresh_merge.outputs.orig_head }}")
+    {
+        return Err("fresh merge, golden producer and cleanup must bind the admitted PR and one disposable worktree".into());
+    }
     Ok(())
 }

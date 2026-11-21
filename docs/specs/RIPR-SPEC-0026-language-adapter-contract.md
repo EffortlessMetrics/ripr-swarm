@@ -80,8 +80,11 @@ fork is permitted.
 
 Additive optional fields:
 
-- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`, `julia`, `go`.
-  Omitted when unknown.
+- `language`: one of `rust`, `typescript`, `javascript`, `python`, `perl`
+  for adapters that exist today. `julia` and `go` are future values reserved
+  by their proposed per-language specs (RIPR-SPEC-0405, RIPR-SPEC-0414);
+  no adapter emits them yet, and `languages.enabled` rejects them as
+  unknown until the corresponding adapter lands. Omitted when unknown.
 - `language_status`: `stable` or `preview`. Omitted when `rust`.
 - `probe.owner`: stable owner identifier when a preview adapter can map the
   changed line to an owner. Per-language specs define the identifier shape.
@@ -136,12 +139,15 @@ Routing rules:
 - `*.js`, `*.jsx`, `*.mjs`, `*.cjs` → TypeScript-family adapter with
   JavaScript preview labels (preview, opt-in).
 - `*.py` → Python adapter (preview, opt-in).
-- `*.jl` → Julia adapter (preview, opt-in) when enabled and the binary was
-  built with `lang-julia`; routes production and test Julia sources only after
-  project role classification (see RIPR-SPEC-0405).
-- `*.go` → Go adapter (preview, opt-in) when enabled and the binary was built
-  with `lang-go`; `*_test.go` is test source (see RIPR-SPEC-0414). Until the
-  adapter lands `.go` stays an unanalyzed source language with a typed limitation.
+- Future, not yet routed: `*.jl` will route to a Julia adapter (preview,
+  opt-in) once that adapter lands with a `lang-julia` feature (see
+  RIPR-SPEC-0405). Until then `.jl` stays an unanalyzed source language
+  with a typed limitation, and `languages.enabled` rejects `julia`.
+- Future, not yet routed: `*.go` will route to a Go adapter (preview,
+  opt-in) once that adapter lands with a `lang-go` feature; `*_test.go`
+  will be test source (see RIPR-SPEC-0414). Until the adapter lands `.go`
+  stays an unanalyzed source language with a typed limitation, and
+  `languages.enabled` rejects `go`.
 - Perl fact-packet preview is a producer/consumer path, not a live Perl parser
   route in this contract slice. A configured Perl language value must fail
   closed unless the binary was built with `lang-perl`, and `ripr check` must not
@@ -154,8 +160,9 @@ Repo configuration adds a `[languages]` section to `ripr.toml`:
 ```toml
 [languages]
 enabled = ["rust"]
-# Preview adapters are opt-in. Adding "typescript", "python", "perl", "julia", or "go" enables
-# the corresponding preview surface when the binary supports it.
+# Preview adapters are opt-in. Adding "typescript", "python", or "perl" enables
+# the corresponding preview surface when the binary supports it. "julia" and
+# "go" are rejected as unknown until their adapters land.
 ```
 
 The default `enabled` value is `["rust"]`. Preview adapters do not run

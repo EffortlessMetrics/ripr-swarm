@@ -1,0 +1,2 @@
+crates/ripr/tests/typescript_expected_value_shape_wording.rs|Command::new|1|cli-tests|#15331: runs the built ripr binary (`check --diff`) against an isolated temp copy of the ts_dynamic_oracle fixture. No shell, network, or user-repository mutation.
+crates/ripr/tests/typescript_expected_value_shape_wording.rs|use std::process::Command|1|cli-tests|#15331: imports the process spawner for the ripr invocation above.

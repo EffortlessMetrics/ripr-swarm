@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0435"
+tests = [
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_plan_puts_default_outputs_under_a_named_root",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_check_with_a_named_root_writes_default_reports_under_it",
+  "crates/ripr/src/cli/commands/review_comments.rs::tests::review_comments_cli_gap_parses_timeout_and_input_paths",
+  "crates/ripr/src/cli/parse/value.rs::tests::default_output_follows_a_named_root_and_keeps_the_dot_spelling",
+  "crates/ripr/tests/cli_smoke/root_default_outputs.rs::gate_check_with_a_member_root_writes_reports_where_ci_summary_reads",
+]
+code = [
+  "crates/ripr/src/cli/parse/value.rs::default_output_under_root",
+]

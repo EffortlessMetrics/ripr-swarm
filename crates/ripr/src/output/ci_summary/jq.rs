@@ -358,11 +358,16 @@ pub(super) fn objects<'a>(value: &'a Value, found: &mut Vec<&'a Map<String, Valu
 }
 
 /// The workflow's `repo_relative`: the checkout path, where it is a whole
-/// path token, becomes the repository root `.`. The physical root is
-/// rewritten first, then the logical one, line by line.
+/// path token, becomes the repository root `.`. The producer's shell-quoted
+/// root (`quoted`, the opening of `'…'` without its closing quote) is
+/// rewritten first to the quote and `.`, then the physical root, its human
+/// display spelling where that differs (forward slashes on Windows), and the
+/// logical one, line by line.
 #[derive(Debug, Clone, Default)]
 pub(super) struct RepoRelative {
     pub(super) physical: Vec<u8>,
+    pub(super) display: Vec<u8>,
+    pub(super) quoted: Vec<u8>,
     pub(super) logical: Vec<u8>,
 }
 
@@ -377,11 +382,28 @@ impl RepoRelative {
     }
 
     fn line(&self, line: &[u8]) -> Vec<u8> {
-        rewrite(&rewrite(line, &self.physical), &self.logical)
+        let line = match self.quoted.first() {
+            Some(&quote) => rewrite_to(line, &self.quoted, &[quote, b'.']),
+            None => line.to_vec(),
+        };
+        let line = rewrite(&line, &self.physical);
+        rewrite(&rewrite(&line, &self.display), &self.logical)
     }
 }
 
 fn rewrite(text: &[u8], root: &[u8]) -> Vec<u8> {
+    rewrite_to(text, root, b".")
+}
+
+/// Replace each whole-token `root` with `dot`.
+///
+/// A root inside a shell quote (`'`/`"` just before it, or a needle that
+/// opens with one) is one shell argument: it ends at the matching closing
+/// quote followed by a token boundary, or continues as a descendant at `/`.
+/// So `'<root> x'`, `'<root>:x'` and `'<root>'x` each name another
+/// directory and keep their spelling. Unquoted and markdown-backtick tokens
+/// keep the plain path rule, which also accepts a `:line` suffix.
+fn rewrite_to(text: &[u8], root: &[u8], dot: &[u8]) -> Vec<u8> {
     if root.is_empty() {
         return text.to_vec();
     }
@@ -390,13 +412,25 @@ fn rewrite(text: &[u8], root: &[u8]) -> Vec<u8> {
     while let Some(start) = find(rest, root) {
         let (pre, tail) = rest.split_at(start);
         let after_root = tail.get(root.len()..).unwrap_or_default();
-        let before_ok = pre.last().is_none_or(|byte| b" '\"`=(".contains(byte));
-        let after_ok = after_root
-            .first()
-            .is_none_or(|byte| b"/ '\"`):".contains(byte));
+        let before = pre.last().copied();
+        let before_ok = before.is_none_or(|byte| b" '\"`=(".contains(&byte));
+        let opener = match (root.first(), before) {
+            (Some(&quote @ (b'\'' | b'"')), _) | (_, Some(quote @ (b'\'' | b'"'))) => Some(quote),
+            _ => None,
+        };
+        let after_ok = match (opener, after_root) {
+            (Some(_), [b'/', ..]) => true,
+            (Some(quote), [close, next @ ..]) if *close == quote => {
+                next.first().is_none_or(|byte| b" ;)|&`".contains(byte))
+            }
+            (Some(_), _) => false,
+            (None, _) => after_root
+                .first()
+                .is_none_or(|byte| b"/ '\"`):".contains(byte)),
+        };
         out.extend_from_slice(pre);
         if before_ok && after_ok {
-            out.push(b'.');
+            out.extend_from_slice(dot);
         } else {
             out.extend_from_slice(root);
         }
@@ -683,6 +717,8 @@ mod tests {
         assert_eq!(none.value("cd /w/repo"), "cd /w/repo");
         let relative = RepoRelative {
             physical: b"/w/repo".to_vec(),
+            display: Vec::new(),
+            quoted: Vec::new(),
             logical: Vec::new(),
         };
         // Every whole-token position the workflow's sed accepted.
@@ -697,5 +733,112 @@ mod tests {
         assert_eq!(relative.value("/w/repo/a /w/repo/b"), "./a ./b");
         // A rewrite never reads outside the line that holds it.
         assert_eq!(relative.value("/w/repo\n/w/repox"), ".\n/w/repox");
+    }
+
+    #[test]
+    fn repo_relative_rewrites_the_windows_display_spelling_of_the_root() {
+        // A Windows producer prints the root forward-slashed
+        // (`command_root_display`) while the canonical root is the verbatim
+        // backslash spelling (#15858). `check-local-context` forbids
+        // drive-letter path literals, so the shapes are assembled from parts.
+        let drive = "D:";
+        let native = format!(r"\\?\{drive}\work\project");
+        let display = crate::output::path::human_path_text(&native, true);
+        assert_eq!(display, format!("{drive}/work/project"));
+        let relative = RepoRelative {
+            physical: native.into_bytes(),
+            display: display.clone().into_bytes(),
+            quoted: Vec::new(),
+            logical: Vec::new(),
+        };
+        assert_eq!(
+            relative.value(&format!("git -C {display} fetch --no-tags origin main")),
+            "git -C . fetch --no-tags origin main"
+        );
+        assert_eq!(
+            relative.value(&format!("ripr check --root {display} --json")),
+            "ripr check --root . --json"
+        );
+        let sibling = format!("{display}-2");
+        assert_eq!(relative.value(&sibling), sibling);
+    }
+
+    #[test]
+    fn repo_relative_rewrites_the_shell_quoted_root_inside_its_quotes() {
+        // `shell_arg` prints a root holding an apostrophe as
+        // `'/w/O'\''Brien/repo'` (#15858); the raw spelling never occurs.
+        let root = "/w/O'Brien/repo";
+        let quoted = crate::agent::loop_commands::shell_arg_for(root, false);
+        assert_eq!(quoted, r"'/w/O'\''Brien/repo'");
+        let opening = quoted.strip_suffix('\'').unwrap_or_default();
+        let relative = RepoRelative {
+            physical: root.as_bytes().to_vec(),
+            display: Vec::new(),
+            quoted: opening.as_bytes().to_vec(),
+            logical: Vec::new(),
+        };
+        assert_eq!(
+            relative.value(&format!(
+                "git -C {quoted} fetch origin -- '+refs/heads/main:refs/remotes/origin/main'"
+            )),
+            "git -C '.' fetch origin -- '+refs/heads/main:refs/remotes/origin/main'"
+        );
+        let below = crate::agent::loop_commands::shell_arg_for(&format!("{root}/target/x"), false);
+        assert_eq!(relative.value(&below), "'./target/x'");
+        // A sibling that shares the quoted prefix keeps its own spelling.
+        for sibling in [format!("{root}-2"), format!("{root} 2")] {
+            let sibling = crate::agent::loop_commands::shell_arg_for(&sibling, false);
+            assert_eq!(relative.value(&sibling), sibling);
+        }
+        let joined = format!("git -C {quoted}x fetch origin");
+        assert_eq!(relative.value(&joined), joined);
+    }
+
+    #[test]
+    fn repo_relative_keeps_a_quoted_sibling_that_only_starts_with_the_root() {
+        // A space-only root is quoted without escapes, so the raw spelling
+        // occurs inside the quotes; a following space names another
+        // directory, not the root (#15858).
+        let root = "/w/two words/repo";
+        let quoted = crate::agent::loop_commands::shell_arg_for(root, false);
+        let relative = RepoRelative {
+            physical: root.as_bytes().to_vec(),
+            display: Vec::new(),
+            quoted: quoted
+                .strip_suffix('\'')
+                .unwrap_or_default()
+                .as_bytes()
+                .to_vec(),
+            logical: Vec::new(),
+        };
+        let sibling = "git -C '/w/two words/repo x' fetch origin";
+        assert_eq!(relative.value(sibling), sibling);
+        assert_eq!(
+            relative.value("git -C '/w/two words/repo' fetch origin"),
+            "git -C '.' fetch origin"
+        );
+        assert_eq!(
+            relative.value("cat '/w/two words/repo/file'"),
+            "cat './file'"
+        );
+        // Unquoted and double-quoted spans follow the same rule.
+        let plain = RepoRelative {
+            physical: b"/w/repo".to_vec(),
+            ..RepoRelative::default()
+        };
+        assert_eq!(plain.value("\"/w/repo more\""), "\"/w/repo more\"");
+        // Adjacent pieces join one shell argument (`/w/repox`), and a quoted
+        // `:` belongs to the directory name; both name another directory.
+        assert_eq!(
+            plain.value("git -C '/w/repo'x fetch"),
+            "git -C '/w/repo'x fetch"
+        );
+        assert_eq!(
+            plain.value("git -C '/w/repo:other' fetch"),
+            "git -C '/w/repo:other' fetch"
+        );
+        assert_eq!(plain.value("git -C '/w/repo' fetch"), "git -C '.' fetch");
+        assert_eq!(plain.value("cd '/w/repo'; ls"), "cd '.'; ls");
+        assert_eq!(plain.value("ls /w/repo more"), "ls . more");
     }
 }

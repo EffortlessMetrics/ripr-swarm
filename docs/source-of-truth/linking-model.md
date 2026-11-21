@@ -115,7 +115,11 @@ of making one document or one check own every layer.
 
 `cargo xtask check-support-tiers` verifies support-tier proof-command references.
 `cargo xtask check-doc-index` checks document indexes, and
-`cargo xtask check-doc-roles` checks the supported planning-document roles.
+`cargo policy check-doc-roles` checks the supported planning-document roles
+without compiling the RIPR product. The existing `cargo xtask check-doc-roles`
+command delegates to the same checker and retains its report and exit behavior.
+This standalone command does not replace the docs gate or discharge its other
+retained obligations.
 `cargo xtask markdown-links` checks local Markdown links. Policy-specific ledgers and
 workflows own exception scope, owner, reason, and review posture.
 `cargo xtask repo-contract-report` composes these facts into an advisory graph

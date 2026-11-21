@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A `char` equality chain that is the owner's returned tail (`c == ',' || c == ';'`) now reaches the return sink as its integer and string twins do. A test that passes the new literal and asserts the result therefore reads `return_value` as `exposed` instead of `propagation_unknown`. A test that passes only the original arm's literal still does not read `exposed`. A lifetime such as `&'a str` is not read as a char literal (#15029).

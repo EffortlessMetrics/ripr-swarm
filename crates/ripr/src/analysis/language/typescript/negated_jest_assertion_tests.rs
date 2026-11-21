@@ -233,3 +233,210 @@ fn ts_negated_tobe_pins_no_identity() {
         "unconditional toBe with a dynamic expected pins identity: {plain:?}"
     );
 }
+
+const CUSTOM_MATCHER_LIMITATION: &str =
+    "typescript_limitation: typescript_custom_matcher_unresolved";
+
+/// Jasmine `toBeTrue()` / `toBeFalse()` are exact boolean matchers: they read
+/// the same `exact_value` / strong credit and expected value as
+/// `toBe(true)` / `toBe(false)`, instead of `unknown` (first-run finding).
+#[test]
+fn ts_jasmine_boolean_matchers_read_like_tobe_boolean() -> Result<(), String> {
+    for (jasmine, jest, expected) in [
+        ("toBeTrue()", "toBe(true)", "true"),
+        ("toBeFalse()", "toBe(false)", "false"),
+    ] {
+        let got = extracted_assertion(&format!("  expect(price(150)).{jasmine};"));
+        let want = extracted_assertion(&format!("  expect(price(150)).{jest};"));
+        assert_eq!(
+            got.oracle_kind,
+            OracleKind::ExactValue,
+            "{jasmine}: {got:?}"
+        );
+        assert_eq!(
+            got.oracle_strength,
+            OracleStrength::Strong,
+            "{jasmine}: {got:?}"
+        );
+        assert_eq!(got.oracle_kind, want.oracle_kind, "{jasmine}");
+        assert_eq!(got.oracle_strength, want.oracle_strength, "{jasmine}");
+        assert_eq!(got.oracle_confidence, want.oracle_confidence, "{jasmine}");
+        assert_eq!(
+            got.expected_value_or_variant.as_deref(),
+            Some(expected),
+            "{jasmine}: {got:?}"
+        );
+        assert!(!got.has_dynamic_matcher_arg, "{jasmine}: {got:?}");
+        let got_finding = finding_for_body(&format!("  expect(price(150)).{jasmine};"))?;
+        let want_finding = finding_for_body(&format!("  expect(price(150)).{jest};"))?;
+        assert_eq!(got_finding.class, want_finding.class, "{jasmine}");
+        assert_eq!(
+            got_finding.class,
+            ExposureClass::Exposed,
+            "{jasmine}: {got_finding:?}"
+        );
+        assert!(
+            got_finding
+                .evidence
+                .iter()
+                .all(|line| !line.contains(CUSTOM_MATCHER_LIMITATION)),
+            "{jasmine} must not read as an unrecognised matcher: {:?}",
+            got_finding.evidence
+        );
+    }
+    // Control: the same fixture with a matcher the adapter does not know
+    // emits the limitation, so the absence above is discriminating.
+    let control = finding_for_body("  expect(price(150)).toBeWithinRange(1, 2);")?;
+    assert!(
+        control
+            .evidence
+            .iter()
+            .any(|line| line.contains(CUSTOM_MATCHER_LIMITATION)),
+        "an unrecognised matcher must emit the limitation: {:?}",
+        control.evidence
+    );
+    Ok(())
+}
+
+/// `.not.toBeTrue()` / `.not.toBeFalse()` take the same capped credit as
+/// `.not.toBe(true)`: relational / weak, with no expected value.
+#[test]
+fn ts_negated_jasmine_boolean_matchers_match_negated_tobe() {
+    for (jasmine, jest) in [("toBeTrue()", "toBe(true)"), ("toBeFalse()", "toBe(false)")] {
+        let got = extracted_assertion(&format!("  expect(price(150)).not.{jasmine};"));
+        let want = extracted_assertion(&format!("  expect(price(150)).not.{jest};"));
+        assert_eq!(
+            got.oracle_kind,
+            OracleKind::RelationalCheck,
+            "{jasmine}: {got:?}"
+        );
+        assert_eq!(
+            got.oracle_strength,
+            OracleStrength::Weak,
+            "{jasmine}: {got:?}"
+        );
+        assert_eq!(got.oracle_kind, want.oracle_kind, "{jasmine}");
+        assert_eq!(got.oracle_strength, want.oracle_strength, "{jasmine}");
+        assert!(
+            got.expected_value_or_variant.is_none(),
+            "{jasmine}: {got:?}"
+        );
+    }
+}
+
+/// Jasmine `toHaveSize(n)` reads like `toHaveLength(n)`, plain and negated.
+#[test]
+fn ts_jasmine_tohavesize_reads_like_tohavelength() {
+    for negation in ["", ".not"] {
+        let got = extracted_assertion(&format!("  expect(price(150)){negation}.toHaveSize(2);"));
+        let want = extracted_assertion(&format!("  expect(price(150)){negation}.toHaveLength(2);"));
+        assert_eq!(
+            got.oracle_kind,
+            OracleKind::RelationalCheck,
+            "{negation}: {got:?}"
+        );
+        assert_eq!(
+            got.oracle_strength,
+            OracleStrength::Weak,
+            "{negation}: {got:?}"
+        );
+        assert_eq!(got.oracle_kind, want.oracle_kind, "{negation}");
+        assert_eq!(got.oracle_strength, want.oracle_strength, "{negation}");
+    }
+}
+
+fn assertion_in_file(source: &str) -> TypeScriptAssertion {
+    let tests = extract_tests(Path::new("tests/lib.test.ts"), source);
+    assert_eq!(tests.len(), 1, "fixture must register its test");
+    let assertions: Vec<_> = tests[0]
+        .assertions
+        .iter()
+        .filter(|assertion| {
+            assertion.matcher.starts_with("toBe") || assertion.matcher == "toHaveSize"
+        })
+        .cloned()
+        .collect();
+    assert_eq!(
+        assertions.len(),
+        1,
+        "fixture must hold one matcher assertion: {:?}",
+        tests[0].assertions
+    );
+    assertions[0].clone()
+}
+
+/// A file that registers its own matchers may redefine a Jasmine-only name
+/// with a looser body (`pass: !!received`), so `toBeTrue` / `toBeFalse` /
+/// `toHaveSize` there stay `unknown` instead of borrowing built-in credit.
+/// The same assertions without a registration read the built-in strength.
+#[test]
+fn ts_jasmine_names_stay_unknown_when_the_file_registers_matchers() {
+    for registration in [
+        "expect.extend({ toBeTrue(received) { return { pass: !!received, message: () => \"\" }; } });\n",
+        "beforeEach(() => { jasmine.addMatchers({ toBeTrue: () => ({ compare: (a) => ({ pass: !!a }) }) }); });\n",
+    ] {
+        for (call, plain_kind) in [
+            ("toBeTrue()", OracleKind::ExactValue),
+            ("toBeFalse()", OracleKind::ExactValue),
+            ("toHaveSize(2)", OracleKind::RelationalCheck),
+            ("not.toBeTrue()", OracleKind::RelationalCheck),
+        ] {
+            let body = format!("  expect(price(150)).{call};");
+            let registered = assertion_in_file(&format!(
+                "import {{ price }} from \"../src/lib\";\n{registration}\ntest(\"price\", () => {{\n{body}\n}});\n"
+            ));
+            assert_eq!(
+                registered.oracle_kind,
+                OracleKind::Unknown,
+                "{call} with {registration}: {registered:?}"
+            );
+            assert_eq!(
+                registered.oracle_strength,
+                OracleStrength::Unknown,
+                "{call}: {registered:?}"
+            );
+            assert!(
+                !matches!(
+                    registered.expected_value_or_variant.as_deref(),
+                    Some("true" | "false")
+                ),
+                "{call}: {registered:?}"
+            );
+            let plain = extracted_assertion(&body);
+            assert_eq!(
+                plain.oracle_kind, plain_kind,
+                "{call} without a registration: {plain:?}"
+            );
+        }
+    }
+}
+
+/// `toBeTrue(arg)` is not the documented zero-argument built-in, and
+/// `.rejects.toBeTrue()` would observe a rejection reason, not the returned
+/// value: both stay `unknown`.
+#[test]
+fn ts_jasmine_boolean_matchers_outside_the_builtin_shape_stay_unknown() {
+    for body in [
+        "  expect(price(150)).toBeTrue(1);",
+        "  expect(price(150)).toBeFalse(\"why\");",
+        "  return expect(price(150)).rejects.toBeTrue();",
+        "  return expect(price(150)).rejects.toBeFalse();",
+        "  expect(price(150)).not.toBeTrue(1);",
+        "  return expect(price(150)).rejects.toHaveSize(2);",
+    ] {
+        let got = extracted_assertion(body);
+        assert_eq!(got.oracle_kind, OracleKind::Unknown, "{body}: {got:?}");
+        assert_eq!(
+            got.oracle_strength,
+            OracleStrength::Unknown,
+            "{body}: {got:?}"
+        );
+        assert!(
+            !matches!(
+                got.expected_value_or_variant.as_deref(),
+                Some("true" | "false")
+            ),
+            "{body}: {got:?}"
+        );
+    }
+}
