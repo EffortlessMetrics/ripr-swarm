@@ -103,9 +103,10 @@ fn first_parent_transition_tracks_reintroduced_conflict_and_never_credits_a_pref
     let original = commit(&s, "original", None)?;
     let head = commit(&s, "candidate", Some(&original))?;
     let sibling = commit(&s, "sibling", Some(&original))?;
-    if s.compare(&original, &head)?.is_some()
-        || s.compare(&original, &sibling)?.is_some()
-        || s.compare(&head, &sibling)? != Some(BTreeSet::from(["file name".to_owned()]))
+    if s.compare(&original, &head)? != Comparison::Clean
+        || s.compare(&original, &sibling)? != Comparison::Clean
+        || s.compare(&head, &sibling)?
+            != Comparison::Conflict(BTreeSet::from(["file name".to_owned()]))
     {
         return Err("individually clean heads were confused with cumulative composition".into());
     }
@@ -135,6 +136,12 @@ fn first_parent_transition_tracks_reintroduced_conflict_and_never_credits_a_pref
         objects: &dir,
         deadline: Instant::now(),
     };
+    s.classify(&tip, &mut rows);
+    if exhausted.attribute_history(&tip, &mut rows).is_ok()
+        || !matches!(&rows.first().ok_or("missing conflict")?.result,Outcome::Conflict{unattributed_reason:Some(why),..} if why.contains("budget"))
+    {
+        return Err("expired history lookup lost the row-specific attribution reason".into());
+    }
     exhausted.classify(&tip, &mut rows);
     if rows
         .iter()
@@ -148,6 +155,9 @@ fn first_parent_transition_tracks_reintroduced_conflict_and_never_credits_a_pref
 #[test]
 fn empty_or_failed_replay_releases_only_its_own_object_store() -> Result<(), String> {
     let dir = crate::tests::temp_dir("queue-report-cleanup");
+    if run(&["--input".into()]).err().as_deref() != Some(USAGE) {
+        return Err("bare --input did not return usage".into());
+    }
     let input = dir.join("pages.json");
     let mut empty = page(&"a".repeat(40), 1, 1, 0, false);
     empty["data"]["repository"]["mergeQueue"]["entries"]["nodes"] = json!([]);
@@ -270,6 +280,33 @@ M 100644 inline tools/man
 data 1
 m
 
+commit refs/heads/occupied
+committer Fixture <fixture@example.invalid> 7 +0000
+data 8
+occupied
+from refs/heads/later
+M 100644 inline tools~observed-main
+data 1
+x
+
+commit refs/heads/raw-name-main
+committer Fixture <fixture@example.invalid> 8 +0000
+data 3
+raw
+from :1
+M 100644 inline "odd\377"
+data 1
+a
+
+commit refs/heads/raw-name-head
+committer Fixture <fixture@example.invalid> 9 +0000
+data 3
+raw
+from :1
+M 100644 inline "odd\377"
+data 1
+b
+
 done
 "#,
         ),
@@ -302,6 +339,20 @@ done
         .ok_or("missing stable collision boundary")?;
     if edge.introduced_at != rev("file")? || edge.first_parent != rev("original")? {
         return Err("unrelated first-parent commit credited for a continuing collision".into());
+    }
+    for (base, head, reason) in [
+        ("occupied", "directory", "ambiguous"),
+        ("raw-name-main", "raw-name-head", "non-UTF-8"),
+    ] {
+        let mut rows = [row(&rev(head)?)];
+        let base = rev(base)?;
+        sweep.classify(&base, &mut rows);
+        sweep.attribute_history(&base, &mut rows)?;
+        let [case] = rows;
+        if !matches!(case.result, Outcome::Conflict{paths,unattributed_reason:Some(why)} if paths.values().all(Option::is_none) && why.contains(reason))
+        {
+            return Err(format!("missing conflict uncertainty for {head}: {reason}"));
+        }
     }
     let store = dir.join("replay");
     fs::create_dir(&store).map_err(|e| e.to_string())?;

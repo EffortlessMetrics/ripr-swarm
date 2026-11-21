@@ -1568,7 +1568,7 @@ for partial fetches, pathless conflicts and private output-directory permissions
 Run `cargo xtask merge-queue conflicts <new-output-directory>` to inspect the
 current private swarm queue on demand. It requires Git with `--attr-source`
 and `merge-tree --write-tree`, authenticated read
-access through `gh`, and Git read access to the swarm through SSH. The output
+access through `gh api --paginate --slurp` (GitHub CLI 2.48 or newer), and Git read access to the swarm through SSH. Saved-page replay skips `gh` and requires Git read access for nonempty snapshots. The output
 directory's parent must exist. The initial fetch can use the operator's configured
 transport and credential helpers. It disables hooks and fetches complete
 objects. The later Git comparisons disable lazy fetching, ignore system and

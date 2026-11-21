@@ -114,6 +114,13 @@ fn parse_pages(bytes: &[u8]) -> Result<(String, Vec<Row>), String> {
     Ok((base, rows))
 }
 
+#[derive(PartialEq)]
+enum Comparison {
+    Clean,
+    Conflict(BTreeSet<String>),
+    UnnamedConflict(&'static str),
+}
+
 struct Sweep<'a> {
     objects: &'a Path,
     deadline: Instant,
@@ -198,7 +205,11 @@ impl Sweep<'_> {
     }
 
     fn prepare(&self, base: &str, rows: &[Row], remote: &str) -> Result<(), String> {
-        self.checked("git", &["init", "--bare", "--template=", "."], None)?;
+        self.checked(
+            "git",
+            &["init", "--bare", "--object-format=sha1", "--template=", "."],
+            None,
+        )?;
         self.checked("git", &["remote", "add", "origin", remote], None)?;
         let base_ref = format!("+{base}:refs/heads/base\n");
         let head_refs = |rows: &[Row]| {
@@ -248,13 +259,11 @@ impl Sweep<'_> {
         .map(|_| ())
     }
 
-    fn compare(&self, base: &str, head: &str) -> Result<Option<BTreeSet<String>>, String> {
+    fn compare(&self, base: &str, head: &str) -> Result<Comparison, String> {
         let paths = self.merge_result(base, base, head)?;
         // Git labels file/directory relocations with the merge argument. Recompute
         // using stable refs when either argument appears in a path; never rewrite names.
-        if paths
-            .as_ref()
-            .is_some_and(|paths| paths.iter().any(|p| p.contains(base) || p.contains(head)))
+        if matches!(&paths, Comparison::Conflict(paths) if paths.iter().any(|p| p.contains(base) || p.contains(head)))
         {
             self.checked("git", &["update-ref", "--stdin"], Some(format!(
                 "update refs/heads/observed-main {base}\nupdate refs/heads/observed-pr {head}\n"
@@ -264,12 +273,7 @@ impl Sweep<'_> {
         Ok(paths)
     }
 
-    fn merge_result(
-        &self,
-        attr: &str,
-        base: &str,
-        head: &str,
-    ) -> Result<Option<BTreeSet<String>>, String> {
+    fn merge_result(&self, attr: &str, base: &str, head: &str) -> Result<Comparison, String> {
         let (status, out) = self.command(
             "git",
             &[
@@ -288,25 +292,67 @@ impl Sweep<'_> {
                 "git merge-tree --write-tree --name-only -z failed (exit {status}); verify both commit objects and Git support"
             ));
         }
+        if status == 1 {
+            let mut fields = out.split(|&b| b == 0);
+            let tree = fields.next().ok_or("missing merge result")?;
+            validate_sha(
+                "merged tree",
+                "tree",
+                std::str::from_utf8(tree).map_err(|e| e.to_string())?,
+            )?;
+            if fields
+                .take_while(|p| !p.is_empty())
+                .any(|p| std::str::from_utf8(p).is_err())
+            {
+                return Ok(Comparison::UnnamedConflict(
+                    "Git confirmed a conflict with a non-UTF-8 path; the UTF-8 path inventory is unavailable",
+                ));
+            }
+        }
         let (tree, paths) = parse_merge_tree_output(&out)?;
         validate_sha("merged tree", "tree", &tree)?;
         if status == 0 && !paths.is_empty() {
             return Err("inconsistent merge-tree status and path inventory".into());
         }
-        Ok((status == 1).then(|| paths.into_iter().collect()))
+        Ok(match (status, paths.is_empty()) {
+            (0, _) => Comparison::Clean,
+            (_, true) => Comparison::UnnamedConflict(
+                "Git confirmed a conflict without individual unmerged paths",
+            ),
+            _ => Comparison::Conflict(paths.into_iter().collect()),
+        })
     }
 
     fn classify(&self, base: &str, rows: &mut [Row]) {
         for row in rows {
             row.result = match self.compare(base, &row.head) {
-                Ok(None) => Outcome::Clean,
-                Ok(Some(paths)) => Outcome::Conflict {
+                Ok(Comparison::Clean) => Outcome::Clean,
+                Ok(Comparison::UnnamedConflict(reason)) => Outcome::Conflict {
+                    paths: BTreeMap::new(),
+                    unattributed_reason: Some(reason.into()),
+                },
+                Ok(Comparison::Conflict(paths)) => Outcome::Conflict {
                     paths: paths.into_iter().map(|p| (p, None)).collect(),
                     unattributed_reason: Some("first-parent history not examined".into()),
                 },
                 Err(reason) => Outcome::Unexamined { reason },
             };
         }
+    }
+
+    fn attribute_history(&self, base: &str, rows: &mut [Row]) -> Result<(), String> {
+        self.boundaries(base, rows).inspect_err(|reason| {
+            for row in rows {
+                if let Outcome::Conflict {
+                    paths,
+                    unattributed_reason,
+                } = &mut row.result
+                    && paths.values().any(Option::is_none)
+                {
+                    *unattributed_reason = Some(reason.clone());
+                }
+            }
+        })
     }
 
     fn boundaries(&self, base: &str, rows: &mut [Row]) -> Result<(), String> {
@@ -330,8 +376,6 @@ impl Sweep<'_> {
                 continue;
             };
             if paths.is_empty() {
-                *unattributed_reason =
-                    Some("Git confirmed a conflict without individual unmerged paths".into());
                 continue;
             }
             *unattributed_reason = Some(format!(
@@ -343,17 +387,27 @@ impl Sweep<'_> {
                     break;
                 }
                 let prior = match self.compare(parent, &row.head) {
-                    Ok(Some(prior)) if prior.is_empty() => {
-                        *unattributed_reason =
-                            Some("parent conflict has no individual unmerged paths".into());
+                    Ok(Comparison::UnnamedConflict(reason)) => {
+                        *unattributed_reason = Some(format!("parent: {reason}"));
                         break;
                     }
-                    Ok(paths) => paths.unwrap_or_default(),
+                    Ok(Comparison::Conflict(prior)) => prior,
+                    Ok(Comparison::Clean) => BTreeSet::new(),
                     Err(reason) => {
                         *unattributed_reason = Some(reason);
                         break;
                     }
                 };
+                if !prior.is_empty()
+                    && paths.iter().any(|(path, edge)| {
+                        edge.is_none()
+                            && !prior.contains(path)
+                            && (path.contains("~observed-main") || path.contains("~observed-pr"))
+                    })
+                {
+                    *unattributed_reason = Some("Git relocation name changed while the parent remains conflicted; path identity is ambiguous".into());
+                    break;
+                }
                 for (path, boundary) in paths.iter_mut() {
                     if boundary.is_none() && !prior.contains(path) {
                         *boundary = Some(Boundary {
@@ -378,8 +432,10 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (out, input) = match args {
-        [out] => (out, None),
-        [out, flag, input] if flag == "--input" => (out, Some(input.as_str())),
+        [out] if !out.starts_with('-') => (out, None),
+        [out, flag, input] if flag == "--input" && !out.starts_with('-') => {
+            (out, Some(input.as_str()))
+        }
         _ => return Err(USAGE.into()),
     };
     let start = Instant::now();
@@ -441,7 +497,7 @@ fn write_report(
             )
             .map_err(|e| {
                 format!(
-                    "{e}; check gh auth status --hostname github.com and private queue read access"
+                    "{e}; check gh api --help for --slurp support, gh auth status --hostname github.com and private queue read access"
                 )
             })?,
     };
@@ -456,7 +512,7 @@ fn write_report(
         ) {
             Ok(()) => {
                 sweep.classify(&base, &mut rows);
-                if let Err(reason) = sweep.boundaries(&base, &mut rows) {
+                if let Err(reason) = sweep.attribute_history(&base, &mut rows) {
                     notes.push(reason);
                 }
             }
