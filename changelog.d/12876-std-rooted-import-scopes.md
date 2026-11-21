@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A macro-generated Rust test keeps its invocation-site name scopes beside an import of std's own item under an exempt macro name, such as `use std::panic;` or `use std::fmt::write;`. The refusal stays when the file could make `std` or `core` mean something else (a local module, rename or `extern crate .. as`), when the importing scope has a glob import, and for `alloc` paths (#12876).

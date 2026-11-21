@@ -515,7 +515,7 @@ pub(crate) fn name_scopes_for_test_caller(
         Some(origin) if origin.body_declares_items => None,
         Some(_) if file_rebinds_a_std_macro(tree) => None,
         Some(_) => name_scopes_at_line(tree, line_index, fn_line)
-            .filter(|scopes| !scopes_import_a_std_macro_name(scopes)),
+            .filter(|scopes| !scopes_import_a_std_macro_name(tree, scopes)),
     }
 }
 
@@ -533,13 +533,90 @@ fn file_rebinds_a_std_macro(tree: &ast::SourceFile) -> bool {
 
 /// An explicit import at the invocation site that binds an exempt std macro
 /// name (`use other::assert_eq;`). Glob imports are not read (#12852).
-fn scopes_import_a_std_macro_name(scopes: &NameScopes) -> bool {
+/// An import of the real std item of that name is not a rebinding
+/// (`use std::panic;`, `use std::fmt::write;`; #12876).
+fn scopes_import_a_std_macro_name(tree: &ast::SourceFile, scopes: &NameScopes) -> bool {
     scopes.scopes.iter().any(|scope| {
-        scope
-            .imports
-            .iter()
-            .any(|import| NAME_FREE_STD_MACROS.contains(&import.bound.trim_start_matches("r#")))
+        scope.imports.iter().any(|import| {
+            NAME_FREE_STD_MACROS.contains(&import.bound.trim_start_matches("r#"))
+                && !imports_from_the_std_crate(tree, scope, import)
+        })
     })
+}
+
+/// Crate roots whose identity the scan can check from one file: `std` and
+/// `core` are in the extern prelude of every std crate. `alloc` is left out:
+/// it enters scope only through an `extern crate`, usually in another file.
+const STD_CRATE_ROOTS: &[&str] = &["std", "core"];
+
+/// `use std::panic;`-style: the path starts at `std` or `core` and ends in
+/// the bound name, so it imports std's own item (a module, function or the
+/// std macro itself), none of which binds names. The root must mean the real
+/// crate, so a local module, rename, `extern crate .. as`, use leaf or
+/// `macro_rules!` declaration of that name anywhere in the file, or a glob in
+/// the importing scope, keeps the refusal (#12876). A crate-root rebinding in
+/// another file is not seen, like a macro defined there.
+fn imports_from_the_std_crate(
+    tree: &ast::SourceFile,
+    scope: &NameScope,
+    import: &UseImport,
+) -> bool {
+    let UseBinding::Path(path) = &import.binding else {
+        return false;
+    };
+    let Some(root) = path.first() else {
+        return false;
+    };
+    path.len() >= 2
+        && STD_CRATE_ROOTS.contains(&root.as_str())
+        && scope.globs.is_empty()
+        && !file_may_bind_name(tree, root)
+}
+
+/// Any declaration in the file that may bind `name`: a named item, rename or
+/// pattern, a `use` leaf, or macro tokens (a `macro_rules!` body or an
+/// invocation's input) that declare it after an item keyword or `as`.
+fn file_may_bind_name(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.syntax().descendants().any(|node| {
+        if let Some(declared) = ast::Name::cast(node.clone()) {
+            return declared.text().trim_start_matches("r#") == name;
+        }
+        if let Some(item_use) = ast::Use::cast(node.clone()) {
+            return use_item_bindings(&item_use)
+                .imports
+                .iter()
+                .any(|import| import.bound == name);
+        }
+        let outermost_tokens = ast::TokenTree::can_cast(node.kind())
+            && !node
+                .parent()
+                .is_some_and(|parent| ast::TokenTree::can_cast(parent.kind()));
+        outermost_tokens && token_tree_declares(&node, name)
+    })
+}
+
+/// A macro token sequence `<item keyword or as> name`.
+fn token_tree_declares(body: &SyntaxNode, name: &str) -> bool {
+    const DECLARING: &[&str] = &[
+        "mod", "as", "crate", "fn", "struct", "enum", "union", "trait", "type", "const", "static",
+    ];
+    let mut previous: Option<String> = None;
+    for token in body
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+    {
+        let text = token.text().trim_start_matches("r#");
+        if text == name
+            && previous
+                .as_deref()
+                .is_some_and(|word| DECLARING.contains(&word))
+        {
+            return true;
+        }
+        previous = Some(text.to_string());
+    }
+    false
 }
 
 fn name_scopes_at_line(

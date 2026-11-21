@@ -6847,6 +6847,98 @@ fn integration_rename_case() {
         Ok(())
     }
 
+    /// #12876: an import of std's own item under an exempt macro name
+    /// (`use std::panic;`) is not a rebinding, so the generated test keeps its
+    /// invocation scopes. When the file can make `std`/`core` mean something
+    /// else, the refusal stays. Each case below was checked with rustc 1.95:
+    /// the positive imports leave `a::render` as the callee, the three
+    /// shadowed roots compile and call `b::render` through the hostile macro.
+    /// The glob and macro-declared roots are refused conservatively (rustc
+    /// rejects them as ambiguous with the extern prelude).
+    #[test]
+    fn std_rooted_import_keeps_invocation_scopes_unless_the_root_is_shadowed()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-std-import-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub mod a;\npub mod b;\npub mod shim { pub mod std { pub use crate::b::assert_eq; } }\n#[macro_export]\nmacro_rules! hostile_assertion { ($actual:expr, $expected:expr) => { use modules::b::render; ::core::assert_eq!($actual, $expected); }; }\n",
+        )?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\npub use crate::hostile_assertion as assert_eq;\npub use crate::hostile_assertion;\n",
+        )?;
+        let settle_with = |import: &str| -> Result<Option<CallTarget>, Box<dyn std::error::Error>> {
+            let source = format!(
+                "macro_rules! shadowed {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(render(1), 3);\n        }}\n    }};\n}}\n\nmod cases {{\n    use modules::a::render;\n    {import}\n    shadowed!(shadowed_case);\n}}\n"
+            );
+            std::fs::write(root.join("tests/gen.rs"), source)?;
+            let index = crate::analysis::facts::build_index(
+                &root,
+                &[
+                    PathBuf::from("src/lib.rs"),
+                    PathBuf::from("src/a.rs"),
+                    PathBuf::from("src/b.rs"),
+                    PathBuf::from("tests/gen.rs"),
+                ],
+            )?;
+            assert!(
+                index
+                    .tests()
+                    .iter()
+                    .any(|test| test.name == "shadowed_case"),
+                "the generated case must be indexed for {import:?}, or the verdict is vacuous"
+            );
+            Ok(settle(&index, "/a.rs::render", "shadowed_case"))
+        };
+        for import in [
+            "",
+            "use std::panic;",
+            "use std::panic::{self, catch_unwind};",
+            "use std::fmt::write;",
+            "use core::panic;",
+            "use std::assert_eq;",
+            "use std::vec;",
+        ] {
+            assert_eq!(
+                settle_with(import)?,
+                Some(CallTarget::Owner),
+                "{import:?} imports std's own item and must keep the invocation scopes"
+            );
+        }
+        for import in [
+            "mod std { pub use modules::b::assert_eq; } use std::assert_eq;",
+            "use modules::b as std; use std::assert_eq;",
+            "extern crate modules as std; use std::b::assert_eq;",
+            "use modules::shim::*; use std::assert_eq;",
+            "macro_rules! mk { () => { mod std { pub use modules::b::assert_eq; } } } use std::assert_eq;",
+            "use other::panic;",
+            "use alloc::vec;",
+        ] {
+            assert_ne!(
+                settle_with(import)?,
+                Some(CallTarget::Owner),
+                "{import:?} may not import std's item, so the test must not borrow scopes"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     /// #14069 fixture: a changed crate-level `max` beside test modules that
     /// reach a bare `max(..)` through different scopes.
     const STD_GLOB_LIB: &str = "\
