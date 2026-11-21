@@ -367,6 +367,23 @@ Evaluated inline ordinary
 function constructors and tags retain body registration notices; their parameter
 shadows and uncalled function values remain separate from runner registrations.
 
+Deno registrations (#15622). `Deno.test(name, fn)`, `Deno.test(name, options,
+fn)`, `Deno.test({ name, fn })` (with `fn` a method, arrow or function value),
+`Deno.test(options, fn)`, `Deno.test(function named() {})` and `Deno.test.only`
+each register one test. An options object whose `ignore` is anything but a
+literal `false`, or that has a spread or computed key, registers nothing, and
+so does `Deno.test.ignore`. A declaration, import or registration-scope name
+`Deno` shadows the runtime namespace, so its `.test` calls register nothing.
+Assertion collection and the unused-closure reach mask read the same resolved
+callback. Deno's standard assertions bind only from `@std/assert`,
+`jsr:@std/assert[@range][/subpath]` or `https://deno.land/std[@version]/...`
+(`/assert/` or `/testing/asserts.ts`): `assertEquals` reads as
+`deepStrictEqual`, `assertStrictEquals` as `strictEqual`, `assert` as the
+truthy `ok` call (it has no node-style members), and `assertThrows` /
+`assertRejects` as the broad `throws` / `rejects`. Other exports, namespace
+imports, look-alike specifiers and same-named local helpers stay unbound.
+`t.step` bodies are not walked for assertions.
+
 ### Assertion collection
 
 - Only the test callback's own statement list is walked, through blocks,
@@ -577,12 +594,21 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | Matcher | Kind / strength |
 | --- | --- |
 | `toBe`, `toEqual`, `toStrictEqual` | `exact_value` / strong |
+| Jasmine `toBeTrue()`, `toBeFalse()` (no argument; expected value `true` / `false`, as `toBe(true)` / `toBe(false)`) | `exact_value` / strong |
 | `toThrow`, `toThrowError` without an exact payload | `broad_error` / weak |
 | `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium (strong for a literal inline snapshot, RIPR-SPEC-0247 rule 3, or a named committed entry, RIPR-SPEC-0258) |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
-| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
+| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, Jasmine `toHaveSize`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
 | any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` (a same-file strict-equality `expect.extend` matcher reads `exact_value` / strong, RIPR-SPEC-0262) |
+
+Jasmine-only names are also common names for home-grown matchers, so
+`toBeTrue`, `toBeFalse` and `toHaveSize` read `unknown` / unknown in a file
+that mentions `extend` or `addMatchers`, with `.rejects`, or (for the
+boolean pair) with an argument (#15627). Negated, they cap like `.not.toBe`. The
+mention check is textual (comments and strings count, which only refuses
+more); a registration in another file, such as a setup or helper file, is
+not seen, the same limit `toBe` has.
 
 `.resolves` uses the same table. For an unshadowed `expect` import from
 `vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
@@ -1122,6 +1148,20 @@ file-level code included), so an alias (`const m = local.name`), a reassignment,
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.
+
+JSX render reach (#15295): in a `.tsx` or `.jsx` test, a JSX element
+`<Local .../>` or `<Local>` whose tag is a capitalized bare import local
+counts as a call of that import for `ImportedOwnerCall`, through the same
+import-source, shadow and mock guards as `Local(`. Intrinsic tags (`<div>`),
+member tags (`<Ns.Item>`), type arguments (`Array<Local>`, `useState<Local>`),
+type parameter lists (`<Local extends X>`, `<Local = X>`), comments and
+same-line strings do not count. A render proves reach only; oracle strength
+still comes from the test's assertions, and a render beside an unrelated
+assertion is not `exposed`. Known limits, all fail-closed: same-file
+components, re-export chains, member tags, explicit type arguments on the tag
+(`<Local<T> />`) and a tag directly after JSX text (`Count<Local />`) are not
+credited. A component owner with only heuristic links is advised to render
+`<Local .../>`, not to add a direct owner call.
 
 ### Observation guard
 
@@ -2499,6 +2539,14 @@ keys); do not take the next number.
   (rule 23).
 
 ## Test Mapping
+
+- #15622 (Deno registrations and `@std/assert`):
+  `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs` pins
+  each registration shape, the ignored/spread/unreadable refusals, the
+  shadowed-namespace refusal, the unused-closure reach mask for every callback
+  position, the std assertion grades and the look-alike, namespace, local and
+  member-call refusals; `crates/ripr/tests/typescript_no_config_detection.rs`
+  pins a zero-config `deno.json` run linking the `Deno.test`.
 
 - #13592 (module-level `const` reached through a reader): `tests/module_value_read_tests.rs`
   pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,

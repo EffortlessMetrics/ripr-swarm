@@ -59,6 +59,13 @@ pub(crate) fn strict_equality_matchers(
         .collect()
 }
 
+/// Whether the file may register its own matchers: any `extend` mention
+/// (`expect.extend`) or `addMatchers` (Jasmine), comments and strings
+/// included, which only over-count and so refuse built-in credit.
+pub(crate) fn file_may_register_matchers(source: &str) -> bool {
+    extend_mentions(source) > 0 || source.contains("addMatchers")
+}
+
 /// The word `extend` anywhere in `source` (not `extends`, `extended`),
 /// comments and strings included, which only over-count and so refuse.
 fn extend_mentions(source: &str) -> usize {

@@ -302,6 +302,25 @@ one changed raise only (#12952); the general class-only table row stays weak.
    `eval`, `setattr`) or a non-function owner leaves the message unresolved
    and keeps the existing verdict (#9185, the attrs `default_if_none`
    instance).
+   Class-attribute text (#15294): when the changed line is a message-only
+   edit of a one-line `name = "..."` or `name: T = "..."` directly in a class
+   body (the owner is the class), the change is `exposed` only if a related
+   oracle test carries a literal that the old text accepts and the new text
+   rejects, with each `{...}` placeholder read as a wildcard. The literals
+   read are: the `match=` / `assertRaisesRegex` pattern (literal characters
+   and the `.` wildcard only, searched as a substring), the string operand of
+   a one-line `assert x == "..."` or `assertEqual` (it must equal the whole
+   text), and the string operand of `assert "..." in x` or `assertIn` against
+   a non-literal container (a substring). At least half of the literal must
+   match fixed characters of the old text; against the new text one fixed
+   character is enough, and a new text made only of placeholders rejects
+   nothing. A literal shorter than four characters pins only through
+   whole-text equality. Call arguments,
+   assert messages, `!=`, `not in`, two-constant comparisons and statements
+   that span lines pin nothing. Otherwise the change is `weakly_exposed`
+   with missing discriminator `class attribute <name> text "<new text>"`.
+   A decorated or multi-line constant and a non-string value keep the
+   existing verdict.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns

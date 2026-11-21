@@ -9,7 +9,7 @@ use super::{
     GapDecisionLedgerReport, GapRecord, eligible_projection_names, fallback_gap_id, non_empty,
 };
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
-use crate::output::markdown::{code_span, inline_prose, inline_prose_literal};
+use crate::output::markdown::{code_span, inline_prose};
 use serde_json::Value;
 
 pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerReport) -> String {
@@ -232,18 +232,10 @@ pub(super) fn render_record_markdown(record: &GapRecord, out: &mut String) {
 
 /// Imported text in a bare list item or sentence: `<` cannot open raw HTML,
 /// `@name` cannot notify an account and a line ending cannot start a block.
-///
-/// `inline_prose` keeps what looks like a code span verbatim, but a parser
-/// gives a backtick inside a link destination to the link, which would leave
-/// a later tag or mention outside any span (#15127). Text carrying a backtick
-/// together with `<` or `[` therefore also has its link brackets escaped, so
-/// the backticks can only pair as the code span the helper assumed.
+/// `inline_prose` keeps only parser-confirmed code spans, so a backtick inside
+/// a link destination cannot hide a later tag or mention (#15127).
 fn md_inline(value: &str) -> String {
-    if value.contains('`') && value.contains(['<', '[']) {
-        inline_prose_literal(value)
-    } else {
-        inline_prose(value)
-    }
+    inline_prose(value)
 }
 
 /// Imported value as an inline code span that reads back as exactly `value`
@@ -394,8 +386,8 @@ mod tests {
 
     #[test]
     fn warning_with_backtick_in_link_destination_opens_no_html() -> Result<(), String> {
-        // Without the bracket escape the parser reads `[x](a`b)` as a link,
-        // the first backtick belongs to its destination and `<b>` is raw.
+        // The parser reads `[x](a`b)` as a link, so its backtick is not part of
+        // a code span and `<b>` must be escaped rather than left raw.
         let report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
             root: ".".to_string(),
             generated_at: "test".to_string(),
@@ -404,11 +396,12 @@ mod tests {
             records_json: Err("gap [x](a`b) <b>bold</b> then `end` is invalid".to_string()),
         });
         let markdown = render_gap_decision_ledger_markdown(&report);
-        let (spans, _) = rendered(&markdown)?;
+        let (spans, text) = rendered(&markdown)?;
         assert!(
-            spans.iter().any(|span| span.contains("<b>bold</b>")),
-            "the tag is not inside a code span: {spans:?}\n{markdown}"
+            text.contains("<b>bold</b>"),
+            "the tag is not shown literally: {text:?}\n{markdown}"
         );
+        assert!(spans.iter().any(|span| span == "end"), "{spans:?}");
         Ok(())
     }
 
@@ -426,12 +419,9 @@ mod tests {
         };
         // No `<` here: the link alone used to take the first backtick and
         // leave the mention as live text.
-        let (spans, text) = warning("gap [x](a`b) @reviewer then `end` is invalid")?;
+        let (_, text) = warning("gap [x](a`b) @reviewer then `end` is invalid")?;
         assert!(!text.contains("@reviewer"), "live mention: {text:?}");
-        assert!(
-            spans.iter().any(|span| span.contains("@reviewer")),
-            "{spans:?}"
-        );
+        assert!(text.contains("@\u{2060}reviewer"), "{text:?}");
         // Control: a real code span next to a link-free mention is untouched.
         let (spans, text) = warning("gap `id` is invalid for @reviewer")?;
         assert!(spans.iter().any(|span| span == "id"), "{spans:?}");

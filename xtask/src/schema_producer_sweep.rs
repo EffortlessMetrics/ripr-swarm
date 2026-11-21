@@ -120,6 +120,9 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             // --root fixtures/helper_chain_controls/input --diff
             // fixtures/helper_chain_controls/diff.patch --format json` (#11584).
             "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
+            // A `--format check-findings-json` capture (#15376): the check
+            // document with its leading `artifact` envelope.
+            "tests/fixtures/verification/ripr/check-findings.valid.json",
             // Retained captures of past `ripr check` runs inside real-repo eval
             // fixtures. They validate against the schema, but they are not
             // bytes the candidate's build produced, so they stay edge fixtures.

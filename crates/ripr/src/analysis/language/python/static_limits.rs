@@ -9,6 +9,7 @@ use super::assertion_selection::{
 use super::callee_patch::callee_only_patch;
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::cli_subcommand::CliSubcommand;
+use super::collection_config::{COLLECT_IGNORE, UNEVALUATED_CONFTEST};
 use super::effect_alignment::ChangedEffect;
 use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
@@ -284,10 +285,22 @@ pub(super) fn static_limit_for_focused_change(
                 "static_limit decorator_indirection: test activation for `{}` is controlled by `{decorator}`",
                 test.qualified_name
             ),
-            missing: format!(
-                "Static limit `decorator_indirection`: related test `{}` uses `{decorator}`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition.",
-                test.qualified_name
-            ),
+            missing: if decorator == UNEVALUATED_CONFTEST {
+                format!(
+                    "Static limit `decorator_indirection`: a `conftest.py` above related test `{}` sets `collect_ignore`, `collect_ignore_glob` or a collection hook in a form the Python preview adapter does not evaluate, so static evidence does not establish that pytest collects the test. Inspect that conftest, or give the ignore list as plain string literals.",
+                    test.qualified_name
+                )
+            } else if decorator == COLLECT_IGNORE {
+                format!(
+                    "Static limit `decorator_indirection`: a `conftest.py` `collect_ignore` / `collect_ignore_glob` entry (possibly behind a conditional) may exclude related test `{}`, so static evidence does not establish that pytest collects it. Add an independent collected test or inspect the conftest.",
+                    test.qualified_name
+                )
+            } else {
+                format!(
+                    "Static limit `decorator_indirection`: related test `{}` uses `{decorator}`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition.",
+                    test.qualified_name
+                )
+            },
         });
     }
     // A mocked test keeps the limit unless its substitutions are literal
@@ -1981,8 +1994,9 @@ pub(super) fn cross_module_reach_limit(
         });
     }
     // Helpers are only gathered when no test relates to the owner directly,
-    // so equal lengths mean every related candidate is a helper candidate;
-    // the check keeps the limit off if candidates are ever appended later.
+    // so equal lengths mean every related candidate is a helper candidate. A
+    // same-file value-helper row (#15350) can sit beside them; it reaches the
+    // owner from its own file, so the unequal lengths keep the limit off.
     if helper_callers.is_empty()
         || related_candidates.len() != helper_callers.len()
         || !helper_callers.iter().all(|helper| helper.cross_module)

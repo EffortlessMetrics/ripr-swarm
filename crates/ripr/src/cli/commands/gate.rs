@@ -98,6 +98,16 @@ fn evaluate_and_write(options: &GateOptions) -> Result<(), CommandError> {
     ) {
         eprintln!("{warning}");
     }
+    for unavailable in output::gate::gate_decision_unavailable_inputs(&report) {
+        // "optional labels_json PATH is unavailable: why" names the field;
+        // say the flag the caller typed.
+        let rest = unavailable.strip_prefix("optional ").unwrap_or(unavailable);
+        let (field, detail) = rest.split_once(' ').unwrap_or((rest, ""));
+        let flag = format!("--{}", field.replace('_', "-"));
+        eprintln!(
+            "ripr gate: {flag} {detail}; the decision was evaluated without it. Pass a readable file of the kind {flag} names, or drop the flag"
+        );
+    }
     let rendered_json = output::gate::render_gate_decision_json(&report)?;
     let rendered_md = output::gate::render_gate_decision_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
@@ -124,6 +134,12 @@ fn evaluate_and_write(options: &GateOptions) -> Result<(), CommandError> {
 }
 
 fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
+    parse_gate_options_for(args, "gate evaluate")
+}
+
+/// `command` names the command actually run in a refused-root message, so
+/// `gate check` does not blame `gate evaluate` (#15249).
+fn parse_gate_options_for(args: &[String], command: &str) -> Result<GateOptions, String> {
     let mut root = PathBuf::from(".");
     let mut root_explicit = false;
     let mut repo_exposure = None;
@@ -262,7 +278,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
                 .to_string(),
         );
     }
-    require_existing_gate_root(&root)?;
+    crate::cli::commands_context::ensure_command_root_dir(&root, command)?;
     Ok(GateOptions {
         input: output::gate::GateEvaluateInput {
             root,
@@ -557,7 +573,7 @@ fn parse_gate_check_plan(args: &[String]) -> Result<GateCheckPlan, String> {
         "--mode".to_string(),
         mode.unwrap_or_else(|| output::gate::GateMode::Acknowledgeable.as_str().to_string()),
     ]);
-    let gate = parse_gate_options(&gate_args)?;
+    let gate = parse_gate_options_for(&gate_args, "gate check")?;
     refuse_overlapping_outputs(&guidance_out, &gate)?;
     Ok(GateCheckPlan {
         review_comments_args: review_args,
@@ -589,17 +605,6 @@ fn missing_candidate_input_message(
         (false, false) => {
             "gate evaluate requires at least one of --pr-guidance <path> or --gap-ledger <path>; see `ripr gate --help` for all options"
         }
-    }
-}
-
-fn require_existing_gate_root(root: &Path) -> Result<(), String> {
-    if root.is_dir() {
-        Ok(())
-    } else {
-        Err(format!(
-            "gate evaluate --root {} is not a directory; pass --root naming an existing repository directory",
-            root.display()
-        ))
     }
 }
 

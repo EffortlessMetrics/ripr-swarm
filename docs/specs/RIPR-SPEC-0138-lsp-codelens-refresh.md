@@ -100,6 +100,15 @@ root-transition guard is released, under the same scheduling discipline as
 the deferred configuration pull. The recording is coalesced identically: a
 view that is already cleared sends nothing.
 
+### Before `initialized`
+
+No `workspace/codeLens/refresh` is sent before the client's `initialized`
+notification. tower-lsp-server refuses server->client requests while
+`initialize` is handled (-32002), and the client requests the current lenses
+itself once the session starts, so the
+initialize-time root transition records the cleared identity without sending
+a request or logging a refresh failure.
+
 ### Failure behavior
 
 A failed or declined request is logged (`window/logMessage`, warning) as a
@@ -127,6 +136,9 @@ mutate snapshot, evidence, or identity state beyond that recording.
 - In-process tests: an unsupported client records and attempts no refresh; a
   supported client records the first view and advances it on a semantic
   (classification) change.
+- Framed duplex test: a supported client sees no refresh request and no
+  refresh-failure log while `initialize` is handled or after `initialized`
+  for the initialize-time cleared view.
 - Framed duplex test: a supported client receives exactly one
   `workspace/codeLens/refresh` after the first snapshot commit (the test
   client answers the request), no request after a byte-identical re-commit,

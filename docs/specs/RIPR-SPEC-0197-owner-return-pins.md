@@ -2881,7 +2881,9 @@ branch holding a statement, or code after the chain is outside the subset.
   mention of a trusted name in another macro's arguments stays ambiguous,
   a plain `assert_eq!(..)` included: to that macro it is only tokens, and
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
-  together with the module whose tests then compile against it. The one
+  together with the module whose tests then compile against it. An audited
+  pass-through wrapper (`proptest!`, `serde_json::json!`) keeps the site but
+  confines it to the call's own text (RIPR-SPEC-0369, #14116). The other
   exception is a call to a wrapper that cannot bind a name at all (#6648):
   an unqualified call to a `macro_rules!` this file defines exactly once,
   without an attribute and never names in a `use`. The definition sits at
@@ -2960,7 +2962,8 @@ branch holding a statement, or code after the chain is outside the subset.
   through resolved module edges, recognized only when that root is a Cargo
   autodiscovered target (`src/lib.rs`, `src/main.rs`, `src/bin/*.rs`,
   `src/bin/NAME/main.rs`, and `tests/*.rs`, `benches/*.rs`, `examples/*.rs`,
-  `build.rs` beside an indexed `src/`) or a root the nearest package
+  their multi-file `tests/NAME/main.rs` forms (#15327) and `build.rs`
+  beside an indexed `src/`) or a root the nearest package
   manifest names: a `[lib] path`, or an explicit `[[test]]`, `[[bin]]`,
   `[[example]]` or `[[bench]]` `path` (#7128). So a test in
   `[[test]] path = "it/pin.rs"` is its own crate root and its exact
@@ -2978,7 +2981,7 @@ branch holding a statement, or code after the chain is outside the subset.
   root is not recognized stay workspace-wide. So does any file another
   crate can also compile: an `include!` fragment or a module below one (a
   recorded include target, include edge, or include target as a module
-  parent), a non-root file under a `tests/*.rs` root (a shared
+  parent), a non-root file under a flat `tests/*.rs` root (a shared
   `tests/common/mod.rs` composes under its first owner only), and, while any
   `include!` in the workspace is unresolved (ambiguous, cfg-conflicting,
   capped, dynamic or unindexed), every file: an unresolved fragment and its

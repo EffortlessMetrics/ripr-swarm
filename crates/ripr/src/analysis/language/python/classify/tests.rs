@@ -4814,6 +4814,102 @@ fn loop_boundary_full_list_loop_keeps_identity_and_other_bodies() -> Result<(), 
 }
 
 #[test]
+fn loop_boundary_none_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = None` takes the first element through `best is None`, then
+    // compares the rest like the `xs[0]` forms, so equal integers select an
+    // equal value under either operator.
+    let source = "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n";
+    for (before, after, expected) in [
+        (
+            "        if best is None or x > best:",
+            "        if best is None or x >= best:",
+            5,
+        ),
+        (
+            "        if best is None or x < best:",
+            "        if best is None or x <= best:",
+            1,
+        ),
+    ] {
+        let source = source.replace("        if best is None or x >= best:", after);
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 4, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_none_guard_needs_its_own_seed_and_shape() -> Result<(), String> {
+    let edit = (
+        "        if best is None or x > best:",
+        "        if best is None or x >= best:",
+    );
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    for (label, source) in [
+        // Seeded from the list, the guard never holds, but the shape is not
+        // the one the guard belongs to; it is left to the prior reading.
+        (
+            "xs[0] seed",
+            "def largest(xs):\n    best = xs[0]\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n",
+        ),
+        // A guard on another name than the accumulator is a different test.
+        (
+            "guard on another name",
+            "def largest(xs):\n    best = None\n    for x in xs:\n        if x is None or x >= best:\n            best = x\n    return best\n",
+        ),
+        // The guard spelled with `and` is not a selector at all.
+        (
+            "and instead of or",
+            "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None and x >= best:\n            best = x\n    return best\n",
+        ),
+        // The iterator form has its own seed; the guard does not belong there.
+        (
+            "iterator form",
+            "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if best is None or x >= best:\n            best = x\n    return best\n",
+        ),
+    ] {
+        let (before, after) = if label == "guard on another name" {
+            (
+                "        if x is None or x > best:",
+                "        if x is None or x >= best:",
+            )
+        } else if label == "and instead of or" {
+            (
+                "        if best is None and x > best:",
+                "        if best is None and x >= best:",
+            )
+        } else {
+            edit
+        };
+        let line = if label == "iterator form" { 8 } else { 4 };
+        let finding = classify_edit_case(source, tests, line, before, after)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // Identity still tells `>` from `>=` on equal keys.
+    let source = "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n";
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(source, identity, 4, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "identity: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn loop_boundary_edit_that_also_changes_the_rest_of_the_condition_keeps_prior_class()
 -> Result<(), String> {
     let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
@@ -5755,5 +5851,213 @@ fn changed_range_preserves_integer_types_before_offset_normalization() -> Result
             "{source}\n{tests}: {finding:?}"
         );
     }
+    Ok(())
+}
+
+// #15294: a changed class-attribute string constant is exposed only when a
+// related assertion carries a literal that the old text accepts and the new
+// text rejects.
+const LENGTH_SOURCE: &str = "class ValidationError(Exception):\n    pass\n\n\nclass Length:\n    message_max = \"Longer than the maximum length {max}.\"\n\n    def __init__(self, max=None):\n        self.max = max\n\n    def __call__(self, value):\n        if self.max is not None and len(value) > self.max:\n            raise ValidationError(self.message_max.format(max=self.max))\n        return value\n";
+const LENGTH_OLD_LINE: &str = "    message_max = \"Longer than maximum length {max}.\"";
+const LENGTH_NEW_LINE: &str = "    message_max = \"Longer than the maximum length {max}.\"";
+
+fn classify_length_change(tests: &str) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, LENGTH_SOURCE);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        6,
+        LENGTH_NEW_LINE,
+        Some(LENGTH_OLD_LINE),
+        &owners,
+        &tests,
+        Some(LENGTH_SOURCE),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())
+}
+
+#[test]
+fn class_attribute_text_change_unobserved_by_related_tests_is_weakly_exposed() -> Result<(), String>
+{
+    for tests in [
+        // The repro: construct and call, never see the message.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_ok():\n    assert Length(max=3)(\"abc\") == \"abc\"\n\ndef test_min():\n    with pytest.raises(ValidationError, match=\"Shorter than minimum length 2\"):\n        Length(max=3)(\"abcd\")\n",
+        // A pattern naming only the unchanged prefix fits both texts.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer than\"):\n        Length(max=1)(\"ab\")\n",
+        // Regex syntax is unreadable and credits nothing.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer.*length\"):\n        Length(max=1)(\"ab\")\n",
+    ] {
+        let finding = classify_length_change(tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{tests}: {finding:?}"
+        );
+        assert!(
+            missing_boundary(
+                &finding,
+                "class attribute `message_max` text \"Longer than the maximum length {max}.\""
+            )
+            .is_some(),
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn class_attribute_text_change_stays_exposed_when_an_assertion_pins_the_old_text()
+-> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer than maximum length 1\"):\n        Length(max=1)(\"ab\")\n",
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError) as exc:\n        Length(max=1)(\"ab\")\n    assert str(exc.value) == \"Longer than maximum length 1.\"\n",
+    ] {
+        let finding = classify_length_change(tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_method_return_change_keeps_exposed_beside_the_class_attribute_gate() -> Result<(), String>
+{
+    let source = "class Length:\n    message_max = \"Longer than maximum length {max}.\"\n\n    def clip(self, value):\n        return value[:2]\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import Length\n\ndef test_clip():\n    assert Length().clip(\"abcd\") == \"ab\"\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        5,
+        "        return value[:2]",
+        Some("        return value[:3]"),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "method change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #15294 review: a `.` in a `match=` pattern is a regex wildcard, and a
+// literal outside an equality operand (a call input, an assert message, a
+// `!=` operand, a fragment on `==`) cannot tell the old text from the new.
+#[test]
+fn class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals() -> Result<(), String>
+{
+    let source = "class Error(Exception):\n    pass\n\n\nclass Limit:\n    message = \"Value too long!\"\n\n    def check(self, value):\n        if len(value) > 3:\n            raise Error(self.message)\n        return value\n";
+    let old_line = "    message = \"Value too long.\"";
+    let new_line = "    message = \"Value too long!\"";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    for tests in [
+        "import pytest\nfrom src.subject import Limit, Error\n\ndef test_long():\n    with pytest.raises(Error, match=\"too long.\"):\n        Limit().check(\"abcd\")\n",
+        "from src.subject import Limit\n\ndef test_input():\n    assert Limit().check(\"too long.\") == \"abc\"\n",
+        "from src.subject import Limit\n\ndef test_message():\n    assert Limit().check(\"abc\") == \"abc\", \"Value too long.\"\n",
+        "from src.subject import Limit\n\ndef test_ne():\n    assert Limit().check(\"abc\") != \"too long.\"\n",
+        // An equality must name the whole text; a fragment of it does not.
+        "from src.subject import Limit\n\ndef test_eq_fragment():\n    assert Limit().check(\"abc\") == \"too long.\"\n",
+        // Membership in a literal container compares nothing the owner made.
+        "from src.subject import Limit\n\ndef test_in_tuple():\n    Limit().check(\"abc\")\n    assert \"too long.\" in (\"too long.\", \"x\")\n",
+        // Two constants compare nothing the owner made.
+        "from src.subject import Limit\n\ndef test_self():\n    Limit().check(\"abc\")\n    assert \"Value too long.\" == \"Value too long.\"\n",
+    ] {
+        let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+        let finding = classify_change_with_source(
+            file,
+            6,
+            new_line,
+            Some(old_line),
+            &owners,
+            &tests_facts,
+            Some(source),
+        )
+        .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    // Control: an equality on the old text pins the edit.
+    let tests = "import pytest\nfrom src.subject import Limit, Error\n\ndef test_long():\n    with pytest.raises(Error) as exc:\n        Limit().check(\"abcd\")\n    assert str(exc.value) == \"Value too long.\"\n";
+    let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+    let finding = classify_change_with_source(
+        file,
+        6,
+        new_line,
+        Some(old_line),
+        &owners,
+        &tests_facts,
+        Some(source),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #15294 review: whole-text equality with a short message is exact, while a
+// short fragment on `in` stays unread.
+#[test]
+fn class_attribute_short_text_pins_only_through_whole_equality() -> Result<(), String> {
+    let source = "class Error(Exception):\n    pass\n\n\nclass Gate:\n    message = \"NO\"\n\n    def check(self, value):\n        if not value:\n            raise Error(self.message)\n        return value\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    for (tests, expected) in [
+        (
+            "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert str(exc.value) == \"OK\"\n",
+            ExposureClass::Exposed,
+        ),
+        (
+            "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert \"OK\" in str(exc.value)\n",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+        let finding = classify_change_with_source(
+            file,
+            6,
+            "    message = \"NO\"",
+            Some("    message = \"OK\""),
+            &owners,
+            &tests_facts,
+            Some(source),
+        )
+        .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+        assert_eq!(finding.class, expected, "{tests}: {finding:?}");
+    }
+    Ok(())
+}
+
+// #15294 review: a new text made only of placeholders can render as the old
+// text, so an equality on the old text does not tell them apart.
+#[test]
+fn class_attribute_placeholder_only_new_text_rejects_nothing() -> Result<(), String> {
+    let source = "class Error(Exception):\n    pass\n\n\nclass Gate:\n    message = \"{word}\"\n\n    def check(self, value):\n        if not value:\n            raise Error(self.message.format(word=\"OK\"))\n        return value\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert str(exc.value) == \"OK\"\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        6,
+        "    message = \"{word}\"",
+        Some("    message = \"OK\""),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }

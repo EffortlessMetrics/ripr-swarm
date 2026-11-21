@@ -913,6 +913,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -1630,6 +1631,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,

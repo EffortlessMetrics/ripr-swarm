@@ -90,12 +90,11 @@ use super::{
     EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
     EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
     EvidenceQualityTrendReport, FixKind, GENERATED_CI_COCKPIT_COMMAND,
-    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
-    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
-    GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
-    Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
-    LspCockpitFixture, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
-    PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
+    GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
+    Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
+    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, MarkdownLink,
+    PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
@@ -19890,6 +19889,15 @@ jobs:
           path: |
             target/ripr/reports
 ";
+    let first_pr_line = concat!(
+        "- Safe next action: run `ripr first-pr --root . --base origin/main --head HEAD",
+        " --gap-ledger target/ripr/reports/gap-decision-ledger.json",
+        " --first-action target/ripr/reports/first-useful-action.json",
+        " --review-comments target/ripr/review/comments.json",
+        " --agent-packet target/ripr/workflow/agent-packet.json",
+        " --gate-decision target/ripr/reports/gate-decision.json",
+        " --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`.",
+    );
     let summary = format!(
         "\
 ## RIPR advisory summary
@@ -19899,7 +19907,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 ### Start here
 - Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
-- {GENERATED_CI_FIRST_PR_REPAIR}
+{first_pr_line}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
 - {GENERATED_CI_PACKET_INDEX_REPAIR}
 
@@ -19924,6 +19932,31 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
     assert!(run.default_advisory);
     assert!(run.artifact_upload);
     assert_eq!(run.language_grouping_status, "checked");
+
+    for (name, changed_summary) in [
+        (
+            "wrong-first-pr-output-dir",
+            summary.replace(
+                "--output-dir target/ripr/reports`",
+                "--output-dir target/ripr/reports-wrong`",
+            ),
+        ),
+        ("missing-first-pr", summary.replace(first_pr_line, "")),
+    ] {
+        let changed = dogfood_generated_ci_cockpit_run_from_surfaces(
+            name,
+            command,
+            10,
+            workflow,
+            &changed_summary,
+        );
+        assert_eq!(changed.repair_commands, 3, "{name}");
+        assert_eq!(
+            changed.errors,
+            ["expected 4 cockpit regeneration commands, got 3"],
+            "{name}"
+        );
+    }
 
     let missing =
         dogfood_generated_ci_cockpit_run_from_surfaces("missing", command, 10, "name: RIPR", "");
@@ -20047,10 +20080,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 
     // Generated CI names the PR range since #4260; the unscoped form it
     // replaced must not satisfy the first-pr repair command.
-    let unscoped = summary.replace(
-        GENERATED_CI_FIRST_PR_REPAIR,
-        "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
-    );
+    let unscoped = summary.replace(" --base origin/main --head HEAD", "");
     let stale = dogfood_generated_ci_cockpit_run_from_surfaces(
         "unscoped-first-pr",
         command,

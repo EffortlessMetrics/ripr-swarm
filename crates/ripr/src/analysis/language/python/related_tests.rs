@@ -1021,6 +1021,9 @@ fn test_text_mentions(test: &PythonTest, name: &str) -> bool {
             .fixture_defs
             .iter()
             .any(|def| def.body_text.contains(name) || def.imports.iter().any(import_mentions))
+        || test.value_helpers.iter().any(|helper| {
+            helper.body_text.contains(name) || helper.imports.iter().any(import_mentions)
+        })
 }
 
 fn related_test_relation_scan(
@@ -1040,7 +1043,13 @@ fn related_test_relation_scan(
         if fixture_owner_call(test, owner) {
             return Some(PythonRelationKind::FixtureOwnerCall);
         }
-        return route.map(|_| PythonRelationKind::ApiClientRouteUnidentifiedApp);
+        if route.is_some() {
+            return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+        }
+        // A value helper resolves its own module's imports (#15350), so the
+        // test's binding of the name to another module does not decide it.
+        return value_helper_calls_owner(test, owner)
+            .then_some(PythonRelationKind::HelperOwnerCall);
     }
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
@@ -1079,6 +1088,9 @@ fn related_test_relation_scan(
     if route.is_some() {
         return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
     }
+    if value_helper_calls_owner(test, owner) {
+        return Some(PythonRelationKind::HelperOwnerCall);
+    }
     // A test is related to an owner only when it references the owner
     // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
     // ranking labels for a test that already references the owner without a
@@ -1099,6 +1111,53 @@ fn related_test_relation_scan(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether a same-file value helper the test calls (`value_helpers.rs`,
+/// #15350) calls the owner by the direct-call rules, read as a test whose body
+/// is the helper's and whose imports are the test's plus the helper's own (a
+/// helper-local import replaces the module's import of the same alias). A
+/// helper that binds the owner's name as a parameter or local never relates.
+/// Reach only: the helper's return is not shown to be the owner's result.
+fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.value_helpers.iter().any(|helper| {
+        let mut view = test.clone();
+        view.body_text.clone_from(&helper.body_text);
+        // The helper resolves names in its own module: the module's imports
+        // with its own imports over them, never the calling test's local
+        // imports.
+        view.imports.clone_from(&helper.imports);
+        // A parameter or local that rebinds the owner's name (or an alias the
+        // view imports it as) is not the owner.
+        let rebinds_owner = helper.local_names.iter().any(|local| {
+            *local == owner.name
+                || view.imports.iter().any(|import| {
+                    import.alias == *local && imports_owner_name(&import.imported, &owner.name)
+                })
+        });
+        if rebinds_owner {
+            return false;
+        }
+        view.assertions.clear();
+        // The helper's parameters stand where a test's fixtures do, so a
+        // parameter that shadows a module alias (`def run(core, n):
+        // return core.total(n)`) is read as rebinding it.
+        view.fixtures.clone_from(&helper.local_names);
+        view.fixture_defs.clear();
+        view.value_helpers.clear();
+        !bare_name_bound_to_other_module(&view, owner)
+            && (body_calls_owner(&view.body_text, owner) || import_alias_calls_owner(&view, owner))
+    })
+}
+
+/// Whether an imported spelling names `owner_name` itself: the bare name or a
+/// dotted path ending in it (`pkg.core.total`), never a longer name that only
+/// ends with it (`subtotal`).
+fn imports_owner_name(imported: &str, owner_name: &str) -> bool {
+    imported == owner_name
+        || imported
+            .strip_suffix(owner_name)
+            .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 /// Whether the test imports the free-function owner's name (under any alias)

@@ -48,6 +48,39 @@ adoption contract in
 [RIPR-SPEC-0009](specs/RIPR-SPEC-0009-defaults-first-adoption.md) defines the
 missing-config and generated-config behavior that must remain advisory.
 
+## Cargo build temporary directories
+
+For source builds of this repository, [`.cargo/config.toml`](../.cargo/config.toml)
+keeps `force = true` for `TEMP`, `TMP`, and `TMPDIR` so build children that
+honor those variables use the checkout's `target/` for scratch space. This
+keeps linker scratch off the system temp volume when the checkout is on a
+different volume.
+
+Cargo itself starts with the values supplied by its launcher. When Cargo loads
+the checkout's config, it supplies all three values as the absolute path to
+`<checkout>/target` to build processes such as rustc and build scripts. The
+linker inherits them from rustc, and programs launched by `cargo run` or
+`cargo test` also receive them. Shell exports still reach Cargo itself, but
+`force = true` replaces those values for these children. For example, the
+`target/tmp/check-pr` values that `cargo xtask check-pr` passes to its nested
+Cargo invocations reach those Cargo processes, whose build children receive
+`<checkout>/target` again.
+
+Cargo discovers this config when invoked from the checkout root or a
+subdirectory. A `--manifest-path` pointing into the checkout from an unrelated
+working directory does not load the checkout's config by itself.
+[Cargo resolves `relative = true` against the parent of `.cargo/`](https://doc.rust-lang.org/cargo/reference/config.html#env).
+`CARGO_TARGET_DIR` moves Cargo's build output, while these three paths still
+resolve to the checkout's `target/`. Create that directory before building with
+a separate output directory, especially in a fresh worktree.
+
+On Windows, if a deep checkout makes a linker temp path too long, clone or
+add a worktree in a short directory such as `ripr` directly under the root of
+a drive with enough space. From that checkout root, create `target` if needed
+and run Cargo there. This shortens the forced temp path while keeping scratch
+under the checkout. For the missing-directory failure, see the
+[workspace linker temp notes](agent-context/validation.md#workspace-linker-temp-redirect).
+
 ## Defaults-first operator profile
 
 The built-in missing-config profile and the `ripr init` generated profile are
@@ -1361,7 +1394,7 @@ card refuse it); `review-comments` output still lists it, labelled `off`.
 
 | Key | Type | Default | Effect |
 | --- | --- | --- | --- |
-| `enabled` | array of strings | `["rust"]` when a `ripr.toml` is found; with no `ripr.toml` (at the root or any ancestor up to the repository boundary), `["rust", "python"]` when Python project markers (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`) or detectable non-generated `.py` files under root `src/` or `tests/` are found, plus `typescript` when a `tsconfig.json` or `jsconfig.json`, or detectable non-generated, non-declaration `.ts`, `.tsx`, `.mts` or `.cts` files under `src/` or `tests/`, are found at the root, in a directory one level below it, or in a `packages/*`, `apps/*`, `libs/*` or `libraries/*` package (vendored and excluded directories never count; below the root, hidden directories do not count either; `package.json` alone, or tooling config files such as `eslint.config.js`, does not select it; a root with a `package.json` and JavaScript or TypeScript source at the root or under `src/`, `test/` or `tests/` does, including beside a Python project; beside a `Cargo.toml`, only the root and `src/` count, because Rust `tests/` hold integration tests and fixtures). Create a `ripr.toml` with `enabled = ["rust"]` to keep Python preview off, and TypeScript preview off too. | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `javascript` (alias for `typescript`; listing both is a duplicate), `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
+| `enabled` | array of strings | `["rust"]` when a `ripr.toml` is found; with no `ripr.toml` (at the root or any ancestor up to the repository boundary), `["rust", "python"]` when Python project markers (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`) or detectable non-generated `.py` files under root `src/` or `tests/` are found, plus `typescript` when a `tsconfig.json`, `jsconfig.json`, `deno.json` or `deno.jsonc` (a Deno project, with or without a `package.json`), or detectable non-generated, non-declaration `.ts`, `.tsx`, `.mts` or `.cts` files under `src/` or `tests/`, are found at the root, in a directory one level below it, or in a `packages/*`, `apps/*`, `libs/*` or `libraries/*` package (vendored and excluded directories never count; below the root, hidden directories do not count either; `package.json` alone, or tooling config files such as `eslint.config.js`, does not select it; a root with a `package.json` and JavaScript or TypeScript source at the root or under `src/`, `test/` or `tests/` does, including beside a Python project; beside a `Cargo.toml`, only the root and `src/` count, because Rust `tests/` hold integration tests and fixtures). Create a `ripr.toml` with `enabled = ["rust"]` to keep Python preview off, and TypeScript preview off too. | Language adapters the analysis pipeline will dispatch to. Valid values: `rust`, `typescript`, `javascript` (alias for `typescript`; listing both is a duplicate), `python`, `perl`. Unknown values and duplicate entries are rejected. TypeScript covers `.ts`, `.tsx`, `.mts`, `.cts`, `.js`, `.jsx`, `.mjs`, and `.cjs`; Python covers `.py`. Perl consumes externally-produced `ripr-perl-facts-v1` packets and does not parse Perl source directly. Supply one with `--perl-facts <path>`, or configure a managed exporter under `[perl]`; without a packet or available exporter, Perl analysis is unavailable. `perl` is accepted only by a ripr built with Cargo feature `lang-perl`; default builds reject it at config load. Rust remains the reference adapter and the only adapter that may be `stable` per [RIPR-SPEC-0026](specs/RIPR-SPEC-0026-language-adapter-contract.md); TypeScript, Python, and Perl remain preview adapters. See [Support Tiers](status/SUPPORT_TIERS.md) and Campaign 31, #1379. |
 
 `[languages.rust]` configures the stable Rust adapter:
 

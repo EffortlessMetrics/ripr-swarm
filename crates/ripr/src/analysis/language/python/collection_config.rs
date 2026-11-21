@@ -51,8 +51,8 @@ use std::sync::Arc;
 /// Largest configuration file this pass reads; a bigger one is unevaluated.
 const MAX_CONFIG_BYTES: u64 = 1 << 20;
 
-const COLLECT_IGNORE: &str = "pytest.collection(collect_ignore)";
-const UNEVALUATED_CONFTEST: &str = "pytest.collection(unevaluated conftest)";
+pub(super) const COLLECT_IGNORE: &str = "pytest.collection(collect_ignore)";
+pub(super) const UNEVALUATED_CONFTEST: &str = "pytest.collection(unevaluated conftest)";
 const UNEVALUATED_CONFIG: &str = "pytest.collection(unevaluated config)";
 const PYTHON_FILES: &str = "pytest.collection(python_files)";
 const PYTHON_CLASSES: &str = "pytest.collection(python_classes)";
@@ -230,23 +230,38 @@ impl ConftestRules {
             return Self::unevaluated();
         };
         for stmt in &module.body {
-            if rules.evaluate(stmt) {
-                continue;
-            }
-            let range = stmt.range();
-            let text = source
-                .get(usize::from(range.start())..usize::from(range.end()))
-                .unwrap_or(source);
-            if COLLECTION_NAMES.iter().any(|name| text.contains(name)) {
-                rules.unevaluated = true;
-            }
+            rules.visit(stmt, source, false);
         }
         rules
     }
 
+    /// Evaluate one statement. A version- or environment-guarded `if` is
+    /// evaluated as the union of both branches (every branch is treated as
+    /// taken, and an assignment inside a branch only adds), so the files it
+    /// could ignore are withheld and nothing else is. A statement that names
+    /// a collection switch in a form not understood marks the conftest
+    /// unevaluated.
+    fn visit(&mut self, stmt: &Stmt, source: &str, branch: bool) {
+        if let Stmt::If(node) = stmt {
+            if mentions_collection_name(source, node.test.range()) {
+                self.unevaluated = true;
+            }
+            for inner in node.body.iter().chain(&node.orelse) {
+                self.visit(inner, source, true);
+            }
+            return;
+        }
+        if self.evaluate(stmt, branch) {
+            return;
+        }
+        if mentions_collection_name(source, range_with_decorators(stmt)) {
+            self.unevaluated = true;
+        }
+    }
+
     /// Evaluate a plain top-level `collect_ignore` statement. False when the
     /// statement is not one of the understood forms.
-    fn evaluate(&mut self, stmt: &Stmt) -> bool {
+    fn evaluate(&mut self, stmt: &Stmt, branch: bool) -> bool {
         match stmt {
             Stmt::Assign(assign) if assign.targets.len() == 1 => {
                 let (Some(list), Some(name)) =
@@ -254,7 +269,11 @@ impl ConftestRules {
                 else {
                     return false;
                 };
-                *self.slot(name) = list;
+                if branch {
+                    self.slot(name).extend(list);
+                } else {
+                    *self.slot(name) = list;
+                }
                 true
             }
             Stmt::AugAssign(assign) if matches!(assign.op, ast::Operator::Add) => {
@@ -324,6 +343,33 @@ impl ConftestRules {
         }
         excluded.then_some(COLLECT_IGNORE)
     }
+}
+
+/// A statement's range, widened to its decorators: a `def` or `class` range
+/// starts at the keyword, so `@pytest.hookimpl(specname="pytest_ignore_collect")`
+/// would otherwise fall outside the collection-name scan.
+fn range_with_decorators(stmt: &Stmt) -> rustpython_parser::text_size::TextRange {
+    let range = stmt.range();
+    let decorators = match stmt {
+        Stmt::FunctionDef(node) => &node.decorator_list,
+        Stmt::AsyncFunctionDef(node) => &node.decorator_list,
+        Stmt::ClassDef(node) => &node.decorator_list,
+        _ => return range,
+    };
+    let start = decorators
+        .iter()
+        .map(|decorator| decorator.range().start())
+        .chain(std::iter::once(range.start()))
+        .min()
+        .unwrap_or_else(|| range.start());
+    rustpython_parser::text_size::TextRange::new(start, range.end())
+}
+
+fn mentions_collection_name(source: &str, range: rustpython_parser::text_size::TextRange) -> bool {
+    let text = source
+        .get(usize::from(range.start())..usize::from(range.end()))
+        .unwrap_or(source);
+    COLLECTION_NAMES.iter().any(|name| text.contains(name))
 }
 
 fn switch_name(expr: &Expr) -> Option<&str> {

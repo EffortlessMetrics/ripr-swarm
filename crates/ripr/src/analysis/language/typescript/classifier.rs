@@ -8680,10 +8680,17 @@ pub(crate) fn classify_resolved_owner(
             StageState::Weak,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
-                owner.name
-            )],
+            vec![if owner.owner_kind == OwnerKind::Component {
+                format!(
+                    "Only heuristic TypeScript test links were found for the component `{}`; verify the suggested test location or render `<{} .../>` in a Jest/Vitest test with an exact-value assertion on the rendered output.",
+                    owner.name, owner.name
+                )
+            } else {
+                format!(
+                    "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
+                    owner.name
+                )
+            }],
         )
     } else if only_conditionally_registered_tests(related_candidates) {
         // #10438: every oracle-eligible related test is registered under a
@@ -9375,6 +9382,9 @@ pub(crate) fn classify_resolved_owner(
                 mock_payload_oracle.as_deref(),
             )
         }
+        _ if !has_oracle_eligible_relation && owner.owner_kind == OwnerKind::Component => {
+            "TypeScript preview advisory: related-test proximity is heuristic only; render the component in a test with an input at the changed boundary before treating this as an actionable repair target.".to_string()
+        }
         _ if !has_oracle_eligible_relation => {
             "TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target.".to_string()
         }
@@ -9394,7 +9404,11 @@ pub(crate) fn classify_resolved_owner(
             && !input_free_field_update
             && !removed_call_change =>
         {
-            crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
+            if old_line_text.is_some_and(|old| ts_comparison_edit(old, line_text).is_some()) {
+                crate::domain::TERNARY_COMPARISON_NEXT_STEP.to_string()
+            } else {
+                crate::domain::STRONG_CHECK_UNTIED_NEXT_STEP.to_string()
+            }
         }
         _ => {
             "TypeScript preview advisory: add a test that exercises the changed behavior with an exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is emitted until the target shape is explicit.".to_string()
