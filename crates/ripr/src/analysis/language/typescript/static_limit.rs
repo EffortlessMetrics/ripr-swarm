@@ -262,13 +262,17 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
                     .filter(|_| !file_module_exists(workspace_root, &module))
             });
             let why_not_actionable = if let Some(entry) = entry {
-                if entry.source.is_some() {
-                    continue;
+                match entry.source.as_deref() {
+                    Some(source) if normalized_path_eq(&owner.file, source) => format!(
+                        "test `{}` imports `{}`, whose package main `{}` is build output outside the source index. RIPR found the tracked source `{}`, but could not attribute this test to it",
+                        test.name, import.source, entry.main, source
+                    ),
+                    Some(_) => continue,
+                    None => format!(
+                        "test `{}` imports `{}`, whose package main `{}` is build output outside the source index. No unique tracked source entry could be attributed to this import",
+                        test.name, import.source, entry.main
+                    ),
                 }
-                format!(
-                    "test `{}` imports `{}`, whose package main `{}` is build output outside the source index. No unique tracked source entry could be attributed to this import",
-                    test.name, import.source, entry.main
-                )
             } else {
                 if base.as_deref().is_some_and(|path| {
                     relative_import_resolves_to_workspace_file(workspace_root, path)

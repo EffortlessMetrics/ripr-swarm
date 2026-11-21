@@ -268,9 +268,14 @@ the adapter can attribute the import to the manifest's single `source` or a
 unique indexed `src/` counterpart with the same build stem. Both the source
 and manifest must be tracked. A competing module, package directory index,
 or root export, an ambiguous source, and a source owned by a nested package
-withhold the relation. An uncredited name-matched import reports the unread
-build entry. An explicit
-file import retains its file identity. This is static source attribution. The
+withhold the relation. For a nested package the adapter checks sibling files
+as well as directory indexes. It withholds for `.js`, `.jsx`, `.mjs`, `.cjs`,
+`.ts`, `.tsx`, `.mts`, `.cts`, `.json` and `.node`, including symlinks.
+That set covers TypeScript runners as well as Node's CommonJS lookup.
+An uncredited name-matched import reports the unread build entry. When the
+tracked source is known, the diagnostic names it and explains that the test
+could not be attributed to it. An explicit file import retains its file
+identity. This is static source attribution. The
 bundle's contents and the test runner's loaded code remain unverified.
 
 This fallback covers non-namespace imports and JavaScript outputs in a
