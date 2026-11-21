@@ -196,6 +196,13 @@ pub(crate) use ripr_contract::domain::{
     typescript_script_preview_related_test,
 };
 
+/// The marker a proximity-only reach summary carries: every related test shares
+/// only the changed file or a name token with the owner, and none is seen
+/// calling it (`analysis::classify::reach`). The human `Why` line reads it to
+/// name that link instead of a bare "not established" (#15336), so producer
+/// and renderer share one spelling.
+pub(crate) const PROXIMITY_ONLY_REACH_MARKER: &str = "; tests share only ";
+
 #[doc(hidden)]
 pub mod context_packet;
 mod diagnostic_witness;

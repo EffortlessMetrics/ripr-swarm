@@ -337,6 +337,14 @@ when detail remains the line
 the recovery format. `--format human-full` still renders every evidence line,
 and no machine format reads the compact line.
 
+An `unrevealed` finding whose reach is proximity-only weak (every related
+test shares only the changed file or a name token, and none is seen calling the
+owner) renders `Why unrevealed: no test is confirmed to reach this change;
+related tests are linked only by a shared file or name` (#15336). The wording
+is chosen only when the reach summary carries the producer's proximity-only
+marker; any other non-`yes` reach keeps `test reach to this change is not
+established`, and callee-only reach keeps its own hint.
+
 The digest states each fact once (#14308). A stage detail whose prose equals
 the digest's `Missing check` / `Analyzer limit` value (after collapsing
 whitespace, one terminal period and ASCII case) is left out of the two-line
@@ -1238,6 +1246,8 @@ report with zero records still carries its route.
 - `crates/ripr/tests/weak_reach_hint.rs::producer_evidence_and_public_renderers_agree_about_reach` — real shadow and direct-owner findings: digest hint agrees with JSON and full human reach (#7330).
 - `crates/ripr/tests/weak_reach_hint.rs::unestablished_reach_never_takes_the_weak_discriminator_shortcut` — every non-`yes` reach state withholds the reaching-test hint (#7330).
 - `crates/ripr/tests/weak_reach_hint.rs::guard_refusal_does_not_override_unestablished_reach` — guard refusal positive and unestablished-reach controls (#7330).
+- `crates/ripr/tests/weak_reach_hint.rs::unrevealed_weak_reach_why_line_does_not_contradict_summary` — real proximity-only unrevealed finding names the file/name link; reach `yes` keeps the reaching-test hint (#15336).
+- `crates/ripr/src/output/human/sections.rs::unrevealed_weak_reach_names_the_link_only_for_proximity_summaries` — marker gate: non-marker weak, `No` and callee-only reach keep their hints (#15336).
 
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
 - `crates/ripr/src/output/human/agent_tests.rs::explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context`
