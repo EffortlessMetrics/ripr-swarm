@@ -1,0 +1,162 @@
+//! `autobins = false` and `autolib = false` turn Cargo's target discovery
+//! off (#15877): an undeclared `src/main.rs`, `src/bin/*.rs` or `src/lib.rs`
+//! is never compiled, so a change to it, or to a module only it mounts, is
+//! not behavior any build runs. Each case pairs the disabled manifest with
+//! an enabled or declared control that still reports the same change.
+
+use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const BULK: &str = "pub fn bulk(qty: u32) -> bool {\n    qty >= 10\n}\n";
+
+fn manifest(package_extra: &str, targets: &str) -> String {
+    format!(
+        "[package]\nname = \"price\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{package_extra}\n{targets}\n[workspace]\n"
+    )
+}
+
+fn predicate_diff(path: &str) -> String {
+    format!(
+        "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,3 +1,3 @@\n pub fn bulk(qty: u32) -> bool {{\n-    qty > 10\n+    qty >= 10\n }}\n"
+    )
+}
+
+struct Fixture(PathBuf);
+
+impl Fixture {
+    fn with_files(files: &[(&str, &str)]) -> Result<Self, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let fixture = Self(std::env::temp_dir().join(format!(
+            "ripr-disabled-target-discovery-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        )));
+        for (relative, text) in files {
+            let path = fixture.0.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create directory {}: {error}", parent.display()))?;
+            }
+            std::fs::write(&path, text)
+                .map_err(|error| format!("write file {}: {error}", path.display()))?;
+        }
+        Ok(fixture)
+    }
+
+    /// Whether the check reported at least one finding in `changed`.
+    fn reports(&self, changed: &str) -> Result<bool, String> {
+        let output = check_workspace(CheckInput {
+            root: self.0.clone(),
+            diff_file: Some(self.0.join("diff.patch")),
+            mode: Mode::Draft,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        Ok(output.findings.iter().any(|finding| {
+            let file = &finding.probe.location.file;
+            let relative = file.strip_prefix(&self.0).unwrap_or(file);
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            Path::new(relative.trim_start_matches("./")) == Path::new(changed)
+        }))
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A package whose `src/main.rs` mounts `src/tool.rs`, with a change to
+/// the mounted module.
+fn main_mounting_tool(manifest: &str) -> Result<Fixture, String> {
+    Fixture::with_files(&[
+        ("Cargo.toml", manifest),
+        ("src/lib.rs", "pub fn unrelated() {}\n"),
+        ("src/main.rs", "mod tool;\n\nfn main() {}\n"),
+        ("src/tool.rs", BULK),
+        ("diff.patch", &predicate_diff("src/tool.rs")),
+    ])
+}
+
+#[test]
+fn autobins_false_drops_an_undeclared_main_and_its_modules() -> Result<(), String> {
+    let enabled = main_mounting_tool(&manifest("", ""))?;
+    assert!(
+        enabled.reports("src/tool.rs")?,
+        "control: discovered main.rs"
+    );
+
+    let disabled = main_mounting_tool(&manifest("autobins = false", ""))?;
+    assert!(
+        !disabled.reports("src/tool.rs")?,
+        "autobins = false never builds src/main.rs, so src/tool.rs is not production"
+    );
+
+    // A path-less `[[bin]]` carrying the package's name resolves to
+    // `src/main.rs` even with discovery off.
+    let declared =
+        main_mounting_tool(&manifest("autobins = false", "[[bin]]\nname = \"price\"\n"))?;
+    assert!(
+        declared.reports("src/tool.rs")?,
+        "declared package-named bin"
+    );
+    Ok(())
+}
+
+fn extra_bin(manifest: &str) -> Result<Fixture, String> {
+    Fixture::with_files(&[
+        ("Cargo.toml", manifest),
+        ("src/lib.rs", "pub fn unrelated() {}\n"),
+        ("src/bin/extra.rs", BULK),
+        ("diff.patch", &predicate_diff("src/bin/extra.rs")),
+    ])
+}
+
+#[test]
+fn autobins_false_drops_undeclared_src_bin_targets() -> Result<(), String> {
+    let enabled = extra_bin(&manifest("", ""))?;
+    assert!(
+        enabled.reports("src/bin/extra.rs")?,
+        "control: discovered bin"
+    );
+
+    let disabled = extra_bin(&manifest("autobins = false", ""))?;
+    assert!(!disabled.reports("src/bin/extra.rs")?, "undeclared bin");
+
+    let declared = extra_bin(&manifest("autobins = false", "[[bin]]\nname = \"extra\"\n"))?;
+    assert!(
+        declared.reports("src/bin/extra.rs")?,
+        "a path-less [[bin]] defaults to src/bin/<name>.rs"
+    );
+    Ok(())
+}
+
+fn library(manifest: &str) -> Result<Fixture, String> {
+    Fixture::with_files(&[
+        ("Cargo.toml", manifest),
+        ("src/lib.rs", BULK),
+        ("src/main.rs", "fn main() {}\n"),
+        ("diff.patch", &predicate_diff("src/lib.rs")),
+    ])
+}
+
+#[test]
+fn autolib_false_drops_an_undeclared_library() -> Result<(), String> {
+    let enabled = library(&manifest("", ""))?;
+    assert!(
+        enabled.reports("src/lib.rs")?,
+        "control: discovered library"
+    );
+
+    let disabled = library(&manifest("autolib = false", ""))?;
+    assert!(!disabled.reports("src/lib.rs")?, "undeclared library");
+
+    let declared = library(&manifest("autolib = false", "[lib]\nname = \"price\"\n"))?;
+    assert!(
+        declared.reports("src/lib.rs")?,
+        "a [lib] table without path defaults to src/lib.rs"
+    );
+    Ok(())
+}

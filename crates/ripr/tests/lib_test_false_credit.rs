@@ -98,6 +98,20 @@ impl TempCrate {
         self.finding_in(Mode::Ready)
     }
 
+    /// Every finding the run reports, in any file (#15877).
+    fn finding_count_in(&self, mode: Mode) -> Result<usize, String> {
+        let output = check_workspace(CheckInput {
+            root: self.root.clone(),
+            base: None,
+            diff_file: Some(self.root.join("diff.patch")),
+            mode,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        Ok(output.findings.len())
+    }
+
     fn finding_in(&self, mode: Mode) -> Result<Finding, String> {
         let output = check_workspace(CheckInput {
             root: self.root.clone(),
@@ -463,6 +477,17 @@ fn assert_withheld_in_every_mode(fixture: &TempCrate) -> Result<(), String> {
 
 /// The exact withheld class (#14972): a skipped target's tests leave the
 /// changed behavior with no static path to a running discriminator.
+/// A root Cargo never builds is no production root either (#15877): its
+/// change is not behavior any build runs, so no mode reports it, and no
+/// finding can carry a discriminator its tests would supply.
+fn assert_never_built_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    for mode in MODES {
+        let count = fixture.finding_count_in(mode.clone())?;
+        assert_eq!(count, 0, "{label} in {mode:?}");
+    }
+    Ok(())
+}
+
 fn assert_no_static_path_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
     for mode in MODES {
         let finding = fixture.finding_in(mode.clone())?;
@@ -868,7 +893,8 @@ fn main_source() -> String {
 #[test]
 fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Result<(), String> {
     // #14972 c04: `autobins = false` and no `[[bin]]`: cargo builds no bin
-    // from `src/main.rs`, so `cargo test` runs 0 tests from it.
+    // from `src/main.rs`, so `cargo test` runs 0 tests from it, and since
+    // #15877 its change is not production behavior either.
     let lib = ("src/lib.rs", "pub fn g() {}\n");
     let main = main_source();
     let skipped = TempCrate::create_in(
@@ -877,7 +903,7 @@ fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Res
         "src/main.rs",
         1,
     )?;
-    assert_no_static_path_in_every_mode(&skipped, "an undiscovered bin")?;
+    assert_never_built_in_every_mode(&skipped, "an undiscovered bin")?;
     // Controls: auto-discovery on, and `autobins = false` with the bin
     // declared explicitly, both run `t` under `cargo test`.
     let discovered = TempCrate::create_in(
@@ -902,7 +928,8 @@ fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Res
 #[test]
 fn autolib_false_lib_unit_tests_are_not_a_discriminator_in_every_mode() -> Result<(), String> {
     // #14972 c18: `autolib = false` and no `[lib]`: `src/lib.rs` is no
-    // target, so `cargo test` runs 0 tests from it.
+    // target, so `cargo test` runs 0 tests from it, and since #15877 its
+    // change is not production behavior either.
     let lib = lib_source(UNIT_TESTS);
     let main = ("src/main.rs", "fn main() {}\n");
     let skipped = TempCrate::create_in(
@@ -911,7 +938,7 @@ fn autolib_false_lib_unit_tests_are_not_a_discriminator_in_every_mode() -> Resul
         "src/lib.rs",
         1,
     )?;
-    assert_no_static_path_in_every_mode(&skipped, "an undiscovered lib")?;
+    assert_never_built_in_every_mode(&skipped, "an undiscovered lib")?;
     let discovered = TempCrate::create_in(
         &package_manifest("", ""),
         &[("src/lib.rs", &lib), main],

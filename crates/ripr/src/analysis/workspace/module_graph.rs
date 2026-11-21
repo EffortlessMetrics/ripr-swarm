@@ -36,8 +36,9 @@
 //! path points into it; and case-insensitive path matching. Each would need
 //! a file-level edge no Rust source in the workspace spells.
 //! Roots are over-collected on purpose (every declared target, and every
-//! autodiscovered one except the tests, benches and examples a manifest's
-//! `autotests`/`autobenches`/`autoexamples = false` turns off, #6965): an
+//! autodiscovered one except the targets a manifest's `autotests`,
+//! `autobenches`, `autoexamples` (#6965), `autobins` or `autolib` (#15877)
+//! `= false` turns off): an
 //! extra root can only reach more files, which keeps a verdict of
 //! "unreached" conservative.
 //!
@@ -768,11 +769,45 @@ fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<Path
         .and_then(|lib| lib.get("path"))
         .and_then(toml::Value::as_str)
         .is_some_and(|path| !path.trim().is_empty());
-    if !custom_lib_path {
+    // `autolib = false` drops the inferred library unless a `[lib]` table
+    // still declares one, whose path then defaults to `src/lib.rs` (#15877).
+    let package = manifest.get("package");
+    let discovers = |key: &str| {
+        package
+            .and_then(|package| package.get(key))
+            .and_then(toml::Value::as_bool)
+            != Some(false)
+    };
+    if !custom_lib_path && (discovers("autolib") || manifest.get("lib").is_some()) {
         roots.insert(src.join("lib.rs"));
     }
-    roots.insert(src.join("main.rs"));
-    roots.extend(autodiscovered(&src.join("bin")));
+    if discovers("autobins") {
+        roots.insert(src.join("main.rs"));
+        roots.extend(autodiscovered(&src.join("bin")));
+    } else {
+        // `autobins = false` builds only declared binaries (#15877). A
+        // declaration without `path` still resolves to `src/bin/<name>.rs`,
+        // `src/bin/<name>/main.rs`, or `src/main.rs` when it carries the
+        // package's name, so those stay rooted; an undeclared `src/main.rs`
+        // or `src/bin/*` is never compiled and reaches nothing.
+        roots.extend(named_default_roots(manifest.get("bin"), &src.join("bin")));
+        let package_name = package
+            .and_then(|package| package.get("name"))
+            .and_then(toml::Value::as_str);
+        let names_package_bin = manifest
+            .get("bin")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|bins| {
+                bins.iter().any(|bin| {
+                    bin.get("path").is_none()
+                        && bin.get("name").and_then(toml::Value::as_str) == package_name
+                        && package_name.is_some()
+                })
+            });
+        if names_package_bin {
+            roots.insert(src.join("main.rs"));
+        }
+    }
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
