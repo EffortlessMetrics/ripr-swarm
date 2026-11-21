@@ -877,6 +877,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     if let Some(before) = &witness.before {
         lines.push(format!("- before: `{before}`"));
     }
+    if let Some(condition) = &witness.before_condition {
+        lines.push(format!("- old condition: `{condition}`"));
+    }
     if let Some(after) = &witness.after {
         lines.push(format!("- after: `{after}`"));
     }

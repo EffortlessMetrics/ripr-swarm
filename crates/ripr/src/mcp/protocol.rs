@@ -645,7 +645,12 @@ fn gap_brief_text(document: &Value, item: &Value) -> String {
         identity(document.get("snapshot_id")),
     ));
     let changed = item.get("changed_behavior");
-    let before = changed.and_then(|changed| changed.get("before"));
+    // #15420: the brief pairs the old condition with the new one when the
+    // producer read it; `before` (the whole old line) stays in the full JSON.
+    let before = changed
+        .and_then(|changed| changed.get("before_condition"))
+        .filter(|condition| condition.is_string())
+        .or_else(|| changed.and_then(|changed| changed.get("before")));
     let after = changed.and_then(|changed| changed.get("after"));
     let mut changed_line = match (
         before.and_then(Value::as_str),
@@ -2848,6 +2853,23 @@ mod tests {
         arm["item"]["changed_behavior"]["arm_result"] = Value::Null;
         if brief_text_of(arm)?.contains("arm result") {
             return Err("a null arm result must not be rendered".into());
+        }
+        // #15420: an old condition, when the producer reads one, replaces
+        // the whole old line on the brief's changed line; a non-string one
+        // is ignored.
+        let mut whole = brief_gap_document();
+        whole["item"]["changed_behavior"]["before"] =
+            json!("if total >= 100 { total - 10 } else { total }");
+        whole["item"]["changed_behavior"]["after"] = json!("total > 200");
+        whole["item"]["changed_behavior"]["before_condition"] = json!("total >= 100");
+        if !brief_text_of(whole.clone())?.contains("changed: total >= 100 -> total > 200") {
+            return Err("an old condition in the document must reach the brief".into());
+        }
+        whole["item"]["changed_behavior"]["before_condition"] = Value::Null;
+        if !brief_text_of(whole)?
+            .contains("changed: if total >= 100 { total - 10 } else { total } -> total > 200")
+        {
+            return Err("without an old condition the brief keeps the old line".into());
         }
         Ok(())
     }

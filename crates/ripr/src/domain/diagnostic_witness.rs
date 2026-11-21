@@ -12,6 +12,13 @@ pub struct DiagnosticWitness {
     pub changed_expression: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before: Option<String>,
+    /// #15420: the old line's `if`/`while` condition, when `before` is a
+    /// whole old line and `after` is only the new condition. Display only:
+    /// it puts the old side at the granularity of `after`. Absent when
+    /// `before` is already at that granularity or the old condition is not
+    /// established from the line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_condition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,6 +160,7 @@ impl DiagnosticWitness {
             probe_family: finding.probe.family.as_str().to_string(),
             changed_expression: finding.probe.expression.clone(),
             before: finding.probe.before.clone(),
+            before_condition: crate::analysis::old_condition_of_whole_line(finding),
             after: finding.probe.after.clone(),
             expected_sink: finding
                 .flow_sinks
@@ -998,6 +1006,64 @@ mod tests {
             crate::agent::loop_commands::shell_arg("probe:src_we ird_it's;x.rs:predicate:ec6d6f91")
         );
         assert_eq!(witness.explain_command, expected);
+        Ok(())
+    }
+
+    /// #15420: a predicate whose `before` is the whole old line carries the
+    /// old condition beside it, so the witness pairs both sides at one
+    /// granularity. `before` itself is unchanged.
+    #[test]
+    fn witness_names_the_old_condition_of_a_whole_old_line() -> Result<(), String> {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
+        finding.probe.after = Some("total > 200".to_string());
+        let witness = DiagnosticWitness::from_finding(&finding)
+            .ok_or_else(|| "a weak finding should produce a witness".to_string())?;
+        assert_eq!(
+            witness.before.as_deref(),
+            Some("if total >= 100 { total - 10 } else { total }")
+        );
+        assert_eq!(witness.before_condition.as_deref(), Some("total >= 100"));
+        assert_eq!(witness.after.as_deref(), Some("total > 200"));
+        Ok(())
+    }
+
+    /// The field is absent, not guessed, when `before` is already cut, when
+    /// the old line's head is not established, for a preview language, and
+    /// for a family whose `before` is not a condition.
+    #[test]
+    fn witness_omits_the_old_condition_when_it_is_not_established() -> Result<(), String> {
+        let witness = |before: &str, after: &str, edit: fn(&mut Finding)| {
+            let mut finding = sample_finding();
+            finding.class = ExposureClass::WeaklyExposed;
+            finding.probe.before = Some(before.to_string());
+            finding.probe.after = Some(after.to_string());
+            edit(&mut finding);
+            DiagnosticWitness::from_finding(&finding)
+                .ok_or_else(|| "a weak finding should produce a witness".to_string())
+        };
+        let whole = "if total >= 100 { total - 10 } else { total }";
+        for (before, after, edit) in [
+            ("total >= 100", "total > 200", (|_| {}) as fn(&mut Finding)),
+            ("if a > 1 { 1 } else if b > 2 { 2 }", "b > 3", |_| {}),
+            ("if let Shape { side } = shape { side }", "side > 3", |_| {}),
+            (
+                whole,
+                "if total > 200 { total - 25 } else { total }",
+                |_| {},
+            ),
+            (whole, "total > 200", |finding| {
+                finding.language = Some(LanguageId::TypeScript);
+            }),
+            (whole, "total > 200", |finding| {
+                finding.probe.family = ProbeFamily::ReturnValue;
+            }),
+        ] {
+            let witness = witness(before, after, edit)?;
+            assert_eq!(witness.before_condition, None, "{before} -> {after}");
+            assert_eq!(witness.before.as_deref(), Some(before));
+        }
         Ok(())
     }
 

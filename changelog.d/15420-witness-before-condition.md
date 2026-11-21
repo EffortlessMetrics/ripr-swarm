@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr context`, the editor diagnostic witness, MCP `ripr_get_gap` and `ripr explain`: when a condition and the rest of its line both changed, such as `if total >= 100 { total - 10 }` to `if total > 200 { total - 25 }`, the old condition (`total >= 100`) is now reported beside the new one. The witness and MCP `changed_behavior` gain an optional `before_condition` field, the MCP gap brief pairs it with `after`, and `ripr explain` and the editor hover print an `old condition` row. `before` stays the whole old line (#15420).

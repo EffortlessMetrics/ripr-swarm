@@ -714,3 +714,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (45)
+
+Reason:
+RIPR-SPEC-0122: the human Changed block prints the old condition under a whole old line (#15420)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
