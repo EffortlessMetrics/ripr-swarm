@@ -1919,6 +1919,18 @@ fn python_len_argument(observed_sink: &str) -> Option<&str> {
                 .chars()
                 .next_back()
                 .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+        // A len() call inside a subscript, as in buf[len(buf) - 1], indexes
+        // into the contents; it is not a length only observation.
+        let bracket_depth = observed_sink[..idx]
+            .chars()
+            .fold(0i32, |depth, ch| match ch {
+                '[' => depth + 1,
+                ']' => depth - 1,
+                _ => depth,
+            });
+        if boundary_ok && bracket_depth > 0 {
+            return None;
+        }
         if boundary_ok {
             let args_start = idx + "len(".len();
             let mut depth = 1usize;
@@ -5594,6 +5606,15 @@ mod tests {
         // `.push(` is not a Python list append.
         assert!(!python_card_len_only_append_effect(
             &finding("buf.push(msg)", "assert len(buf) == 1"),
+            &card
+        ));
+        // A len() call used as a subscript index observes the contents at
+        // that position, not only the length.
+        assert!(!python_card_len_only_append_effect(
+            &finding(
+                "buf.append(msg.upper())",
+                "assert buf[len(buf) - 1] == 'HI'"
+            ),
             &card
         ));
     }
