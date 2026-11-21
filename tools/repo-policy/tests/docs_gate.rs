@@ -477,3 +477,45 @@ fn revision_mode_widens_when_unchanged_markdown_can_lose_its_destination() -> Te
     fs::remove_dir_all(root)?;
     Ok(())
 }
+
+#[test]
+fn revision_mode_preserves_non_markdown_link_destinations() -> TestResult {
+    let data = "fixtures/rust-verdict-corpus/spec-scopes/targets.json";
+    let root = fixture(&[
+        (
+            "README.md",
+            "[scope](fixtures/rust-verdict-corpus/spec-scopes/targets.json#L1)\n",
+        ),
+        (data, "{}\n"),
+    ])?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "linked JSON"])?;
+    fs::write(root.join(data), "{ \"paths\": [] }\n")?;
+    git(&root, &["commit", "-qam", "ordinary JSON content"])?;
+    let content = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !content.plan.is_docs_eligible() || !content.violations.is_empty() {
+        return Err(content.render().into());
+    }
+    git(&root, &["update-index", "--chmod=+x", data])?;
+    git(&root, &["commit", "-qm", "mode change"])?;
+    let mode = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if mode.plan.is_docs_eligible() {
+        return Err(format!("mode transition was eligible: {}", mode.render()).into());
+    }
+    git(
+        &root,
+        &[
+            "mv",
+            data,
+            "fixtures/rust-verdict-corpus/spec-scopes/renamed.json",
+        ],
+    )?;
+    git(&root, &["commit", "-qm", "rename linked JSON"])?;
+    let removed = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if removed.plan.is_docs_eligible() {
+        return Err(format!("renamed destination was eligible: {}", removed.render()).into());
+    }
+    fs::remove_dir_all(root)?;
+    Ok(())
+}

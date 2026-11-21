@@ -1091,12 +1091,10 @@ fn revision_changes(
             ));
             continue;
         }
-        if !path.ends_with(".md") {
-            continue;
-        }
         // Unchanged referrers may name a removed destination or heading.
         match (*status, *old_mode, *new_mode) {
             ("A", "000000", "100644") => (),
+            ("M", "100644", "100644") if !path.to_ascii_lowercase().ends_with(".md") => (),
             ("M", "100644", "100644") => {
                 let old = blob_headings(checkout, old_blob)?;
                 let new = blob_headings(checkout, new_blob)?;
@@ -1105,7 +1103,7 @@ fn revision_changes(
                 }
             }
             _ => risks.push(format!(
-                "{path}: changed Markdown destination or mode; full incoming-link check required"
+                "{path}: removed destination or changed file mode; full incoming-link check required"
             )),
         }
     }
