@@ -1138,7 +1138,7 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 // The forward asserts the source's `module.exports` is this
                 // module's: an unrecorded name is the source's own binding
