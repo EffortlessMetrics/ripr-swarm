@@ -12458,6 +12458,73 @@ fn ts_fieldconstruction_alias_whole_object_and_foreign_local_stay() -> Result<()
     Ok(())
 }
 
+/// #15875 review: a local bound to a PROJECTION of the owner result
+/// (`const retries = buildConfig(5).retries`) holds the changed field
+/// itself, not the whole result. A read inside it (`retries.limit`)
+/// observes the change and must stay `exposed`; the sibling guard must
+/// not treat the projected alias as a whole-result alias.
+#[test]
+fn ts_fieldconstruction_projected_alias_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function buildConfig(limit: number) {\n  return { retries: { limit: 3 }, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"retries limit\", () => { const retries = buildConfig(5).retries; expect(retries.limit).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return { retries: { limit: limit }, verbose: false };",
+        Some("  return { retries: { limit: 3 }, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a read inside a projected alias of the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15875 review: the changed field can select the asserted value from
+/// inside a computed index (`cfg.items[cfg.selectedIndex]`). The alias
+/// member check must see `selectedIndex` inside the brackets; the
+/// sibling guard must not downgrade the assertion.
+#[test]
+fn ts_fieldconstruction_alias_index_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function buildConfig(selectedIndex: number) {\n  return { selectedIndex: 0, items: [{ label: \"first\" }, { label: \"second\" }] };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"selected label\", () => { const cfg = buildConfig(1); expect(cfg.items[cfg.selectedIndex].label).toBe(\"second\"); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return { selectedIndex: selectedIndex, items: [{ label: \"first\" }, { label: \"second\" }] };",
+        Some("  return { selectedIndex: 0, items: [{ label: \"first\" }, { label: \"second\" }] };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a changed field read inside a computed index must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
 /// #14857: a change that moves TWO values of the returned literal cannot be
 /// reduced to one changed field, so #14814's single-field guard is skipped.
 /// A test that reads a THIRD, untouched field still cannot witness the

@@ -910,11 +910,16 @@ fn ts_masked_reads_key_as_alias_member(
     if key.is_empty() {
         return false;
     }
-    let mut segments = masked.split('.');
-    let Some(root_segment) = segments.next() else {
+    // Split into identifier words rather than dot segments so a read of
+    // the key inside a computed index (`cfg.items[cfg.selectedIndex]`)
+    // or an unnormalized bracket form still counts as reading the key.
+    // The input is literal-masked, so words cannot leak from strings.
+    let mut words = masked
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '$'))
+        .filter(|word| !word.is_empty());
+    let Some(root) = words.next() else {
         return false;
     };
-    let root = root_segment.trim().trim_end_matches(['?', '!']);
     if !ts_observed_local_aliases_owner(
         root,
         owner_names,
@@ -925,11 +930,23 @@ fn ts_masked_reads_key_as_alias_member(
     ) {
         return false;
     }
-    segments.any(|segment| {
-        let segment = segment.trim().trim_end_matches(['?', '!']);
-        let segment = segment.split(['(', '[']).next().unwrap_or(segment);
-        segment == key
-    })
+    // A local bound to a projection of the owner result
+    // (`const retries = buildConfig(5).retries`) holds the changed field
+    // itself, so any read through that local reads through the change.
+    if let Some(initializer) = ts_effect_single_declaration_initializer(test, root) {
+        let normalized = ts_normalize_bracket_field_reads(initializer.trim());
+        let init_masked = ts_mask_literals_and_comments(&normalized);
+        if ts_masked_reads_changed_field_as_member(
+            &init_masked,
+            key,
+            owner_names,
+            owner_is_method,
+            namespace_receivers,
+        ) {
+            return true;
+        }
+    }
+    words.any(|word| word == key)
 }
 
 /// #14857: whether `observed` reads a field of the owner's returned literal

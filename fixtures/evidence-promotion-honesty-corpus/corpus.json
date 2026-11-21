@@ -14991,6 +14991,16 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "keeps the verbose flag",
+          "file": "tests/config.test.ts",
+          "line": 3,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call",
+          "miss": "assertion_not_observing"
         }
       ]
     },
