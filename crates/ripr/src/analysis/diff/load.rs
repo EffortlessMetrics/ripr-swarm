@@ -3057,6 +3057,14 @@ fn run_git_diff_bytes(
     // as a copy section that carries only its difference from another file.
     // It is a config pin, not a flag, so a caller extra such as
     // `--no-renames` still decides for its own invocation.
+    // The next four pins restore git's own defaults so the analyzed patch
+    // and its identities do not depend on the machine (#15954):
+    // `diff.algorithm` (histogram or patience give different hunks, so
+    // different changed lines, for an ambiguous edit), `diff.indentHeuristic`
+    // (off, a sliding insertion is reported one line later),
+    // `diff.renameLimit` (below the rename count, each rename becomes a
+    // deletion plus a whole new file) and `core.bigFileThreshold` (below a
+    // source file's size, the file arrives as `Binary files differ`).
     let mut args: Vec<&str> = vec![
         "-c",
         "core.quotePath=true",
@@ -3064,6 +3072,14 @@ fn run_git_diff_bytes(
         "diff.orderFile=/dev/null",
         "-c",
         "diff.renames=true",
+        "-c",
+        "diff.algorithm=myers",
+        "-c",
+        "diff.indentHeuristic=true",
+        "-c",
+        "diff.renameLimit=1000",
+        "-c",
+        "core.bigFileThreshold=512m",
         "diff",
     ];
     args.extend_from_slice(extra_args);
@@ -3084,9 +3100,14 @@ fn run_git_diff_bytes(
     // Ambient submodule ignore settings can hide a changed gitlink before
     // the parser's skipped-content disclosure sees it (#8209). Keep those
     // sections visible without analyzing the child repository's contents.
+    // `--full-index` writes whole blob ids on the `index` line (#15954).
+    // The abbreviated form follows `core.abbrev` and, unset, an automatic
+    // length that grows with the object count, so a shallow CI clone and a
+    // full local clone produced different patch bytes for one range.
     let unified_arg = format!("--unified={unified}");
     args.extend_from_slice(&[
         "--no-ext-diff",
+        "--full-index",
         "--no-textconv",
         "--no-color",
         "--ignore-submodules=none",
