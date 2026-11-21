@@ -983,6 +983,42 @@ runner_dependent = false
 source = "ingest:mutation-spot-check"
 
 [[metric]]
+id = "trust.mutation_recall_of_missed"
+board = "trust"
+title = "Runtime-missed mutants ripr flags ungripped (strict recall of missed)"
+unit = "ratio"
+direction = "higher_is_better"
+target = 0.8
+regression_pct = 0
+regression_floor = 0.05
+runner_dependent = false
+source = "ingest:mutation-spot-check"
+
+[[metric]]
+id = "trust.mutation_recall_flagged_or_unknown"
+board = "trust"
+title = "Runtime-missed mutants ripr flags as a gap or honest unknown"
+unit = "ratio"
+direction = "higher_is_better"
+target = 0.8
+regression_pct = 0
+regression_floor = 0.05
+runner_dependent = false
+source = "ingest:mutation-spot-check"
+
+[[metric]]
+id = "trust.mutation_no_seam_share"
+board = "trust"
+title = "Real mutants with no containing static seam"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.5
+regression_pct = 0
+regression_floor = 0.02
+runner_dependent = false
+source = "ingest:mutation-spot-check"
+
+[[metric]]
 id = "trust.judged_panel_false_actionable"
 board = "trust"
 title = "False actionable rate on the Rust judged behavior panel"

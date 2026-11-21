@@ -256,8 +256,12 @@ These native receipts are also accepted as-is:
 - `ripr-mutation-spot-check-v2` from the mutation spot-check: the agreement
   rate of the `claims_discriminator` and `claims_no_discriminator` families
   over `canonical_precise` records (operator mutants joined by `seam_id` or
-  span containment to a predicate or return seam), and join coverage as
-  `canonical_precise` over every runtime record. These compare static claims
+  span containment to a predicate or return seam), join coverage as
+  `canonical_precise` over every runtime record, recall of missed as the
+  `ungripped` (strict) and flagged-or-unknown shares of runtime-missed
+  mutants, and the no-seam share of every recorded mutant — each generated
+  from the receipt's `recall_of_missed` and `seam_coverage` counts, never
+  hand-derived (#12900). These compare static claims
   with real mutation outcomes on a sample; they are evidence about ripr's
   calibration, not a mutation result for the corpus. A
   `ripr-mutation-spot-check-v1` receipt is refused: its `seam_precise`

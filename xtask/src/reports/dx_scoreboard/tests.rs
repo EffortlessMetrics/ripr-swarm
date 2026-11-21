@@ -1477,6 +1477,165 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 }
 
 #[test]
+fn mutation_spot_check_receipt_generates_recall_and_no_seam_rows() -> Result<(), String> {
+    // Small fixture mirroring the checked-in receipt's shape (#12900): the
+    // rows must be computed from counts, so removing or miscomputing the
+    // generation changes these exact values and fails.
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+        "recall_of_missed": {
+            "missed_total": 322,
+            "ungripped_missed": 34,
+            "ungripped_share_of_missed": 0.106,
+            "flagged_or_unknown_missed": 189,
+            "flagged_or_unknown_share_of_missed": 0.587,
+        },
+        "seam_coverage": {
+            "mutants_total": 1745,
+            "no_containing_seam": 843,
+            "no_containing_seam_share": 0.483,
+        },
+    });
+    let input = mutation_spot_check_to_input(&receipt)?;
+    let value = |id: &str| {
+        input["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == Some(id)))
+            .and_then(|row| row["value"].as_f64())
+    };
+    assert!(
+        value("trust.mutation_recall_of_missed").is_some_and(|v| (v - 34.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_recall_flagged_or_unknown")
+            .is_some_and(|v| (v - 189.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_no_seam_share").is_some_and(|v| (v - 843.0 / 1745.0).abs() < 1e-9),
+        "{input}"
+    );
+    let evidence_of = |id: &str| {
+        input["metrics"].as_array().and_then(|rows| {
+            rows.iter()
+                .find(|row| row["id"].as_str() == Some(id))
+                .and_then(|row| row["evidence"].as_str().map(str::to_string))
+        })
+    };
+    assert!(
+        evidence_of("trust.mutation_recall_of_missed")
+            .is_some_and(|e| e.contains("34 of 322 runtime-missed mutants flagged ungripped")),
+        "{input}"
+    );
+    assert!(
+        evidence_of("trust.mutation_no_seam_share")
+            .is_some_and(|e| e.contains("843 of 1745 mutants have no containing static seam")),
+        "{input}"
+    );
+
+    // The generated rows must be declared metrics: ingest admits them.
+    let config = load_config(&committed_config())?;
+    let samples = parse_ingest(&receipt, &config)?;
+    assert_eq!(samples.len(), 6, "{samples:?}");
+    for id in [
+        "trust.mutation_recall_of_missed",
+        "trust.mutation_recall_flagged_or_unknown",
+        "trust.mutation_no_seam_share",
+    ] {
+        assert!(samples.iter().any(|s| s.metric == id), "{id}: {samples:?}");
+    }
+
+    // A stored share that disagrees with the counts is hand-derived drift.
+    let mut drifted = receipt.clone();
+    drifted["recall_of_missed"]["ungripped_share_of_missed"] = json!(0.5);
+    assert!(mutation_spot_check_to_input(&drifted).is_err());
+    let mut drifted = receipt.clone();
+    drifted["seam_coverage"]["no_containing_seam"] = json!(2000);
+    assert!(mutation_spot_check_to_input(&drifted).is_err());
+    let mut missing = receipt.clone();
+    missing["recall_of_missed"]
+        .as_object_mut()
+        .map(|map| map.remove("ungripped_missed"));
+    assert!(mutation_spot_check_to_input(&missing).is_err());
+
+    // Older receipts without the sections simply omit the rows.
+    let mut older = receipt.clone();
+    older
+        .as_object_mut()
+        .map(|map| map.remove("recall_of_missed"));
+    older.as_object_mut().map(|map| map.remove("seam_coverage"));
+    let rows = mutation_spot_check_to_input(&older)?;
+    assert!(rows["metrics"].as_array().is_some_and(|rows| {
+        rows.iter().all(|row| {
+            !matches!(
+                row["id"].as_str(),
+                Some(
+                    "trust.mutation_recall_of_missed"
+                        | "trust.mutation_recall_flagged_or_unknown"
+                        | "trust.mutation_no_seam_share"
+                )
+            )
+        })
+    }));
+    // A zero denominator claims no figure.
+    let mut empty = receipt.clone();
+    empty["recall_of_missed"]["missed_total"] = json!(0);
+    empty["recall_of_missed"]["ungripped_missed"] = json!(0);
+    empty["recall_of_missed"]["flagged_or_unknown_missed"] = json!(0);
+    empty["recall_of_missed"]["ungripped_share_of_missed"] = json!(null);
+    empty["recall_of_missed"]["flagged_or_unknown_share_of_missed"] = json!(null);
+    let rows = mutation_spot_check_to_input(&empty)?;
+    assert!(rows["metrics"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .all(|row| row["id"] != "trust.mutation_recall_of_missed")
+    }));
+    Ok(())
+}
+
+#[test]
+fn mutation_spot_check_checked_in_receipt_generates_issue_12900_values() -> Result<(), String> {
+    // Pin the generation against the real checked-in receipt: 34/322 strict
+    // recall (~11%), 189/322 flagged-or-unknown, 843/1745 no-seam (~48%).
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../metrics/public-proof/mutation-spot-check.json");
+    let text = fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let receipt: Value =
+        serde_json::from_str(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    let input = mutation_spot_check_to_input(&receipt)?;
+    let value = |id: &str| {
+        input["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == Some(id)))
+            .and_then(|row| row["value"].as_f64())
+    };
+    assert!(
+        value("trust.mutation_recall_of_missed").is_some_and(|v| (v - 34.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_recall_flagged_or_unknown")
+            .is_some_and(|v| (v - 189.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_no_seam_share").is_some_and(|v| (v - 843.0 / 1745.0).abs() < 1e-9),
+        "{input}"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<(), String> {
     // Slack is max(baseline * regression_pct/100, regression_floor) from the
     // committed first_run.install_seconds row. Hard-coding 158 s / 170 s here

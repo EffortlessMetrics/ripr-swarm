@@ -1900,7 +1900,14 @@ fn pilot_tier_split(pilot: &Value) -> String {
 ///   to a seam by `seam_id` or span containment;
 /// - pilot top-recommendation precision: of `ripr pilot`'s top seams that a
 ///   real mutant scores, the share where a mutant was missed (receipts written
-///   before the pilot section existed simply omit the row).
+///   before the pilot section existed simply omit the row);
+/// - recall of missed: of runtime-missed mutants, the share ripr flagged
+///   ungripped (strict) and the share flagged as a gap or honest unknown
+///   (`ungripped`, `weakly_gripped`, `activation_unknown`, `opaque`), computed
+///   from the receipt's `recall_of_missed` counts (#12900);
+/// - no-seam coverage: of every recorded mutant, the share with no containing
+///   static seam, computed from the receipt's `seam_coverage` counts (#12900).
+///   Receipts written before those sections existed simply omit the rows.
 ///
 /// Rates pool every repository, so each row's evidence ends with the
 /// population it measured (every repository's name, revision, cargo-mutants
@@ -2024,6 +2031,54 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
             ),
         }));
     }
+    // Recall-of-missed and no-seam rows are generated from the receipt's own
+    // counts, never copied from its rounded shares: a hand-derived share that
+    // disagrees with the counts fails ingest instead of trending (#12900).
+    if let Some((share, ungripped, missed)) = spot_check_ratio(
+        &value["recall_of_missed"],
+        "ungripped_missed",
+        "missed_total",
+        "ungripped_share_of_missed",
+        "recall_of_missed",
+    )? {
+        rows.push(json!({
+            "id": "trust.mutation_recall_of_missed",
+            "value": share,
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {ungripped} of {missed} runtime-missed mutants flagged ungripped"
+            ),
+        }));
+    }
+    if let Some((share, flagged, missed)) = spot_check_ratio(
+        &value["recall_of_missed"],
+        "flagged_or_unknown_missed",
+        "missed_total",
+        "flagged_or_unknown_share_of_missed",
+        "recall_of_missed",
+    )? {
+        rows.push(json!({
+            "id": "trust.mutation_recall_flagged_or_unknown",
+            "value": share,
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {flagged} of {missed} runtime-missed mutants flagged as a gap or honest unknown"
+            ),
+        }));
+    }
+    if let Some((share, no_seam, total)) = spot_check_ratio(
+        &value["seam_coverage"],
+        "no_containing_seam",
+        "mutants_total",
+        "no_containing_seam_share",
+        "seam_coverage",
+    )? {
+        rows.push(json!({
+            "id": "trust.mutation_no_seam_share",
+            "value": share,
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {no_seam} of {total} mutants have no containing static seam"
+            ),
+        }));
+    }
     // Rates pool every repository, and a repository run with extra
     // cargo-mutants arguments is not a default run, so every row says how
     // many were: ingest publishes a row's own evidence, not the top-level one.
@@ -2061,6 +2116,53 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         "evidence": evidence,
         "metrics": rows,
     }))
+}
+
+/// One generated ratio from a spot-check receipt section's counts.
+/// Returns `(share, numerator, denominator)`, or `None` when the section is
+/// absent (older receipts omit the row) or its denominator is zero (no figure
+/// is claimed). A present section with missing, impossible or
+/// share-inconsistent counts is an error, never a silent omission.
+fn spot_check_ratio(
+    section: &Value,
+    numerator_key: &str,
+    denominator_key: &str,
+    share_key: &str,
+    section_name: &str,
+) -> Result<Option<(f64, u64, u64)>, String> {
+    if section.is_null() {
+        return Ok(None);
+    }
+    let count = |key: &str| {
+        section[key].as_u64().ok_or_else(|| {
+            format!("mutation spot-check `{section_name}` needs {key} as a non-negative integer")
+        })
+    };
+    let numerator = count(numerator_key)?;
+    let denominator = count(denominator_key)?;
+    if denominator == 0 {
+        return Ok(None);
+    }
+    if numerator > denominator {
+        return Err(format!(
+            "mutation spot-check `{section_name}` counts {numerator} of only {denominator} for {numerator_key}"
+        ));
+    }
+    let share = numerator as f64 / denominator as f64;
+    // The receipt's stored share is rounded to three decimals; a larger gap
+    // means the share was hand-derived from different counts.
+    if let Some(stored) = section[share_key].as_f64() {
+        if !(0.0..=1.0).contains(&stored) || (stored - share).abs() > 0.001 {
+            return Err(format!(
+                "mutation spot-check `{section_name}` {share_key} {stored} disagrees with {numerator}/{denominator}"
+            ));
+        }
+    } else {
+        return Err(format!(
+            "mutation spot-check `{section_name}` needs {share_key} between 0 and 1"
+        ));
+    }
+    Ok(Some((share, numerator, denominator)))
 }
 
 /// Metrics read from committed receipts (`file:<path>#<json.path>`) or from
