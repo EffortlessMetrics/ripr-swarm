@@ -78,7 +78,7 @@ pub(crate) fn literal_arm_return(
     // `undefined` is an ordinary identifier: a parameter or a top-level
     // declaration may bind it, and the recorded source cannot prove which
     // one a `return undefined` reads. Decline only when such a binding is
-    // proven; otherwise an `undefined` return (or a bare `return;`) is an
+    // established; otherwise an `undefined` return (or a bare `return;`) is an
     // unreadable other arm, not a scalar that disables the changed arm.
     if binds_undefined {
         return None;
