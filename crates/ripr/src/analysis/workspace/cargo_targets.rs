@@ -405,7 +405,7 @@ impl ManifestInventory {
         workspace_root: &Path,
         registration_target: &Path,
     ) -> CargoHarnessVerdict {
-        let (anchored, lookup) = self.lookup_test_owners(workspace_root, registration_target);
+        let (explicit_path, lookup) = self.lookup_test_owners(workspace_root, registration_target);
         let owners = match lookup {
             InventoryLookup::Unavailable => {
                 return CargoHarnessVerdict::ManifestUnavailable;
@@ -425,14 +425,6 @@ impl ManifestInventory {
             // `required-features`): libtest does not collect the file.
             return CargoHarnessVerdict::NotDeclared;
         }
-        // Cargo may report the physical workspace when the caller used an
-        // aliased ancestor. Keep the configured suffix lexical: an undeclared
-        // alias *inside* the workspace is not an explicit Cargo target.
-        let physical_root_target = std::cell::LazyCell::new(|| {
-            let root = std::fs::canonicalize(workspace_root).ok()?;
-            let root = crate::analysis::plain_drive_verbatim_path(&root, cfg!(windows));
-            Some(lexical(&normalize(&root.join(registration_target))))
-        });
         let mut flags: Vec<bool> = Vec::new();
         for owner in &live {
             match self.manifest_at(&owner.manifest_dir) {
@@ -450,10 +442,7 @@ impl ManifestInventory {
                         // another entry owns.
                         let matched = match &target.name {
                             Some(name) => name == &owner.name,
-                            None => {
-                                target.path == anchored
-                                    || physical_root_target.as_ref() == Some(&target.path)
-                            }
+                            None => explicit_path.as_ref() == Some(&target.path),
                         };
                         if matched {
                             flags.push(target.harness);
@@ -648,7 +637,7 @@ impl ManifestInventory {
         &mut self,
         workspace_root: &Path,
         registration_target: &Path,
-    ) -> (PathBuf, InventoryLookup<MetadataTestOwner>) {
+    ) -> (Option<PathBuf>, InventoryLookup<MetadataTestOwner>) {
         self.lookup_in(workspace_root, registration_target, |inventory| {
             &inventory.tests
         })
@@ -659,40 +648,38 @@ impl ManifestInventory {
         workspace_root: &Path,
         registration_target: &Path,
         select: fn(&MetadataInventory) -> &BTreeMap<PathBuf, Vec<T>>,
-    ) -> (PathBuf, InventoryLookup<T>) {
+    ) -> (Option<PathBuf>, InventoryLookup<T>) {
+        self.ensure_workspace_metadata(workspace_root);
+        let MetadataState::Loaded(inventory) = &self.metadata else {
+            return (None, InventoryLookup::Unavailable);
+        };
+        let key = |path: &Path| {
+            lexical(&normalize(&crate::analysis::plain_drive_verbatim_path(
+                path,
+                cfg!(windows),
+            )))
+        };
         let joined = workspace_root.join(registration_target);
         let absolute = std::path::absolute(&joined).unwrap_or(joined);
-        let anchored = lexical(&normalize(&crate::analysis::plain_drive_verbatim_path(
-            &absolute,
-            cfg!(windows),
-        )));
-        self.ensure_workspace_metadata(workspace_root);
-        let lookup = match &self.metadata {
-            MetadataState::Loaded(inventory) => {
-                let targets = select(inventory);
-                let owners = targets.get(&anchored).cloned().or_else(|| {
-                    // `fs::canonicalize` returns verbatim `\\?\`
-                    // paths on Windows; stripped to the plain drive
-                    // spelling, the real path compares in the same
-                    // family as the echoed keys (#7937).
-                    let real = std::fs::canonicalize(&absolute).ok()?;
-                    targets
-                        .get(&lexical(&normalize(
-                            &crate::analysis::plain_drive_verbatim_path(&real, cfg!(windows)),
-                        )))
-                        .cloned()
-                });
-                match owners {
-                    Some(owners) => InventoryLookup::Present(owners),
-                    None => InventoryLookup::Missing,
-                }
-            }
-            // No metadata premise is available (probe failed or was never
-            // loadable): the registration grants nothing. Fail closed —
-            // under-credit, never over-credit (#3634).
-            MetadataState::Unloaded | MetadataState::Failed => InventoryLookup::Unavailable,
+        let anchored = key(&absolute);
+        let targets = select(inventory);
+        if let Some(owners) = targets.get(&anchored) {
+            return (Some(anchored), InventoryLookup::Present(owners.clone()));
+        }
+        let Some((matched, owners)) = std::fs::canonicalize(&absolute)
+            .ok()
+            .and_then(|real| targets.get_key_value(&key(&real)))
+        else {
+            return (None, InventoryLookup::Missing);
         };
-        (anchored, lookup)
+        // Only Cargo's selected key may supply the explicit declaration.
+        // An alias in the workspace root preserves the configured target
+        // suffix. A symlink within that suffix does not.
+        let explicit_path = std::fs::canonicalize(workspace_root)
+            .ok()
+            .map(|root| key(&root.join(registration_target)))
+            .filter(|root_anchored| root_anchored == matched);
+        (explicit_path, InventoryLookup::Present(owners.clone()))
     }
 
     /// Initialize the metadata probe once per batch. A failed probe is
@@ -2938,6 +2925,43 @@ harness=false
                     "unexpected explicit-harness classifications: {verdicts:?}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn explicit_harness_uses_only_the_selected_metadata_key() -> Result<(), String> {
+        let dir = unique_workspace("explicit-harness-selected-key");
+        let real = dir.join("actual");
+        let link = dir.join("link");
+        make_dir(&real, "src")?;
+        create_filesystem_alias(&real, &link).map_err(|error| error.to_string())?;
+        let as_toml_path = |root: &Path| {
+            toml::Value::String(root.join("src/runner.rs").to_string_lossy().into_owned())
+        };
+        let manifest = format!(
+            "[package]\nname='fixture'\nversion='0.1.0'\nedition='2024'\n[workspace]\n\
+             [[test]]\nname='live'\npath={}\nharness=false\n\
+             [[test]]\nname='skipped'\npath={}\ntest=false\nharness=true\n",
+            as_toml_path(&link),
+            as_toml_path(&real)
+        );
+        write_member_package(&real, "", &manifest)?;
+        write_file(&real, "src/runner.rs", "")?;
+        let target = Path::new("src/runner.rs");
+        let live = cargo_test_target_harness_verdict(&link, target);
+        let skipped = cargo_test_target_harness_verdict(&real, target);
+        std::fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
+        if (live, skipped)
+            != (
+                CargoHarnessVerdict::HarnessDisabled,
+                CargoHarnessVerdict::NotDeclared,
+            )
+        {
+            return Err(format!(
+                "expected only the live key to supply a disabled harness; got {live:?}, {skipped:?}"
+            ));
         }
         Ok(())
     }
