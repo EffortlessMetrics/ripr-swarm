@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.187 for attribute-macro generated tests (#12857)
+
+A macro-generated test that carries an unrecognised attribute macro takes no
+invocation scopes, which bumps the analyzer cache schema to 1.187. Move the
+portable unchanged-attempt snapshots to 1.187, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
 ## Pending — explicit Cargo harness path identity (#15846)
 
 Classified cache generation 1.185 binds a harness flag to the selected Cargo
