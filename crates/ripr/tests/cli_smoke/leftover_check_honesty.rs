@@ -164,3 +164,101 @@ fn docs_only_and_single_commit_ranges_keep_their_existing_wording()
     assert!(!docs_out.contains("choose a base before"), "{docs_out}");
     Ok(())
 }
+
+// #15330: the last-commit fallback retries `--base HEAD~1`; a retry that is
+// discarded (the last commit only deleted a file, so it has no changed file
+// either) must not print its "diff deleted" note beside the empty diff that
+// the report actually describes.
+#[test]
+fn discarded_last_commit_retry_prints_no_deletion_note() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("check-discarded-retry-deletion");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    super::run_git(&root, &["checkout", "-B", "main"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"sm\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate(x: u64) -> bool { x > 100 }\n",
+    )?;
+    std::fs::write(root.join("dependabot.yml"), "version: 2\n")?;
+    commit_all(&root, "feature")?;
+    super::run_git(&root, &["rm", "-q", "dependabot.yml"])?;
+    commit_all(&root, "turn off dependabot")?;
+    let root_arg = root.display().to_string();
+
+    let bare = run_ripr(&["check", "--root", &root_arg]);
+    let bare_out = String::from_utf8_lossy(&bare.stdout).into_owned();
+    let bare_err = String::from_utf8_lossy(&bare.stderr).into_owned();
+    // The same deletion-only diff reported on purpose keeps its note.
+    let explicit = run_ripr(&["check", "--root", &root_arg, "--base", "HEAD~1"]);
+    let explicit_err = String::from_utf8_lossy(&explicit.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert!(
+        bare_out.contains("0 changed file(s)"),
+        "fixture must reach the empty diff: {bare_out}"
+    );
+    assert!(
+        !bare_err.contains("diff deleted"),
+        "a discarded retry must not print its deletion note: {bare_err}"
+    );
+    assert!(
+        !bare_err.contains("analyzed the last commit"),
+        "the deletion-only retry must be discarded, not adopted: {bare_err}"
+    );
+    assert!(
+        explicit_err.contains("diff deleted 1 file(s)"),
+        "a reported deletion-only diff keeps its note: {explicit_err}"
+    );
+    Ok(())
+}
+
+// #15330: an adopted last-commit retry still prints the disclosures it
+// buffered (here the pure-rename note), before the "analyzed the last commit"
+// label, so the capture never swallows a note about the reported range.
+#[test]
+fn adopted_last_commit_retry_prints_its_buffered_disclosures()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("check-adopted-retry-disclosure");
+    std::fs::create_dir_all(&root)?;
+    init_git_fixture_repo(&root)?;
+    super::run_git(&root, &["checkout", "-B", "main"])?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"sm\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate(x: u64) -> bool { x > 100 }\n",
+    )?;
+    std::fs::write(root.join("README.md"), "notes\n")?;
+    commit_all(&root, "feature")?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate(x: u64) -> bool { x >= 100 }\n",
+    )?;
+    super::run_git(&root, &["mv", "README.md", "NOTES.md"])?;
+    commit_all(&root, "tighten gate and rename notes")?;
+    let root_arg = root.display().to_string();
+
+    let bare = run_ripr(&["check", "--root", &root_arg]);
+    let bare_err = String::from_utf8_lossy(&bare.stderr).into_owned();
+    let _ = std::fs::remove_dir_all(&root);
+
+    let label = bare_err
+        .find("analyzed the last commit")
+        .ok_or_else(|| format!("the retry must be adopted: {bare_err}"))?;
+    let rename = bare_err
+        .find("1 pure rename(s)")
+        .ok_or_else(|| format!("an adopted retry keeps its rename note: {bare_err}"))?;
+    assert!(
+        rename < label,
+        "the buffered note prints before the last-commit label: {bare_err}"
+    );
+    Ok(())
+}

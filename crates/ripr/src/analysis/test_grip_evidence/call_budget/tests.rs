@@ -64,7 +64,9 @@ fn evidence(states: [StageState; 5], missing: usize) -> TestGripEvidence {
 }
 
 fn names_limit(stage: &StageEvidence) -> bool {
-    stage.state == StageState::Unknown && stage.summary.contains(LIMIT.as_str())
+    stage.state == StageState::Unknown
+        && stage.static_limit_kind == Some(LIMIT)
+        && stage.summary.contains(LIMIT.as_str())
 }
 
 #[test]

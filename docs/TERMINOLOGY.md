@@ -27,7 +27,7 @@ analyzer itself, you will want the internal term.
 | PR review summary | `pr-review front-panel` / report packet index | composed advisory CI artifact summarizing PR guidance, first useful action, assistant proof, ledger, baseline, gate, calibration, coverage/grip, and receipt |
 | agent proof status | `assistant-loop health` | advisory summary of existing assistant proof reports |
 | receipt for a focused test | `agent receipt` | provenance plus bounded next-action guidance for one focused test |
-| under-the-hood model | RIPR: **Reachability**, **Infection**, **Propagation**, **Revealability** | the four stages `ripr` evaluates statically per probe / seam |
+| under-the-hood model | RIPR: **Reachability**, **Infection**, **Propagation**, **Revealability** | the model behind the five stages `ripr` evaluates statically per probe / seam (`reach`, `infect`, `propagate`, `observe`, `discriminate` in JSON) |
 
 ## Where the precise vocabulary lives
 

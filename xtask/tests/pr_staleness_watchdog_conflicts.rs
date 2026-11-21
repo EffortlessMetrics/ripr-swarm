@@ -15,6 +15,10 @@ use std::process::Command;
 
 const WORKFLOW: &str = ".github/workflows/pr-staleness-watchdog.yml";
 const OURS_FAILURE: &str = r#"[{"context":"merge-ready conflict","state":"failure","creator":{"login":"github-actions[bot]"}}]"#;
+const RESULT_JOB: &str = r#"{"total_count":1,"jobs":[{"id":278,"run_id":277,"run_attempt":2,"head_sha":"{head}","name":"Ripr Rust Small Result","check_run_url":"https://api.github.com/repos/o/r/check-runs/278"}]}"#;
+const RESULT_CHECK: &str =
+    r#"{"id":278,"name":"Ripr Rust Small Result","head_sha":"{head}","check_suite":{"id":277}}"#;
+const RESULT_SUITE: &str = r#"{"total_count":1,"check_runs":[{"name":"Ripr Rust Small Result","head_sha":"{head}","check_suite":{"id":277}}]}"#;
 
 const FAKE_GH: &str = r#"#!/bin/bash
 printf 'CALL %s\n' "$*" >> "$FAKE_DIR/log"
@@ -23,10 +27,12 @@ args=("$@")
 for ((i = 0; i < ${#args[@]}; i++)); do
   [ "${args[$i]}" = "--jq" ] && expr="${args[$((i + 1))]}"
 done
-serve() { if [ -f "$1" ]; then jq -r "$expr" < "$1"; else jq -r "$expr" <<< "$2"; fi; }
+serve() { if [ -f "$1" ]; then jq -r "${expr:-.}" < "$1"; else jq -r "${expr:-.}" <<< "$2"; fi; }
 all="$*"
 case "$all" in
-  *"/pulls?state=open"*) serve "$FAKE_DIR/pulls.json" '[]' ;;
+  *"/pulls?state=open"*)
+    if [ -f "$FAKE_DIR/pulls.fail" ]; then echo "invalid character 'u' looking for beginning of value" >&2; exit 1; fi
+    serve "$FAKE_DIR/pulls.json" '[]' ;;
   *"/pulls/"*)
     n="${all#*/pulls/}"; n="${n%% *}"
     if [ -f "$FAKE_DIR/pull.$n.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
@@ -37,20 +43,35 @@ case "$all" in
     else
       touch "$FAKE_DIR/pull.$n.seen"; serve "$FAKE_DIR/pull.$n.json" '{}'
     fi ;;
-  *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"; serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
+  *"/check-suites/277/check-runs?"*)
+    if [ -f "$FAKE_DIR/suite.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    serve "$FAKE_DIR/suite.json" '{"total_count":0,"check_runs":[]}' ;;
+  *"/check-suites/"*) echo "Unexpected suite: $all" >&2; exit 1 ;;
+  *"/actions/runs/277/attempts/2/jobs?"*)
+    if [ -f "$FAKE_DIR/jobs.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    serve "$FAKE_DIR/jobs.json" '{"total_count":0,"jobs":[]}' ;;
+  *"/actions/runs/"*) echo "Unexpected run or attempt: $all" >&2; exit 1 ;;
+  *"/check-runs/278"*) serve "$FAKE_DIR/result.json" '{}' ;;
+  *"/check-runs"*) sha="${all#*/commits/}"; sha="${sha%%/*}"
+    serve "$FAKE_DIR/checks.$sha.json" '{"check_runs":[]}' ;;
   *"/workflows/routed-rust.yml/runs"*)
     # A `.later.json` fixture answers every look after the first (delayed run visibility).
+    sha="${all#*head_sha=}"; sha="${sha%%&*}"
+    if [ -f "$FAKE_DIR/runs.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     if [ -f "$FAKE_DIR/runs.later.fail" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
       echo "HTTP 502" >&2; exit 1
     elif [ -f "$FAKE_DIR/runs.later.json" ] && [ -f "$FAKE_DIR/runs.seen" ]; then
-      serve "$FAKE_DIR/runs.later.json" '{"workflow_runs":[]}'
+      serve "$FAKE_DIR/runs.later.json" '{"total_count":0,"workflow_runs":[]}'
     else
-      touch "$FAKE_DIR/runs.seen"; serve "$FAKE_DIR/runs.json" '{"workflow_runs":[]}'
+      touch "$FAKE_DIR/runs.seen"; serve "$FAKE_DIR/runs.$sha.json" '{"total_count":0,"workflow_runs":[]}'
     fi ;;
   *"/statuses?"*) sha="${all#*/commits/}"; sha="${sha%%/*}"
     if [ -f "$FAKE_DIR/statuses.$sha.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
     serve "$FAKE_DIR/statuses.$sha.json" '[]' ;;
-  *"/comments?"*) serve "$FAKE_DIR/comments.json" '[]' ;;
+  *"/comments?"*)
+    n="${all#*/issues/}"; n="${n%%/*}"
+    if [ -f "$FAKE_DIR/comments.$n.fail" ]; then echo "HTTP 502" >&2; exit 1; fi
+    serve "$FAKE_DIR/comments.json" '[]' ;;
 esac
 "#;
 
@@ -67,6 +88,11 @@ struct Pr {
     covered: bool,
     in_flight: bool,
     completed_run: bool,
+    suite: Option<&'static str>,
+    jobs: Option<&'static str>,
+    result: Option<&'static str>,
+    association: Option<&'static str>,
+    runs_response: Option<&'static str>,
     fresh: bool,
     late_run: Option<&'static str>,
     late_fail: bool,
@@ -74,9 +100,11 @@ struct Pr {
     withdrawn: Option<&'static str>,
     late_withdrawn: Option<&'static str>,
     late_pull_fail: bool,
+    comments_fail: bool,
     head_of: Option<u32>,
     status_fail: bool,
     pull_fail: bool,
+    runs_fail: bool,
 }
 
 impl Pr {
@@ -94,6 +122,11 @@ impl Pr {
             covered: false,
             in_flight: false,
             completed_run: false,
+            suite: None,
+            jobs: None,
+            result: None,
+            association: None,
+            runs_response: None,
             fresh: false,
             late_run: None,
             late_fail: false,
@@ -101,13 +134,26 @@ impl Pr {
             withdrawn: None,
             late_withdrawn: None,
             late_pull_fail: false,
+            comments_fail: false,
             head_of: None,
             status_fail: false,
             pull_fail: false,
+            runs_fail: false,
         }
     }
     fn sha(&self) -> String {
         format!("{:040x}", self.head_of.unwrap_or(self.number))
+    }
+
+    fn runs(&self, status: &str) -> String {
+        let sha = self.sha();
+        let target = format!(r#"[{{"number":{}}}]"#, self.number);
+        let association = self.association.unwrap_or(&target);
+        // Include an older exact request and a newer label-metadata run. The watchdog
+        // must select suite 277 from the newest exact request regardless of list order.
+        format!(
+            r#"{{"total_count":3,"workflow_runs":[{{"id":111,"run_number":1,"run_attempt":1,"check_suite_id":111,"status":"completed","head_sha":"{sha}","display_title":"Merge-ready request {sha}","pull_requests":[{{"number":99999}}]}},{{"id":333,"run_number":3,"check_suite_id":333,"status":"completed","head_sha":"{sha}","display_title":"Label metadata 3"}},{{"id":277,"run_number":2,"run_attempt":2,"check_suite_id":277,"status":"{status}","head_sha":"{sha}","display_title":"Merge-ready request {sha}","pull_requests":{association}}}]}}"#
+        )
     }
 }
 
@@ -134,6 +180,27 @@ fn run_block() -> Result<String, String> {
         .map(|line| line.strip_prefix("          ").unwrap_or(line))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+/// Runs the workflow's script block with bash against the fake `gh` under `dir/bin`.
+fn spawn_block(dir: &Path, summary_path: &Path) -> Result<std::process::Output, String> {
+    Command::new("bash")
+        .arg(dir.join("block.sh"))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                dir.join("bin").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .env("FAKE_DIR", dir)
+        .env("GH_TOKEN", "unused")
+        .env("REPOSITORY", "o/r")
+        .env("REQUIRED_CHECK", "Ripr Rust Small Result")
+        .env("GITHUB_STEP_SUMMARY", summary_path)
+        .output()
+        .map_err(|e| e.to_string())
 }
 
 fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
@@ -176,8 +243,15 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             fs::write(dir.join(format!("pull.{}.fail", pr.number)), "")
                 .map_err(|e| e.to_string())?;
         }
+        if pr.runs_fail {
+            fs::write(dir.join("runs.fail"), "").map_err(|e| e.to_string())?;
+        }
         if pr.late_pull_fail {
             fs::write(dir.join(format!("pull.{}.later.fail", pr.number)), "")
+                .map_err(|e| e.to_string())?;
+        }
+        if pr.comments_fail {
+            fs::write(dir.join(format!("comments.{}.fail", pr.number)), "")
                 .map_err(|e| e.to_string())?;
         }
         fs::write(
@@ -219,31 +293,46 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
             )
             .map_err(|e| e.to_string())?;
         }
-        if pr.in_flight {
+        if let Some(response) = pr.runs_response {
+            fs::write(dir.join(format!("runs.{}.json", pr.sha())), response)
+                .map_err(|e| e.to_string())?;
+        } else if pr.in_flight || pr.completed_run || pr.covered {
             fs::write(
-                dir.join("runs.json"),
-                r#"{"workflow_runs":[{"status":"in_progress","display_title":"Merge-ready request abc"}]}"#,
+                dir.join(format!("runs.{}.json", pr.sha())),
+                pr.runs(if pr.in_flight {
+                    "in_progress"
+                } else {
+                    "completed"
+                }),
             )
             .map_err(|e| e.to_string())?;
         }
-        if pr.completed_run {
-            fs::write(
-                dir.join("runs.json"),
-                r#"{"workflow_runs":[{"status":"completed","display_title":"Merge-ready request abc"}]}"#,
-            )
-            .map_err(|e| e.to_string())?;
+        if let Some(suite) = pr.suite {
+            if suite == "HTTP 502" {
+                fs::write(dir.join("suite.fail"), "").map_err(|e| e.to_string())?;
+            } else {
+                fs::write(dir.join("suite.json"), suite.replace("{head}", &pr.sha()))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        let jobs = pr.jobs.or(pr.covered.then_some(RESULT_JOB));
+        if let Some(jobs) = jobs {
+            if jobs == "HTTP 502" {
+                fs::write(dir.join("jobs.fail"), "").map_err(|e| e.to_string())?;
+            } else {
+                fs::write(dir.join("jobs.json"), jobs.replace("{head}", &pr.sha()))
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        if let Some(result) = pr.result.or(pr.covered.then_some(RESULT_CHECK)) {
+            fs::write(dir.join("result.json"), result.replace("{head}", &pr.sha()))
+                .map_err(|e| e.to_string())?;
         }
         if pr.late_fail {
             fs::write(dir.join("runs.later.fail"), "").map_err(|e| e.to_string())?;
         }
         if let Some(status) = pr.late_run {
-            fs::write(
-                dir.join("runs.later.json"),
-                format!(
-                    r#"{{"workflow_runs":[{{"status":"{status}","display_title":"Merge-ready request abc"}}]}}"#
-                ),
-            )
-            .map_err(|e| e.to_string())?;
+            fs::write(dir.join("runs.later.json"), pr.runs(status)).map_err(|e| e.to_string())?;
         }
         if let Some(later) = pr.later_state {
             fs::write(
@@ -320,21 +409,7 @@ fn run(prs: &[Pr], case: &str) -> Result<Outcome, String> {
         fs::set_permissions(&path, mode).map_err(|e| e.to_string())?;
     }
     let summary_path = dir.join("summary.md");
-    let path = format!(
-        "{}:{}",
-        dir.join("bin").display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    let output = Command::new("bash")
-        .arg(dir.join("block.sh"))
-        .env("PATH", path)
-        .env("FAKE_DIR", &dir)
-        .env("GH_TOKEN", "unused")
-        .env("REPOSITORY", "o/r")
-        .env("REQUIRED_CHECK", "Ripr Rust Small Result")
-        .env("GITHUB_STEP_SUMMARY", &summary_path)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let output = spawn_block(&dir, &summary_path)?;
     if !output.status.success() {
         return Err(format!(
             "block exited {:?}: {}",
@@ -770,6 +845,13 @@ fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_a
         "{}",
         outcome.log
     );
+    assert_eq!(
+        outcome
+            .log
+            .matches("/actions/runs/277/attempts/2/jobs?")
+            .count(),
+        2
+    );
 
     // Touched within the grace window: a label applied moments ago has not run yet.
     let fresh = Pr {
@@ -788,6 +870,199 @@ fn a_finished_run_without_the_check_is_named_and_a_fresh_or_moved_head_is_left_a
     };
     let outcome = run(&[moved], "dark-moved")?;
     assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    Ok(())
+}
+
+#[test]
+fn shared_sha_checks_cannot_replace_the_target_pr_and_attempt() -> Result<(), String> {
+    for (case, association, covered) in [
+        ("other-pr", Some(r#"[{"number":99999}]"#), false),
+        (
+            "other-pr-commit-census",
+            Some(r#"[{"number":99999}]"#),
+            true,
+        ),
+        ("missing-pr", Some("[]"), false),
+        (
+            "ambiguous-pr",
+            Some(r#"[{"number":274},{"number":99999}]"#),
+            false,
+        ),
+        ("older-attempt", None, true),
+    ] {
+        let pr = Pr {
+            state: "clean",
+            completed_run: true,
+            covered,
+            association,
+            // Both commit and suite legacy paths can see a Result. Attempt 2 has none.
+            jobs: Some(r#"{"total_count":0,"jobs":[]}"#),
+            suite: Some(RESULT_SUITE),
+            ..Pr::dirty(274)
+        };
+        let outcome = run(&[pr], case)?;
+        assert!(
+            !outcome.summary.contains("covered ("),
+            "{case}: {}",
+            outcome.summary
+        );
+        if matches!(case, "missing-pr" | "ambiguous-pr") {
+            assert_eq!(outcome.comments, 0, "{}", outcome.log);
+            assert!(outcome.summary.contains("deferred to the next sweep"));
+            assert!(
+                outcome
+                    .summary
+                    .contains("dark merge-ready heads reported: 0")
+            );
+        } else {
+            assert_eq!(outcome.comments, 1, "{}", outcome.log);
+            assert_eq!(
+                outcome.log.contains("/attempts/2/jobs?"),
+                case == "older-attempt"
+            );
+        }
+        assert!(!outcome.log.contains("/check-runs/278"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_late_comment_or_eligibility_read_failure_defers_all_writes_and_dark_output()
+-> Result<(), String> {
+    for (case, comments_fail, expected) in [
+        ("late-comments", true, "comment census"),
+        ("late-eligibility", false, "final eligibility"),
+    ] {
+        let pr = Pr {
+            state: "clean",
+            prior_statuses: OURS_FAILURE,
+            comments_fail,
+            late_pull_fail: !comments_fail,
+            ..Pr::dirty(275)
+        };
+        let outcome = run(&[pr, Pr::dirty(276)], case)?;
+        assert_eq!(
+            (outcome.comments, outcome.failures, outcome.successes),
+            (1, 1, 0),
+            "{}",
+            outcome.log
+        );
+        assert!(outcome.summary.contains(expected), "{}", outcome.summary);
+        assert!(
+            outcome.summary.contains("API reads failed: 1"),
+            "{}",
+            outcome.summary
+        );
+        // Only the healthy conflicted head contributes to the dark count.
+        assert!(
+            outcome
+                .summary
+                .contains("dark merge-ready heads reported: 1"),
+            "{}",
+            outcome.summary
+        );
+        assert!(
+            !outcome
+                .summary
+                .lines()
+                .any(|line| line.contains("| #275 |") && line.contains("DARK"))
+        );
+        assert!(!outcome.stdout.contains("title=Dark merge-ready PR head"));
+    }
+    Ok(())
+}
+
+#[test]
+fn the_current_attempts_verified_result_suppresses_relabel_advice() -> Result<(), String> {
+    for late in [false, true] {
+        let pr = Pr {
+            state: "clean",
+            completed_run: !late,
+            late_run: late.then_some("completed"),
+            jobs: Some(RESULT_JOB),
+            result: Some(RESULT_CHECK),
+            ..Pr::dirty(270)
+        };
+        let outcome = run(&[pr], &format!("suite-covered-{late}"))?;
+        assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+        assert!(
+            outcome
+                .summary
+                .contains("covered (required check in routed suite)")
+        );
+        assert!(
+            outcome
+                .summary
+                .contains("dark merge-ready heads reported: 0")
+        );
+        assert!(!outcome.stdout.contains("title=Dark merge-ready PR head"));
+        assert_eq!(outcome.log.matches("/attempts/2/jobs?").count(), 1);
+        assert_eq!(outcome.log.matches("/check-runs/278").count(), 1);
+        assert!(!outcome.log.contains("/check-suites/"));
+    }
+    Ok(())
+}
+
+#[test]
+fn unreadable_or_mismatched_attempt_evidence_defers_the_head_and_preserves_the_sweep()
+-> Result<(), String> {
+    for (case, jobs, result) in [
+        ("unreadable", "HTTP 502", RESULT_CHECK),
+        (
+            "incomplete",
+            r#"{"total_count":101,"jobs":[]}"#,
+            RESULT_CHECK,
+        ),
+        (
+            "wrong-suite",
+            RESULT_JOB,
+            r#"{"id":278,"name":"Ripr Rust Small Result","head_sha":"{head}","check_suite":{"id":111}}"#,
+        ),
+        (
+            "wrong-attempt",
+            r#"{"total_count":1,"jobs":[{"run_id":277,"run_attempt":1,"head_sha":"{head}","name":"Ripr Rust Small Result","check_run_url":"https://api.github.com/repos/o/r/check-runs/278"}]}"#,
+            RESULT_CHECK,
+        ),
+    ] {
+        let pr = Pr {
+            state: "clean",
+            completed_run: true,
+            jobs: Some(jobs),
+            result: Some(result),
+            ..Pr::dirty(271)
+        };
+        let outcome = run(&[pr, Pr::dirty(272)], case)?;
+        assert_eq!(
+            (outcome.comments, outcome.failures),
+            (1, 1),
+            "{}",
+            outcome.summary
+        );
+        assert!(outcome.summary.contains("Result attempt verification"));
+        assert!(outcome.summary.contains("deferred to the next sweep"));
+        assert!(outcome.summary.contains("conflict reported"));
+        assert!(!outcome.log.contains("merge-ready-dark:"));
+        assert!(!outcome.stdout.contains("title=Dark merge-ready PR head"));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_truncated_routed_run_inventory_cannot_prove_a_head_dark() -> Result<(), String> {
+    let pr = Pr {
+        state: "clean",
+        runs_response: Some(r#"{"total_count":1000,"workflow_runs":[]}"#),
+        ..Pr::dirty(273)
+    };
+    let outcome = run(&[pr], "truncated-runs")?;
+    assert_eq!(outcome.comments, 0, "{}", outcome.summary);
+    assert!(
+        outcome
+            .summary
+            .contains("dark merge-ready heads reported: 0")
+    );
+    assert!(outcome.summary.contains("deferred to the next sweep"));
+    assert!(!outcome.log.contains("/check-suites/"));
     Ok(())
 }
 
@@ -834,8 +1109,12 @@ fn a_failed_lookup_before_the_notice_posts_nothing_and_is_reported() -> Result<(
     let outcome = run(&[failing], "late-fail")?;
     assert_eq!(outcome.comments, 0, "{}", outcome.summary);
     assert!(
-        outcome.summary.contains("re-apply notice failed")
-            && outcome.summary.contains("re-apply notices: 0"),
+        outcome.summary.contains("deferred to the next sweep")
+            && outcome.summary.contains("re-apply notices: 0")
+            && outcome
+                .summary
+                .contains("dark merge-ready heads reported: 0")
+            && !outcome.stdout.contains("title=Dark merge-ready PR head"),
         "{}",
         outcome.summary
     );
@@ -1072,7 +1351,14 @@ fn a_request_withdrawn_or_moved_after_the_initial_live_read_receives_no_write() 
     };
     let outcome = run(&[failed_recheck], "late-pull-fail-dirty")?;
     if (outcome.comments, outcome.failures, outcome.successes) != (0, 0, 0)
-        || !outcome.summary.contains("conflict report failed")
+        || !outcome
+            .summary
+            .contains("API read failed (final eligibility)")
+        || !outcome
+            .summary
+            .contains("dark merge-ready heads reported: 0")
+        || !outcome.summary.contains("API reads failed: 1")
+        || outcome.stdout.contains("title=Dark conflicted PR head")
     {
         return Err(format!(
             "failed write-boundary recheck wrote or misreported: {}",
@@ -1098,5 +1384,121 @@ fn a_request_withdrawn_or_moved_after_the_initial_live_read_receives_no_write() 
             ));
         }
     }
+    Ok(())
+}
+
+/// The runs fixture is global, so every head reads the failure: all are deferred, none
+/// is told, and the sweep still finishes with its summary instead of aborting.
+#[test]
+fn a_failed_runs_read_defers_every_head_and_the_sweep_still_finishes() -> Result<(), String> {
+    let down = Pr {
+        runs_fail: true,
+        ..Pr::dirty(711)
+    };
+    let outcome = run(&[down, Pr::dirty(712)], "api-down-runs-read")?;
+    assert_eq!(
+        (outcome.comments, outcome.failures),
+        (0, 0),
+        "{}",
+        outcome.log
+    );
+    assert!(
+        outcome.summary.contains("API reads failed: 2")
+            && outcome.summary.contains("workflow-runs read"),
+        "{}",
+        outcome.summary
+    );
+    Ok(())
+}
+
+/// A failed API read of one head (a 502 or a non-JSON gateway body, #14721) defers
+/// that head; it must not abort the sweep and lose the other heads' conflict reports.
+#[test]
+fn a_failed_read_of_one_head_defers_it_and_the_sweep_still_reports_the_rest() -> Result<(), String>
+{
+    for (case, broken) in [
+        (
+            "pull-read",
+            Pr {
+                pull_fail: true,
+                ..Pr::dirty(701)
+            },
+        ),
+        (
+            "attempt-jobs-read",
+            Pr {
+                completed_run: true,
+                jobs: Some("HTTP 502"),
+                ..Pr::dirty(701)
+            },
+        ),
+        (
+            "status-read",
+            Pr {
+                status_fail: true,
+                ..Pr::dirty(701)
+            },
+        ),
+    ] {
+        let outcome = run(&[broken, Pr::dirty(702)], &format!("api-down-{case}"))?;
+        assert!(
+            outcome.summary.contains("| #702 |")
+                && outcome.summary.contains("conflict reported")
+                && !outcome.summary.contains("API reads failed: 0"),
+            "{case}: the healthy head must still be swept: {}",
+            outcome.summary
+        );
+        assert_eq!(
+            (outcome.comments, outcome.failures),
+            (1, 1),
+            "{case}: only the healthy head is told: {}",
+            outcome.log
+        );
+        assert!(
+            outcome.stdout.contains("title=API read failed"),
+            "{case}: the failed read is named: {}",
+            outcome.stdout
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_open_pr_list_fails_the_sweep_after_retrying_and_says_so() -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!("watchdog-list-down-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("bin")).map_err(|e| e.to_string())?;
+    fs::write(dir.join("pulls.fail"), "").map_err(|e| e.to_string())?;
+    fs::write(dir.join("bin/gh"), FAKE_GH).map_err(|e| e.to_string())?;
+    fs::write(dir.join("bin/sleep"), "#!/bin/bash\nexit 0\n").map_err(|e| e.to_string())?;
+    fs::write(dir.join("block.sh"), run_block()?).map_err(|e| e.to_string())?;
+    for tool in ["gh", "sleep"] {
+        let path = dir.join("bin").join(tool);
+        let mut mode = fs::metadata(&path)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        mode.set_mode(0o755);
+        fs::set_permissions(&path, mode).map_err(|e| e.to_string())?;
+    }
+    let summary_path = dir.join("summary.md");
+    let output = spawn_block(&dir, &summary_path)?;
+    let log = fs::read_to_string(dir.join("log")).unwrap_or_default();
+    let summary = fs::read_to_string(&summary_path).unwrap_or_default();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        !output.status.success(),
+        "an unswept run must not read green"
+    );
+    assert_eq!(
+        log.lines()
+            .filter(|l| l.contains("/pulls?state=open"))
+            .count(),
+        3,
+        "{log}"
+    );
+    assert!(
+        summary.contains("Open PR list unreadable after 3 attempts"),
+        "{summary}"
+    );
     Ok(())
 }

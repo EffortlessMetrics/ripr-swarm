@@ -1,0 +1,6 @@
+# A function closer git's diff slider reports as added seeds no probe (#15270).
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_function_closer_slid_ahead_of_an_appended_item_seeds_no_probe",
+]

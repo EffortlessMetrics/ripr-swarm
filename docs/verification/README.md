@@ -35,6 +35,9 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/config/ripr-toml.schema.json`](../../schemas/config/ripr-toml.schema.json) | Repository `ripr.toml` input, for editor validation and completion (not a ripr output). |
 | [`schemas/ripr/pr-evidence.schema.json`](../../schemas/ripr/pr-evidence.schema.json) | Canonical PR evidence summary packet. |
 | [`schemas/ripr/review-comments.schema.json`](../../schemas/ripr/review-comments.schema.json) | `ripr review-comments` guidance output. |
+| [`schemas/ripr/agent-status.schema.json`](../../schemas/ripr/agent-status.schema.json) | `ripr agent status --json` inventory: the seven agent-loop artifacts, recorded repair attempts with their receipt readings, and the next command status selects. |
+| [`schemas/ripr/rerun.schema.json`](../../schemas/ripr/rerun.schema.json) | `ripr rerun --json` targeted rerun report: the seams a changed test or gap ledger selects, the file-fact cache work, and the optional `--before` movement, `--check-parity` comparison and ledger route. |
+| [`schemas/ripr/cache-export.schema.json`](../../schemas/ripr/cache-export.schema.json) | `ripr cache export` success report: the export directory and the entry, file and byte counts it copied. |
 | [`schemas/ripr/cache-status.schema.json`](../../schemas/ripr/cache-status.schema.json) | `ripr cache status --json` report: cache location, readability, and owned versus foreign file counts. |
 | [`schemas/ripr/capabilities.schema.json`](../../schemas/ripr/capabilities.schema.json) | `ripr capabilities --json` language capability registry: build availability per language and the support cells per language, framework and mode. |
 | [`schemas/ripr/cli-refusal.schema.json`](../../schemas/ripr/cli-refusal.schema.json) | Minimal `cli_refusal` document for argv usage errors and selector misses under an explicit JSON request (#11584). |
@@ -46,6 +49,7 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/ripr/gate-decision.schema.json`](../../schemas/ripr/gate-decision.schema.json) | `ripr gate evaluate` decision output and its structured repair route. |
 | [`schemas/ripr/check.schema.json`](../../schemas/ripr/check.schema.json) | `ripr check --json` primary findings and typed analysis-outcome output. |
 | [`schemas/ripr/check-timeout-refusal.schema.json`](../../schemas/ripr/check-timeout-refusal.schema.json) | `ripr check --json` `analysis_timeout` refusal with input context (refusal generation 0.3, RIPR-SPEC-0241 amendment #10796). |
+| [`schemas/ripr/agent-brief.schema.json`](../../schemas/ripr/agent-brief.schema.json) | Agent brief full and opt-in lossless range profiles. |
 | [`schemas/ripr/doctor.schema.json`](../../schemas/ripr/doctor.schema.json) | `ripr doctor --json` environment report: detected languages, unanalyzed source, preview-language gaps, config defaults, cache, test surfaces, and the Perl preview. |
 | [`schemas/ripr/repair-assurance.schema.json`](../../schemas/ripr/repair-assurance.schema.json) | Design-only `RepairAssuranceV1` envelope and the producer-owned command-spec and execution-result shapes. |
 | [`schemas/ripr/rust-repair-trust-corpus.schema.json`](../../schemas/ripr/rust-repair-trust-corpus.schema.json) | Authorized Rust repair attempt corpus of record. |

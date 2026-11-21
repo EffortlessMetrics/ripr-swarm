@@ -27,7 +27,7 @@ ripr first-pr \
   --base origin/main \
   --head HEAD \
   --gap-ledger inputs/reports/gap-decision-ledger.json \
-  --out-dir target/ripr/demo/boundary-gap
+  --output-dir target/ripr/demo/boundary-gap
 ```
 
 Read:
