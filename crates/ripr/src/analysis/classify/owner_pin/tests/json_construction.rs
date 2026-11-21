@@ -248,9 +248,9 @@ fn literal_json_identity_accepts_each_audited_release_with_its_own_checksum() ->
 fn literal_json_identity_follows_a_member_declaration_under_a_virtual_root() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/owner_return_pin_json_real_literal/input");
-    let manifest = std::fs::read_to_string(fixture.join("Cargo.toml"))
-        .map_err(|e| e.to_string())?
-        .replace("\n[workspace]\n", "\n");
+    let package = std::fs::read_to_string(fixture.join("Cargo.toml")).map_err(|e| e.to_string())?;
+    let manifest = package.replace("\n[workspace]\n", "\n");
+    assert_ne!(manifest, package, "the member is not a workspace root");
     let before_other = "[[package]]\nname = \"proc-macro2\"";
     let lock = std::fs::read_to_string(fixture.join("Cargo.lock")).map_err(|e| e.to_string())?;
     let member_lock = lock.replace(
