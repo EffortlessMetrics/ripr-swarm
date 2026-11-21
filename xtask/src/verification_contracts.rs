@@ -1167,6 +1167,9 @@ fn version_authority_violations(
         let schema = read_json(root.join(&schema_path))?;
         let pinned = pinned_version(&schema);
         for producer in *producers {
+            if let Some(violation) = version_type_mismatch(&schema_path, &schema, producer.prefix) {
+                violations.push(violation);
+            }
             let source = read_source(producer.source_path)?;
             if let Some(violation) = version_mismatch(
                 &schema_path,
@@ -1193,6 +1196,27 @@ fn pinned_version(schema: &Value) -> Option<String> {
         Value::Number(version) => version.as_u64().map(|version| version.to_string()),
         _ => None,
     }
+}
+
+/// `pinned_version` spells an integer const in decimal, so `5` and `"5"`
+/// would read alike. The JSON type is part of the contract: a string const
+/// pairs only with a string producer constant (a prefix ending in its opening
+/// quote) and an integer const only with an integer one.
+fn version_type_mismatch(schema_path: &str, schema: &Value, prefix: &str) -> Option<String> {
+    let schema_is_string = match schema.pointer("/properties/schema_version/const")? {
+        Value::String(_) => true,
+        Value::Number(_) => false,
+        _ => return None,
+    };
+    let producer_is_string = prefix.ends_with('"');
+    (schema_is_string != producer_is_string).then(|| {
+        let kind = |string: bool| if string { "a string" } else { "an integer" };
+        format!(
+            "{schema_path} pins `schema_version` as {} but its producer constant `{prefix}` is {}",
+            kind(schema_is_string),
+            kind(producer_is_string)
+        )
+    })
 }
 
 fn version_mismatch(
@@ -3537,6 +3561,21 @@ mod tests {
             pinned_version(&serde_json::json!({"properties": {"schema_version": {"const": true}}})),
             None
         );
+    }
+
+    /// The decimal spelling hides the JSON type, so the gate also compares
+    /// the schema const's type with the producer constant's.
+    #[test]
+    fn version_type_mismatch_rejects_a_string_const_for_an_integer_producer() {
+        let path = "schemas/ripr/example.schema.json";
+        let integer = serde_json::json!({"properties": {"schema_version": {"const": 5}}});
+        let string = serde_json::json!({"properties": {"schema_version": {"const": "5"}}});
+        let integer_prefix = "const VERSION: u64 = ";
+        let string_prefix = "const VERSION: &str = \"";
+        assert!(version_type_mismatch(path, &integer, integer_prefix).is_none());
+        assert!(version_type_mismatch(path, &string, string_prefix).is_none());
+        assert!(version_type_mismatch(path, &string, integer_prefix).is_some());
+        assert!(version_type_mismatch(path, &integer, string_prefix).is_some());
     }
 
     /// Mutate only the installed `ripr pr-evidence` producer and require the

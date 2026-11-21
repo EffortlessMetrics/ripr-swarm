@@ -154,60 +154,106 @@ fn published_help_schema_rejects_documents_it_forbids() -> Result<(), String> {
             })
             .ok_or("no command with a boolean flag")?,
     };
-    let cases: [(&str, Mutation); 16] = [
-        ("an unknown top-level field", |doc, _| {
-            doc["ok"] = json!(true)
-        }),
-        ("the version as a string", |doc, _| {
-            doc["schema_version"] = json!("5")
-        }),
-        ("another version", |doc, _| doc["schema_version"] = json!(6)),
-        ("a short catalog digest", |doc, _| {
-            doc["catalog_digest"] = json!("43addde4")
-        }),
-        ("an uppercase catalog digest", |doc, _| {
-            let upper = doc["catalog_digest"].as_str().unwrap_or("").to_uppercase();
-            doc["catalog_digest"] = json!(upper);
-        }),
-        ("no commands", |doc, _| doc["commands"] = json!([])),
-        ("an unknown command class", |doc, rows| {
-            doc["commands"][rows.public]["class"] = json!("beta")
-        }),
+    let cases: [(&str, (&str, &str), Mutation); 16] = [
+        (
+            "an unknown top-level field",
+            (
+                "help[an unknown top-level field]",
+                "emitted `ok`, which the published schema does not declare",
+            ),
+            |doc, _| doc["ok"] = json!(true),
+        ),
+        (
+            "the version as a string",
+            (".schema_version", "expected const 5"),
+            |doc, _| doc["schema_version"] = json!("5"),
+        ),
+        (
+            "another version",
+            (".schema_version", "expected const 5"),
+            |doc, _| doc["schema_version"] = json!(6),
+        ),
+        (
+            "a short catalog digest",
+            (".catalog_digest", "does not match ^[0-9a-f]{64}$"),
+            |doc, _| doc["catalog_digest"] = json!("43addde4"),
+        ),
+        (
+            "an uppercase catalog digest",
+            (".catalog_digest", "does not match ^[0-9a-f]{64}$"),
+            |doc, _| {
+                let upper = doc["catalog_digest"].as_str().unwrap_or("").to_uppercase();
+                doc["catalog_digest"] = json!(upper);
+            },
+        ),
+        (
+            "no commands",
+            (".commands", "below minItems 1"),
+            |doc, _| doc["commands"] = json!([]),
+        ),
+        (
+            "an unknown command class",
+            (".class", "is not one of"),
+            |doc, rows| doc["commands"][rows.public]["class"] = json!("beta"),
+        ),
         (
             "a public canonical command shown as advanced",
+            (".discovery", "expected const \"ordinary_public\""),
             |doc, rows| doc["commands"][rows.public]["discovery"] = json!("advanced"),
         ),
-        ("an alias shown as ordinary public", |doc, rows| {
-            doc["commands"][rows.alias]["discovery"] = json!("ordinary_public")
-        }),
-        ("an alias with no target", |doc, rows| {
-            doc["commands"][rows.alias]["relation"] = json!({"kind": "alias_of"})
-        }),
-        ("a gate that blocks with exit 2", |doc, rows| {
-            doc["commands"][rows.gate]["exit"]["blocked"] = json!(2)
-        }),
-        ("an unknown refusal stdout", |doc, rows| {
-            doc["commands"][rows.refusal]["exit"]["stdout_on_refusal"] = json!("stderr")
-        }),
-        ("flags on a command with no help body", |doc, rows| {
-            doc["commands"][rows.no_body]["flags"] = json!([{"name": "--root", "takes_value": true, "values": [], "required": false, "repeatable": false, "env": null}])
-        }),
-        ("a boolean flag with a value set", |doc, rows| {
-            if let Some(flag) = doc["commands"][rows.with_flags]["flags"]
-                .as_array_mut()
-                .and_then(|flags| flags.iter_mut().find(|flag| flag["takes_value"] == false))
-            {
-                flag["values"] = json!(["yes"]);
-            }
-        }),
-        ("a flag that is not a long flag", |doc, rows| {
-            doc["commands"][rows.with_flags]["flags"][0]["name"] = json!("-q")
-        }),
-        ("a workflow with no steps", |doc, _| {
-            doc["workflows"][0]["steps"] = json!([])
-        }),
+        (
+            "an alias shown as ordinary public",
+            (".discovery", "expected const \"compatibility_alias\""),
+            |doc, rows| doc["commands"][rows.alias]["discovery"] = json!("ordinary_public"),
+        ),
+        (
+            "an alias with no target",
+            (".relation", "oneOf"),
+            |doc, rows| doc["commands"][rows.alias]["relation"] = json!({"kind": "alias_of"}),
+        ),
+        (
+            "a gate that blocks with exit 2",
+            (".exit", "oneOf"),
+            |doc, rows| doc["commands"][rows.gate]["exit"]["blocked"] = json!(2),
+        ),
+        (
+            "an unknown refusal stdout",
+            (".exit", "oneOf"),
+            |doc, rows| {
+                doc["commands"][rows.refusal]["exit"]["stdout_on_refusal"] = json!("stderr")
+            },
+        ),
+        (
+            "flags on a command with no help body",
+            (".flags", "above maxItems 0"),
+            |doc, rows| doc["commands"][rows.no_body]["flags"] = json!([{"name": "--root", "takes_value": true, "values": [], "required": false, "repeatable": false, "env": null}]),
+        ),
+        (
+            "a boolean flag with a value set",
+            (".values", "above maxItems 0"),
+            |doc, rows| {
+                if let Some(flag) = doc["commands"][rows.with_flags]["flags"]
+                    .as_array_mut()
+                    .and_then(|flags| flags.iter_mut().find(|flag| flag["takes_value"] == false))
+                {
+                    flag["values"] = json!(["yes"]);
+                }
+            },
+        ),
+        (
+            "a flag that is not a long flag",
+            (".name", "does not match ^--[a-z]"),
+            |doc, rows| doc["commands"][rows.with_flags]["flags"][0]["name"] = json!("-q"),
+        ),
+        (
+            "a workflow with no steps",
+            (".steps", "below minItems 1"),
+            |doc, _| doc["workflows"][0]["steps"] = json!([]),
+        ),
     ];
-    for (label, mutate) in cases {
+    // Each mutation must be refused at the field it changed and for the
+    // constraint it breaks, so an unrelated rejection cannot pass it.
+    for (label, (location, reason), mutate) in cases {
         let mut mutated = document.clone();
         mutate(&mut mutated, &rows);
         if mutated == document {
@@ -219,7 +265,18 @@ fn published_help_schema_rejects_documents_it_forbids() -> Result<(), String> {
                     "the published help schema accepted a document the contract forbids: {label}"
                 ));
             }
-            Err(error) => println!("rejected as expected ({label}): {error}"),
+            Err(error) => {
+                let at_field = error
+                    .split(": ")
+                    .next()
+                    .is_some_and(|path| path.ends_with(location));
+                if !at_field || !error.contains(reason) {
+                    return Err(format!(
+                        "{label}: rejected for another reason; expected `{reason}` at `{location}`, got: {error}"
+                    ));
+                }
+                println!("rejected as expected ({label}): {error}");
+            }
         }
     }
     Ok(())

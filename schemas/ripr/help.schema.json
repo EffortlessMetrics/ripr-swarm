@@ -99,7 +99,7 @@
       ],
       "properties": {
         "id": {
-          "description": "Stable command identity, `cmd:` then the path with spaces as dots.",
+          "description": "Stable command identity: `cmd:` then a dotted name. Canonical commands use their path with spaces as dots; a compatibility alias may carry its own namespace (`start-here` is `cmd:compat.start-here`).",
           "type": "string",
           "minLength": 5
         },

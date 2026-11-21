@@ -21728,7 +21728,8 @@ of the command rows, the workflow rows and `catalog_contract_version`, so a
 release that only changes `product_version` keeps the digest.
 `crates/ripr/tests/help_json_schema.rs` validates the real command's bytes,
 asserts they reach every exit-contract kind, flag scope and workflow next-route
-kind, and checks that broken variants are rejected. Beyond field shapes the
+kind, and checks that broken variants are rejected at the field and for the
+constraint each one breaks. Beyond field shapes the
 schema binds the exit codes of each contract kind, discovery to class and
 relation as the catalog validator derives it, an empty `flags` list for
 `no_help_body`, and no value set on a flag that takes no value.
