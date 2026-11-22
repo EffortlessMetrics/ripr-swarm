@@ -82,6 +82,8 @@ fn assert_not_entry_related(
     Ok(())
 }
 
+/// Call-graph entries only; closure entries (#13592), which read unknown
+/// whatever the oracle, are covered by `closure_entry_tests`.
 fn entry_names(owner_source: &str, owner: &str) -> Vec<String> {
     extract_owners(Path::new("src/merge.ts"), owner_source)
         .into_iter()
@@ -90,6 +92,7 @@ fn entry_names(owner_source: &str, owner: &str) -> Vec<String> {
             candidate
                 .module_entries
                 .into_iter()
+                .filter(|entry| !entry.closure)
                 .map(|entry| entry.name)
                 .collect()
         })

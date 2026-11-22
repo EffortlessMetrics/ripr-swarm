@@ -199,6 +199,7 @@ fn class_entries_for(
                 instance_kind: TypeScriptInstanceKind::default(),
                 hops: 0,
                 cross_module: None,
+                closure: false,
             })
             .collect();
         entries.sort();
