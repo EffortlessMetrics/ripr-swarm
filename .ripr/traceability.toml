@@ -8387,6 +8387,8 @@ id = "RIPR-SPEC-0082"
 name = "preview-language disclosure"
 spec = "docs/specs/RIPR-SPEC-0082-preview-language-disclosure.md"
 tests = [
+  "crates/ripr/tests/check_not_analyzed_note_pointer.rs::the_snippet_starts_from_an_explicit_language_list",
+  "crates/ripr/tests/check_not_analyzed_note_pointer.rs::a_candidate_tree_snippet_starts_from_the_candidate_list",
   "crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs::python_partial_preview_claims_follow_selected_files",
   "crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs::typescript_partial_preview_claims_follow_selected_files",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::missing_changed_python_source_is_incomplete_and_restorable",

@@ -287,3 +287,44 @@ fn the_snippet_starts_from_an_explicit_language_list() -> Result<(), String> {
         true,
     )
 }
+
+/// A candidate-tree check runs under the candidate's configuration, so its
+/// snippet starts from the candidate's list. The checkout's uncommitted
+/// `ripr.toml` says `rust` only and must not leak into it.
+#[test]
+fn a_candidate_tree_snippet_starts_from_the_candidate_list() -> Result<(), String> {
+    let repo = Repo::create()?;
+    repo.write("ripr.toml", "[languages]\nenabled = [\"python\"]\n")?;
+    repo.write("web.ts", OLD_TS)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "ts"])?;
+    repo.write("web.ts", NEW_TS)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "change"])?;
+    repo.write("ripr.toml", "[languages]\nenabled = [\"rust\"]\n")?;
+    let tree = Command::new("git")
+        .current_dir(&repo.0)
+        .args(["rev-parse", "HEAD^{tree}"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let tree = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&repo.0)
+        .env("RIPR_QUIET", "1")
+        .args([
+            "check",
+            "--candidate-tree",
+            &tree,
+            "--candidate-base",
+            "HEAD~1",
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let screen = String::from_utf8_lossy(&output.stdout).into_owned();
+    require(
+        &screen,
+        "[languages]\nenabled = [\"python\", \"typescript\"]\n",
+        true,
+    )
+    .map_err(|e| format!("{e}\n{}", String::from_utf8_lossy(&output.stderr)))
+}
