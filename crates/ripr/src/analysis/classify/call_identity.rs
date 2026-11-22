@@ -474,7 +474,7 @@ fn scan_call_identity_shapes(
     let mut libs: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     let mut mains: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     for (path, facts) in index.files().iter() {
-        let package = package_key(path);
+        let package = package_key_in(index, path);
         remaps.entry(package.clone()).or_insert((false, false));
         if has_path_attribute(&facts.data().source)
             && !path_attributes_only_select_cfg_alternatives(&facts.data().source)
@@ -757,7 +757,7 @@ impl OwnerCallIdentity {
             owner_crate: None,
             layout: CrateLayout::default(),
             owner_file: helper.file.clone(),
-            owner_package: package_key(&helper.file),
+            owner_package: package_key_in(index, &helper.file),
             definitions,
             memo: Mutex::new(BTreeMap::new()),
         })
@@ -821,7 +821,7 @@ impl OwnerCallIdentity {
             return None;
         }
         let owner_path = definition_module_path_in(index, owner)?;
-        let owner_package = package_key(&owner.file);
+        let owner_package = package_key_in(index, &owner.file);
         let owner_absolute = super::related_tests::path_is_absolute_form(&owner.file);
         let mut rivals = Vec::new();
         for function in same_named {
@@ -836,7 +836,7 @@ impl OwnerCallIdentity {
                 // A mixed index cannot be told apart by package: rule off.
                 return None;
             }
-            if package_key(&function.file) == owner_package {
+            if package_key_in(index, &function.file) == owner_package {
                 rivals.push(function);
             }
         }
@@ -844,14 +844,14 @@ impl OwnerCallIdentity {
             return None;
         }
         let layout = CrateLayout::new(index, owner_package.as_deref());
-        let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+        let CrateClass::Crate(owner_crate) = layout.classify(index, &owner.file) else {
             return None;
         };
         let mut definitions = vec![Some(owner_path)];
         for function in rivals {
             match function.item.container {
                 FunctionContainer::Free if function.item.has_body => {
-                    match layout.classify(&function.file) {
+                    match layout.classify(index, &function.file) {
                         // Only a library-shaped `src/` module is ambiguous,
                         // and it may compose into either root's crate.
                         CrateClass::Ambiguous if owner_crate == "lib" || owner_crate == "main" => {
@@ -887,12 +887,16 @@ impl OwnerCallIdentity {
     /// Another crate's definition (an integration test's or a binary's
     /// root, an `extern` declaration without a body) is not settled here
     /// and keeps competing.
-    pub(in crate::analysis) fn settles(&self, function: &FunctionSummary) -> bool {
+    pub(in crate::analysis) fn settles(
+        &self,
+        index: &RustIndex,
+        function: &FunctionSummary,
+    ) -> bool {
         function.name == self.name
             && function.item.container == FunctionContainer::Free
             && function.item.has_body
-            && package_key(&function.file) == self.owner_package
-            && self.layout.class(&function.file) == self.owner_crate
+            && package_key_in(index, &function.file) == self.owner_package
+            && self.layout.class(index, &function.file) == self.owner_crate
     }
 
     /// What `test`'s calls of the owner's name settle on, taken together:
@@ -1024,8 +1028,8 @@ impl OwnerCallIdentity {
         // modules only from the owner's own crate: same package, same crate
         // within it.
         let same_crate = self.owner_crate.is_some()
-            && self.layout.class(&test.file) == self.owner_crate
-            && package_key(&test.file) == self.owner_package;
+            && self.layout.class(index, &test.file) == self.owner_crate
+            && package_key_in(index, &test.file) == self.owner_package;
         TestScope {
             file_segments: file_module_segments_in(index, &test.file).filter(|_| same_crate),
             scopes,
@@ -1383,7 +1387,7 @@ fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool
 /// crate: any remap outside `tests/`, or a `tests/` remap when the owner
 /// itself lives under `tests/` (#12771).
 fn package_remaps_owner_module_paths(index: &RustIndex, owner: &FunctionSummary) -> bool {
-    let shape = call_identity_shape(index, package_key(&owner.file).as_deref());
+    let shape = call_identity_shape(index, package_key_in(index, &owner.file).as_deref());
     shape.remaps_module_paths || (shape.remaps_test_modules && under_tests_dir(&owner.file))
 }
 
@@ -1676,42 +1680,74 @@ enum CustomRootReading {
     Unplaced,
 }
 
+/// A file below a custom library root: its package key and module segments.
+struct CustomRootPlacement {
+    package: Option<String>,
+    segments: Vec<String>,
+    /// The file sits under the package's own `src/` directory.
+    under_src: bool,
+}
+
 fn custom_lib_root_reading(index: &RustIndex, file: &Path) -> CustomRootReading {
-    let Some(segments) = custom_lib_root_segments(index, file) else {
+    let Some(placement) = custom_lib_root_placement(index, file) else {
         return CustomRootReading::NotBelowRoot;
     };
     // With `src/main.rs` and no `src/lib.rs`, the layout gives every `src/`
     // module to the binary, whose paths start at `src/main.rs`, while the
     // custom root may compose the same file as a library module. Neither
     // reading is established, so neither names the owner (#14495 review).
-    if call_identity_shape(index, package_key(file).as_deref())
-        .layout
-        .main_only
+    // A root whose modules sit outside `src/` shares no file with the
+    // binary, so its files stay placed.
+    if placement.under_src
+        && call_identity_shape(index, placement.package.as_deref())
+            .layout
+            .main_only
     {
         return CustomRootReading::Unplaced;
     }
-    CustomRootReading::Placed(segments)
+    CustomRootReading::Placed(placement.segments)
 }
 
-/// Module segments of `file` below its package's `[lib] path` root, or
+/// [`package_key`] that reads a file below a custom library root as part of
+/// the package that declares the root: `core/source/pricing.rs` under
+/// `core/Cargo.toml`'s `[lib] path = "source/entry.rs"` is package `core/`,
+/// which the path shape cannot tell without a `src/` or `tests/` component
+/// (#14495).
+fn package_key_in(index: &RustIndex, file: &Path) -> Option<String> {
+    match custom_lib_root_placement(index, file) {
+        Some(placement) => placement.package,
+        None => package_key(file),
+    }
+}
+
+/// The placement of `file` below its package's custom library root, or
 /// `None` when the package has no custom root or `file` is not under the
-/// root's directory.
-fn custom_lib_root_segments(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
+/// root's module directory.
+fn custom_lib_root_placement(index: &RustIndex, file: &Path) -> Option<CustomRootPlacement> {
+    if super::related_tests::path_is_absolute_form(file) {
+        return None;
+    }
     let custom = index.member_crates.custom_lib_path_root_of(file)?;
     let normalized = super::related_tests::normalize_path(file);
     let root = super::related_tests::normalize_path(&custom.crate_root);
+    let package = super::related_tests::normalize_path(&custom.package);
+    let package_prefix = if package.is_empty() {
+        String::new()
+    } else {
+        format!("{package}/")
+    };
+    let in_package = normalized.strip_prefix(&package_prefix)?;
+    let placed = |segments: Vec<String>| CustomRootPlacement {
+        package: (!package.is_empty()).then(|| package_prefix.clone()),
+        segments,
+        under_src: in_package.starts_with("src/"),
+    };
     if normalized == root {
-        return Some(Vec::new());
+        return Some(placed(Vec::new()));
     }
     // Other targets' paths never hold the library's modules. They are fixed
     // relative to the package directory, not to the root's directory, so a
     // nested root keeps a `tests` or `main` module of its own (#14495 review).
-    let package = super::related_tests::normalize_path(&custom.package);
-    let in_package = if package.is_empty() {
-        Some(normalized.as_str())
-    } else {
-        normalized.strip_prefix(&format!("{package}/"))
-    }?;
     if ["tests/", "benches/", "examples/", "src/bin/"]
         .iter()
         .any(|target| in_package.starts_with(target))
@@ -1719,16 +1755,30 @@ fn custom_lib_root_segments(index: &RustIndex, file: &Path) -> Option<Vec<String
     {
         return None;
     }
-    let directory = match root.rsplit_once('/') {
-        Some((directory, _)) => format!("{directory}/"),
-        None => String::new(),
+    let module_dir = super::related_tests::normalize_path(&custom.module_dir);
+    let directory = if module_dir.is_empty() {
+        String::new()
+    } else {
+        format!("{module_dir}/")
     };
-    let body = normalized.strip_prefix(&directory)?.strip_suffix(".rs")?;
-    let mut segments: Vec<String> = body.split('/').map(str::to_string).collect();
+    let body = normalized.strip_prefix(&directory)?;
+    // A symlinked `src` directory holds the binary targets too, under the
+    // name the link resolves to (#15909).
+    if custom.module_dir != custom.package.join("src")
+        && custom.declared_dir == custom.package.join("src")
+        && (body == "main.rs" || body.starts_with("bin/"))
+    {
+        return None;
+    }
+    let mut segments: Vec<String> = body
+        .strip_suffix(".rs")?
+        .split('/')
+        .map(str::to_string)
+        .collect();
     if segments.last().is_some_and(|last| last == "mod") {
         segments.pop();
     }
-    (!segments.is_empty()).then_some(segments)
+    (!segments.is_empty()).then(|| placed(segments))
 }
 
 fn module_path_from(
@@ -1812,7 +1862,7 @@ pub(super) fn inherent_entry_type_identity(
         return None;
     }
     if !super::helper_transfer::is_identifier(self_ty)
-        || package_key(&owner.file).is_some()
+        || package_key_in(index, &owner.file).is_some()
         || package_remaps_module_paths(index, None)
         || super::owner_pin::target_root(&owner.file, index, &BTreeSet::new())?
             != Path::new("src/lib.rs")
@@ -2193,8 +2243,8 @@ pub(super) fn unit_test_relative_import_names_entry(
         return false;
     }
     let normalized = super::related_tests::normalize_path(test_file);
-    if package_key(test_file).is_some()
-        || package_key(&entry.file).is_some()
+    if package_key_in(index, test_file).is_some()
+        || package_key_in(index, &entry.file).is_some()
         || super::related_tests::path_is_absolute_form(test_file)
         || under_tests_dir(test_file)
         || src_body(&normalized).is_none()
@@ -2451,7 +2501,7 @@ fn module_declaration_is_ambiguous(index: &RustIndex, segment: &str, library_onl
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let mut declarations = 0usize;
     for (path, facts) in index.files().iter() {
-        if package_key(path).is_some() || under_tests_dir(path) {
+        if package_key_in(index, path).is_some() || under_tests_dir(path) {
             continue;
         }
         // The library-only form (an imported entry) ignores binary roots: a
@@ -2594,7 +2644,15 @@ impl CrateLayout {
         }
     }
 
-    fn classify(&self, file: &Path) -> CrateClass {
+    fn classify(&self, index: &RustIndex, file: &Path) -> CrateClass {
+        // A file a custom library root places is that library's module, even
+        // outside `src/` (#14495); one whose crate is not established names
+        // none.
+        match custom_lib_root_reading(index, file) {
+            CustomRootReading::Placed(_) => return CrateClass::Crate("lib".to_string()),
+            CustomRootReading::Unplaced => return CrateClass::Ambiguous,
+            CustomRootReading::NotBelowRoot => {}
+        }
         let Some(shape) = crate_class(file) else {
             return CrateClass::Outside;
         };
@@ -2626,8 +2684,8 @@ impl CrateLayout {
 
     /// The file's crate; `None` outside the layout or when ambiguous, so it
     /// never equals a placed owner's crate.
-    fn class(&self, file: &Path) -> Option<String> {
-        match self.classify(file) {
+    fn class(&self, index: &RustIndex, file: &Path) -> Option<String> {
+        match self.classify(index, file) {
             CrateClass::Crate(class) => Some(class),
             CrateClass::Outside | CrateClass::Ambiguous => None,
         }
@@ -2836,17 +2894,17 @@ fn anchored_rest<'a>(
     test: &TestSummary,
     module: &'a [String],
 ) -> Option<&'a [String]> {
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     let layout = CrateLayout::new(index, owner_package.as_deref());
-    let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+    let CrateClass::Crate(owner_crate) = layout.classify(index, &owner.file) else {
         return None;
     };
     let (first, rest) = module.split_first()?;
     let anchored = if first == "crate" {
-        package_key(&test.file) == owner_package
+        package_key_in(index, &test.file) == owner_package
             && !under_tests_dir(&test.file)
             && !under_tests_dir(&owner.file)
-            && layout.class(&test.file).as_deref() == Some(owner_crate.as_str())
+            && layout.class(index, &test.file).as_deref() == Some(owner_crate.as_str())
     } else {
         own_crate_names_of(
             &owner.file,
@@ -2987,7 +3045,7 @@ fn own_crate_names_of(
     test: &TestSummary,
     index: &RustIndex,
 ) -> BTreeSet<String> {
-    let test_package = package_key(&test.file);
+    let test_package = package_key_in(index, &test.file);
     let same_package = test_package.as_deref() == owner_package;
     let mut names = BTreeSet::new();
     if same_package && !integration_test_root(index, &test.file) {
@@ -3259,9 +3317,9 @@ pub(super) fn name_bound_outside_owner_crate(
         return false;
     };
     let scope = identity.test_scope(test, index);
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     let layout = CrateLayout::new(index, owner_package.as_deref());
-    let owner_crate = match layout.classify(&owner.file) {
+    let owner_crate = match layout.classify(index, &owner.file) {
         CrateClass::Crate(name) => Some(name),
         _ => None,
     };
@@ -3384,7 +3442,7 @@ pub(super) fn bare_name_renames_another_function(
         return false;
     };
     let raw_name = format!("r#{name}");
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     for scope in &scopes.scopes {
         if scope.block_binds(name) || scope.block_binds(&raw_name) {
             return false;
@@ -3422,7 +3480,7 @@ pub(super) fn bare_name_renames_another_function(
                     index.functions().iter().any(|function| {
                         function.item.container == FunctionContainer::Free
                             && function.name.trim_start_matches("r#") == target
-                            && package_key(&function.file) == owner_package
+                            && package_key_in(index, &function.file) == owner_package
                             && definition_module_path_in(index, function).as_ref() == Some(&placed)
                     })
                 });
@@ -3750,12 +3808,12 @@ fn module_reexports_owner(
 ) -> bool {
     use ra_ap_syntax::ast;
     use ra_ap_syntax::ast::{HasModuleItem, HasName, HasVisibility};
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     let layout = CrateLayout::new(index, owner_package.as_deref());
     index.files().iter().any(|(file, facts)| {
-        if package_key(file) != owner_package
+        if package_key_in(index, file) != owner_package
             || under_tests_dir(file)
-            || layout.class(file).as_deref() != Some(owner_crate)
+            || layout.class(index, file).as_deref() != Some(owner_crate)
             || file_module_segments_in(index, file).is_none_or(|segments| segments != module)
         {
             return false;
@@ -3839,7 +3897,7 @@ fn qualified_call_names_owner(
     }
     // A path anchored at the owner's crate through a verified re-export
     // (`crate_name::inner` for `pub use internal::inner;`).
-    let owner_package = package_key(&owner.file);
+    let owner_package = package_key_in(index, &owner.file);
     if package_remaps_module_paths(index, owner_package.as_deref()) {
         return false;
     }
@@ -3847,7 +3905,7 @@ fn qualified_call_names_owner(
         return false;
     };
     let layout = CrateLayout::new(index, owner_package.as_deref());
-    let CrateClass::Crate(owner_crate) = layout.classify(&owner.file) else {
+    let CrateClass::Crate(owner_crate) = layout.classify(index, &owner.file) else {
         return false;
     };
     let names = own_crate_names_of(
@@ -3862,10 +3920,10 @@ fn qualified_call_names_owner(
         // when the test file belongs to the owner's target (a `main.rs` or
         // `src/bin` test is another crate).
         Some((first, rest)) if first == "crate" => (
-            package_key(&test.file) == owner_package
+            package_key_in(index, &test.file) == owner_package
                 && !under_tests_dir(&test.file)
                 && !under_tests_dir(&owner.file)
-                && layout.class(&test.file).as_deref() == Some(owner_crate.as_str()),
+                && layout.class(index, &test.file).as_deref() == Some(owner_crate.as_str()),
             rest,
         ),
         Some((first, rest)) => (
