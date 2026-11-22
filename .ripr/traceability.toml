@@ -9626,6 +9626,10 @@ tests = [
   "crates/ripr/tests/typescript_tsconfig_alias_default.rs::relative_paths_without_base_url_relate_the_aliased_test",
   "crates/ripr/tests/typescript_tsconfig_alias_default.rs::paths_without_base_url_do_not_credit_a_same_named_decoy",
   "crates/ripr/tests/typescript_tsconfig_alias_default.rs::non_relative_target_without_base_url_stays_unresolved",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::fallback_array_resolves_the_first_existing_target_in_order",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::fallback_stops_at_an_earlier_target_it_cannot_rule_out",
+  "crates/ripr/tests/typescript_tsconfig_alias_default.rs::fallback_array_relates_the_test_only_through_the_first_existing_target",
+  "crates/ripr/tests/typescript_tsconfig_alias_default.rs::fallback_array_stops_at_a_first_target_it_cannot_rule_out",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/tsconfig.rs",
