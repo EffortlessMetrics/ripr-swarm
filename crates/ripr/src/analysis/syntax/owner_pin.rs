@@ -5151,11 +5151,10 @@ fn item_context_refusal(
         {
             return Some(AssertionContextRefusal::NestedItem);
         }
-        // #11738: the node's unsettled attributes are read once per scan.
-        if let Some(attr) = scan_memo::unsettled_attributes(&node)
-            .into_iter()
-            .find(|attr| !default_enabled_gate(attr, default_features))
-        {
+        // #11738: within a scan the node's unsettled attributes are read once.
+        if let Some(attr) = scan_memo::first_refusing_attribute(&node, |attr| {
+            !default_enabled_gate(attr, default_features)
+        }) {
             return Some(AssertionContextRefusal::GatedItem(
                 attr.syntax().text().to_string(),
             ));

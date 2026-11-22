@@ -20,7 +20,7 @@
 //! never compare equal to a stale entry through a reused address. Outside a
 //! scan nothing is kept and every question is computed directly.
 
-use ra_ap_syntax::{SyntaxNode, ast};
+use ra_ap_syntax::{AstNode, SyntaxNode, ast};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -106,41 +106,60 @@ pub(super) fn builtin_name_holds(name: &str, module: &SyntaxNode) -> bool {
     holds
 }
 
-/// The child attributes of `node` whose test-build availability is not
-/// established as on (`attribute_test_build_availability != Some(true)`),
-/// in child order; memoized within a scan.
-pub(super) fn unsettled_attributes(node: &SyntaxNode) -> Vec<ast::Attr> {
+/// The first child attribute of `node` whose test-build availability is not
+/// established as on (`attribute_test_build_availability != Some(true)`) and
+/// that `refuses` accepts, in child order.
+///
+/// Within a scan the node's not-established-on attributes are read once and
+/// kept; `refuses` (which may differ per call, e.g. by default features) is
+/// applied to that ordered list. Outside a scan the children are searched
+/// lazily, stopping at the first refusing attribute, exactly as before the
+/// memo: a refused caller there pays no walk past its gate.
+pub(super) fn first_refusing_attribute(
+    node: &SyntaxNode,
+    refuses: impl Fn(&ast::Attr) -> bool,
+) -> Option<ast::Attr> {
+    if !MODULE_ANSWERS.with(|answers| answers.borrow().is_some()) {
+        return node
+            .children()
+            .filter_map(ast::Attr::cast)
+            .find(|attr| unsettled(attr) && refuses(attr));
+    }
     let known = MODULE_ANSWERS.with(|answers| {
         answers
             .borrow()
             .as_ref()
             .and_then(|answers| answers.unsettled_attributes.get(node).cloned())
     });
-    if let Some(known) = known {
-        return known;
-    }
-    #[cfg(test)]
-    count_walk();
-    let attributes = unsettled_attributes_uncached(node);
-    MODULE_ANSWERS.with(|answers| {
-        if let Some(answers) = answers.borrow_mut().as_mut() {
-            answers
-                .unsettled_attributes
-                .insert(node.clone(), attributes.clone());
+    let attributes = match known {
+        Some(known) => known,
+        None => {
+            #[cfg(test)]
+            count_walk();
+            let attributes = unsettled_attributes_uncached(node);
+            MODULE_ANSWERS.with(|answers| {
+                if let Some(answers) = answers.borrow_mut().as_mut() {
+                    answers
+                        .unsettled_attributes
+                        .insert(node.clone(), attributes.clone());
+                }
+            });
+            attributes
         }
-    });
-    attributes
+    };
+    attributes.into_iter().find(|attr| refuses(attr))
+}
+
+fn unsettled(attr: &ast::Attr) -> bool {
+    crate::analysis::facts::cfg_predicates::attribute_test_build_availability(
+        &attr.syntax().text().to_string(),
+    ) != Some(true)
 }
 
 fn unsettled_attributes_uncached(node: &SyntaxNode) -> Vec<ast::Attr> {
-    use ra_ap_syntax::AstNode;
     node.children()
         .filter_map(ast::Attr::cast)
-        .filter(|attr| {
-            crate::analysis::facts::cfg_predicates::attribute_test_build_availability(
-                &attr.syntax().text().to_string(),
-            ) != Some(true)
-        })
+        .filter(unsettled)
         .collect()
 }
 

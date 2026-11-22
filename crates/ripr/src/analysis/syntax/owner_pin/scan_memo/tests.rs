@@ -38,7 +38,7 @@ fn reference_item_context_refusal(
 /// Sources covering rebinding imports and `extern crate` renames of `test`
 /// and of a lint name, `use super::*` chains, nested modules, inner and outer
 /// gates that are on, off, unknown or feature-settled, and nested items.
-const SOURCES: [&str; 8] = [
+const SOURCES: [&str; 9] = [
     "#[test]\nfn plain() { assert_eq!(1, 1); }\n",
     "use skipper::serial as test;\n#[test]\nfn rebound() { assert_eq!(1, 1); }\nmod inner {\n    use super::*;\n    #[test]\n    fn through_glob() { assert_eq!(1, 1); }\n}\n",
     "extern crate skipper as test;\nmod a {\n    mod b {\n        #[test]\n        fn deep() {}\n    }\n}\n",
@@ -46,6 +46,7 @@ const SOURCES: [&str; 8] = [
     "#[cfg(feature = \"slow\")]\nmod slow {\n    #![doc = \"slow\"]\n    #[test]\n    fn under_feature() {}\n}\n#[cfg(not(test))]\nmod off {\n    #[test]\n    fn never() {}\n}\n",
     "#[cfg(windows)]\nmod platform {\n    #[test]\n    fn unknown_gate() {}\n}\nfn outer() {\n    fn nested() {}\n}\n",
     "use lints::warn as allow;\nmod m {\n    use super::*;\n    #[allow(unused)]\n    #[test]\n    fn lint_rebound() {}\n    mod n {\n        use super::*;\n        #[test]\n        fn two_levels() {}\n    }\n}\n",
+    "mod rebinds {\n    use skipper::serial as test;\n    #[test]\n    fn skipped() {}\n}\nmod plain {\n    #[test]\n    fn kept() {}\n}\n#[test]\nfn at_root() {}\n",
     "mod clean {\n    use std::fmt;\n    #[test]\n    fn ok() {}\n}\nimpl S {\n    fn method() {}\n}\n",
 ];
 
@@ -65,6 +66,7 @@ fn memoized_module_readings_answer_as_the_direct_readings() -> Result<(), String
     let fast = BTreeSet::from(["fast".to_string(), "slow".to_string()]);
     let mut refusals = BTreeSet::new();
     let mut holds = BTreeSet::new();
+    let mut mixed_in_one_file = false;
     for parse in fixtures()? {
         let root = parse.tree().syntax().clone();
         let functions: Vec<SyntaxNode> = root
@@ -87,12 +89,17 @@ fn memoized_module_readings_answer_as_the_direct_readings() -> Result<(), String
                     refusals.insert(format!("{expected:?}").chars().take(9).collect::<String>());
                 }
             }
-            for scope in &scopes {
-                for name in ["test", "allow", "doc"] {
+            for name in ["test", "allow", "doc"] {
+                let mut answers_here = BTreeSet::new();
+                for scope in &scopes {
                     let expected = builtin_name_holds_uncached(name, scope);
                     assert_eq!(super::builtin_name_holds(name, scope), expected, "{name}");
                     holds.insert(expected);
+                    answers_here.insert(expected);
                 }
+                // A memo keyed by name alone would answer every scope of a
+                // file as its first: one file must disagree across scopes.
+                mixed_in_one_file |= answers_here.len() == 2;
             }
             drop(scan);
             assert!(!module_memo_is_live());
@@ -102,6 +109,10 @@ fn memoized_module_readings_answer_as_the_direct_readings() -> Result<(), String
         holds,
         BTreeSet::from([false, true]),
         "premise: names held and rebound"
+    );
+    assert!(
+        mixed_in_one_file,
+        "premise: one file holds a scope that rebinds a name and one that does not"
     );
     for kind in ["None", "Some(Gate", "Some(Nest"] {
         assert!(
@@ -157,4 +168,39 @@ fn admitting_many_tests_in_one_module_reads_the_module_once() {
         walks_300 - 300
     );
     assert!(!module_memo_is_live(), "the scan's memo ends with it");
+}
+
+/// Outside a scan the gate check reads lazily and keeps nothing: no
+/// memoized walk runs, and a refused item answers from its leading gate.
+#[test]
+fn outside_a_scan_the_gate_check_searches_lazily() -> Result<(), String> {
+    let mut source = String::from("mod gated {\n    #![cfg(feature = \"extra\")]\n");
+    for case in 0..200 {
+        source.push_str(&format!("    #[test]\n    fn case_{case}() {{}}\n"));
+    }
+    source.push_str("}\n");
+    let parse = parse_clean_source_file(&source).ok_or("fixture must parse")?;
+    let functions: Vec<SyntaxNode> = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter(|node| ast::Fn::can_cast(node.kind()))
+        .collect();
+    assert_eq!(functions.len(), 200, "premise: every case is parsed");
+    let before = MODULE_WALKS.with(std::cell::Cell::get);
+    for function in &functions {
+        let refusal = item_context_refusal(function, None);
+        assert_eq!(refusal, reference_item_context_refusal(function, None));
+        assert!(
+            matches!(refusal, Some(AssertionContextRefusal::GatedItem(ref gate)) if gate.contains("extra")),
+            "the leading gate refuses: {refusal:?}"
+        );
+    }
+    assert_eq!(
+        MODULE_WALKS.with(std::cell::Cell::get) - before,
+        0,
+        "no memoized walk outside a scan"
+    );
+    assert!(!module_memo_is_live());
+    Ok(())
 }
