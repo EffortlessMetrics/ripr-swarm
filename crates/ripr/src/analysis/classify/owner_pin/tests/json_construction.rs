@@ -241,6 +241,111 @@ fn literal_json_identity_accepts_each_audited_release_with_its_own_checksum() ->
     result
 }
 
+/// #14116: a virtual workspace root declares nothing; the member that uses
+/// `json!` declares serde_json itself. The importing file's own resolved edge
+/// stays the authority, so a sibling member without the dependency is refused.
+#[test]
+fn literal_json_identity_follows_a_member_declaration_under_a_virtual_root() -> Result<(), String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/owner_return_pin_json_real_literal/input");
+    let package = std::fs::read_to_string(fixture.join("Cargo.toml")).map_err(|e| e.to_string())?;
+    let manifest = package.replace("\n[workspace]\n", "\n");
+    assert_ne!(manifest, package, "the member is not a workspace root");
+    let before_other = "[[package]]\nname = \"proc-macro2\"";
+    let lock = std::fs::read_to_string(fixture.join("Cargo.lock")).map_err(|e| e.to_string())?;
+    let member_lock = lock.replace(
+        before_other,
+        &format!("[[package]]\nname = \"other\"\nversion = \"0.1.0\"\n\n{before_other}"),
+    );
+    assert_ne!(
+        member_lock, lock,
+        "fixture lock orders proc-macro2 after other"
+    );
+    const VIRTUAL: &str = "[workspace]\nmembers=['crates/demo','crates/other']\nresolver='3'\n";
+    const OTHER: &str = "[package]\nname=\"other\"\nversion=\"0.1.0\"\nedition=\"2024\"\n";
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "json-member",
+        &[
+            ("Cargo.toml", VIRTUAL),
+            ("Cargo.lock", &member_lock),
+            ("crates/demo/Cargo.toml", &manifest),
+            ("crates/demo/src/lib.rs", "pub fn weight(x:u32)->u32{x*3}"),
+            ("crates/demo/tests/save.rs", "#[test] fn checks() {}"),
+            ("crates/other/Cargo.toml", OTHER),
+            ("crates/other/src/lib.rs", ""),
+            ("crates/other/tests/save.rs", "#[test] fn checks() {}"),
+        ],
+    )?;
+    let result = (|| -> Result<(), String> {
+        let verified = |file: &str| {
+            crate::analysis::facts::drop_in::DropInManifests::new(&root)
+                .verified_literal_json(Path::new(file))
+        };
+        let write = |path: &str, text: &str| {
+            std::fs::write(root.join(path), text).map_err(|e| e.to_string())
+        };
+        assert!(
+            verified("crates/demo/tests/save.rs"),
+            "the declaring member's own edge resolves"
+        );
+        assert!(
+            !verified("crates/other/tests/save.rs"),
+            "a member without the dependency has no edge"
+        );
+        // The same answer reaches the assertion: the literal `json!` leaves the
+        // equality credited in the declaring member and refused in the other.
+        let refusal = |member: &str| -> Result<Option<AssertionRefusal>, String> {
+            let tests = "use serde_json::json;\nuse demo::weight;\n#[test]\nfn checks() { let p = json!({\"uri\":\"untitled:save\",\"text\":null}); assert_eq!(weight(4),12); }\n";
+            let lib = format!("{member}/src/lib.rs");
+            let file = format!("{member}/tests/save.rs");
+            let mut index = index(&[(lib.as_str(), WEIGHT_LIB), (file.as_str(), tests)]);
+            index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.file == Path::new(&file))
+                .ok_or("the member test must be indexed")?;
+            let assertion = test.assertions.first().ok_or("the assertion must parse")?;
+            Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+        };
+        let credited = refusal("crates/demo")?;
+        assert!(credited.is_none(), "declaring member: {credited:?}");
+        assert!(
+            refusal("crates/other")?.is_some(),
+            "member without the edge"
+        );
+        // The root must name the declaring member for the prefilter to pass.
+        write("Cargo.toml", &VIRTUAL.replace("'crates/demo',", ""))?;
+        assert!(!verified("crates/demo/tests/save.rs"), "unnamed member");
+        write("Cargo.toml", VIRTUAL)?;
+        assert!(verified("crates/demo/tests/save.rs"));
+        // Every refusal of the single-package profile still holds for a member.
+        for dependency in [
+            "serde_json={version='=1.0.151',optional=true}",
+            "serde_json={version='=1.0.151',package='foreign'}",
+            "serde_json={path='fake'}",
+        ] {
+            let changed = manifest.replace("serde_json=\"=1.0.151\"", dependency);
+            assert_ne!(changed, manifest);
+            write("crates/demo/Cargo.toml", &changed)?;
+            assert!(!verified("crates/demo/tests/save.rs"), "{dependency}");
+        }
+        write("crates/demo/Cargo.toml", &manifest)?;
+        assert!(verified("crates/demo/tests/save.rs"));
+        write(
+            "Cargo.lock",
+            &member_lock.replace(
+                "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        )?;
+        assert!(!verified("crates/demo/tests/save.rs"), "changed checksum");
+        Ok(())
+    })();
+    std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+    result
+}
+
 #[test]
 fn literal_json_binding_in_a_withheld_file_remains_a_refusal() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
