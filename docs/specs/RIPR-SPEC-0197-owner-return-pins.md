@@ -2897,7 +2897,11 @@ branch holding a statement, or code after the chain is outside the subset.
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
   together with the module whose tests then compile against it. An audited
   pass-through wrapper (`proptest!`, `serde_json::json!`) keeps the site but
-  confines it to the call's own text (RIPR-SPEC-0369, #14116). The other
+  confines it to the call's own text (RIPR-SPEC-0369, #14116). A trusted
+  name with a binding site makes that name's own calls opaque in turn, but
+  only where the site binds (#16053): a site scoped to a function body or
+  block makes calls inside that span opaque, not the name's calls elsewhere
+  in the file, and a confined pass-through mention makes none opaque. The other
   exception is a call to a wrapper that cannot bind a name at all (#6648):
   an unqualified call to a `macro_rules!` this file defines exactly once,
   without an attribute and never names in a `use`. The definition sits at
