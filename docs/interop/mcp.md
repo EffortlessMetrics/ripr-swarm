@@ -382,6 +382,18 @@ An attempt runs to a terminal state; cancelling the MCP request never rolls
 an attempt back or manufactures a snapshot. A cancelled attempt still commits
 as a completed snapshot when it finishes and only transport teardown abandons
 one before it commits, while a superseded attempt is never committed.
+A refresh costs what `ripr check` costs on the same input, which on a large
+repository can be minutes (#15983). The stdio transport answers one request
+until its reply is flushed and does not read input meanwhile, so while a
+refresh runs no other request is answered (`ripr_workspace_status` and `ping`
+included) and a `notifications/cancelled` for it is not read. A client-side
+timeout therefore stops nothing: the attempt still commits. Do not re-send
+`ripr_refresh` after a timeout, because the repeat is admitted after the first
+attempt finishes and runs a second full analysis. Wait, then call
+`ripr_workspace_status`; its reply arrives once the attempt has ended and
+reports the committed snapshot. For large repositories raise the client's
+per-tool timeout (for example `tool_timeout_sec` for the server entry in
+Codex's `config.toml`, or `MCP_TOOL_TIMEOUT` for Claude Code).
 The workspace's own `ripr.toml` is honored (#6825): refresh resolves it
 through the same `load_for_root` the CLI uses — a loaded config runs (the
 session profile discloses `loaded` with its `config_identity` and enabled
