@@ -1,6 +1,6 @@
 {
   "id": "ts_tap_context_escape",
-  "language": "typescript",
+  "language": "javascript",
   "tier": "pure",
   "source_fixture": "fixtures/javascript_tap_context_escape",
   "vector": "tap_named_test_context_escape",

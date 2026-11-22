@@ -1,6 +1,6 @@
 {
   "id": "ts_tap_options_alias_skip",
-  "language": "typescript",
+  "language": "javascript",
   "tier": "pure",
   "source_fixture": "fixtures/javascript_tap_options_alias_skip",
   "vector": "tap_options_alias_skip",

@@ -1,6 +1,6 @@
 {
   "id": "ts_tap_skipped_assertion",
-  "language": "typescript",
+  "language": "javascript",
   "tier": "pure",
   "source_fixture": "fixtures/javascript_tap_skipped_assertion",
   "vector": "tap_named_test_skipped_assertion",

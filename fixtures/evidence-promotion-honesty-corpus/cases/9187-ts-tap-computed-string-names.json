@@ -1,6 +1,6 @@
 {
   "id": "ts_tap_computed_string_names",
-  "language": "typescript",
+  "language": "javascript",
   "tier": "pure",
   "source_fixture": "fixtures/javascript_tap_computed_string_names",
   "vector": "tap_computed_string_names",

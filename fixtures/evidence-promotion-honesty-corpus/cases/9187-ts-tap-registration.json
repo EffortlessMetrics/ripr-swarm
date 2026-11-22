@@ -1,6 +1,6 @@
 {
   "id": "ts_tap_registration",
-  "language": "typescript",
+  "language": "javascript",
   "tier": "pure",
   "source_fixture": "fixtures/javascript_tap_registration",
   "vector": "tap_named_test_registration",

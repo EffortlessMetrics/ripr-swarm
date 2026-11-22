@@ -1,6 +1,6 @@
 {
   "id": "ts_tap_global_expect",
-  "language": "typescript",
+  "language": "javascript",
   "tier": "pure",
   "source_fixture": "fixtures/javascript_tap_global_expect",
   "vector": "tap_does_not_supply_ambient_jest_expect",

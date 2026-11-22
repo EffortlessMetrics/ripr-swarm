@@ -1,6 +1,6 @@
 {
   "id": "ts_tap_template_eval",
-  "language": "typescript",
+  "language": "javascript",
   "tier": "pure",
   "source_fixture": "fixtures/javascript_tap_template_eval",
   "vector": "tap_named_test_template_eval",
