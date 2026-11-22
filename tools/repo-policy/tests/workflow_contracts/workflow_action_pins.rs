@@ -114,7 +114,7 @@ const PINS: &[Pin] = &[
         "1.95",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
         None,
-        1,
+        2,
     ),
     (
         "pilot-ranking.yml",
@@ -340,8 +340,8 @@ fn burn_down_pins_preserve_step_local_tool_selections() -> Result<(), String> {
         total += count;
     }
     assert_eq!(
-        total, 41,
-        "38 burn-down pins, the inherited #9527 cache pin, and the two pins the Windows integration job reuses"
+        total, 42,
+        "38 burn-down pins, the inherited #9527 cache pin, and the two pins the Windows integration job reuses, and the toolchain pin the macOS library test job reuses"
     );
     Ok(())
 }

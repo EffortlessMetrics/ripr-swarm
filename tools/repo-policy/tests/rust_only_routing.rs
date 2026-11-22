@@ -438,7 +438,7 @@ fn gated_jobs(workflow: &str) -> &[&str] {
         "ci.yml" => &["release-proof", "rust-only-features", "msrv"],
         "coverage.yml" => &["coverage"],
         "future-clippy.yml" => &["future-clippy", "stable-repo-policy"],
-        "macos-advisory.yml" => &["macos-advisory"],
+        "macos-advisory.yml" => &["macos-advisory", "macos-advisory-lib-tests"],
         "npm-launcher.yml" => &["launcher"],
         "pilot-ranking.yml" => &["ranking"],
         "printed-command-paste.yml" => &["paste"],

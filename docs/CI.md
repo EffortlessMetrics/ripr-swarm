@@ -418,7 +418,7 @@ remain in their producing workflows.
 | Workflow / artifact | Consumer and retained evidence |
 | --- | --- |
 | `future-clippy.yml` / `ripr-future-clippy` | Maintainer investigation of lint readiness and instrumentation failures. Native status and identity are also printed in the job summary; the scan log is streamed to the job log. |
-| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-tests` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
+| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-build`, `macos-advisory-logs-lib-tests` (and the one-day `macos-advisory-lib-test-binary` handover) | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
 | `windows-gate.yml` / `ripr-windows-gate-subset` | Maintainer investigation of the subset logs and statuses. `Ripr Windows Gate Result` consumes job outputs, not the uploaded artifact. |
 | `kani.yml` / `ripr-kani` | Maintainer inspection of the per-harness report. `cargo xtask kani` prints the same report to the job log and judges the run before upload. |
 
@@ -827,16 +827,15 @@ printed commands, so macOS-only dead code behind `cfg(target_os = "linux")`
 gating (#8055, #8060), `/var` -> `/private/var` temp paths and APFS case or
 normalization behavior surfaced only on a maintainer's local run.
 
-- **What runs.** On `macos-15`: `cargo clippy -p ripr -p xtask --all-targets
-  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`, each in its
-  own job (`macos-advisory-clippy`, `macos-advisory-lib-tests`) under the same
-  40-minute limit: as steps of one job they were cancelled by it every night
-  from 2026-11-12, before the tests had finished compiling. Clippy now
-  fits (25 to 30 minutes cold). The library tests do not yet: the `ripr` test
-  build alone takes about 30 minutes and its tests about 14, so that job
-  fails at its 34-minute step deadline as missing evidence until the build
-  and the run are separate jobs (#8391). The integration suites are not part
-  of this lane.
+- **What runs.** On `macos-15`, three jobs under the same 40-minute limit:
+  `macos-advisory-clippy` (`cargo clippy -p ripr -p xtask --all-targets -- -D
+  warnings`), `macos-advisory-lib-build` (`cargo test -p ripr --lib --no-run`,
+  which hands the test executable over as an artifact) and
+  `macos-advisory-lib-tests`, which runs that executable from the package
+  directory. As steps of one job they were cancelled by the limit every night
+  from 2026-11-12, and the library tests did not fit a job of their own
+  either: the `ripr` test build takes about 30 minutes and the tests about 14
+  (#8391). The integration suites are not part of this lane.
 - **Contract.** Clippy and test outcomes are advisory and appear in the job
   summary. A missing log or exit status, or a library run that executed zero
   tests, fails the job. It is not a required check.
