@@ -4699,9 +4699,10 @@ fn assert_already_complete_summary(
             ));
         }
     }
-    // The printed root is shell-quoted for this host (a Windows root prints in
-    // the console double-quote form, #16105), so decode each command the way
-    // its shell would and compare the argument, not the printed bytes.
+    // The printed root is the bound root, shell-quoted for this host: on
+    // Windows it renders with `/` separators (#4287), so `D:\a\b` prints as
+    // `D:/a/b` (#16105). Decode each command the way its shell would and
+    // compare the argument as a path, not as the bytes the test passed in.
     for (index, command) in [(4, "Next"), (5, "Full status")] {
         let printed = lines[index]
             .split('`')
@@ -4712,7 +4713,8 @@ fn assert_already_complete_summary(
             .windows(2)
             .find(|pair| pair[0] == "--root")
             .map(|pair| pair[1].as_str());
-        if selected != Some(root_arg) || words.last().map(String::as_str) != selected {
+        let names_root = selected.is_some_and(|word| Path::new(word) == Path::new(root_arg));
+        if !names_root || words.last().map(String::as_str) != selected {
             return Err(format!(
                 "the {command} command must end by naming the selected root `{root_arg}`:\n{summary}"
             ));
