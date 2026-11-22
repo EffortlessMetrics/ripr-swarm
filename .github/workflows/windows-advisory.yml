@@ -1853,7 +1853,9 @@ jobs:
               }
               pending = [row['fullTitle'] for row in report.get('pending', [])]
               if len(pending) != len(expected_pending) or set(pending) != expected_pending:
-                  raise SystemExit('fixture producer PASS skipped an unexpected set of POSIX-only controls')
+                  missing = sorted(expected_pending - set(pending))
+                  unexpected = sorted(set(pending) - expected_pending)
+                  raise SystemExit(f'fixture producer PASS skipped an unexpected set of POSIX-only controls; not pending: {missing}; newly pending: {unexpected}; observed {len(pending)} for {len(expected_pending)} expected')
               if any(stats.get(key) != value for key, value in {'tests': 39, 'passes': 31, 'failures': 0, 'pending': 8}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
               print('Verified 31 native process/setup controls; eight POSIX-only controls (three adapter, four procfs observation, one developer setup ESRCH) are pending.')
