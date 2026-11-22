@@ -253,6 +253,35 @@ does not start a merge-group run, and the PR is enqueued again after the review
 is repaired and the current PR qualification is confirmed (see
 [qualification recovery](agent-context/convergence-runbook.md)).
 
+### Result refused at the eligibility recheck
+
+`Ripr Rust Small Result` re-reads the PR after the child jobs finish. A failure
+whose error line reads `eligibility recheck refused at stage
+review_decision_and_threads` came from that read, not from the Rust jobs. The
+stage refuses when any review thread on the PR is unresolved, including a bot's
+and an outdated one, when the review decision is `CHANGES_REQUESTED`, when the
+head moved, or, in a queue run, when the queue entry no longer matches. The
+usual case is a bot reviewer's threads opened after `merge-ready` was applied
+and still open when Result ran.
+
+Do not diagnose it from the routing summary. `runner_query_http` `401` with
+`reason=runner_api_failed` records only that the self-hosted runner inventory
+query was refused and routing fell back to the GitHub-hosted leg; the workflow's
+own warning says the PR is not red for that.
+
+To repair: answer and resolve the threads, confirm the head is unchanged, then
+remove and reapply `merge-ready` for a fresh run. Re-running the failed job
+cannot pass, because the recheck binds the admitted request to the original run
+attempt (`routed-rust.yml`, `admission_binding`; #8858). Do not relabel while a
+current-head run is queued or running.
+
+To prevent it: after publishing or pushing, give the bot reviewers about five
+minutes, disposition and resolve their threads, and only then apply
+`merge-ready`. `Admit PR Candidate` applies thread admission when the run
+starts, so a thread already open at label time refuses the request at once. A
+thread that arrives mid-run can still be resolved before Result starts; one
+that is open at the recheck costs the whole run.
+
 Keep H (reviewed head), P (historical PR synthetic merge), G (native queue
 composition) and M (actual landed commit/tree) distinct. A green P does not prove
 compatibility with a later base. Bind G to its base, ordered constituent heads,
