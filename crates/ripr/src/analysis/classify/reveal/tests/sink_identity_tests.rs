@@ -219,3 +219,81 @@ fn sink_identity_real_parser_discarded_return_cannot_lend_identity_to_another_as
     }
     Ok(())
 }
+
+/// #12010 (public ripr #1751): discrimination binds in ONE oracle. An
+/// assertion on the owner's result that names no changed token carries
+/// identity and strength without a change reference; an assertion that
+/// quotes the changed token on another value carries a change reference
+/// without identity. Neither would notice the change alone, so together they
+/// must withhold in either order, in one test or two. An oracle that binds
+/// all three keeps its credit beside either half.
+#[test]
+fn sink_identity_split_across_oracles_cannot_combine_identity_and_change_reference() {
+    let mut probe = owned_probe(
+        ProbeFamily::ReturnValue,
+        "\"verifies catalog consistency\"",
+        "description",
+    );
+    probe.before = Some("\"checks catalog consistency\"".to_string());
+    let identity_oracle = || {
+        oracle(
+            "assert_eq!(description(), expected);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )
+    };
+    let change_oracle = || {
+        oracle(
+            "assert_eq!(label, \"verifies catalog consistency\");",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )
+    };
+    let bound_oracle = || {
+        oracle(
+            "assert_eq!(description(), \"verifies catalog consistency\");",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )
+    };
+    let identity = test_with_assertions("owner_result", vec![identity_oracle()]);
+    let change = test_with_assertions("label_text", vec![change_oracle()]);
+    let bound = test_with_assertions("description_text", vec![bound_oracle()]);
+    let reason = RelationReason::DirectOwnerCall;
+
+    // Each half alone withholds, for its own reason.
+    let (_, alone, _) = reveal_evidence(&probe, &[(&identity, reason)]);
+    assert_eq!(alone.state, StageState::Weak, "identity alone: {alone:?}");
+    let (_, alone, _) = reveal_evidence(&probe, &[(&change, reason)]);
+    assert_eq!(alone.state, StageState::Weak, "change alone: {alone:?}");
+    assert!(alone.summary.contains("identity_unresolved"), "{alone:?}");
+
+    // Split across two tests, both orders.
+    for related in [
+        vec![(&identity, reason), (&change, reason)],
+        vec![(&change, reason), (&identity, reason)],
+    ] {
+        let (_, split, _) = reveal_evidence(&probe, &related);
+        assert_eq!(split.state, StageState::Weak, "two tests: {split:?}");
+    }
+    // Split inside one test, both orders.
+    for assertions in [
+        vec![identity_oracle(), change_oracle()],
+        vec![change_oracle(), identity_oracle()],
+    ] {
+        let one = test_with_assertions("one_test", assertions);
+        let (_, split, _) = reveal_evidence(&probe, &[(&one, reason)]);
+        assert_eq!(split.state, StageState::Weak, "one test: {split:?}");
+    }
+    // Positive control: a single bound oracle keeps Yes beside either half.
+    for related in [
+        vec![(&bound, reason)],
+        vec![(&identity, reason), (&bound, reason)],
+        vec![(&bound, reason), (&identity, reason)],
+        vec![(&change, reason), (&bound, reason)],
+        vec![(&bound, reason), (&change, reason)],
+    ] {
+        let (_, credited, _) = reveal_evidence(&probe, &related);
+        assert_eq!(credited.state, StageState::Yes, "bound: {credited:?}");
+    }
+}
