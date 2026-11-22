@@ -103,17 +103,18 @@ packet's root, scope, selected ID and continuation commands; do not reuse a
 0.10 command merely because its output path still exists.
 
 A receipt written by 0.10 does not record the repository HEAD. Check it by
-file, replacing `PATH` with the receipt (0.10 wrote it under
-`target/ripr/receipts/`, named by the raw gap id):
+gap id, replacing `GAP_ID` with the id the receipt was written for:
 
 ```bash
-ripr receipt check --path PATH
+ripr receipt check --gap GAP_ID
 ```
 
-`ripr receipt check --gap <canonical_gap_id>` finds a 0.10 receipt only when
-the gap id contains no path separator. Every Rust gap whose file sits in a
-directory has one, and for those `--gap` reports the receipt as not found.
-The `--path` rejection (exit `2`) prints the `ripr receipt write` command, with the gap
+This finds the file 0.10 wrote under `target/ripr/receipts/`, named by the raw
+gap id. ripr does not translate ids: a receipt written under another spelling
+of the gap, such as the hashed `gap:4b5fdc1a2a157b0d` form 0.10's
+`repo-exposure-json` printed, is not found under the `gap:rust:src/lib.rs:...`
+id 0.11 prints. For that receipt, pass the file with
+`ripr receipt check --path PATH`. The rejection (exit `2`) prints the `ripr receipt write` command, with the gap
 id, verify command and output path filled in, that writes a current receipt.
 The printed `--out` is the old receipt's own path, so running the command as
 printed replaces the 0.10 file. Copy the old receipt elsewhere first, or change
