@@ -701,6 +701,7 @@ name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::parallel_compact_classification_matches_the_serial_projection",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::memoized_names_reaching_matches_the_graph_walk",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_shares_facts_and_complete_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity",
