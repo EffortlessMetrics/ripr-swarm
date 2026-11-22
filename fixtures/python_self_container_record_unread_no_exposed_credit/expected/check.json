@@ -56,12 +56,12 @@
         {"stage":"observe","state":"yes","confidence":"low","basis":[{"code":"observation_not_confirmed","summary":"the assertion is not confirmed to observe the changed value"}]},
         {"stage":"discriminate","state":"weak","confidence":"low"}
       ],
-      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `tick`", "infection yes: Changed Python call or output effect can alter observable side effects: `self._seen.append(n + 1)`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches call effect: self._seen.append(n + 1) (line 7)", "related test tests/test_lib.py:4 test_tick uses strong exact value oracle: assert Clock(1).tick(2) == 3", "missing discriminator a read of `self._seen` after `tick` runs: no related test reads `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the tests pin the result of `tick` without observing what it records"],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `tick`", "infection yes: Changed Python call or output effect can alter observable side effects: `self._seen.append(n + 1)`", "propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches call effect: self._seen.append(n + 1) (line 7)", "related test tests/test_lib.py:4 test_tick uses strong exact value oracle: assert Clock(1).tick(2) == 3", "missing discriminator the values `tick` records in `self._seen`: no related test reads `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the tests pin the result of `tick` without observing what it records"],
       "flow_sinks": [
         {"kind":"call_effect","text":"self._seen.append(n + 1)","line":7}
       ],
-      "evidence": ["owner: Clock.tick", "owner_kind: method", "missing_discriminator: a read of `self._seen` after `tick` runs", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_lib.py", "suggested_test_name: test_tick", "suggested_test_node_id: tests/test_lib.py::test_tick", "suggested_verify_command: python -m pytest tests/test_lib.py::test_tick", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_tick)", "test_verify_command: python -m pytest tests/test_lib.py::test_tick (test_tick)", "related_test_relation: syntactic_call (test_tick)", "test_oracle: exact_value strong (test_tick)"],
-      "missing": ["A strong Python oracle reaches `tick`, but no related test reads `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the tests pin the result of `tick` without observing what it records. Add an assertion on a function that reads `_seen` after calling `tick`."],
+      "evidence": ["owner: Clock.tick", "owner_kind: method", "missing_discriminator: the values `tick` records in `self._seen`", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_lib.py", "suggested_test_name: test_tick", "suggested_test_node_id: tests/test_lib.py::test_tick", "suggested_verify_command: python -m pytest tests/test_lib.py::test_tick", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_tick)", "test_verify_command: python -m pytest tests/test_lib.py::test_tick (test_tick)", "related_test_relation: syntactic_call (test_tick)", "test_oracle: exact_value strong (test_tick)"],
+      "missing": ["A strong Python oracle reaches `tick`, but no related test reads `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the tests pin the result of `tick` without observing what it records. After calling `tick`, assert the values `self._seen` holds, not only its size."],
       "assertion_texts": {
       },
       "activation": {
@@ -69,7 +69,7 @@
         ],
         "missing_discriminators": [
           {
-            "value": "a read of `self._seen` after `tick` runs",
+            "value": "the values `tick` records in `self._seen`",
             "reason": "no related test reads `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the tests pin the result of `tick` without observing what it records",
             "flow_sink": {"kind":"call_effect","text":"self._seen.append(n + 1)","line":7}
           }
@@ -79,7 +79,7 @@
       ],
       "missing_discriminators": [
         {
-          "value": "a read of `self._seen` after `tick` runs",
+          "value": "the values `tick` records in `self._seen`",
           "reason": "no related test reads `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the tests pin the result of `tick` without observing what it records",
           "flow_sink": {"kind":"call_effect","text":"self._seen.append(n + 1)","line":7}
         }
@@ -113,9 +113,9 @@
         "changed_owner": "Clock.tick",
         "changed_behavior": "call_or_output_effect changed at src/lib.py:7: `self._seen.append(n + 1)`",
         "current_test_evidence": "tests/test_lib.py:4 test_tick currently has oracle_strength=strong, oracle_kind=exact_value: assert Clock(1).tick(2) == 3",
-        "missing_discriminator": "a read of `self._seen` after `tick` runs",
-        "recommended_test_shape": "Strengthen the existing pytest output/log/call-effect assertion for `a read of `self._seen` after `tick` runs`.",
-        "suggested_assertion": "Assert the changed output, log text, or call effect for `a read of `self._seen` after `tick` runs`.",
+        "missing_discriminator": "the values `tick` records in `self._seen`",
+        "recommended_test_shape": "Strengthen the existing pytest output/log/call-effect assertion for `the values `tick` records in `self._seen``.",
+        "suggested_assertion": "Assert the changed output, log text, or call effect for `the values `tick` records in `self._seen``.",
         "suggested_location": {
           "test_file": "tests/test_lib.py",
           "test_name": "test_tick",
@@ -136,8 +136,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `a read of `self._seen` after `tick` runs`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `a read of `self._seen` after `tick` runs`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `the values `tick` records in `self._seen``.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `the values `tick` records in `self._seen``.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "method",

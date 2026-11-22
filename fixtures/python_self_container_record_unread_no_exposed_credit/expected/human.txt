@@ -23,14 +23,14 @@ Start here:
   Changed behavior: self._seen.append(n + 1)
   Missing check (1 of 2): A strong Python oracle reaches `tick`, but no related test reads
     `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the
-    tests pin the result of `tick` without observing what it records. Add an assertion on a function
-    that reads `_seen` after calling `tick`
+    tests pin the result of `tick` without observing what it records. After calling `tick`, assert
+    the values `self._seen` holds, not only its size
   Related test: tests/test_lib.py:4 test_tick
   Suggested test file: tests/test_lib.py
   Suggested test: test_tick
   Test node: tests/test_lib.py::test_tick
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_self_container_record_unread_no_exposed_credit/input && python -m pytest tests/test_lib.py::test_tick) (high)
-  Next step — Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `a read of `self._seen` after `tick` runs`
+  Next step — Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `the values `tick` records in `self._seen``
   Evidence: reach yes · infection yes · propagation weak · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

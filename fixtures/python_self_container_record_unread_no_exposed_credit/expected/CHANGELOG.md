@@ -12,3 +12,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_self_container_record_unread_no_exposed_credit (2)
+
+Reason:
+RIPR-SPEC-0238: recorded-container advice asks for the recorded values
+
+Command:
+`cargo xtask goldens bless python_self_container_record_unread_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

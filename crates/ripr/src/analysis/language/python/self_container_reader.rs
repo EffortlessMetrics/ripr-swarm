@@ -12,7 +12,9 @@
 //! verdict:
 //!
 //! - the changed line and the line it replaced both record into the same
-//!   single-underscore `self._name`, so readers are expected in this file;
+//!   single-underscore `self._name`, so readers are expected in this file,
+//!   and neither recorded argument calls, assigns, awaits or yields, so the
+//!   edit cannot change other state the result may carry;
 //! - the owner is an undecorated, non-dunder method of a class with no bases,
 //!   keywords or decorators, so no inherited method reads the container;
 //! - the container is seeded in `__init__` by a fresh empty collection and
@@ -23,7 +25,15 @@
 //! - no dunder method reads the container, since Python invokes those through
 //!   syntax, and the file uses no dynamic attribute access;
 //! - no oracle-eligible related test uses a fixture, a setup receiver or a
-//!   value helper, and none names the container or a reader.
+//!   value helper, inspects attributes by name (`vars(c)`), imports a reader
+//!   under another name, hands a local it binds to a call (`dump(c)`, which
+//!   may read the container from another module), calls a method of its own
+//!   test class other than an assertion, or names the container or a reader.
+//!
+//! A test that calls any reader keeps the existing verdict, even a reader
+//! that projects only the container's size. The gate does not judge whether
+//! that read distinguishes the edit, so its advice asks for the recorded
+//! values, not for any reader call.
 //!
 //! Readers are found by whole-word name over the file's functions and methods
 //! and closed over same-file callers. That over-approximates, which only
@@ -73,6 +83,8 @@ pub(super) fn python_self_container_reader_gap(
     let attr = self_attribute_mutation(new_line)?;
     if self_attribute_mutation(old_line) != Some(attr)
         || new_line == old_line
+        || !has_inert_argument(new_line)
+        || !has_inert_argument(old_line)
         || !attr.starts_with('_')
         || attr.starts_with("__")
         || !matches!(owner.owner_kind, Some(OwnerKind::Method))
@@ -192,6 +204,21 @@ pub(super) fn python_self_container_reader_gap(
         if !test.fixtures.is_empty()
             || !test.setup_receivers.is_empty()
             || !test.value_helpers.is_empty()
+            || DYNAMIC_ACCESS
+                .iter()
+                .any(|word| mentions_identifier(&test.body_text, word))
+            || test.imports.iter().any(|import| {
+                import.alias != import.imported
+                    && readers.contains(
+                        import
+                            .imported
+                            .rsplit('.')
+                            .next()
+                            .unwrap_or(import.imported.as_str()),
+                    )
+            })
+            || hands_local_to_call(&test.body_text)
+            || calls_own_helper_method(&test.body_text)
             || mentions_identifier(&test.body_text, attr)
             || readers
                 .iter()
@@ -213,15 +240,79 @@ pub(super) fn python_self_container_reader_gap(
         )
     };
     Some(SelfContainerGap {
-        discriminator: format!("a read of `self.{attr}` after `{}` runs", owner.name),
+        discriminator: format!("the values `{}` records in `self.{attr}`", owner.name),
         reason: format!(
             "no related test reads `self.{attr}` or calls a function that reads it ({read_by}), so the tests pin the result of `{}` without observing what it records",
             owner.name
         ),
         advice: format!(
-            "Add an assertion on a function that reads `{attr}` after calling `{}`.",
+            "After calling `{}`, assert the values `self.{attr}` holds, not only its size.",
             owner.name
         ),
+    })
+}
+
+/// The recorded argument only computes a value: no call, assignment
+/// expression, `await` or `yield` that could change other state.
+fn has_inert_argument(line: &str) -> bool {
+    let argument = line
+        .split_once('(')
+        .and_then(|(_, rest)| rest.rsplit_once(')'))
+        .map_or("", |(argument, _)| argument);
+    !argument.contains('(')
+        && !argument.contains(":=")
+        && !mentions_identifier(argument, "await")
+        && !mentions_identifier(argument, "yield")
+}
+
+/// Whether the test passes a name it binds (`c = Clock(1)`, `with .. as c`)
+/// as a call argument, so a function this file cannot list may read it.
+fn hands_local_to_call(body: &str) -> bool {
+    let locals: Vec<&str> = body
+        .lines()
+        .filter_map(|line| {
+            let code = line.split('#').next().unwrap_or(line).trim();
+            if let Some((_, target)) = code.rsplit_once(" as ") {
+                return Some(target.trim_end_matches(':').trim());
+            }
+            let (target, value) = code.split_once('=')?;
+            let target = target.split(':').next().unwrap_or(target).trim();
+            (!value.starts_with('=')
+                && !target.ends_with(['!', '<', '>', '+', '-', '*', '/', '%', '|', '&', '^']))
+            .then_some(target)
+        })
+        .filter(|name| is_simple_python_identifier(name))
+        .collect();
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    locals.iter().any(|name| {
+        body.match_indices(name).any(|(start, _)| {
+            let before = body[..start].trim_end().chars().next_back();
+            let after = body[start + name.len()..].trim_start().chars().next();
+            let whole = !body[..start].chars().next_back().is_some_and(is_word)
+                && !body[start + name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word);
+            whole
+                && matches!(before, Some('(' | ',' | '=' | '*'))
+                && matches!(after, Some(')' | ','))
+        })
+    })
+}
+
+/// Whether the test calls `self.name(..)` for a name that is not a
+/// `unittest` assertion; such a helper may call a reader.
+fn calls_own_helper_method(body: &str) -> bool {
+    body.match_indices("self.").any(|(start, _)| {
+        let rest = &body[start + "self.".len()..];
+        let name_len = rest
+            .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .unwrap_or(rest.len());
+        let name = &rest[..name_len];
+        !name.is_empty()
+            && !name.starts_with("assert")
+            && !name.starts_with("fail")
+            && rest[name_len..].starts_with('(')
     })
 }
 

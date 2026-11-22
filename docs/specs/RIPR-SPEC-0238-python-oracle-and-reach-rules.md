@@ -329,21 +329,28 @@ one changed raise only (#12952); the general class-only table row stays weak.
    `self._name.<mutator>(..)` statement (`append`, `appendleft`, `extend`,
    `extendleft`, `insert`, `add`, `update`) of an ordinary method, the edit
    changes what the object holds, not what the method returns. It is
-   `weakly_exposed` with missing discriminator `a read of self.<name> after
-   <method> runs` when no oracle-eligible related test names the container or
-   a function that reads it. Readers are the functions and methods of the
+   `weakly_exposed` with missing discriminator `the values <method> records
+   in self.<name>` when no oracle-eligible related test names the container or
+   a function that reads it. The advice asks for an assertion on the recorded
+   values, not only the size. A test that calls any reader keeps the existing
+   verdict, even a reader that projects only the size; the rule does not
+   judge whether that read distinguishes the edit. Readers are the functions and methods of the
    same file whose body names the container as a whole word, closed over
    same-file functions that name a reader. The existing verdict is kept when
    the readers cannot be listed from the file: the name is public or a
-   dunder; the line is added without an old side; the method is decorated or
-   a dunder; the class has bases other than `object`, keywords or decorators;
+   dunder; the line is added without an old side; the recorded argument on
+   either side calls, assigns (`:=`), awaits or yields; the method is
+   decorated or a dunder; the class has bases other than `object`, keywords or decorators;
    the container is not seeded in `__init__` by a fresh empty collection
    (`[]`, `{}`, `set()`, `list()`, `dict()`, `deque()`), or is named outside
    a function body; the method names the container on another line, names
    `self` other than as an attribute receiver, or is itself reached from a
    reader; a dunder method is a reader; the file uses `getattr`, `setattr`,
    `vars` or `__dict__`; or a related test uses a fixture, a setup receiver
-   or a value helper. A reader in another file is not seen, which is why only
+   or a value helper, uses one of those dynamic spellings, imports a reader
+   under another name, hands a name it binds to a call (a reader in another
+   file), or calls a method of its own test class other than an assertion.
+   A reader in another file is otherwise not seen, which is why only
    single-underscore names are read. Module-level containers (`LOG.append`)
    and public attributes keep the call-based reading of #9421.
 3. **A fluent helper chain is a custom helper.** A call statement whose
