@@ -12456,6 +12456,27 @@ fn golden_drift_semantics_summarize_json_changes() {
 }
 
 #[test]
+fn golden_drift_human_evidence_classification() {
+    let before = include_str!("../../fixtures/manual_let_else_pairing/expected/human.txt");
+    let classify =
+        |after: &str| super::golden_drift_type(&golden_drift_semantics("human.txt", before, after));
+    let window = before.replace("    - propagation yes: Complete propagation witness reaches returned value: let Some(rhs) = rhs.next() else {", "    - infection unknown: No reachable tests were found, so infection cannot be established");
+    assert_eq!(classify(&window), "detail_window_changed");
+    let semantic = window.replace(" · infection unknown ·", " · infection yes ·");
+    assert_eq!(
+        classify(&semantic),
+        "stage_states_changed [infection: unknown -> yes]"
+    );
+    for malformed in [" · infection nonsense ·", " · reach weak ·", " · "] {
+        assert_eq!(
+            classify(&before.replace(" · infection unknown ·", malformed)),
+            "stage_states_unavailable"
+        );
+    }
+    assert!(classify(&before.replace("Summary:", "Overview:")).starts_with("formatting_only"));
+}
+
+#[test]
 fn golden_drift_type_names_classification_flip() {
     // Gate-feedback contract: a goldens-check failure must say WHAT KIND of
     // drift happened. A classification flip is the highest-stakes case and

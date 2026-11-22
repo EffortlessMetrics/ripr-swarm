@@ -1385,7 +1385,7 @@ impl PacketRun {
                 "--no-color",
                 // Ambient `diff.ignoreSubmodules=all` (or `.gitmodules`
                 // `ignore = all`) would silently empty a gitlink bump (#8209).
-                "--ignore-submodules=none",
+                crate::git::SUBMODULE_POINTERS_ONLY,
                 "--src-prefix=a/",
                 "--dst-prefix=b/",
                 "--unified=3",
@@ -1421,7 +1421,7 @@ impl PacketRun {
                     "core.quotePath=true",
                     "diff",
                     "--name-only",
-                    "--ignore-submodules=none",
+                    crate::git::SUBMODULE_POINTERS_ONLY,
                     "-z",
                     &range,
                 ],

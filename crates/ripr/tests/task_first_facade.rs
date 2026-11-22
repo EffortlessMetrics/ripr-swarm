@@ -2465,7 +2465,9 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
             "before",
         ],
     )?;
-    assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    // docs/EXIT_CODES.md: an unknown `--seam-id` is one typed refusal with
+    // one exit, `3`, as `ripr repair` gives above (#15311).
+    assert_exit(&agent_stale, 3, "agent repair with a stale probe ID");
     let agent_stale_stderr = stderr_text(&agent_stale);
     assert!(
         agent_stale_stderr.contains("agent repair --seam-id")

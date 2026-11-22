@@ -33,6 +33,8 @@
 
 use crate::analysis::language::{changed_let_binding, mask_rust_comments_and_strings};
 
+mod resolution_memo;
+
 /// Which operand position the binding occupies at the predicate use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PredicateOperandSide {
@@ -122,7 +124,30 @@ const COMPARISON_OPERATORS: [&str; 6] = ["==", "!=", "<=", ">=", "<", ">"];
 /// scopes or unmodeled capture), and lines inside an unclosed foreign
 /// expression (running parentheses from a previous line) are
 /// continuations, not use sites.
+///
+/// Every seam of an owner asks this about the same owner body, so the
+/// answer is memoized per thread by the exact question (#15189).
 pub(crate) fn resolve_changed_binding_uses(
+    binding: &str,
+    initializer: &str,
+    body: &str,
+    body_start_line: usize,
+    changed_line: usize,
+) -> BindingPredicateResolution {
+    resolution_memo::resolved(
+        resolution_memo::Question {
+            binding,
+            initializer,
+            body,
+            body_start_line,
+            changed_line,
+        },
+        scan_changed_binding_uses,
+    )
+}
+
+/// The uncached reading behind [`resolve_changed_binding_uses`].
+fn scan_changed_binding_uses(
     binding: &str,
     initializer: &str,
     body: &str,
@@ -141,6 +166,7 @@ pub(crate) fn resolve_changed_binding_uses(
 
 /// The same liveness/scope authority for an exact `binding.len()` comparison.
 /// This relation establishes only the receiver binding, never its type or value.
+/// It is not memoized: the memo question does not carry the length form.
 pub(crate) fn resolve_changed_binding_length_uses(
     binding: &str,
     initializer: &str,

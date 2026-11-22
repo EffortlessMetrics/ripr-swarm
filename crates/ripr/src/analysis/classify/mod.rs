@@ -116,7 +116,7 @@ pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, assertion_is_discriminating, assertion_reads_bound_boundary_bool,
     has_same_test_boundary_oracle_pairing, has_wrapper_boundary_oracle_pairing,
     observed_owner_call_rows_on_line, returned_boundary_probe, same_test_pairing_missing_summary,
-    wrapper_return_boundary_pinned,
+    unpaired_return_gate, wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
     constructor_starts_empty, function_returns_value, getter_plainly_reads,
