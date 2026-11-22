@@ -338,7 +338,8 @@ needs about 100 sound flips, 152 of the 276 avoidable rows are rows the tests
 miss (so a flip is a gap claim, the actionable direction a false positive
 hurts most), and analyzer slices have landed 3 to 6 sound rows each. 0.28 is
 about 33 flips. The bar is lowered again whenever landed slices pass it; it is
-never raised to absorb a regression. It keeps the total
+never raised to absorb a regression (a dx-scoreboard population
+test pins the target at or below 0.28). It keeps the total
 (`trust.verdict_corpus_abstention`) visible and ratcheted, and its target is
 the avoidable bar plus the abstention-expected share, rounded down: 0.0128
 when the split landed (0.21), 39/862 = 0.0452 once `[abstain]`-marked

@@ -1662,6 +1662,17 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate"
         );
         assert_eq!(avoidable["runner_dependent"], false);
+        // The avoidable bar moved from 0.20 to 0.28 on measured evidence
+        // (RIPR-SPEC-0219, #12766) and only ratchets down from here: it is
+        // lowered when landed slices pass it, never raised to absorb a
+        // regression. Raising it means editing this pin with a dated reason.
+        let target = avoidable["target"]
+            .as_f64()
+            .ok_or("avoidable target missing")?;
+        assert!(
+            target <= 0.28,
+            "avoidable abstention target {target} was raised above 0.28"
+        );
         let samples = avoidable["samples"].as_array().ok_or("samples missing")?;
         assert_eq!(samples.len(), 1);
         let population: Population = serde_json::from_value(samples[0]["population"].clone())
@@ -1699,5 +1710,28 @@ fn avoidable_abstention_population_sums_to_the_report_and_stays_under_the_total(
     assert_eq!(avoidable.1, total.1);
     // The committed corpus has rows a spec example asks to abstain.
     assert!(avoidable.0 < total.0, "{avoidable:?} vs {total:?}");
+    Ok(())
+}
+
+/// The avoidable-abstention bar moved from 0.20 to 0.28 on measured evidence
+/// (RIPR-SPEC-0219, #12766) and only ratchets down from here: it is lowered
+/// when landed slices pass it, never raised to absorb a regression. Raising it
+/// means editing this pin with a dated reason. The baseline copy is pinned in
+/// `operational_baseline_refreshes_only_the_five_rust_rates_with_provenance`.
+#[test]
+fn avoidable_abstention_bar_only_ratchets_down() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let metric = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "trust.verdict_corpus_avoidable_abstention")
+        .ok_or("trust.verdict_corpus_avoidable_abstention missing from scoreboards.toml")?;
+    assert!(
+        metric.target <= 0.28,
+        "avoidable abstention target {} was raised above 0.28",
+        metric.target
+    );
     Ok(())
 }
