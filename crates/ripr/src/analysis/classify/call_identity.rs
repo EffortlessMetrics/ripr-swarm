@@ -92,6 +92,9 @@ pub(super) type ItemBindingsKey = (String, std::path::PathBuf, usize, String, u6
 
 mod rename_spellings;
 
+/// `(bare name, enum name, test file)`.
+type EnumVariantValueKey = (String, String, std::path::PathBuf);
+
 /// Per-index memos for the call-identity family (#7716 residual).
 ///
 /// Every producer that classifies probes rebuilds its [`RustIndex`] per
@@ -102,7 +105,6 @@ mod rename_spellings;
 /// layout scan and each probe re-parsed every candidate test: measured
 /// ~28 ms of related-test work per probe pair on a 20-package corpus where
 /// the work is identical across probes.
-
 #[derive(Default)]
 pub(crate) struct CallIdentityMemos {
     /// One workspace shape pass per index, shared by every
@@ -208,6 +210,12 @@ pub(crate) struct CallIdentityMemos {
     /// sources, so the per-(seam, test) enum-variant check reads it once
     /// instead of masking every file that mentions the name each time.
     sole_type_declarers: Mutex<BTreeMap<String, Option<std::path::PathBuf>>>,
+    /// Whether a bare name in one test file is an imported unit variant of
+    /// one enum (#12940). The receiver check asks this for every bare
+    /// receiver of every (owner, test) pair, and each answer parses the
+    /// declaring file and walks it for the enum. It depends only on the
+    /// indexed sources and the three names.
+    enum_variant_values: Mutex<BTreeMap<EnumVariantValueKey, bool>>,
     /// Positions in [`RustIndex::functions`] order of every function, keyed by
     /// its name without a `r#` prefix, built once per index so a per-(seam,
     /// test) free-function lookup reads one bucket instead of every function.
@@ -345,6 +353,33 @@ impl CallIdentityMemos {
         let answer = compute();
         if let Ok(mut cache) = self.sole_type_declarers.lock() {
             cache.insert(name.to_string(), answer.clone());
+        }
+        answer
+    }
+
+    /// The memoized answer for one `(name, enum, test file)` variant query,
+    /// computed by `compute` on first use (recomputed, not cached, if the
+    /// lock is poisoned).
+    pub(super) fn enum_variant_value(
+        &self,
+        name: &str,
+        enum_name: &str,
+        test_file: &std::path::Path,
+        compute: impl FnOnce() -> bool,
+    ) -> bool {
+        let key = (
+            name.to_string(),
+            enum_name.to_string(),
+            test_file.to_path_buf(),
+        );
+        if let Ok(cache) = self.enum_variant_values.lock()
+            && let Some(found) = cache.get(&key)
+        {
+            return *found;
+        }
+        let answer = compute();
+        if let Ok(mut cache) = self.enum_variant_values.lock() {
+            cache.insert(key, answer);
         }
         answer
     }

@@ -45,9 +45,9 @@ pub(in crate::analysis) use value_contradiction::{
 
 pub(crate) use related_tests::CompactGripContext;
 use related_tests::{
-    CompactTest, assertion_target_tokens, call_text_contains_named_call, find_related_tests_ranked,
-    find_related_tests_with_context, relates_to_pool_test, required_discriminator_text,
-    sort_related_tests_for_seam, strip_comments_and_strings,
+    CompactTest, PoolDirectCalls, assertion_target_tokens, call_text_contains_named_call,
+    find_related_tests_ranked, find_related_tests_with_context, relates_to_pool_test,
+    required_discriminator_text, sort_related_tests_for_seam, strip_comments_and_strings,
     test_assertion_mentions_any_target_token,
 };
 
@@ -809,6 +809,7 @@ impl<'index> EvidencePass<'index> {
         };
         let token = cancellation::current_token();
         let overlay = crate::analysis::committed_source::current_overlay();
+        let direct_calls = PoolDirectCalls::default();
         ordinals
             .par_iter()
             .map(|ordinal| {
@@ -822,7 +823,13 @@ impl<'index> EvidencePass<'index> {
                 cancellation::with_optional_token(token.as_ref(), || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
                         cancellation::checkpoint().is_err()
-                            || relates_to_pool_test(seam, context, pool, counts_relation)
+                            || relates_to_pool_test(
+                                seam,
+                                context,
+                                pool,
+                                counts_relation,
+                                &direct_calls,
+                            )
                     })
                 })
             })

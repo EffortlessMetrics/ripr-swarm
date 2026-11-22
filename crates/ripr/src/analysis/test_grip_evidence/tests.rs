@@ -4,6 +4,7 @@ mod boundary_input_limit;
 mod framework_snapshot;
 mod module_extraction;
 pub(super) mod panic_marker;
+mod pool_relation;
 mod rebound_assertion_macro;
 mod shared_execution_context;
 mod unread_owner_result_field;
@@ -3634,7 +3635,7 @@ fn direct_candidate_walk_observes_cancellation() -> Result<(), String> {
     let context = CompactGripContext::new(&index);
     let owner = related_tests::OwnerContext::resolve(seam, &context);
     let mut complete = BTreeMap::new();
-    related_tests::match_direct_owner_call(&mut complete, &context, None, &owner);
+    related_tests::match_direct_owner_call(&mut complete, &context, None, &owner, None);
     assert_eq!(complete.len(), 65);
     let started = Instant::now();
     let calls = Arc::new(AtomicUsize::new(0));
@@ -3652,7 +3653,7 @@ fn direct_candidate_walk_observes_cancellation() -> Result<(), String> {
     );
     let mut interrupted = BTreeMap::new();
     cancellation::with_token(&token, || {
-        related_tests::match_direct_owner_call(&mut interrupted, &context, None, &owner);
+        related_tests::match_direct_owner_call(&mut interrupted, &context, None, &owner, None);
     });
     assert_eq!(
         interrupted.len(),
