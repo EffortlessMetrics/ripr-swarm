@@ -483,3 +483,228 @@ fn rust_check_findings_json_repeats_under_a_pinned_generated_at() -> Result<(), 
     }
     Ok(())
 }
+
+/// `ripr` with `RIPR_GENERATED_AT` set to `stamp` or removed for `None`.
+fn stamped_ripr(
+    cwd: &Path,
+    args: &[&str],
+    stamp: Option<&str>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .current_dir(cwd)
+        .args(args)
+        .env_remove("RIPR_LOG")
+        .env_remove("RIPR_CACHE_DIR");
+    match stamp {
+        Some(stamp) => command.env("RIPR_GENERATED_AT", stamp),
+        None => command.env_remove("RIPR_GENERATED_AT"),
+    };
+    command.output().map_err(|err| format!("spawn ripr: {err}"))
+}
+
+/// A stamped command that must exit 0 and leave `written` on disk; returns
+/// the written bytes.
+fn stamped_write(
+    cwd: &Path,
+    args: &[&str],
+    stamp: Option<&str>,
+    written: &Path,
+) -> Result<Vec<u8>, String> {
+    let _ = std::fs::remove_file(written);
+    let output = stamped_ripr(cwd, args, stamp)?;
+    if output.status.code() != Some(0) {
+        return Err(format!(
+            "ripr {args:?} under {stamp:?} exited {:?}:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    std::fs::read(written).map_err(|err| format!("read {}: {err}", written.display()))
+}
+
+/// A malformed pin must stop the command before it writes `written`.
+fn assert_stamp_refused(
+    cwd: &Path,
+    args: &[&str],
+    stamp: &str,
+    written: &Path,
+    reason: &str,
+) -> Result<(), String> {
+    let _ = std::fs::remove_file(written);
+    let output = stamped_ripr(cwd, args, Some(stamp))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if output.status.code() != Some(2) || !stderr.contains(reason) || written.exists() {
+        return Err(format!(
+            "ripr {args:?} under {stamp:?} must exit 2 naming `{reason}` and write nothing; exit {:?}, wrote: {}, stderr:\n{stderr}",
+            output.status.code(),
+            written.exists()
+        ));
+    }
+    Ok(())
+}
+
+fn fixture_git(root: &Path, args: &[&str]) -> Result<(), String> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args([
+            "-c",
+            "user.name=determinism",
+            "-c",
+            "user.email=determinism@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .map_err(|err| format!("spawn git: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// `RIPR_GENERATED_AT` pins a receipt's `written_at`, the one field that
+/// made two writes of the same receipt differ (#14230). The pin is truncated
+/// to the receipt's whole seconds, a different second changes the bytes, the
+/// default still reads the clock, and a malformed or unspellable pin is
+/// refused with no receipt written.
+#[test]
+fn receipt_write_repeats_under_a_pinned_generated_at() -> Result<(), String> {
+    const PIN: &str = "unix_ms:1778179200999";
+    const PINNED_WRITTEN_AT: &str = "\"written_at\": \"2026-05-07T18:40:00Z\"";
+    const NEXT_SECOND: &str = "unix_ms:1778179201000";
+    let root = std::env::temp_dir().join(format!(
+        "ripr-output-determinism-receipt-stamp-{}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(root.clone());
+    std::fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+    std::fs::write(root.join("README.md"), "receipt stamp fixture\n")
+        .map_err(|err| format!("write fixture: {err}"))?;
+    fixture_git(&root, &["init", "-q", "-b", "main"])?;
+    fixture_git(&root, &["add", "-A"])?;
+    fixture_git(&root, &["commit", "-q", "-m", "base"])?;
+    let receipt = root.join("receipt.json");
+    let args = [
+        "receipt",
+        "write",
+        "--gap",
+        "gap:rust:src/lib.rs:total:predicate_boundary:predicate:a==1",
+        "--verify-command",
+        "cargo test",
+        "--status",
+        "passed",
+        "--out",
+        "receipt.json",
+    ];
+
+    let first = stamped_write(&root, &args, Some(PIN), &receipt)?;
+    let text = String::from_utf8_lossy(&first);
+    if !text.contains(PINNED_WRITTEN_AT) || !text.contains("\"verify_command\": \"cargo test\"") {
+        return Err(format!(
+            "pinned receipt must carry {PINNED_WRITTEN_AT} and the verify command:\n{text}"
+        ));
+    }
+    let second = stamped_write(&root, &args, Some(PIN), &receipt)?;
+    if second != first {
+        return Err(format!(
+            "two receipts under the same pin differ at {}",
+            first_difference(&first, &second)
+        ));
+    }
+    if stamped_write(&root, &args, Some(NEXT_SECOND), &receipt)? == first {
+        return Err("a pin in a different second must change the receipt bytes".to_string());
+    }
+    let unpinned = stamped_write(&root, &args, None, &receipt)?;
+    let unpinned_text = String::from_utf8_lossy(&unpinned);
+    if !unpinned_text.contains("\"written_at\": \"") || unpinned_text.contains(PINNED_WRITTEN_AT) {
+        return Err(format!(
+            "an unpinned receipt must stamp its own time:\n{unpinned_text}"
+        ));
+    }
+
+    assert_stamp_refused(
+        &root,
+        &args,
+        "2026-05-07T18:40:00Z",
+        &receipt,
+        "RIPR_GENERATED_AT must be unix_ms:",
+    )?;
+    // 10000-01-01T00:00:00Z: `written_at` has four year digits.
+    assert_stamp_refused(
+        &root,
+        &args,
+        "unix_ms:253402300800000",
+        &receipt,
+        "past year 9999",
+    )
+}
+
+/// The report commands stamp `generated_at` through one helper; `first-action`
+/// stands for them. Under the pin its JSON repeats byte for byte and carries
+/// the pinned stamp, the default still reads the clock, and a malformed pin
+/// is refused with no report written (#14230).
+#[test]
+fn first_action_report_repeats_under_a_pinned_generated_at() -> Result<(), String> {
+    const PIN: &str = "unix_ms:1778179200000";
+    const PINNED_GENERATED_AT: &str = "\"generated_at\": \"unix_ms:1778179200000\"";
+    let root = std::env::temp_dir().join(format!(
+        "ripr-output-determinism-report-stamp-{}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(root.clone());
+    std::fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+    let guidance = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/boundary_gap/expected/pr-guidance/exact-line/comments.json");
+    let guidance = guidance
+        .to_str()
+        .ok_or_else(|| format!("fixture path is not UTF-8: {}", guidance.display()))?;
+    let report = root.join("first-useful-action.json");
+    let args = [
+        "first-action",
+        "--root",
+        ".",
+        "--pr-guidance",
+        guidance,
+        "--out",
+        "first-useful-action.json",
+        "--out-md",
+        "first-useful-action.md",
+    ];
+
+    let first = stamped_write(&root, &args, Some(PIN), &report)?;
+    let text = String::from_utf8_lossy(&first);
+    // The report must have read the guidance, not only written an envelope.
+    if !text.contains(PINNED_GENERATED_AT) || !text.contains("src/pricing.rs") {
+        return Err(format!(
+            "pinned report must carry {PINNED_GENERATED_AT} and the guided file:\n{text}"
+        ));
+    }
+    let second = stamped_write(&root, &args, Some(PIN), &report)?;
+    if second != first {
+        return Err(format!(
+            "two reports under the same pin differ at {}",
+            first_difference(&first, &second)
+        ));
+    }
+    let unpinned = stamped_write(&root, &args, None, &report)?;
+    let unpinned_text = String::from_utf8_lossy(&unpinned);
+    if !unpinned_text.contains("\"generated_at\": \"unix_ms:")
+        || unpinned_text.contains(PINNED_GENERATED_AT)
+    {
+        return Err(format!(
+            "an unpinned report must stamp its own time:\n{unpinned_text}"
+        ));
+    }
+    assert_stamp_refused(
+        &root,
+        &args,
+        "1778179200000",
+        &report,
+        "RIPR_GENERATED_AT must be unix_ms:",
+    )
+}

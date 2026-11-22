@@ -657,12 +657,25 @@ fn resolve_check_path_from(opts: &ReceiptCheckOptions, base: &Path) -> Result<Pa
     }
 }
 
+/// Last second `written_at` can spell with a four-digit year.
+const MAX_WRITTEN_AT_SECS: u64 = 253_402_300_799;
+
+/// The receipt's `written_at`: the `RIPR_GENERATED_AT` pin when set, so two
+/// writes of one receipt repeat byte for byte (#14230), else the wall clock.
 fn written_at_rfc3339() -> Result<String, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| format!("system clock before unix epoch: {err}"))?
-        .as_secs();
+    let secs = match crate::agent::artifact::pinned_generated_at_unix_ms()? {
+        Some(millis) if millis / 1_000 > MAX_WRITTEN_AT_SECS => {
+            return Err(format!(
+                "RIPR_GENERATED_AT=unix_ms:{millis} is past year 9999, which a receipt's written_at cannot spell; use an earlier stamp or unset it"
+            ));
+        }
+        Some(millis) => millis / 1_000,
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("system clock before unix epoch: {err}"))?
+            .as_secs(),
+    };
     // Format as ISO 8601 / RFC 3339 UTC without external deps.
     let (year, month, day, hour, minute, second) = seconds_to_ymdhms(secs);
     Ok(format!(

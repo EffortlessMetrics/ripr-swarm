@@ -418,6 +418,11 @@ the human digest's one-time first-run legend (#10481), which is intended
 state. Rerun commands carry the absolute root, so output also differs by
 checkout location (#14230).
 
+The same pin sets a receipt's `written_at` and the report commands'
+`generated_at`, which are otherwise the only bytes that differ between two
+writes of one receipt or report; a malformed pin refuses those commands
+before anything is written (#14230).
+
 ## Classifications
 
 Static findings may use only these exposure classes:
