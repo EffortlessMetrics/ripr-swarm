@@ -176,7 +176,7 @@ nothing is uploaded to a finalized release.
 
 ## Proof
 
-`cargo test -p xtask release_github_transaction` runs 22 tests. One sweeps all
+`cargo test -p xtask release_github_transaction` runs 24 tests. One sweeps all
 1,000 combinations of tag, release, asset and provenance state the model can
 observe and checks, against the classification alone, that a mutation is
 proposed only when the object it writes is absent and everything present is

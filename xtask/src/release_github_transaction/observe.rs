@@ -358,6 +358,8 @@ pub(crate) fn observe(
     };
     if let Err(reason) = require_write_visibility(api, &request.repository) {
         return RemoteInventory {
+            repository: request.repository.clone(),
+            tag_name: request.tag.clone(),
             tag: TagObservation::Unavailable {
                 reason: reason.clone(),
             },
@@ -373,6 +375,8 @@ pub(crate) fn observe(
         Ok(observed) => observed,
         Err(reason) => {
             return RemoteInventory {
+                repository: request.repository.clone(),
+                tag_name: request.tag.clone(),
                 tag,
                 releases: ReleasesObservation::Unavailable { reason },
                 attestations: unchecked(),
@@ -397,6 +401,8 @@ pub(crate) fn observe(
         })
         .collect();
     RemoteInventory {
+        repository: request.repository.clone(),
+        tag_name: request.tag.clone(),
         tag,
         releases: ReleasesObservation::Listed { releases },
         attestations,
