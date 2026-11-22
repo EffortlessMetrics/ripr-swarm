@@ -1,0 +1,137 @@
+//! `ripr pr-evidence --check` and `ripr impacted-evidence --check` refusals
+//! for a missing or broken packet name the command that writes it, not just
+//! the read error. Each case runs the real binary in a scratch directory and
+//! pins the next-step clause, so a regression that drops it fails here rather
+//! than only in the looser action-word floor (`refusal_next_step.rs`).
+
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+struct ScratchDir(PathBuf);
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        if let Ok(()) = std::fs::remove_dir_all(&self.0) {}
+    }
+}
+
+fn scratch() -> Result<ScratchDir, String> {
+    let dir = std::env::temp_dir().join(format!(
+        "ripr-evidence-refusal-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).map_err(|error| format!("create scratch dir: {error}"))?;
+    Ok(ScratchDir(dir))
+}
+
+fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
+    let status = Command::new("git")
+        .current_dir(dir)
+        .args([
+            "-c",
+            "user.name=ripr",
+            "-c",
+            "user.email=ripr@example.invalid",
+        ])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .status()
+        .map_err(|error| format!("spawn git {args:?}: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("git {args:?} exited with {status}"))
+    }
+}
+
+fn committed_repo() -> Result<ScratchDir, String> {
+    let dir = scratch()?;
+    git(&dir.0, &["init", "-q"])?;
+    std::fs::write(dir.0.join("README.md"), "fixture\n")
+        .map_err(|error| format!("write README.md: {error}"))?;
+    git(&dir.0, &["add", "README.md"])?;
+    git(&dir.0, &["commit", "-q", "-m", "fixture"])?;
+    Ok(dir)
+}
+
+/// Runs `ripr` in `dir` and returns stderr when the exit code is 2.
+fn refusal(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if output.status.code() == Some(2) {
+        Ok(stderr)
+    } else {
+        Err(format!(
+            "ripr {args:?}: expected exit 2, got {:?}:\n{stderr}",
+            output.status.code()
+        ))
+    }
+}
+
+fn stderr_has_all(stderr: &str, wanted: &[&str]) -> Result<(), String> {
+    match wanted.iter().find(|clause| !stderr.contains(*clause)) {
+        None => Ok(()),
+        Some(missing) => Err(format!("stderr lacks `{missing}`:\n{stderr}")),
+    }
+}
+
+const CHECK: &[&str] = &["pr-evidence", "--base", "HEAD", "--head", "HEAD", "--check"];
+
+#[test]
+fn pr_evidence_check_without_a_packet_names_the_command_that_writes_it() -> Result<(), String> {
+    let repo = committed_repo()?;
+    let stderr = refusal(&repo.0, CHECK)?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "missing or unreadable target/ripr/pr/repo-exposure.json: ",
+            "; run `ripr pr-evidence` with the same --base, --head and --root to write it, then rerun with --check",
+        ],
+    )
+}
+
+#[test]
+fn pr_evidence_check_with_a_broken_packet_names_the_regeneration() -> Result<(), String> {
+    let repo = committed_repo()?;
+    let packet = repo.0.join("target/ripr/pr");
+    std::fs::create_dir_all(&packet).map_err(|error| format!("create packet dir: {error}"))?;
+    std::fs::write(packet.join("repo-exposure.json"), "{ not json")
+        .map_err(|error| format!("write packet: {error}"))?;
+    let stderr = refusal(&repo.0, CHECK)?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "target/ripr/pr/repo-exposure.json is not valid JSON: ",
+            "; regenerate it with `ripr pr-evidence` (same --base, --head and --root), then rerun with --check",
+        ],
+    )
+}
+
+#[test]
+fn impacted_evidence_check_without_outputs_names_the_command_that_writes_them() -> Result<(), String>
+{
+    let dir = scratch()?;
+    let packet = dir.0.join("target/ripr/pr");
+    std::fs::create_dir_all(&packet).map_err(|error| format!("create packet dir: {error}"))?;
+    std::fs::write(
+        packet.join("repo-exposure.json"),
+        r#"{"summary":{"ripr_severe_gap":false,"requires_targeted_mutation":false}}"#,
+    )
+    .map_err(|error| format!("write packet: {error}"))?;
+    let stderr = refusal(&dir.0, &["impacted-evidence", "--check"])?;
+    stderr_has_all(
+        &stderr,
+        &[
+            "missing or unreadable target/xtask/impacted-evidence/latest.json: ",
+            "; run `ripr impacted-evidence` to write it",
+        ],
+    )
+}

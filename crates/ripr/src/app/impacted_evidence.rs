@@ -636,10 +636,16 @@ fn string_field<'a>(value: &'a Value, key: &str, fallback: &'a str) -> &'a str {
 fn check_outputs(repo: &Path, json_text: &str, markdown: &str) -> Result<(), String> {
     let json_path = repo.join(IMPACTED_JSON);
     let md_path = repo.join(IMPACTED_MD);
-    let actual_json = fs::read_to_string(&json_path)
-        .map_err(|err| format!("missing or unreadable {IMPACTED_JSON}: {err}"))?;
-    let actual_md = fs::read_to_string(&md_path)
-        .map_err(|err| format!("missing or unreadable {IMPACTED_MD}: {err}"))?;
+    let actual_json = fs::read_to_string(&json_path).map_err(|err| {
+        format!(
+            "missing or unreadable {IMPACTED_JSON}: {err}; run `ripr impacted-evidence` to write it"
+        )
+    })?;
+    let actual_md = fs::read_to_string(&md_path).map_err(|err| {
+        format!(
+            "missing or unreadable {IMPACTED_MD}: {err}; run `ripr impacted-evidence` to write it"
+        )
+    })?;
     if actual_json == format!("{json_text}\n") && actual_md == markdown {
         println!("Impacted evidence contract ok: {IMPACTED_JSON}");
         Ok(())
@@ -655,9 +661,9 @@ fn write_outputs(repo: &Path, json_text: &str, markdown: &str) -> Result<(), Str
         fs::create_dir_all(parent).map_err(|err| format!("create impacted evidence dir: {err}"))?;
     }
     crate::output::file_write::write(&json_path, format!("{json_text}\n").as_bytes())
-        .map_err(|err| format!("failed to write {IMPACTED_JSON}: {err}"))?;
+        .map_err(|err| format!("failed to write {IMPACTED_JSON}: {err}; make sure the output directory is writable, then rerun `ripr impacted-evidence`"))?;
     crate::output::file_write::write(&md_path, markdown.as_bytes())
-        .map_err(|err| format!("failed to write {IMPACTED_MD}: {err}"))?;
+        .map_err(|err| format!("failed to write {IMPACTED_MD}: {err}; make sure the output directory is writable, then rerun `ripr impacted-evidence`"))?;
     println!("Wrote {IMPACTED_JSON}");
     println!("Wrote {IMPACTED_MD}");
     Ok(())

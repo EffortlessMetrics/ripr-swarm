@@ -1,0 +1,2 @@
+crates/ripr/tests/evidence_refusal_next_step.rs|Command::new|2|cli-tests|Runs git (init/add/commit in a scratch temp repo) and the built ripr binary (CARGO_BIN_EXE_ripr) as `pr-evidence --check` and `impacted-evidence --check` to pin each refusal's next step. No shell or network; only the scratch repo is mutated; bounded by `.status()`/`.output()`.
+crates/ripr/tests/evidence_refusal_next_step.rs|use std::process::Command|1|cli-tests|Import for the git and exact-binary spawn sites described above.
