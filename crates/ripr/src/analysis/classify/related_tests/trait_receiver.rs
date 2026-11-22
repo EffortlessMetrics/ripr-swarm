@@ -54,15 +54,11 @@ pub(super) fn typed_receiver_runs_trait_impl(
     if a_standard_trait_names_the_method(owner.name.as_str(), owner_trait) {
         return false;
     }
-    if another_method_may_take_the_call(owner, owner_trait, impl_type, index)
-        || super::super::implicit_call::unindexed_impl_may_take_method_call(
-            owner,
-            owner_trait,
-            index,
-        )
-    {
+    if super::super::implicit_call::unindexed_impl_may_take_method_call(owner, owner_trait, index) {
         return false;
     }
+    // The rival scan reads workspace sources for renamings of a rival's self
+    // type, so it runs only for a test whose receiver the index has typed.
     inherent_receiver_call_resolves_with(
         test,
         owner.name.as_str(),
@@ -71,7 +67,7 @@ pub(super) fn typed_receiver_runs_trait_impl(
         Some(owner),
         trust_unplaced_standard_root,
         None,
-    )
+    ) && !another_method_may_take_the_call(owner, owner_trait, impl_type, index)
 }
 
 /// A self type written as a path (`Chain<T, U>`, `crate::Limit`). A
@@ -104,17 +100,40 @@ fn another_method_may_take_the_call(
 ) -> bool {
     let functions = index.functions();
     let name = owner.name.strip_prefix("r#").unwrap_or(&owner.name);
-    index
+    let positions = index
         .call_identity_memos
-        .function_positions_named(index, name)
-        .iter()
-        .filter_map(|&position| functions.get(position))
-        .filter(|function| function.id != owner.id)
-        .any(|function| match &function.item.container {
+        .function_positions_named(index, name);
+    let rivals = || {
+        positions
+            .iter()
+            .filter_map(|&position| functions.get(position))
+            .filter(|function| function.id != owner.id)
+    };
+    // Two traits can share a last path segment (`Shape` and `other::Shape`).
+    // The owner overrides one declaration of the name, so a second one under
+    // the owner trait's name is another trait's method.
+    let declared_under_the_owner_traits_name = rivals()
+        .filter(|function| {
+            matches!(&function.item.container, FunctionContainer::Trait { trait_name }
+                if impl_trait_name_from_path(trait_name) == owner_trait)
+        })
+        .count();
+    declared_under_the_owner_traits_name > 1
+        || rivals().any(|function| match &function.item.container {
             FunctionContainer::Free | FunctionContainer::Local => false,
             FunctionContainer::Unknown => true,
-            FunctionContainer::Inherent { self_ty } => on_the_same_type(self_ty, impl_type),
-            FunctionContainer::TraitImpl { self_ty, .. } => on_the_same_type(self_ty, impl_type),
+            // Coherence allows the owner's trait one impl per type, so its
+            // impl under another name is for another type, renamed or not.
+            FunctionContainer::TraitImpl {
+                trait_path,
+                self_ty,
+            } if impl_trait_name_from_path(trait_path) == owner_trait => {
+                compact_impl_type_name(self_ty).is_none_or(|rival| rival == impl_type)
+            }
+            FunctionContainer::Inherent { self_ty }
+            | FunctionContainer::TraitImpl { self_ty, .. } => {
+                on_the_same_type(self_ty, impl_type, index)
+            }
             FunctionContainer::Trait { trait_name } => {
                 impl_trait_name_from_path(trait_name) != owner_trait && function.item.has_body
             }
@@ -367,9 +386,27 @@ const STANDARD_TRAIT_METHODS: &[(&str, &[&str])] = &[
     ("IndexMut", &["index_mut"]),
 ];
 
-/// Whether a rival's self type is, or cannot be told from, `impl_type`.
-fn on_the_same_type(self_ty: &str, impl_type: &str) -> bool {
-    compact_impl_type_name(self_ty).is_none_or(|rival| rival == impl_type)
+/// Whether a rival's self type is, or cannot be told from, `impl_type`. A
+/// rival under another name is the same type when that name is an alias or
+/// a renamed import (`type Tile = Square;`, `use crate::Square as Tile;`),
+/// so a source that writes either for the name is not told apart.
+fn on_the_same_type(self_ty: &str, impl_type: &str, index: &RustIndex) -> bool {
+    compact_impl_type_name(self_ty).is_none_or(|rival| {
+        rival == impl_type
+            || index.files().values().any(|facts| {
+                [format!("type {rival}"), format!("as {rival}")]
+                    .iter()
+                    .any(|renaming| {
+                        facts
+                            .source
+                            .match_indices(renaming.as_str())
+                            .any(|(at, _)| {
+                                !facts.source[at + renaming.len()..]
+                                    .starts_with(|ch: char| ch.is_alphanumeric() || ch == '_')
+                            })
+                    })
+            })
+    })
 }
 
 #[cfg(test)]

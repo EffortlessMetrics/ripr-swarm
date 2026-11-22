@@ -139,6 +139,23 @@ fn another_method_of_the_name_on_the_type_withholds_the_relation() -> Result<(),
              forward!(BytesMut);\n",
         ),
         (
+            "an inherent method on an alias of the type",
+            "pub type Buffer = BytesMut;\nimpl Buffer {\n    pub fn advance_mut(self, _cnt: usize) {}\n}\n",
+        ),
+        (
+            "an inherent method on a renamed import of the type",
+            "pub mod view {\n    use super::BytesMut as Buffer;\n    impl Buffer {\n        pub fn advance_mut(self, _cnt: usize) {}\n    }\n}\n",
+        ),
+        (
+            "a default body of a second trait that shares the owner trait's name",
+            "pub mod other {\n    pub trait BufMut: Sized {\n        fn advance_mut(self, _cnt: usize) {}\n    }\n    impl BufMut for super::BytesMut {}\n}\n",
+        ),
+        (
+            "a macro call in the type's impl that writes the method",
+            "macro_rules! by_value {\n    () => {\n        pub fn advance_mut(self, _cnt: usize) {}\n    };\n}\n\
+             impl BytesMut {\n    by_value!();\n}\n",
+        ),
+        (
             "a second type of the same name",
             "pub mod other {\n    pub struct BytesMut;\n}\n",
         ),
@@ -331,5 +348,23 @@ fn a_standard_trait_method_of_the_name_withholds_the_relation() -> Result<(), St
         "impl Iterator for Shelf::next",
         "let _ = Shelf::stocked(5).next();"
     )?);
+    Ok(())
+}
+
+/// A rival under another type's name, and a macro call in the type's impl
+/// that cannot write the method, leave the relation.
+#[test]
+fn a_rival_on_another_type_and_an_unrelated_impl_macro_leave_the_relation() -> Result<(), String> {
+    for addition in [
+        "pub struct Other;\nimpl Other {\n    pub fn advance_mut(self, _cnt: usize) {}\n}\n",
+        "macro_rules! getter {\n    () => {\n        pub fn len(&self) -> usize { self.len }\n    };\n}\n\
+         impl BytesMut {\n    getter!();\n}\n",
+    ] {
+        let production = format!("{BUF}{addition}");
+        assert!(
+            direct(&production, BYTES_MUT_ADVANCE, TYPED_CALL)?,
+            "{addition}"
+        );
+    }
     Ok(())
 }

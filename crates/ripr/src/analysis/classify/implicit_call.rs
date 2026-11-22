@@ -1384,6 +1384,10 @@ pub(super) struct HiddenImpls {
     macro_definitions: std::collections::BTreeMap<String, Vec<MacroDefinition>>,
     /// Item-level invocations (macro name, words of the arguments).
     item_macro_invocations: Vec<(String, std::collections::BTreeSet<String>)>,
+    /// Macro calls in associated-item position (`impl Square { area!(); }`):
+    /// the impl's self type, the macro, the words of its arguments. A self
+    /// type that is not one plain name reads as "", which stands for any.
+    impl_macro_calls: Vec<(String, String, std::collections::BTreeSet<String>)>,
 }
 
 /// What one macro definition's own text can put into its expansion.
@@ -1418,10 +1422,20 @@ impl MacroDefinition {
             }
             let before = text[..bang].trim_end();
             let spaced = before.len() != bang;
+            // A combining mark continues an identifier and is not a word
+            // character here, so the name starts after the whole character.
             let start = before
-                .rfind(|ch: char| !is_word_char(ch))
-                .map_or(0, |at| at + 1);
+                .char_indices()
+                .rev()
+                .find(|&(_, ch)| !is_word_char(ch))
+                .map_or(0, |(at, ch)| at + ch.len_utf8());
             let name = &before[start..];
+            // A name that ends in a character this scanner does not read as
+            // part of a word (`cafe\u{301}!()`) is an invocation it cannot name.
+            if name.is_empty() && before.ends_with(|ch: char| !ch.is_ascii()) {
+                definition.opaque = true;
+                continue;
+            }
             // `if !(a)` and `return !{ .. }` negate; a bare `!(` has no name.
             if name.is_empty() || (spaced && NEGATION_HEADS.contains(&name)) {
                 continue;
@@ -1566,6 +1580,7 @@ impl HiddenImpls {
                 }
                 ast::Item::Impl(imp) => {
                     self.read_blanket_impl(imp);
+                    self.read_impl_macro_calls(imp);
                     self.read_body_macros(imp.syntax());
                     walk.skip_subtree();
                 }
@@ -1679,6 +1694,32 @@ impl HiddenImpls {
         }
     }
 
+    /// Macro calls that write associated items of an impl. The arguments need
+    /// not name the type: the impl block supplies it.
+    fn read_impl_macro_calls(&mut self, imp: &ast::Impl) {
+        let Some(items) = imp.assoc_item_list() else {
+            return;
+        };
+        let self_type = imp
+            .self_ty()
+            .and_then(referent_type_name)
+            .unwrap_or_default();
+        for item in items.assoc_items() {
+            if let ast::AssocItem::MacroCall(call) = item {
+                let words = call
+                    .token_tree()
+                    .map(|tokens| masked_text(tokens.syntax()))
+                    .map(|text| words_of(&text).into_iter().map(String::from).collect())
+                    .unwrap_or_default();
+                self.impl_macro_calls.push((
+                    self_type.clone(),
+                    macro_call_name(&call).unwrap_or_default(),
+                    words,
+                ));
+            }
+        }
+    }
+
     /// A trait impl whose self type is one of its own generic parameters
     /// (`impl<T: Into<i64>> Wide for T`, also through `&T`, `&'a mut T` or a
     /// raw pointer) records the methods it defines.
@@ -1758,6 +1799,9 @@ impl HiddenImpls {
     ///   coherence keeps a blanket impl of that trait from covering a type
     ///   with its own impl.
     ///
+    /// A macro call in associated-item position of an impl for the type
+    /// counts by the same reading, whatever its arguments name.
+    ///
     /// Every other source answers as in [`Self::may_define`].
     fn may_define_method(&self, self_type: &str, name: &str, owner_trait: &str) -> bool {
         self.unreadable_source
@@ -1781,6 +1825,18 @@ impl HiddenImpls {
             || self.blanket_default_defines(name)
             || self.unresolved_macro_may_write_impl(self_type)
             || self.macro_naming_type_may_write_fn(self_type, name)
+            || self
+                .impl_macro_calls
+                .iter()
+                .any(|(impl_type, macro_name, words)| {
+                    (impl_type.is_empty() || impl_type == self_type)
+                        && (words.contains(name)
+                            || self.macro_may_write_fn(
+                                macro_name,
+                                name,
+                                &mut std::collections::BTreeSet::new(),
+                            ))
+                })
     }
 
     /// Whether a macro whose definition or item-level invocation names
@@ -2125,6 +2181,16 @@ fn trait_path_names_owner(trait_path: &str, owner: &TypePathOwner) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A combining mark continues a Rust identifier and is no word character
+    /// here, so the invoked name starts after the whole character.
+    #[test]
+    fn a_macro_name_after_a_multibyte_character_is_read_without_slicing_it() {
+        let definition = MacroDefinition::read("() => { cafe\u{301}!(); \u{d7}inner!(); }");
+        assert_eq!(definition.invokes, ["inner"]);
+        assert!(definition.opaque);
+        assert!(!MacroDefinition::read("() => { \u{d7}inner!(); }").opaque);
+    }
 
     #[test]
     fn operator_syntax_is_read_per_trait() {
