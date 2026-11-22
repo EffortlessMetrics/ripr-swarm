@@ -461,6 +461,25 @@ jobs:
           RIPR_HONESTY_ADMITTED_BASE: ${{ steps.admitted.outputs.base }}
         run: cargo xtask check-evidence-promotion-honesty
 
+      # #15935: the hosted runner has 16 GiB and no swap. The `ripr` lib-test
+      # lint unit alone reaches about 11 GiB resident, and the workspace pass
+      # checks `xtask` beside it, so the kernel killed the runner mid-step
+      # (exit 143) at three build jobs and, measured locally, at two. Swap
+      # turns that peak into slower minutes instead of a lost runner. It only
+      # adds memory: every lint target and both passes below stay as they are.
+      # The scratch route keeps its own configured capacity.
+      - name: Add swap headroom for the lint builds
+        if: ${{ !inputs.use-scratch }}
+        run: |
+          swapfile=/mnt/ci-swapfile-8g
+          if [ ! -d /mnt ]; then swapfile=/ci-swapfile-8g; fi
+          if sudo fallocate -l 8G "$swapfile" && sudo chmod 600 "$swapfile" && sudo mkswap "$swapfile" > /dev/null && sudo swapon "$swapfile"; then
+            echo "swap enabled:"; swapon --show
+          else
+            echo "::warning::could not enable swap; the lint builds run without extra headroom (#15935)"
+          fi
+          free -m
+
       # Lint optional-feature code as well as type-checking it (#13152).
       # Keep the default-feature workspace pass below: cfg(not(feature = ...))
       # branches are absent from this all-features build.
@@ -475,6 +494,16 @@ jobs:
         env:
           CARGO_BUILD_JOBS: ${{ inputs.use-scratch && inputs.cargo-build-jobs || '3' }}
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # #15935: retain what the lint builds cost in memory. A lost runner
+      # prints nothing, so these counters are the evidence that swap absorbed
+      # the peak (pages swapped out) and that the kernel killed no process.
+      - name: Report lint memory pressure
+        if: ${{ always() && !inputs.use-scratch }}
+        run: |
+          free -m
+          swapon --show || true
+          awk '$1 == "pswpout" || $1 == "oom_kill" { print "lint_memory_" $1 "=" $2 }' /proc/vmstat || echo "::warning::memory counters unavailable"
 
       # PR-side `actions/checkout` checks out `refs/pull/N/merge`, whose base can
       # lag `origin/$BASE_REF` by hours. Re-merge `HEAD^2` onto current
