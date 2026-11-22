@@ -43,7 +43,6 @@ use super::bounded_read::read_config_capped;
 use super::owners::extract_imports_for_test_file;
 use super::parse::parse_on_worker;
 use super::paths::{is_relative_specifier, normalized_path};
-use super::related_tests::package_root_for_file_path;
 use super::source_type_for;
 use super::tests_extract::{UNRESOLVED_MOCK_SPECIFIER, extract_mocks_from_statements};
 use super::types::{Shared, TypeScriptTest};
@@ -168,26 +167,27 @@ fn runner_setup_mocks(
             entries.push((parent_dir(&normalized).to_string(), found));
         }
     }
-    // JSON configs live beside a `package.json`, which the source walk does
-    // not list; each package that holds a test is asked once.
-    let mut package_dirs: BTreeSet<PathBuf> = BTreeSet::new();
+    // JSON configs are not in the source walk. A `jest.config.json` needs no
+    // manifest beside it (`jest --config tests/jest.config.json`), so every
+    // directory from a test file up to the root is asked once.
+    let mut config_dirs: BTreeSet<String> = BTreeSet::new();
     let mut last_file: Option<&Path> = None;
     for test in tests {
         if last_file == Some(test.file.as_path()) {
             continue;
         }
         last_file = Some(test.file.as_path());
-        if let Some(dir) = package_root_for_file_path(&test.file, root) {
-            package_dirs.insert(dir);
+        let test_file = normalized_path(&test.file);
+        let mut dir = parent_dir(&test_file);
+        while config_dirs.insert(dir.to_string()) && !dir.is_empty() {
+            dir = parent_dir(dir);
         }
     }
     // A root manifest can govern nested packages (`projects`).
-    package_dirs.insert(PathBuf::from("."));
-    for dir in package_dirs {
-        let config_dir = normalized_path(&dir);
-        let config_dir = join_normalized("", &config_dir).unwrap_or_default();
+    config_dirs.insert(String::new());
+    for config_dir in config_dirs {
         for (name, key) in [("package.json", Some("jest")), ("jest.config.json", None)] {
-            let Ok(text) = read_config_capped(&root.join(&dir).join(name)) else {
+            let Ok(text) = read_config_capped(&root.join(&config_dir).join(name)) else {
                 continue;
             };
             if !SETUP_KEYS.iter().any(|key| text.contains(key)) {
@@ -209,8 +209,12 @@ fn runner_setup_mocks(
     for (config_dir, found) in entries {
         let mut bases = vec![config_dir.clone()];
         for literal in &found.roots {
-            let literal = literal.strip_prefix("<rootDir>").unwrap_or(literal);
-            if let Some(base) = join_normalized(&config_dir, literal.trim_start_matches('/'))
+            let base = match config_path(root, literal) {
+                ConfigPath::Relative(literal) => join_normalized(&config_dir, literal),
+                ConfigPath::Workspace(path) => join_normalized("", &path),
+                ConfigPath::Outside => None,
+            };
+            if let Some(base) = base
                 && !bases.contains(&base)
             {
                 bases.push(base);
@@ -218,11 +222,19 @@ fn runner_setup_mocks(
         }
         let mut setup_files: Vec<String> = Vec::new();
         for entry in &found.setup {
-            let entry = entry.strip_prefix("<rootDir>").unwrap_or(entry);
-            let entry = entry.trim_start_matches('/');
-            for base in &bases {
-                if let Some(file) = join_normalized(base, entry)
-                    .and_then(|path| resolve_module_file(root, &by_normalized, &path))
+            let candidates: Vec<String> = match config_path(root, entry) {
+                ConfigPath::Relative(entry) => bases
+                    .iter()
+                    .filter_map(|base| join_normalized(base, entry))
+                    .collect(),
+                ConfigPath::Workspace(path) => join_normalized("", &path).into_iter().collect(),
+                ConfigPath::Outside => Vec::new(),
+            };
+            for candidate in candidates {
+                if setup_files.len() >= MAX_SETUP_FILES_PER_CONFIG {
+                    break;
+                }
+                if let Some(file) = resolve_module_file(root, &by_normalized, &candidate)
                     && !setup_files.contains(&file)
                 {
                     setup_files.push(file);
@@ -235,6 +247,37 @@ fn runner_setup_mocks(
         }
     }
     out
+}
+
+/// How a config spells a path.
+enum ConfigPath<'a> {
+    /// Relative to the config's base directory (`./setup.ts`,
+    /// `<rootDir>/setup.ts`, `setup.ts`).
+    Relative(&'a str),
+    /// An absolute path inside the analysis root, as a root-relative path.
+    Workspace(String),
+    /// An absolute path outside the analysis root: it names no workspace file.
+    Outside,
+}
+
+fn config_path<'a>(root: &Path, literal: &'a str) -> ConfigPath<'a> {
+    if let Some(rest) = literal.strip_prefix("<rootDir>") {
+        return ConfigPath::Relative(rest.trim_start_matches('/'));
+    }
+    let path = Path::new(literal);
+    // A rooted path without a drive (`/test/setup.js` on Windows) is not
+    // relative to the config either.
+    if !path.is_absolute() && !literal.starts_with(['/', '\\']) {
+        return ConfigPath::Relative(literal);
+    }
+    let inside = path.strip_prefix(root).ok().or_else(|| {
+        let canonical = root.canonicalize().ok()?;
+        path.strip_prefix(&canonical).ok()
+    });
+    match inside {
+        Some(relative) => ConfigPath::Workspace(normalized_path(relative)),
+        None => ConfigPath::Outside,
+    }
 }
 
 /// Mocks of `setup_files` and of the files they load through relative static
@@ -320,10 +363,16 @@ fn setup_file_facts(
                 Statement::ImportDeclaration(import) if !import.import_kind.is_type() => {
                     Some(import.source.value.as_str())
                 }
-                Statement::ExportAllDeclaration(export) => Some(export.source.value.as_str()),
-                Statement::ExportNamedDeclaration(export) => {
+                // `export type ... from` is erased: the helper never loads.
+                Statement::ExportAllDeclaration(export) if !export.export_kind.is_type() => {
+                    Some(export.source.value.as_str())
+                }
+                Statement::ExportNamedDeclaration(export) if !export.export_kind.is_type() => {
                     export.source.as_ref().map(|source| source.value.as_str())
                 }
+                // A bare `require('./mocks');` loads the helper without a
+                // binding, so the import records below do not hold it.
+                Statement::ExpressionStatement(statement) => bare_require(&statement.expression),
                 _ => None,
             };
             if let Some(specifier) = specifier
@@ -343,6 +392,28 @@ fn setup_file_facts(
     })
     .ok()
     .flatten()
+}
+
+/// The literal specifier of a `require('<specifier>')` call expression.
+fn bare_require<'a>(expression: &'a Expression<'_>) -> Option<&'a str> {
+    let Expression::CallExpression(call) = expression.get_inner_expression() else {
+        return None;
+    };
+    let Expression::Identifier(callee) = call.callee.get_inner_expression() else {
+        return None;
+    };
+    if callee.name != "require" || call.arguments.len() != 1 {
+        return None;
+    }
+    match call
+        .arguments
+        .first()?
+        .as_expression()?
+        .get_inner_expression()
+    {
+        Expression::StringLiteral(literal) => Some(literal.value.as_str()),
+        _ => None,
+    }
 }
 
 fn is_runner_config_source(file: &Path) -> bool {

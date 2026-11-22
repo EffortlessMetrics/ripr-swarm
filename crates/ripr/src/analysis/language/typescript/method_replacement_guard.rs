@@ -61,7 +61,26 @@ pub(crate) fn method_replaced_in_test(test: &TypeScriptTest, name: &str) -> bool
     // Read unmasked: `defineProperty(c, 'apply', ...)` names the member in a
     // string, and a match inside a comment or string only withholds.
     class_entries::assigns_member_named(&test.body_text, name)
+        || bracket_assigns_member_named(&test.body_text, name)
         || replacement_call_names_member(&test.body_text, name)
+}
+
+/// `true` when `body` assigns through a literal bracket key naming the
+/// member: `c['apply'] = fake`, `Cart.prototype["apply"] ||= fake`.
+fn bracket_assigns_member_named(body: &str, name: &str) -> bool {
+    ['\'', '"', '`'].iter().any(|quote| {
+        let key = format!("[{quote}{name}{quote}]");
+        body.match_indices(&key).any(|(idx, _)| {
+            let rest = body[idx + key.len()..].trim_start();
+            // A compound operator (`||=`, `??=`, `&&=`) is still a write.
+            let rest = ["||", "??", "&&"]
+                .iter()
+                .find_map(|operator| rest.strip_prefix(operator))
+                .unwrap_or(rest);
+            rest.strip_prefix('=')
+                .is_some_and(|after| !after.starts_with('=') && !after.starts_with('>'))
+        })
+    })
 }
 
 /// `true` when `body` holds a [`REPLACEMENT_CALLS`] call whose second
@@ -89,7 +108,27 @@ fn replacement_call_names_member(body: &str, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::replacement_call_names_member;
+    use super::{bracket_assigns_member_named, replacement_call_names_member};
+
+    #[test]
+    fn a_bracket_write_names_the_member_by_its_literal_key() {
+        for body in [
+            "c['apply'] = () => 90;",
+            "Cart.prototype[\"apply\"] ||= fake;",
+            "c[`apply`]= fake;",
+        ] {
+            assert!(bracket_assigns_member_named(body, "apply"), "{body}");
+        }
+        for body in [
+            // A read, a comparison, another key, a computed key.
+            "const f = c['apply'];",
+            "if (c['apply'] === fake) {}",
+            "c['total'] = fake;",
+            "c[apply] = fake;",
+        ] {
+            assert!(!bracket_assigns_member_named(body, "apply"), "{body}");
+        }
+    }
 
     #[test]
     fn a_replacement_call_must_name_the_member_as_its_second_argument() {

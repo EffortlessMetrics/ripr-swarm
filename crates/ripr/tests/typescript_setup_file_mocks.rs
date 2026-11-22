@@ -55,8 +55,10 @@ fn owner_finding(
     let root = &workspace.0;
     write_file(root, "ripr.toml", "[languages]\nenabled = ['typescript']\n")?;
     let mut owner_source = None;
+    // `@ROOT@` in a file stands for the workspace's absolute path.
+    let root_text = root.to_string_lossy().replace('\\', "/");
     for (path, contents) in files {
-        write_file(root, path, contents)?;
+        write_file(root, path, &contents.replace("@ROOT@", &root_text))?;
         if *path == owner_file {
             owner_source = Some(*contents);
         }
@@ -417,5 +419,156 @@ fn an_unreadable_setup_specifier_withholds_like_an_in_file_one() -> Result<(), S
             ("test/d.test.ts", &test_source("../src/discount", VITEST)),
         ],
         "no_static_path",
+    )
+}
+
+const JEST_SETUP: (&str, &str) = ("test/setup.js", "jest.mock('../src/discount');\n");
+
+#[test]
+fn a_jest_json_config_without_a_manifest_beside_it_governs_its_directory() -> Result<(), String> {
+    // `jest --config test/jest.config.json`: no `package.json` under `test/`.
+    let test = test_source("../src/discount", "");
+    let manifest = ("package.json", "{ \"name\": \"x\" }\n");
+    assert_class(
+        "jest-json-nested",
+        &[
+            manifest,
+            (
+                "test/jest.config.json",
+                "{ \"setupFiles\": [\"./setup.js\"] }\n",
+            ),
+            JEST_SETUP,
+            ("test/d.test.ts", &test),
+        ],
+        "no_static_path",
+    )?;
+    // Twin: the same config in a sibling directory governs no test here.
+    assert_class(
+        "jest-json-sibling",
+        &[
+            manifest,
+            (
+                "other/jest.config.json",
+                "{ \"setupFiles\": [\"../test/setup.js\"] }\n",
+            ),
+            JEST_SETUP,
+            ("test/d.test.ts", &test),
+        ],
+        "exposed",
+    )
+}
+
+#[test]
+fn a_bare_require_in_a_setup_file_loads_the_helper() -> Result<(), String> {
+    let test = test_source("../src/discount", "");
+    let config = (
+        "jest.config.js",
+        "module.exports = { setupFilesAfterEnv: ['<rootDir>/test/setup.cjs'] };\n",
+    );
+    let helper = ("test/mock-discounts.cjs", "jest.mock('../src/discount');\n");
+    assert_class(
+        "setup-bare-require",
+        &[
+            config,
+            ("test/setup.cjs", "require('./mock-discounts.cjs');\n"),
+            helper,
+            ("test/d.test.ts", &test),
+        ],
+        "no_static_path",
+    )?;
+    // Twin: `require.resolve` names the helper without running it.
+    assert_class(
+        "setup-require-resolve",
+        &[
+            config,
+            (
+                "test/setup.cjs",
+                "require.resolve('./mock-discounts.cjs');\n",
+            ),
+            helper,
+            ("test/d.test.ts", &test),
+        ],
+        "exposed",
+    )
+}
+
+#[test]
+fn a_type_only_re_export_does_not_load_the_helper() -> Result<(), String> {
+    let test = test_source("../src/discount", VITEST);
+    let config = ("vitest.config.ts", VITEST_CONFIG);
+    let helper = (
+        "test/mock-cart.ts",
+        "import { vi } from 'vitest';\nvi.mock('../src/discount');\nexport type CartFixture = { total: number };\nexport const fixture = { total: 1 };\n",
+    );
+    for (label, setup) in [
+        (
+            "setup-export-type",
+            "export type { CartFixture } from './mock-cart';\n",
+        ),
+        (
+            "setup-export-type-star",
+            "export type * from './mock-cart';\n",
+        ),
+    ] {
+        assert_class(
+            label,
+            &[
+                config,
+                ("test/setup.ts", setup),
+                helper,
+                ("test/d.test.ts", &test),
+            ],
+            "exposed",
+        )?;
+    }
+    // Twin: a value re-export of the same helper runs it.
+    assert_class(
+        "setup-export-value",
+        &[
+            config,
+            ("test/setup.ts", "export { fixture } from './mock-cart';\n"),
+            helper,
+            ("test/d.test.ts", &test),
+        ],
+        "no_static_path",
+    )
+}
+
+#[test]
+fn an_absolute_setup_path_is_read_against_the_workspace_root() -> Result<(), String> {
+    let test = test_source("../src/discount", "");
+    for (label, config) in [
+        (
+            "jest-absolute-entry",
+            "{ \"setupFiles\": [\"@ROOT@/test/setup.js\"] }\n",
+        ),
+        (
+            "jest-absolute-root-dir",
+            "{ \"rootDir\": \"@ROOT@/test\", \"setupFiles\": [\"<rootDir>/setup.js\"] }\n",
+        ),
+    ] {
+        assert_class(
+            label,
+            &[
+                ("jest.config.json", config),
+                JEST_SETUP,
+                ("test/d.test.ts", &test),
+            ],
+            "no_static_path",
+        )?;
+    }
+    // Twin: an absolute path outside the workspace is not rebased onto the
+    // workspace file with the same tail.
+    assert_class(
+        "jest-absolute-outside",
+        &[
+            (
+                "jest.config.json",
+                "{ \"setupFiles\": [\"/test/setup.js\"] }\n",
+            ),
+            JEST_SETUP,
+            ("test/d.test.ts", &test),
+        ],
+        "exposed",
     )
 }

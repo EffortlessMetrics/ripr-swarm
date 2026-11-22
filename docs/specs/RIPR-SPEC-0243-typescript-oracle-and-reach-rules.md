@@ -1094,15 +1094,19 @@ owner-module mock (fail closed). `spyOn(x, "owner")` with
 Setup-file mocks (#15949): a mock registered by a runner setup file counts
 for every test file under the config's directory, exactly like a mock
 written in the test file. Configs read: `vitest.config.*`, `vite.config.*`,
-`vitest.workspace.*`, `jest.config.*`, `jest.config.json` and the `jest` key
-of `package.json`. Keys read, at any depth: `setupFiles`,
+`vitest.workspace.*`, `jest.config.*`, and, in every directory from a test
+file up to the root, `jest.config.json` and the `jest` key of `package.json`.
+Keys read, at any depth: `setupFiles`,
 `setupFilesAfterEnv` and the legacy `setupTestFrameworkScriptFile`
 (`globalSetup` runs in another process and registers no mock for a test).
 Every string literal inside the value is an entry, read against the config's
 directory and a literal `rootDir` or `root` beside it; `<rootDir>` is
-stripped. A relative mock specifier resolves from the file that holds the
+stripped. An absolute path inside the analysis root is read as that file, and
+one outside it names nothing. A relative mock specifier resolves from the file that holds the
 mock call, not from the test. Files a setup file loads through relative
-static imports are read too, 2 hops and 32 files per config at most. An entry
+static imports, value re-exports and bare `require('./x')` statements are
+read too, 2 hops and 32 files per config at most; `import type` and
+`export type` load nothing. An entry
 that names no workspace file (a package, a variable), a setup file that does
 not parse, `automock` and automatic `__mocks__` are not modelled. A nearer
 config of another project is not told apart from the one that governs:
@@ -1114,7 +1118,7 @@ tier-1 relation when the test file may replace the member. That is: the
 member's name is among the file-wide replacement names (an argument token of
 a `spyOn`, `stub`, `replace`, `mock`, `doMock`, `stubGlobal`,
 `mockImplementation` or `mockReturnValue` call, or a `.name =` target,
-hooks included); or the test body assigns the member, names it in a
+hooks included); or the test body assigns the member (`c.apply =`, `c['apply'] =`), names it in a
 `defineProperty` or a prototype `delete`, or calls `spyOn`, `stub`,
 `replace`, `replaceGetter`, `replaceSetter`, `method` or `replaceProperty`
 with the literal name as second argument. A call-through spy is withheld as

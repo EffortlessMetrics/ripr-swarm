@@ -147,7 +147,16 @@ fn related(label: &str, owner: Owner, preamble: &str, body: &str) -> Result<bool
         (line, "    if (amount > threshold) {"),
         name,
     )?;
-    Ok(finding.class != "no_static_path" && finding.related > 0)
+    // The relation and the class are read separately and must agree: a
+    // withheld relation leaves no related test and no static path.
+    let related = finding.related > 0;
+    if related == (finding.class == "no_static_path") {
+        return Err(format!(
+            "{label}: {} related tests but class {}",
+            finding.related, finding.class
+        ));
+    }
+    Ok(related)
 }
 
 /// Checks every `(label, preamble, body)` case and reports each miss.
@@ -175,6 +184,11 @@ fn an_unreplaced_method_on_a_constructed_receiver_relates() -> Result<(), String
     assert_all(
         Owner::Apply,
         &[
+            (
+                "m-control-bracket-other-member",
+                "",
+                &format!("    const c = new Cart();\n    c['total'] = 5;\n{CALL}"),
+            ),
             (
                 "m-control",
                 "",
@@ -244,6 +258,11 @@ fn a_method_replaced_in_the_test_body_withholds() -> Result<(), String> {
                 "m-assigned",
                 "",
                 &format!("    const c = new Cart();\n    c.apply = () => 100;\n{CALL}"),
+            ),
+            (
+                "m-bracket-assigned",
+                "",
+                &format!("    const c = new Cart();\n    c['apply'] = () => 100;\n{CALL}"),
             ),
             (
                 "m-prototype-assigned",
