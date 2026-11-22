@@ -256,3 +256,34 @@ fn the_snippet_keeps_rust_for_a_crate_nested_below_the_root() -> Result<(), Stri
         true,
     )
 }
+
+/// #15989: a `ripr.toml` that enables only Python is the list being
+/// replaced. The snippet for the TypeScript file keeps `python`, which this
+/// diff does not touch, and does not put back the `rust` the list leaves
+/// out, although the root has a `Cargo.toml`. `ripr doctor` agrees.
+#[test]
+fn the_snippet_starts_from_an_explicit_language_list() -> Result<(), String> {
+    let repo = Repo::create()?;
+    repo.write("ripr.toml", "[languages]\nenabled = [\"python\"]\n")?;
+    repo.write("web.ts", OLD_TS)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "ts"])?;
+    repo.write("web.ts", NEW_TS)?;
+    let screen = repo.check_change()?;
+    require(
+        &screen,
+        "[languages]\nenabled = [\"python\", \"typescript\"]\n",
+        true,
+    )?;
+    require(&screen, "\"rust\"", false)?;
+    let doctor = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&repo.0)
+        .arg("doctor")
+        .output()
+        .map_err(|e| e.to_string())?;
+    require(
+        &String::from_utf8_lossy(&doctor.stdout),
+        "Set `enabled = [\"python\", \"typescript\"]` under `[languages]`",
+        true,
+    )
+}

@@ -395,6 +395,22 @@ fn is_repository_boundary(directory: &Path) -> bool {
     document.get("workspace").is_some_and(toml::Value::is_table)
 }
 
+/// Whether the loaded `ripr.toml` sets `[languages].enabled` itself, rather
+/// than leaving the built-in default in place. Reads the exact text the
+/// config was parsed from, so a config-free run and a `[languages]` table
+/// without `enabled` both read as the default.
+pub(crate) fn languages_enabled_is_explicit(config: &RiprConfig) -> bool {
+    config
+        .source_text()
+        .and_then(|text| toml::from_str::<toml::Value>(text).ok())
+        .is_some_and(|document| {
+            document
+                .get("languages")
+                .and_then(|languages| languages.get("enabled"))
+                .is_some()
+        })
+}
+
 pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     load_for_root_failure(root).map_err(|failure| failure.human_display(root, cfg!(windows)))
 }

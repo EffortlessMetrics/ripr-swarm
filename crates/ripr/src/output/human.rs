@@ -1666,20 +1666,30 @@ fn nested_python_root_hint(
 /// Names Rust only when the analyzed root has Rust markers or a crate nested
 /// below it (#7648): a root with `backend/Cargo.toml` has its Rust files
 /// analyzed, and a list without `rust` would switch that off.
+///
+/// A `ripr.toml` that sets `[languages].enabled` is the list being replaced,
+/// so the line starts from it, as the `ripr doctor` tip does (#15989): a
+/// list that leaves `rust` out keeps it out, and a preview language it
+/// enables stays even when this diff has no file of that language.
 fn preview_enablement_toml(output: &CheckOutput) -> String {
-    let rust_detected = crate::domain::enablement_tip_keeps_rust(&output.root);
+    let explicit = crate::config::load_for_root(&output.root)
+        .ok()
+        .filter(crate::config::languages_enabled_is_explicit)
+        .map(|config| config.languages().enabled().to_vec());
+    let rust_detected =
+        explicit.is_some() || crate::domain::enablement_tip_keeps_rust(&output.root);
     // Keep the preview languages this diff shows are already on (their
     // advisories say so), then add every language still off, so one edit
-    // enables them all (#15288). A preview language enabled in ripr.toml but
-    // absent from this diff has no advisory and is not listed.
+    // enables them all (#15288).
     let wire_id = |wire: &str| match crate::domain::LanguageId::from_wire(wire) {
         Some(crate::domain::LanguageId::JavaScript) => Some(crate::domain::LanguageId::TypeScript),
         other => other,
     };
-    let mut enabled: Vec<crate::domain::LanguageId> = Vec::new();
-    if rust_detected {
-        enabled.push(crate::domain::LanguageId::Rust);
-    }
+    let mut enabled: Vec<crate::domain::LanguageId> = match explicit {
+        Some(configured) => configured,
+        None if rust_detected => vec![crate::domain::LanguageId::Rust],
+        None => Vec::new(),
+    };
     for advisory in output
         .preview_language_advisories
         .iter()
