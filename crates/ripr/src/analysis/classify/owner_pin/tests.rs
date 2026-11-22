@@ -9849,7 +9849,7 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
             false,
         ),
         (
-            "#[cfg_attr(test, allow(dead_code))]\nmod core;\nuse core::*;\n",
+            "#[cfg_attr(test, doc = \"local\")]\nmod core;\nuse core::*;\n",
             false,
         ),
     ] {
