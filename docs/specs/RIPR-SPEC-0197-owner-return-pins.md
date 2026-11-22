@@ -2791,6 +2791,30 @@ value on its own line (the #14385 branch probe) is credited by the same per-call
 rule when the diff changes only that line. A chain without a final `else`, a
 branch holding a statement, or code after the chain is outside the subset.
 
+### Manifest-rebound standard assertion roots (#10150)
+
+Owner-pin admission proves a `std::` or `core::` assertion root against the
+manifests before it credits a pin. The test's other assertion consumers read
+the parsed oracle directly, so a constructor called inside
+`std::assert_eq!(Widget::new().read(), 4)` was credited `strongly_gripped`
+even where the test's `Cargo.toml` binds `std` to a token-discarding package
+(`std = { package = "fakestd" }` in a `#![no_std]` crate) or declares a `core`
+dependency. After the index is built, an assertion written through a `std::` or
+`core::` root becomes an `unknown` oracle when the nearest manifest of the
+test's compilation unit declares a dependency under that name in a table the
+test can see: `[dependencies]`, `[dev-dependencies]` or their
+`[target.'cfg(..)'.*]` forms. A test file mounted by a resolved literal
+`include!` is judged by the including file's manifest. The real standard crates
+are never Cargo dependencies, so the declaration alone shows the root may be
+another package; a platform or optional declaration that may be inactive still
+reads `unknown`, which states the uncertainty without making the seam
+actionable. The oracle is kept as `unknown` rather than dropped, because that
+package may still assert. These leave the parsed oracle alone: a
+`[build-dependencies]` entry (visible only to the build script), a `[patch]` or
+`[workspace.dependencies]` entry alone (neither adds a dependency to the
+crate), an unparsable nearest manifest, and a renamed package under a
+different key.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`

@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/rebound_assertion_root.rs::a_manifest_rebound_assertion_root_gives_the_constructor_no_exact_credit",
+]
+code = [
+  "crates/ripr/src/analysis/facts/rebound_assertion_roots.rs",
+]
