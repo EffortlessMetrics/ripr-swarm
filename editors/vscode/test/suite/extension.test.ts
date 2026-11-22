@@ -8,11 +8,13 @@ import {
   RiprClientRuntime,
   RiprAgentLoopCommandTarget,
   RiprWorkspaceRootState,
+  lspConfigurationForResource,
   readActionableGapQueueStatus,
   readFirstPrPacketStatus,
   validatedAgentLoopCommand
 } from '../../src/client';
-import { explicitSetting } from '../../src/config';
+import { explicitSetting, getConfig } from '../../src/config';
+import { configurationChangeRequiresRestart } from '../../src/extension';
 import { hasUnsafeShellMetacharacter, redirectStaysInWorkspace, redirectTargetMatches, serverShellArg } from '../../src/packetJson';
 import {
   NO_RUNNING_SERVER_MESSAGE,
@@ -350,23 +352,28 @@ suite('Extension Smoke', () => {
   });
 
   test('forwards seam diagnostic settings through LSP initialization options', async () => {
-    await withControllerTestContext({ seamDiagnostics: false, diagnosticProfile: 'full' }, async (context) => {
-      await context.controller.start();
+    await withControllerTestContext(
+      { checkMode: 'fast', includeUnchangedTests: false, seamDiagnostics: false, diagnosticProfile: 'full' },
+      async (context) => {
+        await context.controller.start();
 
-      const initializationOptions = context.client.receivedInitializationOptions;
-      assert.deepStrictEqual(
-        {
-          includeUnchangedTests: initializationOptions?.includeUnchangedTests,
-          seamDiagnostics: initializationOptions?.seamDiagnostics,
-          diagnosticProfile: initializationOptions?.diagnosticProfile
-        },
-        {
-          includeUnchangedTests: true,
-          seamDiagnostics: false,
-          diagnosticProfile: 'full'
-        }
-      );
-    });
+        const initializationOptions = context.client.receivedInitializationOptions;
+        assert.deepStrictEqual(
+          {
+            checkMode: initializationOptions?.checkMode,
+            includeUnchangedTests: initializationOptions?.includeUnchangedTests,
+            seamDiagnostics: initializationOptions?.seamDiagnostics,
+            diagnosticProfile: initializationOptions?.diagnosticProfile
+          },
+          {
+            checkMode: 'fast',
+            includeUnchangedTests: false,
+            seamDiagnostics: false,
+            diagnosticProfile: 'full'
+          }
+        );
+      }
+    );
   });
 
   test('leaves unset seam diagnostic settings to ripr.toml', async () => {
@@ -379,7 +386,102 @@ suite('Extension Smoke', () => {
       const initializationOptions = context.client.receivedInitializationOptions ?? {};
       assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).seamDiagnostics, undefined);
       assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).diagnosticProfile, undefined);
+      // The same rule for ripr.toml [analysis] (#15897): a forwarded
+      // manifest default overrode `mode` and `include_unchanged_tests`.
+      assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).checkMode, undefined);
+      assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).includeUnchangedTests, undefined);
     });
+  });
+
+  test('reports a setting sent at initialize that was later unset', async () => {
+    const options: ControllerTestOptions = { includeUnchangedTests: false, seamDiagnostics: false };
+    await withControllerTestContext(options, async (context) => {
+      await context.controller.start();
+      assert.strictEqual(context.controller.initializedSettingWasUnset(), false);
+
+      // Changing a value keeps the key in the configuration pull, so the
+      // server applies it live.
+      options.includeUnchangedTests = true;
+      assert.strictEqual(context.controller.initializedSettingWasUnset(), false);
+
+      // Removing it leaves the server on the initialize value until a restart.
+      options.includeUnchangedTests = undefined;
+      assert.strictEqual(context.controller.initializedSettingWasUnset(), true);
+    });
+
+    // A key the session never sent has no initialize value to go stale.
+    const unset: ControllerTestOptions = {};
+    await withControllerTestContext(unset, async (context) => {
+      await context.controller.start();
+      unset.seamDiagnostics = false;
+      unset.seamDiagnostics = undefined;
+      assert.strictEqual(context.controller.initializedSettingWasUnset(), false);
+    });
+  });
+
+  test('restarts for a removed session setting but not for a changed one', () => {
+    const affecting = (...sections: string[]) => (section: string) => sections.includes(section);
+    const unset = () => true;
+    const stillSet = () => false;
+    for (const section of ['ripr.includeUnchangedTests', 'ripr.seamDiagnostics', 'ripr.diagnosticProfile']) {
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), unset), true, section);
+      // A changed value reaches the server through the configuration pull.
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), stillSet), false, section);
+    }
+    for (const section of ['ripr.enabled', 'ripr.server', 'ripr.check', 'ripr.baseRef']) {
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), stillSet), true, section);
+    }
+    // An unrelated change never restarts, whatever the session state.
+    assert.strictEqual(configurationChangeRequiresRestart(affecting('ripr.trace'), unset), false);
+    assert.strictEqual(configurationChangeRequiresRestart(affecting('editor.fontSize'), unset), false);
+  });
+
+  test('reads check mode and unchanged-test settings only from a settings layer', async () => {
+    const manifestDefault = (key: string, defaultValue: unknown) =>
+      ({ inspect: () => ({ key, defaultValue }) }) as unknown as vscode.WorkspaceConfiguration;
+    assert.strictEqual(explicitSetting<string>(manifestDefault('ripr.check.mode', 'draft'), 'check.mode'), undefined);
+    assert.strictEqual(
+      explicitSetting<boolean>(manifestDefault('ripr.includeUnchangedTests', true), 'includeUnchangedTests'),
+      undefined
+    );
+
+    // The real settings read: an unset key is undefined, not the manifest
+    // default, so ripr.toml [analysis] applies; a workspace value is
+    // forwarded (#15897).
+    const uri = workspaceFileUri('src/lib.rs');
+    const inspect = () =>
+      vscode.workspace.getConfiguration('ripr', uri).inspect<boolean>('includeUnchangedTests');
+    const previous = inspect()?.workspaceValue;
+    const update = (value: unknown) =>
+      vscode.workspace
+        .getConfiguration('ripr', uri)
+        .update('includeUnchangedTests', value, vscode.ConfigurationTarget.Workspace);
+    try {
+      await update(undefined);
+      assert.strictEqual(inspect()?.defaultValue, true);
+      assert.strictEqual(getConfig(uri).includeUnchangedTests, inspect()?.globalValue);
+      await update(false);
+      assert.strictEqual(getConfig(uri).includeUnchangedTests, false);
+
+      // The configuration pull as the server receives it: a set value is on
+      // the wire, and removing it drops the key instead of sending the
+      // manifest default.
+      const pulled = () =>
+        JSON.parse(JSON.stringify(lspConfigurationForResource(uri.toString()))) as Record<string, unknown>;
+      assert.strictEqual(pulled().includeUnchangedTests, false);
+      await update(true);
+      assert.strictEqual(pulled().includeUnchangedTests, true);
+      await update(undefined);
+      assert.strictEqual(pulled().includeUnchangedTests, inspect()?.globalValue);
+      assert.strictEqual('includeUnchangedTests' in pulled(), inspect()?.globalValue !== undefined);
+      const mode = vscode.workspace.getConfiguration('ripr', uri).inspect<string>('check.mode');
+      assert.strictEqual(
+        pulled().checkMode,
+        mode?.workspaceFolderValue ?? mode?.workspaceValue ?? mode?.globalValue
+      );
+    } finally {
+      await update(previous);
+    }
   });
 
   test('explicitSetting ignores manifest defaults and returns user layers', () => {
@@ -445,9 +547,7 @@ suite('Extension Smoke', () => {
       assert.deepStrictEqual(delegatedSections, ['other.setting']);
       assert.strictEqual((result[1] as string), 'delegated:other.setting');
       assert.strictEqual(typeof (result[0] as Record<string, unknown>).diagnosticProfile, 'string');
-      assert.strictEqual(typeof (result[0] as Record<string, unknown>).includeUnchangedTests, 'boolean');
       assert.strictEqual(typeof (result[2] as Record<string, unknown>).diagnosticProfile, 'string');
-      assert.strictEqual(typeof (result[2] as Record<string, unknown>).includeUnchangedTests, 'boolean');
     });
   });
 
@@ -6467,6 +6567,7 @@ suite('Start or Continue Repair shell (#2928 / #4647)', () => {
 interface ControllerTestOptions {
   enabled?: boolean;
   serverVersionWarning?: string;
+  checkMode?: 'instant' | 'draft' | 'fast' | 'deep' | 'ready';
   includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
@@ -6926,9 +7027,9 @@ function createControllerTestContext(options: ControllerTestOptions) {
         autoDownload: false,
         serverVersion: '',
         downloadBaseUrl: '',
-        checkMode: 'draft',
+        checkMode: options.checkMode,
         baseRef: options.baseRef ?? 'origin/main',
-        includeUnchangedTests: options.includeUnchangedTests ?? true,
+        includeUnchangedTests: options.includeUnchangedTests,
         seamDiagnostics: options.seamDiagnostics,
         diagnosticProfile: options.diagnosticProfile,
         traceServer: 'off'
