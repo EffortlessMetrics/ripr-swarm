@@ -541,9 +541,9 @@ client supports:
   (the default actionable profile, or spot diagnostics off), deferred or
   not, the same finding instead lists the start inert as
   `seam_inventory_not_enabled`, whose reason names the setting
-  (`ripr.diagnosticProfile` = `full` and `ripr.seamDiagnostics` on, or
-  `[lsp] diagnostic_profile = "full"` and `seam_diagnostics = true` in
-  `ripr.toml` with Rust enabled) and then the full refresh. An `exposed`, base-side, preview, non-Rust or static-limited
+  (`ripr.diagnosticProfile` = `full` and `ripr.seamDiagnostics` on in the
+  editor; the `ripr.toml` `[lsp]` keys apply only where no editor setting
+  overrides them, and Rust must be enabled) and then the full refresh. An `exposed`, base-side, preview, non-Rust or static-limited
   finding, a full snapshot whose configuration builds spots, a request that
   also carries a gap record (which has its own repair-packet actions) and a
   legacy client get no inert start. While analysis is queued or running,

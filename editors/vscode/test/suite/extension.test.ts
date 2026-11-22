@@ -1797,21 +1797,35 @@ suite('Extension Smoke', () => {
     }
   });
 
-  for (const deferred of [true, false]) {
-    test(`startCurrentRepair ${deferred ? 'names the full refresh for a finding whose seams were deferred (#13636)' : 'keeps the no-gap message for a finding the server names no blocker for'}`, async function (this: Mocha.Context) {
+  const blockedFindingStarts = [
+    {
+      name: 'names the full refresh for a finding whose seams were deferred (#13636)',
+      code: 'seam_evidence_deferred',
+      reason: 'The last save ran a quick analysis that skips repair spots, so there is no repair start here yet; run "ripr: Refresh Full Analysis", then check this finding again.',
+    },
+    {
+      name: 'names the settings when the profile builds no repair spots (#13636)',
+      code: 'seam_inventory_not_enabled',
+      reason: 'Your ripr settings skip repair spots, so there is no repair start here; set ripr.diagnosticProfile to "full" and ripr.seamDiagnostics to true in your editor settings (diagnostic_profile and seam_diagnostics under [lsp] in ripr.toml apply only where no editor setting overrides them, and "rust" must be enabled under [languages]), then run "ripr: Refresh Full Analysis".',
+    },
+    undefined,
+  ];
+  for (const [index, blockedStart] of blockedFindingStarts.entries()) {
+    const blocked = blockedStart !== undefined;
+    test(`startCurrentRepair ${blockedStart ? blockedStart.name : 'keeps the no-gap message for a finding the server names no blocker for'}`, async function (this: Mocha.Context) {
       skipUnlessTrustedTestHost(this);
-      const reason = 'The last save ran a quick analysis that skips repair spots, so there is no repair start here yet; run "ripr: Refresh Full Analysis", then check this finding again.';
+      const reason = blockedStart?.reason ?? '';
       const context = createControllerTestContext({
-        lspResult: deferred
+        lspResult: blockedStart
           ? [{
             title: 'Start repair: copy repair command',
             kind: 'quickfix.ripr.inspect',
             disabled: { reason },
-            data: { action_name: 'copy_agent_repair_command', disabled_reason: 'seam_evidence_deferred' },
+            data: { action_name: 'copy_agent_repair_command', disabled_reason: blockedStart.code },
           }]
           : [],
       });
-      const relativePath = `src/start-deferred-finding-${deferred ? 'named' : 'unnamed'}.rs`;
+      const relativePath = `src/start-blocked-finding-${index}.rs`;
       const uri = workspaceFileUri(relativePath);
       const collection = vscode.languages.createDiagnosticCollection('ripr-start-deferred-finding');
       try {
@@ -1853,7 +1867,7 @@ suite('Extension Smoke', () => {
           JSON.stringify(sent.context.diagnostics)
         );
         assert.ok(!context.runRiprCalls.some((call) => call.args[0] === 'agent' && call.args[1] === 'repair'));
-        if (deferred) {
+        if (blocked) {
           assert.ok(
             context.infoMessages.some((message) => message === `ripr cannot start this repair yet. ${reason}`),
             context.infoMessages.join(' | ')
