@@ -461,13 +461,23 @@ mod tests {
 
     #[test]
     fn windows_separators_normalize_into_the_identity() -> Result<(), String> {
+        let path = PathBuf::from("src\\pricing.rs");
+        // The owner names the file the way the seam side spells it.
+        let owner_file = crate::analysis::stable_path_text(&path);
         let gap = gap_for(
-            &PathBuf::from("src\\pricing.rs"),
-            Some(owner("src/pricing.rs", "discounted_total")),
+            &path,
+            Some(owner(&owner_file, "discounted_total")),
             &ProbeFamily::Predicate,
             "if amount >= discount_threshold {",
         )?;
-        assert_eq!(gap.file, "src/pricing.rs");
+        // A backslash is a separator on Windows and a file-name byte, spelled
+        // `%5C`, on Unix (#15908).
+        let expected = if cfg!(unix) {
+            "src%5Cpricing.rs"
+        } else {
+            "src/pricing.rs"
+        };
+        assert_eq!(gap.file, expected);
         assert_eq!(gap.owner, "discounted_total");
         Ok(())
     }
@@ -715,22 +725,23 @@ mod tests {
     }
 
     /// #8638: the finding side mints from the producer's path and the seam
-    /// side from the seam's path after `stable_path_text`; both normalize
-    /// Windows-style separators, so the ids match byte-for-byte.
+    /// side from the seam's path after `stable_path_text`; both spell the file
+    /// the same way (`/` for a Windows separator, `%5C` for a literal Unix
+    /// backslash, #15908), so the ids match byte-for-byte.
     #[test]
     fn finding_and_seam_paths_agree_after_stable_path_text() -> Result<(), String> {
         let windows = PathBuf::from("src\\pricing.rs");
+        let seam_file = crate::analysis::stable_path_text(&windows);
         let gap = gap_for(
             &windows,
-            Some(owner("src/pricing.rs", "score")),
+            Some(owner(&seam_file, "score")),
             &ProbeFamily::Predicate,
             "if a >= b {",
         )?;
-        let seam_file = crate::analysis::stable_path_text(&windows);
         assert_eq!(
             rust_gap_id_for_seam_shape(
                 &seam_file,
-                "src/pricing.rs::score",
+                &format!("{seam_file}::score"),
                 SeamKind::PredicateBoundary,
                 "if a >= b {"
             )

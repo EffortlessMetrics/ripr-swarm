@@ -3113,13 +3113,21 @@ mod tests {
 
         let rendered = render(&output);
 
+        // A backslash is a separator on Windows. On Unix it is a file-name
+        // byte (#15908): the stable `%5C` marker goes back to the raw `\`
+        // so the annotation is placed on the file Git tracks.
+        let expected = if cfg!(unix) {
+            r"file=src\pricing.ts,"
+        } else {
+            "file=src/pricing.ts,"
+        };
         assert!(
-            rendered.contains("file=src/pricing.ts,"),
-            "expected forward-slash path in github annotation; got:\n{rendered}"
+            rendered.contains(expected),
+            "expected {expected} in github annotation; got:\n{rendered}"
         );
         assert!(
-            !rendered.contains(r"src\pricing.ts"),
-            "backslash path must not appear in github annotation; got:\n{rendered}"
+            !rendered.contains("not placed") && !rendered.contains("%5C"),
+            "the annotation must be placed on the file; got:\n{rendered}"
         );
     }
 

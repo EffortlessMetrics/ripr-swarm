@@ -2315,7 +2315,11 @@ mod tests {
             Path::new("src/lib.rs"),
             "./crates/a/src/lib.rs"
         ));
-        assert!(paths_match(Path::new("src\\lib.rs"), "src/lib.rs"));
+        // A backslash is a separator on Windows only (#15908).
+        assert_eq!(
+            paths_match(Path::new("src\\lib.rs"), "src/lib.rs"),
+            !cfg!(unix)
+        );
         assert!(!paths_match(Path::new("src/lib.rs"), "lib.rs.bak"));
         assert!(!paths_match(Path::new("src/mylib.rs"), "lib.rs"));
     }
