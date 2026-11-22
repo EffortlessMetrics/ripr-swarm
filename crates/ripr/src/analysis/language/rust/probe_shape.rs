@@ -461,9 +461,12 @@ mod tests {
 
     #[test]
     fn windows_separators_normalize_into_the_identity() -> Result<(), String> {
+        let path = PathBuf::from("src\\pricing.rs");
+        // The owner names the file the way the seam side spells it.
+        let owner_file = crate::analysis::stable_path_text(&path);
         let gap = gap_for(
-            &PathBuf::from("src\\pricing.rs"),
-            Some(owner("src/pricing.rs", "discounted_total")),
+            &path,
+            Some(owner(&owner_file, "discounted_total")),
             &ProbeFamily::Predicate,
             "if amount >= discount_threshold {",
         )?;
