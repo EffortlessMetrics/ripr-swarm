@@ -603,9 +603,10 @@ fn may_be_unreached(
         let discovery = *discovery_off
             .entry(package_dir.to_path_buf())
             .or_insert_with(|| {
-                // The same reading `evidence_roots` applies: only an explicit
-                // `auto* = false` turns discovery off. An unparsable manifest
-                // leaves the walk nothing to prove.
+                // The same reading `evidence_roots` applies: an explicit
+                // `auto* = false`, or edition 2015 with a declared target of
+                // that kind (#15877), turns discovery off. An unparsable
+                // manifest leaves the walk nothing to prove.
                 committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
                     .ok()
                     .flatten()
@@ -614,15 +615,15 @@ fn may_be_unreached(
                             .ok()
                             .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
                             .is_some_and(|manifest| {
-                                let package = manifest.get("package");
-                                ["autotests", "autobenches", "autoexamples"]
-                                    .iter()
-                                    .any(|key| {
-                                        package
-                                            .and_then(|package| package.get(*key))
-                                            .and_then(toml::Value::as_bool)
-                                            == Some(false)
-                                    })
+                                [
+                                    ("autotests", "test"),
+                                    ("autobenches", "bench"),
+                                    ("autoexamples", "example"),
+                                ]
+                                .iter()
+                                .any(|(key, section)| {
+                                    !workspace::discovers_targets(&manifest, key, section)
+                                })
                             })
                     })
             });

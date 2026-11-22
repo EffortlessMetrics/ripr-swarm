@@ -781,11 +781,13 @@ fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<Path
     if !custom_lib_path && (discovers("autolib") || manifest.get("lib").is_some()) {
         roots.insert(src.join("lib.rs"));
     }
-    if discovers("autobins") {
+    if discovers_targets(manifest, "autobins", "bin") {
         roots.insert(src.join("main.rs"));
         roots.extend(autodiscovered(&src.join("bin")));
     } else {
-        // `autobins = false` builds only declared binaries (#15877). A
+        // `autobins = false`, or an edition 2015 manifest that declares a
+        // `[[bin]]` without setting `autobins`, builds only declared
+        // binaries (#15877). A
         // declaration without `path` still resolves to `src/bin/<name>.rs`,
         // `src/bin/<name>/main.rs`, or `src/main.rs` when it carries the
         // package's name, so those stay rooted; an undeclared `src/main.rs`
@@ -882,6 +884,32 @@ fn manifest_rules_out_production(
             ))
 }
 
+/// Whether Cargo autodiscovers targets of one kind (`autobins`/`bin`,
+/// `autotests`/`test`, `autobenches`/`bench`, `autoexamples`/`example`).
+/// An explicit `auto* = true|false` decides. Unset, edition 2015 turns
+/// discovery off as soon as the manifest declares any target of that kind
+/// (#15877); a manifest without `edition` is edition 2015. An inherited or
+/// unreadable edition keeps discovery on, so an unknown edition never drops
+/// a root.
+pub(crate) fn discovers_targets(manifest: &toml::Value, auto_key: &str, section: &str) -> bool {
+    let package = manifest.get("package");
+    if let Some(explicit) = package
+        .and_then(|package| package.get(auto_key))
+        .and_then(toml::Value::as_bool)
+    {
+        return explicit;
+    }
+    let edition_2015 = match package.and_then(|package| package.get("edition")) {
+        None => true,
+        Some(edition) => edition.as_str() == Some("2015"),
+    };
+    let declares_kind = manifest
+        .get(section)
+        .and_then(toml::Value::as_array)
+        .is_some_and(|targets| !targets.is_empty());
+    !(edition_2015 && declares_kind)
+}
+
 /// Test, bench, example and build-script roots, declared and autodiscovered.
 fn evidence_roots(
     manifest: &toml::Value,
@@ -894,22 +922,17 @@ fn evidence_roots(
     roots.extend(declared.benches);
     roots.extend(declared.build_script);
     collect_explicit_paths(manifest.get("example"), package_dir, &mut roots);
-    // `autotests = false` (and its bench and example twins) turns Cargo's
-    // discovery off: only declared targets build, and a declaration without
-    // `path` still defaults to `<dir>/<name>.rs` or `<dir>/<name>/main.rs`
-    // (#6965).
-    let package = manifest.get("package");
+    // `autotests = false` (and its bench and example twins), or edition 2015
+    // with a declared target of that kind, turns Cargo's discovery off:
+    // only declared targets build, and a declaration without `path` still
+    // defaults to `<dir>/<name>.rs` or `<dir>/<name>/main.rs` (#6965, #15877).
     for (dir, auto_key, section) in [
         ("tests", "autotests", "test"),
         ("benches", "autobenches", "bench"),
         ("examples", "autoexamples", "example"),
     ] {
         let dir = package_dir.join(dir);
-        let discovers = package
-            .and_then(|package| package.get(auto_key))
-            .and_then(toml::Value::as_bool)
-            != Some(false);
-        if discovers {
+        if discovers_targets(manifest, auto_key, section) {
             roots.extend(autodiscovered(&dir));
         } else {
             roots.extend(named_default_roots(manifest.get(section), &dir));

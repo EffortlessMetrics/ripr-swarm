@@ -30,7 +30,7 @@ pub(crate) use cargo_targets::{
     declared_crate_root_paths_from_manifest, explicit_target_roots_are_covered,
 };
 pub(crate) use module_graph::{
-    apply_module_graph_evidence, covered_rust_source_manifest_dirs,
+    apply_module_graph_evidence, covered_rust_source_manifest_dirs, discovers_targets,
     standalone_packages_have_no_source_aliases, target_manifest_directories,
 };
 pub(crate) use path_dependencies::{

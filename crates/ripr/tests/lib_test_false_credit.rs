@@ -1177,3 +1177,40 @@ fn an_example_included_into_an_integration_test_keeps_credit() -> Result<(), Str
     )?;
     assert_credited_beyond_instant(&fixture, "an example included by an integration test")
 }
+
+/// An edition 2015 manifest (no `edition` key) that declares one `[[test]]`
+/// leaves `autotests` off unless it says otherwise (#15877): Cargo builds
+/// only the declared test, so `tests/integration.rs` never runs and credits
+/// no discriminator. Edition 2021 and an explicit `autotests = true` build
+/// it and keep the credit.
+#[test]
+fn edition_2015_declared_test_turns_off_test_discovery() -> Result<(), String> {
+    let manifest = |package_keys: &str| {
+        format!(
+            "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\n{package_keys}\n[[test]]\nname = \"declared\"\npath = \"tests/declared.rs\"\n\n[workspace]\n"
+        )
+    };
+    let files = [
+        ("src/lib.rs", OWNER),
+        ("tests/declared.rs", "#[test]\nfn unrelated() {}\n"),
+        ("tests/integration.rs", INTEGRATION_TEST),
+    ];
+    let legacy = TempCrate::create_in(&manifest(""), &files, "src/lib.rs", 1)?;
+    let finding = legacy.finding()?;
+    assert!(
+        !credits_a_discriminator(&finding.class),
+        "edition 2015 never builds tests/integration.rs: {finding:?}"
+    );
+    for (keys, label) in [
+        ("edition = \"2021\"\n", "edition 2021"),
+        ("autotests = true\n", "edition 2015 with autotests = true"),
+    ] {
+        let built = TempCrate::create_in(&manifest(keys), &files, "src/lib.rs", 1)?;
+        let finding = built.finding()?;
+        assert!(
+            credits_a_discriminator(&finding.class),
+            "{label} builds tests/integration.rs: {finding:?}"
+        );
+    }
+    Ok(())
+}

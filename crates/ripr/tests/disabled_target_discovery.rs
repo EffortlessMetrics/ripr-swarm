@@ -209,3 +209,30 @@ fn an_edition_2015_bin_keeps_the_legacy_main_fallback() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn an_edition_2015_declared_bin_turns_off_bin_discovery() -> Result<(), String> {
+    // Without an `edition` key the package is edition 2015, where declaring
+    // any `[[bin]]` leaves `autobins` off unless set (#15877): Cargo builds
+    // `src/cli.rs` only, so `src/main.rs` and the module it mounts are never
+    // compiled. Edition 2021 and `autobins = true` build them.
+    let legacy = |package_keys: &str| {
+        main_mounting_tool(&format!(
+            "[package]\nname = \"price\"\nversion = \"0.1.0\"\n{package_keys}\n[[bin]]\nname = \"cli\"\npath = \"src/cli.rs\"\n\n[workspace]\n"
+        ))
+    };
+    let disabled = legacy("")?;
+    std::fs::write(disabled.0.join("src/cli.rs"), "fn main() {}\n")
+        .map_err(|error| format!("write cli: {error}"))?;
+    assert!(
+        !disabled.reports("src/tool.rs")?,
+        "edition 2015 with a declared [[bin]] never builds src/main.rs"
+    );
+    for keys in ["edition = \"2021\"\n", "autobins = true\n"] {
+        let built = legacy(keys)?;
+        std::fs::write(built.0.join("src/cli.rs"), "fn main() {}\n")
+            .map_err(|error| format!("write cli: {error}"))?;
+        assert!(built.reports("src/tool.rs")?, "{keys} builds src/main.rs");
+    }
+    Ok(())
+}
