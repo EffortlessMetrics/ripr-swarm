@@ -1,0 +1,101 @@
+{
+  "version": "1.1",
+  "tool": "ripr",
+  "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+  "source_currentness": "candidate_current",
+  "classification": "weakly_exposed",
+  "severity": "warning",
+  "confidence": 0.92,
+  "probe": {
+    "id": "probe:src_lib.rs:predicate:c80557eb",
+    "family": "predicate",
+    "delta": "control",
+    "file": "./src/lib.rs",
+    "line": 2,
+    "changed_expression": "amount >= discount_threshold"
+  },
+  "ripr": {
+    "reach": "yes",
+    "infect": "weak",
+    "propagate": "yes",
+    "observe": "yes",
+    "discriminate": "yes"
+  },
+  "related_tests_total": 2,
+  "related_tests": [
+    {
+      "name": "below_threshold_has_no_discount",
+      "file": "tests/pricing.rs",
+      "line": 4,
+      "oracle_strength": "strong",
+      "oracle_kind": "exact_value",
+      "oracle": "assert_eq!(discounted_total(50, 100), 50);",
+      "relation_reason": "direct_owner_call",
+      "relation_confidence": "high",
+      "miss": "missing_input",
+      "why": "no test input reaches `amount == discount_threshold`"
+    },
+    {
+      "name": "far_above_threshold_discounts",
+      "file": "tests/pricing.rs",
+      "line": 9,
+      "oracle_strength": "strong",
+      "oracle_kind": "exact_value",
+      "oracle": "assert_eq!(discounted_total(10_000, 100), 9_990);",
+      "relation_reason": "direct_owner_call",
+      "relation_confidence": "high",
+      "miss": "missing_input",
+      "why": "no test input reaches `amount == discount_threshold`"
+    }
+  ],
+  "observed_values": [{"value":"50","context":"assertion_argument","line":5}, {"value":"amount = 50","context":"function_argument","line":5}, {"value":"discount_threshold = 100","context":"function_argument","line":5}, {"value":"9_990","context":"assertion_argument","line":10}, {"value":"amount = 10_000","context":"function_argument","line":10}, {"value":"discount_threshold = 100","context":"function_argument","line":10}],
+  "missing_discriminators": [{"value":"amount == discount_threshold","reason":"No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100"}],
+  "witness": {
+    "kind": "static_discriminator_gap",
+    "probe_family": "predicate",
+    "changed_expression": "amount >= discount_threshold",
+    "before": "amount > discount_threshold",
+    "after": "amount >= discount_threshold",
+    "expected_sink": "return_value",
+    "missing_discriminators": [
+      {
+        "value": "amount == discount_threshold",
+        "reason": "No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100",
+        "flow_sink": {
+          "kind": "return_value",
+          "text": "amount - 10",
+          "line": 3,
+          "owner": "src/lib.rs::discounted_total"
+        },
+        "shape": "Boundary"
+      }
+    ],
+    "fix_site": {
+      "file": "tests/pricing.rs",
+      "line": 4,
+      "test_name": "below_threshold_has_no_discount",
+      "current_oracle": "assert_eq!(discounted_total(50, 100), 50);",
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong"
+    },
+    "explain_command": "ripr explain --root /work/repo --diff /work/repo/change.diff probe:src_lib.rs:predicate:c80557eb",
+    "confidence": {
+      "value": 0.92,
+      "basis": "static_only"
+    },
+    "limitations": [
+      {
+        "kind": "oracle_source_location_unavailable",
+        "detail": "The producer did not provide an exact assertion source location."
+      },
+      {
+        "kind": "suggested_assertion_unavailable",
+        "detail": "No producer-owned symbol-resolved assertion template is available."
+      }
+    ]
+  },
+  "missing": ["Missing check value: amount == discount_threshold"],
+  "stop_reasons": [],
+  "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions."
+}
+

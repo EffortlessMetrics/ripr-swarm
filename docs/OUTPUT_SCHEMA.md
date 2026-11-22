@@ -181,6 +181,7 @@ records that distinction.
 | `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
+| `schemas/ripr/context.schema.json` | `1.1` | `crates/ripr/src/output/json/context_packet.rs` (`CONTEXT_PACKET_VERSION_CONTRACT`, pinned under the packet's top-level `version` key); the one-finding packet (`ripr context --json`) |
 | `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document has its own schema |
 | `schemas/ripr/agent-seam-packets.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the repository-wide packet document (`ripr check --format agent-seam-packets-json`), sharing the packet definitions of `agent-packet.schema.json` |
 | `schemas/ripr/agent-gap-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the GapRecord-backed packet document (`ripr agent packet --gap-ledger <path> --gap-id <id> --json`), advisory or blocked |
@@ -5332,6 +5333,17 @@ ambient configuration; no packet field or schema version changes (#10720).
   "recommended_next_step": "Add below, equal, and above threshold tests."
 }
 ```
+
+The packet has a published schema,
+[`schemas/ripr/context.schema.json`](../schemas/ripr/context.schema.json),
+tested against every finding's packet over a set of committed fixtures that
+reaches every classification
+(`crates/ripr/tests/context_json_schema.rs`). Objects are closed: a field
+added to the packet is added to the schema in the same change. Two shapes are
+worth knowing. The top-level `missing_discriminators[]` entries carry only
+`value` and `reason`, while `witness.missing_discriminators[]` entries are the
+full fact with `flow_sink` and `shape`. And `witness` may be `null` only when
+`classification` is `exposed`.
 
 The context packet contract versions through the top-level `version` key, not
 `schema_version` (#5081). Producers pin the live value in

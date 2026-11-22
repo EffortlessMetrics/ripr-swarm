@@ -325,6 +325,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         excluded: &[],
     },
     Binding {
+        schema_path: "schemas/ripr/context.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: context_json_conforms_for_every_finding_of_the_covering_fixtures in crates/ripr/tests/context_json_schema.rs validates the real CLI bytes of every finding's packet over eight committed fixtures and a git fixture (also checking --format json-compact), and requires the corpus to reach every classification, both source-currentness states, a null and an exposed witness, preview confidence caps, owner_signature, before_condition and each discriminator shape; confidence_basis_is_the_check_finding_definition holds the shared field equal to check.schema.json, and published_context_schema_rejects_documents_it_forbids is the negative experiment; the packet names the host root in witness.explain_command, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/context.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
         pointer: None,
         corpus: Corpus::FileName("gate-decision.json"),

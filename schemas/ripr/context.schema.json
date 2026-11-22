@@ -1,0 +1,623 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/context.schema.json",
+  "title": "RIPR Context Packet",
+  "description": "The packet `ripr context --at <finding-id|file:line>` writes to stdout for one finding (exit 0): `--json` and `--format json` write it indented, `--format json-compact` without whitespace. It versions through the top-level `version` key (`CONTEXT_PACKET_VERSION_CONTRACT`), not `schema_version`. `classification`, `severity`, `confidence` and `confidence_basis` are wire-identical to the `ripr check --json` finding fields of the same names; `witness` is the producer-owned diagnostic witness, `null` only for an exposed finding with no unresolved discriminator. When the command cannot produce a packet it writes the refusal envelope `context-refusal.schema.json` instead. Shape only: a conforming packet says nothing about whether the finding is right.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "tool",
+    "source_currentness",
+    "classification",
+    "severity",
+    "confidence",
+    "probe",
+    "ripr",
+    "related_tests_total",
+    "related_tests",
+    "observed_values",
+    "missing_discriminators",
+    "witness",
+    "missing",
+    "stop_reasons",
+    "recommended_next_step"
+  ],
+  "properties": {
+    "version": {
+      "const": "1.1"
+    },
+    "tool": {
+      "const": "ripr"
+    },
+    "canonical_gap_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The finding's canonical gap identity, present exactly when the finding carries one; the same value as the check finding's `canonical_gap_id`."
+    },
+    "source_currentness": {
+      "enum": [
+        "candidate_current",
+        "base_deleted",
+        "moved_or_renamed",
+        "unresolved_subject"
+      ]
+    },
+    "classification": {
+      "enum": [
+        "exposed",
+        "weakly_exposed",
+        "reachable_unrevealed",
+        "no_static_path",
+        "infection_unknown",
+        "propagation_unknown",
+        "static_unknown"
+      ]
+    },
+    "severity": {
+      "description": "The finding's configured severity; `off` is refused for findings by the config loader.",
+      "enum": [
+        "info",
+        "warning",
+        "note"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "confidence_basis": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "code",
+          "summary"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "confidence_why_capped": {
+      "type": "string",
+      "minLength": 1
+    },
+    "probe": {
+      "$ref": "#/$defs/probe"
+    },
+    "ripr": {
+      "$ref": "#/$defs/ripr"
+    },
+    "related_tests_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "related_tests": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/related_test"
+      }
+    },
+    "observed_values": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/value_fact"
+      }
+    },
+    "missing_discriminators": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/missing_discriminator"
+      }
+    },
+    "witness": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/witness"
+        }
+      ]
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "stop_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "recommended_next_step": {
+      "type": "string",
+      "description": "The reconciled next step shared with the other surfaces; empty when there is none."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "confidence_basis"
+        ]
+      },
+      "then": {
+        "required": [
+          "confidence_why_capped"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "confidence_why_capped"
+        ]
+      },
+      "then": {
+        "required": [
+          "confidence_basis"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "classification": {
+            "not": {
+              "const": "exposed"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "witness": {
+            "$ref": "#/$defs/witness"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "family",
+        "delta",
+        "file",
+        "line",
+        "changed_expression"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delta": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "owner_signature": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The changed function's observed call shape; absent whenever it cannot be honestly named."
+        },
+        "changed_expression": {
+          "type": "string"
+        }
+      }
+    },
+    "ripr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reach",
+        "infect",
+        "propagate",
+        "observe",
+        "discriminate"
+      ],
+      "properties": {
+        "reach": {
+          "$ref": "#/$defs/stage_state"
+        },
+        "infect": {
+          "$ref": "#/$defs/stage_state"
+        },
+        "propagate": {
+          "$ref": "#/$defs/stage_state"
+        },
+        "observe": {
+          "$ref": "#/$defs/stage_state"
+        },
+        "discriminate": {
+          "$ref": "#/$defs/stage_state"
+        }
+      }
+    },
+    "stage_state": {
+      "enum": [
+        "yes",
+        "weak",
+        "no",
+        "unknown",
+        "opaque",
+        "not_applicable"
+      ]
+    },
+    "related_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "file",
+        "line",
+        "oracle_strength",
+        "oracle_kind",
+        "oracle"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "oracle_strength": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oracle_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oracle": {
+          "type": "string",
+          "description": "The test's oracle text; empty when none was read."
+        },
+        "relation_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relation_confidence": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        "miss": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why this test would not notice the change; absent when no miss was established."
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": {
+        "required": [
+          "why"
+        ]
+      },
+      "then": {
+        "required": [
+          "miss"
+        ]
+      }
+    },
+    "value_fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "context",
+        "line"
+      ],
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "context": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "missing_discriminator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "reason"
+      ],
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "witness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "probe_family",
+        "changed_expression",
+        "missing_discriminators",
+        "explain_command",
+        "confidence"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "probe_family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changed_expression": {
+          "type": "string"
+        },
+        "before": {
+          "type": "string"
+        },
+        "before_condition": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The old line's `if`/`while` condition when `before` is the whole old line and `after` is only the new condition (#15420)."
+        },
+        "after": {
+          "type": "string"
+        },
+        "expected_sink": {
+          "type": "string",
+          "minLength": 1
+        },
+        "missing_discriminators": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/witness_discriminator"
+          }
+        },
+        "fix_site": {
+          "$ref": "#/$defs/fix_site"
+        },
+        "suggested_assertion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "explain_command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "basis"
+          ],
+          "properties": {
+            "value": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "basis": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Unavailable evidence; omitted when empty.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "detail"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "witness_discriminator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "reason",
+        "flow_sink",
+        "shape"
+      ],
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "flow_sink": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "text",
+                "line",
+                "owner"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "text": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "owner": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "drafted_boundary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "arguments"
+          ],
+          "properties": {
+            "arguments": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "expected": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "shape": {
+          "enum": [
+            "Boundary",
+            "GuardDomain",
+            "Other"
+          ]
+        }
+      }
+    },
+    "fix_site": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "file",
+        "line",
+        "test_name",
+        "oracle_kind",
+        "oracle_strength"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "test_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "current_oracle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oracle_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oracle_strength": {
+          "type": "string",
+          "minLength": 1
+        },
+        "oracle_location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "file",
+            "line"
+          ],
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,2 @@
+crates/ripr/tests/context_json_schema.rs|Command::new|1|cli-tests|#3920: the context packet schema conformance tests run the worktree-built binary (CARGO_BIN_EXE_ripr) with `check --json` and `context --json`/`--format json-compact` over committed read-only fixtures and an isolated temporary git fixture; no shell, network or mutation outside the temporary fixture root.
+crates/ripr/tests/context_json_schema.rs|use std::process::Command|1|cli-tests|#3920: import for the exact-binary invocations described above.
