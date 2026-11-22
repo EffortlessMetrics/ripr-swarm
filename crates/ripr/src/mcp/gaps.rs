@@ -3393,7 +3393,7 @@ mod tests {
             finding.probe.location.file = file;
             let item = GapItem::from_finding(&finding, root)?;
             let expected =
-                crate::analysis::finding_location_text(root, &finding.probe.location.file);
+                crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
             let budget = budget_items(std::slice::from_ref(&item));
             assert_eq!(budget[0].document, expected);
             assert_eq!(item.list_summary["file"], "src/lib.rs");
