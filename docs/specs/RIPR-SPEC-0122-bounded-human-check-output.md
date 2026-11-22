@@ -831,8 +831,11 @@ note that the after side is the condition only and where the new line is
 whole old line has exactly one `if`/`while` head with a plain condition, an
 `old condition:` row under `before:` prints the old condition
 (`total >= 100`), so both sides can be read at one granularity. A line with a
-second head, an `if let` or `while let`, a match guard or a block expression
-inside the condition prints no such row. The same `before` reaches the MCP
+second head, an `if let` or `while let`, a match guard, a block expression
+inside the condition, or a comparison or boolean operator outside the
+condition prints no such row, and neither does an old condition that does not
+start with the identifier the new one starts with: the changed predicate may
+then be a comparison in the branch body. The same `before` reaches the MCP
 `changed_behavior.before` field and the diagnostic witness (`ripr context`,
 LSP diagnostic data), unchanged; both add the old condition as an optional
 `before_condition` field under the same rule. `ripr check --format json`

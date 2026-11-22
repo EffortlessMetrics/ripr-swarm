@@ -22,14 +22,23 @@ pub(crate) fn before_is_whole_line_over_condition(finding: &Finding) -> bool {
 /// line over a condition-only `after` and the line has exactly one head whose
 /// condition ends at its block. `None` when that is not established: a
 /// second head on the line, an `if let` or `while let` (a struct pattern
-/// brace is not the block), a match guard, or a block expression inside the
-/// condition.
+/// brace is not the block), a match guard, a block expression inside the
+/// condition, a comparison or boolean operator anywhere else on the line
+/// (a predicate probe also covers a comparison in a branch body, so the
+/// probe may be that one), or an old condition that does not start with the
+/// identifier `after` starts with.
 pub(crate) fn old_condition_of_whole_line(finding: &Finding) -> Option<String> {
     if !matches!(finding.language, None | Some(LanguageId::Rust)) {
         return None;
     }
-    let (before, _) = whole_line_and_condition(finding)?;
-    condition_of_single_head(before).map(str::to_string)
+    let (before, after) = whole_line_and_condition(finding)?;
+    // The new condition is expected to be an edit of the old one. When the
+    // two do not start with the same identifier the pairing is not
+    // established: the probe may be a comparison the new line gained
+    // somewhere else.
+    condition_of_single_head(before)
+        .filter(|condition| same_leading_identifier(condition, after))
+        .map(str::to_string)
 }
 
 fn whole_line_and_condition(finding: &Finding) -> Option<(&str, &str)> {
@@ -107,12 +116,21 @@ fn condition_of_single_head(line: &str) -> Option<&str> {
             b'(' | b'[' => depth += 1,
             b')' | b']' => depth = depth.saturating_sub(1),
             b'{' if depth == 0 && start.is_some() && end.is_none() => end = Some(at),
-            b';' if start.is_some() && end.is_none() => plain = false,
+            // `[0; 4]` holds a `;` inside brackets; only a statement end counts.
+            b';' if depth == 0 && start.is_some() && end.is_none() => plain = false,
             _ => {}
         }
         at += 1;
     }
     if heads != 1 || !plain {
+        return None;
+    }
+    // A predicate probe also covers a comparison in a branch body
+    // (`if enabled { total > 100 } ..`). When the line holds one outside the
+    // head's condition, the head's condition may not be what changed.
+    if holds_predicate_operator(masked.get(..start?)?)
+        || holds_predicate_operator(masked.get(end?..)?)
+    {
         return None;
     }
     let condition = line.get(start?..end?)?.trim();
@@ -138,13 +156,64 @@ fn condition_of_single_head(line: &str) -> Option<&str> {
     Some(condition)
 }
 
+/// Whether masked code holds a comparison or boolean operator: `<`, `>`
+/// (so also `<=`, `>=`, `=>`, `->` and generics, refused as not
+/// established), `==`, `!=`, `&&`, `||`, or a prefix `!`. A macro's `!`
+/// (`println!(..)`) follows a word and is not one.
+fn holds_predicate_operator(masked: &str) -> bool {
+    let bytes = masked.as_bytes();
+    bytes.iter().enumerate().any(|(at, byte)| {
+        let next = bytes.get(at + 1).copied();
+        match byte {
+            b'<' | b'>' => true,
+            b'=' => next == Some(b'='),
+            b'&' => next == Some(b'&'),
+            b'|' => next == Some(b'|'),
+            b'!' => {
+                next == Some(b'=')
+                    || !at
+                        .checked_sub(1)
+                        .is_some_and(|prev| is_word_byte(bytes[prev]))
+            }
+            _ => false,
+        }
+    })
+}
+
+/// Whether two code fragments start with the same identifier (`total` in
+/// `total >= 100` and `total > 200`; `ready` in `!ready` and `ready`).
+/// Literals and comments are masked first.
+fn same_leading_identifier(left: &str, right: &str) -> bool {
+    fn leading(text: &str) -> Option<String> {
+        crate::analysis::mask_comments_and_strings(text)
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .find(|word| {
+                word.chars()
+                    .next()
+                    .is_some_and(|first| first.is_alphabetic() || first == '_')
+            })
+            .map(str::to_string)
+    }
+    leading(left).is_some_and(|name| Some(name) == leading(right))
+}
+
 fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || !byte.is_ascii()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::condition_of_single_head;
+    use super::{condition_of_single_head, same_leading_identifier};
+
+    #[test]
+    fn pairs_only_conditions_that_start_with_the_same_identifier() {
+        assert!(same_leading_identifier("total >= 100", "total > 200"));
+        assert!(same_leading_identifier("!ready", "ready"));
+        assert!(!same_leading_identifier("enabled", "total >= 200"));
+        // A literal is not a name.
+        assert!(!same_leading_identifier("\"total\" == a", "total > 1"));
+        assert!(!same_leading_identifier("1 > 0", "2 > 0"));
+    }
 
     #[test]
     fn reads_the_condition_of_the_only_head_on_the_line() {
@@ -168,6 +237,8 @@ mod tests {
             ("if é >= ü { a }", "é >= ü"),
             ("if ready()? { a }", "ready()?"),
             ("if c == '{' { a }", "c == '{'"),
+            ("if key == [0; 4] { a }", "key == [0; 4]"),
+            ("if ready { println!(\"go\") }", "ready"),
         ] {
             assert_eq!(condition_of_single_head(line), Some(condition), "{line}");
         }
@@ -189,6 +260,14 @@ mod tests {
             "if unsafe { ready() } { a }",
             "if match k { 1 => true, _ => false } { a }",
             "if a == { b } { c }",
+            // A comparison in a branch body or before the head may be the
+            // probe instead of the head's condition.
+            "if enabled { total > 100 } else { false }",
+            "if total > 5 { (total > 100) as u32 } else { 0 }",
+            "if enabled { !done } else { false }",
+            "if enabled { a == b } else { false }",
+            "if n > 1 { v.retain(|x| x.ok) } else { v.retain(|x| x.ok || x.new) }",
+            "let ok = a && if b >= 1 { c } else { d };",
             // A comment between the condition and the brace.
             "if a == /* b */ { c } { d }",
             // No head, or a head only inside brackets.

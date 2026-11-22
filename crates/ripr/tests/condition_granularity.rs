@@ -141,3 +141,61 @@ fn a_condition_only_edit_keeps_the_cut_before_and_adds_no_field() -> Result<(), 
     assert!(json.get("before_condition").is_none(), "{json}");
     Ok(())
 }
+
+/// A condition that ends in a string literal, and one that holds an array
+/// repeat expression, are read too.
+#[test]
+fn a_condition_ending_in_a_literal_or_holding_an_array_is_paired() -> Result<(), String> {
+    for (old, new, old_condition, new_condition) in [
+        (
+            "if total.to_string() == \"100\" { total - 10 } else { total }",
+            "if total.to_string() == \"200\" { total - 25 } else { total }",
+            "total.to_string() == \"100\"",
+            "total.to_string() == \"200\"",
+        ),
+        (
+            "if [total; 2] == [100; 2] { total - 10 } else { total }",
+            "if [total; 2] == [200; 2] { total - 25 } else { total }",
+            "[total; 2] == [100; 2]",
+            "[total; 2] == [200; 2]",
+        ),
+    ] {
+        let (_, witness) = predicate_witness(old, new)?;
+        assert_eq!(witness.before.as_deref(), Some(old), "{old}");
+        assert_eq!(witness.after.as_deref(), Some(new_condition), "{old}");
+        assert_eq!(
+            witness.before_condition.as_deref(),
+            Some(old_condition),
+            "{old}"
+        );
+    }
+    Ok(())
+}
+
+/// The guard is unchanged and the comparison in the branch body changed
+/// with the rest of the line. The probe is that comparison, so the old
+/// guard must not be reported as its old side.
+#[test]
+fn a_branch_body_comparison_is_not_paired_with_the_unchanged_guard() -> Result<(), String> {
+    let old = "if total > 5 { (total > 100) as u32 } else { 0 }";
+    let findings = TempRepo::create(
+        &source("if total > 5 { (total >= 200) as u32 } else { 1 }"),
+        &diff(old, "if total > 5 { (total >= 200) as u32 } else { 1 }"),
+    )?
+    .findings()?;
+    let witnesses: Vec<DiagnosticWitness> = findings
+        .iter()
+        .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
+        .filter_map(DiagnosticWitness::from_finding)
+        .collect();
+    assert!(
+        witnesses
+            .iter()
+            .any(|witness| witness.before.as_deref() == Some(old)),
+        "premise: a predicate gap whose before is the whole old line, got {findings:?}"
+    );
+    for witness in &witnesses {
+        assert_eq!(witness.before_condition, None, "{witness:?}");
+    }
+    Ok(())
+}
