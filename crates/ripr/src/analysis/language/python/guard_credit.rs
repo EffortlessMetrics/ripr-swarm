@@ -19,7 +19,9 @@ pub(super) fn safe_prefix_line_ends(
     let starts: Vec<usize> = std::iter::once(0)
         .chain(source.match_indices('\n').map(|(offset, _)| offset + 1))
         .collect();
-    let body_start = *starts.get(owner.start_line)?;
+    // Below the whole `def` header: an annotated parameter on a continuation
+    // line (`kind: str,`) is not a body statement that writes it (#15292).
+    let body_start = *starts.get(super::guard_activation::owner_body_start(source, owner))?;
     let changed_start = *starts.get(changed_index)?;
     let text = SourceText::new(source);
     let mut ends = vec![None; changed_index];

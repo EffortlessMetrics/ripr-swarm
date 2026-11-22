@@ -1155,6 +1155,16 @@ pub(super) fn line_rebinds_parameter(line: &str, name: &str) -> bool {
         if rest.starts_with(',') && line_is_assignment(line) {
             return true;
         }
+        // The last target of a bracketed list: `(_, total) = ..`,
+        // `[_, total] = ..`. A subscript store (`seen[total] = ..`)
+        // over-refuses the same safe way.
+        let closed = rest.trim_start_matches([')', ']', ' ']);
+        if closed.len() < rest.len()
+            && let Some(after) = closed.strip_prefix('=')
+            && !after.starts_with('=')
+        {
+            return true;
+        }
     }
     false
 }
@@ -1971,6 +1981,20 @@ mod tests {
         // span: the rebinding above that definition is still read.
         let tabbed = "def\tquote(total):\n    total = 10\n    def helper(\n        x,\n    ):\n        return x\n    if total > 1000:\n        return 42\n";
         assert!(parameter_rebound_before(tabbed, 1, 6, "total"));
+        // The last target of a parenthesized or bracketed tuple is a
+        // rebinding; a parenthesized read in a comparison is not.
+        for target in ["(_, total) = (0, 2000)", "[_, total] = [0, 2000]"] {
+            let unpacked =
+                format!("{header}    {target}\n    if total > 1000:\n        return 42\n");
+            assert!(
+                parameter_rebound_before(&unpacked, 1, 6, "total"),
+                "{target}"
+            );
+        }
+        let grouped = format!(
+            "{header}    seen = (total) == 2000\n    if total > 1000:\n        return 42\n"
+        );
+        assert!(!parameter_rebound_before(&grouped, 1, 6, "total"));
         // A loop above the guard still widens the scan to the whole owner.
         let looped = format!(
             "{header}    for step in range(3):\n        if total > 1000:\n            return 42\n        total = step\n"
