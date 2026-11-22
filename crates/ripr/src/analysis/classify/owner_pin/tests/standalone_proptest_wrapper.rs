@@ -24,11 +24,9 @@ fn helper(call: &str) -> String {
 
 #[test]
 fn a_standalone_wrapper_confines_its_arguments_to_the_call() -> Result<(), String> {
-    // Fixture premise: the mention refuses the test elsewhere when the
-    // locked version is not the audited one.
     let bare = format!("{GLOB}{}", helper("prop_oneof"));
+    // Fixture admission: the helper's `prop_oneof!` carries the assertion.
     assert!(bare.contains("prop_oneof![Just(1u8).prop_map(|v| { assert_eq!(v, v); v })"));
-    assert!(audited_at("premise", "1.11.0", &bare)?);
     for (label, sibling) in [
         ("bare", bare.clone()),
         ("qualified", helper("proptest::prop_oneof")),
@@ -44,6 +42,12 @@ fn a_standalone_wrapper_confines_its_arguments_to_the_call() -> Result<(), Strin
             ),
         ),
     ] {
+        // Premise: an unaudited lock refuses the same source, so the audited
+        // version decides each row (the qualified rows carry no glob).
+        assert!(
+            audited_at(&format!("{label}-unaudited"), "1.11.0", &sibling)?,
+            "{label} at 1.11.0: {sibling}"
+        );
         assert!(
             !audited_at(label, "1.12.0", &sibling)?,
             "{label}: {sibling}"
