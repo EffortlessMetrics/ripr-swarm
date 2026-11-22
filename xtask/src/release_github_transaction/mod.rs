@@ -7,7 +7,7 @@
 //! performs a step is a later slice.
 
 mod inventory;
-mod model;
+pub(crate) mod model;
 mod plan;
 #[cfg(test)]
 mod tests;

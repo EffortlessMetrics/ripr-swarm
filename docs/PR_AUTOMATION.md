@@ -376,6 +376,7 @@ cargo xtask release-readiness --version <version>
 cargo xtask release-server-archive --version <version> --target <triple> --executable <name> --archive <zip\|tar.gz>
 cargo xtask release-server-manifest --version <version> --repository <owner/repo>
 cargo xtask release-upload-assets --version <version>
+cargo xtask release-crates-io-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>
 cargo xtask release-github-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>
 cargo xtask repo-badge-artifacts [--gap-ledger <path>]
 cargo xtask repo-contract-report

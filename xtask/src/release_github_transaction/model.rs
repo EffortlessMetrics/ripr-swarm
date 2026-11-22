@@ -97,7 +97,7 @@ pub(crate) fn is_hex(value: &str, len: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn is_stable_version(value: &str) -> bool {
+pub(crate) fn is_stable_version(value: &str) -> bool {
     let mut parts = value.split('.');
     let numeric = |part: Option<&str>| {
         part.is_some_and(|part| {

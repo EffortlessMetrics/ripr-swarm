@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Add the decision core of the crates.io release transaction: a typed request with packages in dependency order, classification of observed registry state, and a read-only `cargo xtask release-crates-io-transaction-plan` that names the single next upload or a terminal stop. It reads no registry state and uploads nothing ([ripr#1649](https://github.com/EffortlessMetrics/ripr/issues/1649)).
