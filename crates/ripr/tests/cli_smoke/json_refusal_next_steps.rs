@@ -162,10 +162,8 @@ fn invalid_config_json_refusals_carry_the_human_next_step() -> TestResult {
     let root_arg = root.display().to_string();
     // The printed command spells the root with `/` on every platform (the
     // human-path rule), so on Windows it differs from the native argument.
-    let validate = format!(
-        "ripr config validate --root {}",
-        root_arg.replace('\\', "/")
-    );
+    let printed_root = root_arg.replace('\\', "/");
+    let validate = format!("ripr config validate --root {printed_root}");
 
     let check = document(&run_ripr(&["check", "--json", "--root", &root_arg]), 2)?;
     assert_eq!(check["error"]["code"], "config_invalid", "{check}");
@@ -224,7 +222,7 @@ fn invalid_config_json_refusals_carry_the_human_next_step() -> TestResult {
     assert_eq!(cont["error"]["code"], "no_current_attempt", "{cont}");
     assert_eq!(
         cont["error"]["next"]["command"],
-        format!("ripr status --root {root_arg}"),
+        format!("ripr status --root {printed_root}"),
         "{cont}"
     );
     let _ = std::fs::remove_dir_all(&root);
