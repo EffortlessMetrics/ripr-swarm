@@ -115,23 +115,48 @@ fn pr_evidence_check_with_a_broken_packet_names_the_regeneration() -> Result<(),
     )
 }
 
+/// The advice keeps the caller's own options: following it with a
+/// non-default `--pr-evidence` path writes outputs the original check accepts.
 #[test]
 fn impacted_evidence_check_without_outputs_names_the_command_that_writes_them() -> Result<(), String>
 {
     let dir = scratch()?;
-    let packet = dir.0.join("target/ripr/pr");
-    std::fs::create_dir_all(&packet).map_err(|error| format!("create packet dir: {error}"))?;
     std::fs::write(
-        packet.join("repo-exposure.json"),
+        dir.0.join("review.json"),
         r#"{"summary":{"ripr_severe_gap":false,"requires_targeted_mutation":false}}"#,
     )
     .map_err(|error| format!("write packet: {error}"))?;
-    let stderr = refusal(&dir.0, &["impacted-evidence", "--check"])?;
+    let check = [
+        "impacted-evidence",
+        "--pr-evidence",
+        "review.json",
+        "--check",
+    ];
+    let stderr = refusal(&dir.0, &check)?;
     stderr_has_all(
         &stderr,
         &[
             "missing or unreadable target/xtask/impacted-evidence/latest.json: ",
-            "; run `ripr impacted-evidence` to write it",
+            "; rerun the same `ripr impacted-evidence` command without --check to write it",
         ],
-    )
+    )?;
+    success(&dir.0, &check[..3])?;
+    success(&dir.0, &check)
+}
+
+fn success(dir: &Path, args: &[&str]) -> Result<(), String> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "ripr {args:?}: expected success, got {:?}:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
 }

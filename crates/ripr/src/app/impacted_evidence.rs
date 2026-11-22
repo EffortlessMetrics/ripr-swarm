@@ -638,19 +638,19 @@ fn check_outputs(repo: &Path, json_text: &str, markdown: &str) -> Result<(), Str
     let md_path = repo.join(IMPACTED_MD);
     let actual_json = fs::read_to_string(&json_path).map_err(|err| {
         format!(
-            "missing or unreadable {IMPACTED_JSON}: {err}; run `ripr impacted-evidence` to write it"
+            "missing or unreadable {IMPACTED_JSON}: {err}; rerun the same `ripr impacted-evidence` command without --check to write it"
         )
     })?;
     let actual_md = fs::read_to_string(&md_path).map_err(|err| {
         format!(
-            "missing or unreadable {IMPACTED_MD}: {err}; run `ripr impacted-evidence` to write it"
+            "missing or unreadable {IMPACTED_MD}: {err}; rerun the same `ripr impacted-evidence` command without --check to write it"
         )
     })?;
     if actual_json == format!("{json_text}\n") && actual_md == markdown {
         println!("Impacted evidence contract ok: {IMPACTED_JSON}");
         Ok(())
     } else {
-        Err("impacted evidence is stale; run `ripr impacted-evidence`".to_string())
+        Err("impacted evidence is stale; rerun the same `ripr impacted-evidence` command without --check to refresh it".to_string())
     }
 }
 
@@ -661,9 +661,9 @@ fn write_outputs(repo: &Path, json_text: &str, markdown: &str) -> Result<(), Str
         fs::create_dir_all(parent).map_err(|err| format!("create impacted evidence dir: {err}"))?;
     }
     crate::output::file_write::write(&json_path, format!("{json_text}\n").as_bytes())
-        .map_err(|err| format!("failed to write {IMPACTED_JSON}: {err}; make sure the output directory is writable, then rerun `ripr impacted-evidence`"))?;
+        .map_err(|err| format!("failed to write {IMPACTED_JSON}: {err}; make sure the output file and its directory are writable, then rerun the same `ripr impacted-evidence` command"))?;
     crate::output::file_write::write(&md_path, markdown.as_bytes())
-        .map_err(|err| format!("failed to write {IMPACTED_MD}: {err}; make sure the output directory is writable, then rerun `ripr impacted-evidence`"))?;
+        .map_err(|err| format!("failed to write {IMPACTED_MD}: {err}; make sure the output file and its directory are writable, then rerun the same `ripr impacted-evidence` command"))?;
     println!("Wrote {IMPACTED_JSON}");
     println!("Wrote {IMPACTED_MD}");
     Ok(())
