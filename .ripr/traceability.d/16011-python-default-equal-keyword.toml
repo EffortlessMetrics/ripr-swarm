@@ -1,0 +1,7 @@
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/default_equal_keyword_tests.rs::a_restated_default_reads_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/default_equal_keyword_tests.rs::a_different_value_keeps_its_reading",
+  "crates/ripr/src/analysis/language/python/default_equal_keyword_tests.rs::only_a_restated_default_of_every_definition_matches",
+]

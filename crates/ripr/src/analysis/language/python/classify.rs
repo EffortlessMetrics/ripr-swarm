@@ -1151,6 +1151,12 @@ fn classify_change_for_owner_inner<'a>(
         &focus,
     );
     let changed_default_exercised_ok = changed_default_override.is_none();
+    // An added `name=<literal>` that restates the declared default of every
+    // workspace definition of the callee (#16011) binds the same value as
+    // before, so an oracle on an ordinary call cannot tell the two apart.
+    let default_keyword = old_line_text.and_then(|old| {
+        super::default_equal_keyword::default_equal_keyword(old, line_text, owners)
+    });
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
@@ -1703,6 +1709,7 @@ fn classify_change_for_owner_inner<'a>(
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
         && changed_default_exercised_ok
+        && default_keyword.is_none()
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
@@ -1755,6 +1762,22 @@ fn classify_change_for_owner_inner<'a>(
                 format_param_name_list(params),
                 owner.name,
                 format_param_name_list(params),
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(keyword) = &default_keyword
+    {
+        // The added keyword restates the callee's default (#16011): the call
+        // binds the same value, so the strong oracle has nothing to tell apart.
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the added argument `{}` equals the declared default of every workspace `{}`, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name.",
+                owner.name, keyword.argument, keyword.callee,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -2216,6 +2239,9 @@ fn classify_change_for_owner_inner<'a>(
                 })
                 .into_iter()
                 .collect()
+        } else if default_keyword.is_some() && changed_default_override.is_none() {
+            // A restated default has no value for a test input to discriminate.
+            Vec::new()
         } else if let Some(params) = &changed_default_override {
             // The override downgrade names a specific, actionable missing
             // discriminator — "call the owner WITHOUT the changed-default

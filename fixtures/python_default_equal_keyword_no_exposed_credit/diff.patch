@@ -1,0 +1,9 @@
+diff --git a/src/lib.py b/src/lib.py
+--- a/src/lib.py
++++ b/src/lib.py
+@@ -7,4 +7,4 @@ class Clock:
+ 
+ 
+ def dehumanize(current_time, **time_changes):
+-    return current_time.shift(**time_changes)
++    return current_time.shift(check_imaginary=True, **time_changes)

@@ -2144,6 +2144,19 @@ the line's own reading.
 
 Tests: `deleted_lines_tests.rs::literal_keyword_argument_line_takes_the_call_shape`.
 
+A changed line that only adds one keyword argument with a plain literal value
+to a call (#16011), where at least one workspace owner has the callee's name
+and every such owner is a function or method declaring that parameter with the
+same default text, binds the same value as before. A strong oracle on that
+call reads `weakly_exposed`, with the reason that the argument restates the
+default, and the finding carries no missing discriminator. Another value, a
+name value, a class of the callee's name, a definition with another default,
+an unknown callee or any other edit on the line keeps the line's reading.
+
+Tests: `default_equal_keyword_tests.rs::a_restated_default_reads_weakly_exposed`,
+`default_equal_keyword_tests.rs::a_different_value_keeps_its_reading`,
+`default_equal_keyword_tests.rs::only_a_restated_default_of_every_definition_matches`.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed
