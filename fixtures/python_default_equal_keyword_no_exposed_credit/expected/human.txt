@@ -22,9 +22,10 @@ Start here:
   Gap ID (for scripts): gap:python:src/lib.py:dehumanize:return_value:return_value:current_time.shift_check_imaginary=true**time_changes
   Changed behavior: return current_time.shift(check_imaginary=True, **time_changes)
   Missing check: A strong Python oracle reaches `dehumanize`, but the added argument
-    `check_imaginary=True` equals the declared default of every workspace `shift`, so the call binds
-    the same value as before; static evidence does not credit an assertion for an edit with no value
-    change. The calls differ only when unpacked keywords already hold that name
+    `check_imaginary=True` equals the declared default of every workspace `shift` the call can
+    reach, so the call binds the same value as before; static evidence does not credit an assertion
+    for an edit with no value change. The calls differ only when unpacked keywords already hold that
+    name
   Related test: tests/test_lib.py:4 test_dehumanize
   Suggested test file: tests/test_lib.py
   Suggested test: test_dehumanize

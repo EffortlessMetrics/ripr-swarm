@@ -47,7 +47,7 @@ Evidence
   - related test tests/test_lib.py:4 test_dehumanize uses strong exact value oracle: assert dehumanize(Clock(1), hours=2).t == 3
 
 Weakness
-  - A strong Python oracle reaches `dehumanize`, but the added argument `check_imaginary=True` equals the declared default of every workspace `shift`, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name
+  - A strong Python oracle reaches `dehumanize`, but the added argument `check_imaginary=True` equals the declared default of every workspace `shift` the call can reach, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name
 
 Repair placement
   suggested file: tests/test_lib.py

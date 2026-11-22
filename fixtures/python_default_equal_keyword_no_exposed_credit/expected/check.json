@@ -61,7 +61,7 @@
         {"kind":"return_value","text":"return current_time.shift(check_imaginary=True, **time_changes)","line":10}
       ],
       "evidence": ["owner: dehumanize", "owner_kind: function", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_lib.py", "suggested_test_name: test_dehumanize", "suggested_test_node_id: tests/test_lib.py::test_dehumanize", "suggested_verify_command: python -m pytest tests/test_lib.py::test_dehumanize", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_dehumanize)", "test_verify_command: python -m pytest tests/test_lib.py::test_dehumanize (test_dehumanize)", "related_test_relation: syntactic_call (test_dehumanize)", "test_oracle: exact_value strong (test_dehumanize)", "test_oracle_shape: field_assertion (test_dehumanize)"],
-      "missing": ["A strong Python oracle reaches `dehumanize`, but the added argument `check_imaginary=True` equals the declared default of every workspace `shift`, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name."],
+      "missing": ["A strong Python oracle reaches `dehumanize`, but the added argument `check_imaginary=True` equals the declared default of every workspace `shift` the call can reach, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name."],
       "assertion_texts": {
       },
       "activation": {
