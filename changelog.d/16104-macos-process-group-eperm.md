@@ -3,7 +3,8 @@
   tree cleanup after it exits on its own. Darwin answers a signal to a process
   group whose only member is the exited, not-yet-reaped child with
   `Operation not permitted` rather than `No such process`; ripr now reads that
-  answer as a settled group, but only once it has observed the child exit.
-  Native macOS library tests that create non-UTF-8 file names, which APFS
-  refuses, are now compiled out on Apple hosts with the reason stated, and the
-  resource-cost tests treat macOS as the documented unsupported host (#16104).
+  answer as a settled group, but only once it has observed the child exit
+  (#16104).
+- `ripr pilot` announces its extension even when one wait on a loaded host
+  overshoots both the default budget and the extension; it previously timed
+  out without the notice (#16104).
