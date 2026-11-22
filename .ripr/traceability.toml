@@ -20788,6 +20788,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/standard_wrapper_disclosure.rs::a_variable_named_macro_use_in_a_standard_assert_is_not_an_attribute",
   "crates/ripr/src/analysis/classify/owner_pin/tests/standard_wrapper_disclosure.rs::a_rebound_standard_wrapper_is_still_named",
   "crates/ripr/src/analysis/classify/owner_pin/tests/standard_wrapper_disclosure.rs::an_unknown_wrapper_is_still_named",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/standard_wrapper_disclosure.rs::a_block_scoped_glob_leaves_standard_calls_outside_the_block_transparent",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/standard_wrapper_disclosure.rs::a_transcriber_call_reads_a_glob_scoped_to_its_invocation",
   "crates/ripr/tests/standard_wrapper_disclosure.rs::a_nested_standard_assertion_alone_blocks_nothing",
   "crates/ripr/tests/standard_wrapper_disclosure.rs::the_refusal_names_the_glob_in_the_tests_own_file",
   "crates/ripr/tests/parser_assertion_provenance.rs::unrelated_reason_literal_cannot_supply_parser_discrimination",

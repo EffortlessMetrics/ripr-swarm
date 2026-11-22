@@ -14534,6 +14534,14 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
                 "{glob}proptest! {{\n    #![proptest_config(ProptestConfig::with_cases(8))]\n    #[doc(hidden)]\n    {body}\n}}\n"
             ),
         ),
+        // A confined mention of `vec` leaves the file's other `vec!` calls
+        // standard, so one outside the property stays transparent.
+        (
+            "confined-mention-leaves-other-calls-standard",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(v in 0u8..3) {{ let _ = vec![v]; }} }}\nfn helper() {{ let _ = vec![assert_eq!(1, 1)]; }}\n"
+            ),
+        ),
         // Trusted calls nested in the confined arguments rebind nothing, so
         // the fixpoint must not reopen what their own arguments mention.
         (
