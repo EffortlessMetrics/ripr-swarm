@@ -1,0 +1,1 @@
+crates/ripr/tests/python_imported_raise_class_sole_site.rs|Command::new|1|15356-imported-raise-class-sole-site|Spawns only the built ripr binary (CARGO_BIN_EXE_ripr) against an isolated temp fixture repo (check --format json); git runs through the shared fixture_git helper; fixed argv, no shell or network.
