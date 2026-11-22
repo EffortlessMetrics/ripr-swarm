@@ -158,7 +158,9 @@ pub(super) fn expected_value(
         })
     });
     // A glob import from elsewhere could bring in a `None` or `Some` the
-    // file does not declare; only `super::*` / `self::*` stay in view.
+    // file does not declare. Only `self::*`, and `super::*` inside an inline
+    // module (whose parent is this file), stay in view; a file-root
+    // `super::*` reaches the parent file, which is not read here.
     let foreign_glob = file
         .syntax()
         .descendants()
@@ -166,10 +168,14 @@ pub(super) fn expected_value(
         .any(|tree| {
             tree.star_token().is_some() && {
                 let full = full_use_path(&tree);
+                let inline = tree
+                    .syntax()
+                    .ancestors()
+                    .any(|node| node.kind() == SyntaxKind::MODULE);
                 !(full.len() == 2
                     && full
                         .first()
-                        .is_some_and(|first| first == "super" || first == "self"))
+                        .is_some_and(|first| first == "self" || first == "super" && inline))
             }
         });
     if prelude_shadowed || foreign_glob {

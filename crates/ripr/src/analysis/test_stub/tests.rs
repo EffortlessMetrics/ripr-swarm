@@ -2751,6 +2751,17 @@ fn expected_fill_in_names_what_the_changed_code_returns() -> Result<(), String> 
                 "(the changed code returns Err(E::Big); with `>` it returns Ok(100); keep the intended one)",
             ),
         ),
+        // A match on a unit-variant parameter compares the pattern
+        // structurally.
+        (
+            format!(
+                "pub enum K {{ A, B }}\npub fn cost(k: K) -> u32 {{\n    match k {{\n        K::A => 1,\n        K::B => 2,\n    }}\n}}\n{module}"
+            ),
+            "K::B => 2",
+            SeamKind::MatchArm,
+            arm("K::B => 2"),
+            Some("(the changed code returns 2; keep the intended one)"),
+        ),
         // A computed result on the taken path is not a constant.
         (
             format!(
