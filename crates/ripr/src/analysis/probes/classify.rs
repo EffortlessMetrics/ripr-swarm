@@ -433,16 +433,25 @@ fn inline_tail_if_arm_edit(
     if old_if_text.is_empty() || changed_line.trim() == removed_trimmed {
         return None;
     }
+    // The closing brace sits on its own line so a trailing `//` comment
+    // cannot swallow it.
     let old_parse =
-        parse_clean_source_file(&format!("fn __ripr_removed_arm() {{ {old_if_text} }}"))?;
-    let old_if = old_parse
+        parse_clean_source_file(&format!("fn __ripr_removed_arm() {{ {old_if_text}\n}}"))?;
+    let old_body = old_parse
         .tree()
         .syntax()
         .descendants()
         .filter_map(ast::Fn::cast)
         .next()?
-        .body()?
-        .tail_expr()?;
+        .body()?;
+    // The removed line must be the `if` alone. A statement before it (an
+    // early `return` the edit removed) is old behavior that the arm text on
+    // the probe cannot carry, so the old function could not be rebuilt.
+    let old_list = old_body.stmt_list()?;
+    if old_list.statements().next().is_some() {
+        return None;
+    }
+    let old_if = old_list.tail_expr()?;
     let ast::Expr::IfExpr(old_if) = old_if else {
         return None;
     };
@@ -463,7 +472,9 @@ fn inline_tail_if_arm_edit(
         if new_text == old_text {
             continue;
         }
-        if !plain_arm_value(new) {
+        // Both sides: a comparison or control flow replaced by a value (or
+        // the reverse) is not a plain value edit.
+        if !plain_arm_value(new) || !plain_arm_value(old) {
             return None;
         }
         let range = new.syntax().text_range();
@@ -497,27 +508,19 @@ fn inline_arm_values(if_expr: &ast::IfExpr) -> Option<[ast::Expr; 2]> {
 }
 
 /// A value the own-line tail-if reader would probe as `return_value`: not
-/// control flow, and not a comparison or boolean connective (a predicate).
+/// control flow, and holding no comparison or boolean connective anywhere
+/// inside it (`x > 10`, `Some(x >= 10)`), which is a predicate whose boundary
+/// the predicate probe on that arm keeps judging.
 fn plain_arm_value(value: &ast::Expr) -> bool {
-    let mut core = value.clone();
-    loop {
-        let inner = match &core {
-            ast::Expr::ParenExpr(paren) => paren.expr(),
-            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) => {
-                prefix.expr()
-            }
-            _ => None,
-        };
-        match inner {
-            Some(inner) => core = inner,
-            None => break,
-        }
-    }
-    let predicate = ast::BinExpr::cast(core.syntax().clone()).is_some_and(|binary| {
-        binary
-            .op_kind()
-            .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
-    });
+    let predicate = value
+        .syntax()
+        .descendants()
+        .filter_map(ast::BinExpr::cast)
+        .any(|binary| {
+            binary
+                .op_kind()
+                .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+        });
     !predicate
         && !matches!(
             value,
@@ -1493,6 +1496,9 @@ mod tests {
             "if x % 2 != 0 { None } else { Some(0) }",
             "if x % 2 == 0 { Some(x) } else { Some(1) }",
             "if x % 2 == 0 { Some(0) } else { None }",
+            // An early return the edit removed is old behavior the arm
+            // text cannot carry.
+            "if x == 4 { return None; } if x % 2 == 0 { Some(x) } else { Some(0) }",
             new,
         ] {
             assert!(
@@ -1508,6 +1514,33 @@ mod tests {
                 "if x == 0 { Some(x) } else if x == 1 { Some(1) } else { Some(0) }"
             )
             .is_none()
+        );
+        // A comparison anywhere in either side's arm stays a predicate.
+        let wrapped = |line: &str| format!("pub fn h(x: i32) -> Option<bool> {{\n    {line}\n}}\n");
+        assert!(
+            inline_tail_if_arm_edit(
+                &wrapped("if x % 2 == 0 { Some(x >= 10) } else { None }"),
+                2,
+                "if x % 2 == 0 { Some(x > 10) } else { None }"
+            )
+            .is_none()
+        );
+        assert!(
+            inline_tail_if_arm_edit(
+                &wrapped("if x % 2 == 0 { Some(true) } else { None }"),
+                2,
+                "if x % 2 == 0 { Some(x > 10) } else { None }"
+            )
+            .is_none()
+        );
+        // A trailing comment on both lines still pairs.
+        assert!(
+            inline_tail_if_arm_edit(
+                &source("if x % 2 == 0 { None } else { Some(0) } // even"),
+                2,
+                "if x % 2 == 0 { Some(x) } else { Some(0) } // even"
+            )
+            .is_some()
         );
         let unit = "pub fn g(x: i32) {\n    if x == 0 { a() } else { b() }\n}\n";
         assert!(inline_tail_if_arm_edit(unit, 2, "if x == 0 { c() } else { b() }").is_none());

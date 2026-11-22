@@ -623,7 +623,8 @@ pub(super) fn inline_tail_if_has_arm(returned: &str, arm: &str) -> bool {
     if !returned.starts_with("if ") || returned.contains('\n') || arm.is_empty() {
         return false;
     }
-    let Some(parse) = parse_clean_source_file(&format!("fn __ripr_tail() {{ {returned} }}")) else {
+    let Some(parse) = parse_clean_source_file(&format!("fn __ripr_tail() {{ {returned}\n}}"))
+    else {
         return false;
     };
     let Some(ast::Expr::IfExpr(if_expr)) = parse
@@ -2502,6 +2503,11 @@ mod tests {
             "3"
         ));
         assert!(!inline_tail_if_has_arm("Some(1)", "Some(1)"));
+        // A trailing comment does not hide the arms.
+        assert!(inline_tail_if_has_arm(
+            "if a { None } else { Some(0) } // even inputs",
+            "None"
+        ));
     }
 
     /// #15189: a long line's memoized arm reading equals the scan, also
