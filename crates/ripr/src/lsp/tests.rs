@@ -9490,10 +9490,10 @@ fn snapshot_without_spot_inventory_lists_an_inert_start_naming_the_blocker() -> 
             .as_ref()
             .map(|disabled| disabled.reason.as_str())
             .unwrap_or_default();
-        assert!(
-            reason.contains("ripr.diagnosticProfile")
-                && reason.contains("ripr: Refresh Full Analysis"),
-            "{reason}"
+        // The full text is pinned: the VS Code e2e mocks this exact string.
+        assert_eq!(
+            reason,
+            "Your ripr settings skip repair spots, so there is no repair start here; set ripr.diagnosticProfile to \"full\" and ripr.seamDiagnostics to true in your editor settings (diagnostic_profile and seam_diagnostics under [lsp] in ripr.toml apply only where no editor setting overrides them, and \"rust\" must be enabled under [languages]), then run \"ripr: Refresh Full Analysis\"."
         );
         let mut retained = no_inventory_actions.clone();
         super::actions::disable_retained_analysis_actions(
