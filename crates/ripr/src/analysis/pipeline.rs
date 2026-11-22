@@ -2170,11 +2170,10 @@ fn run_pipeline_for_diff_text_with_language_config(
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
                 format!(
                     "Not analyzed by the {name} preview adapter: {listed}. It skips \
-                     generated files, vendored, dependency, build-output and cache \
-                     directories, docs sites and tool configuration scripts; if one of \
-                     these is hand-written, declare its exact \
+                     {skipped_kinds}; if one of these is hand-written, declare its exact \
                      repository-relative path in `[{config_section}] handwritten_files` \
-                     and re-run the analysis."
+                     and re-run the analysis.",
+                    skipped_kinds = excluded_path_skip_kinds(language),
                 ),
             ),
             PreviewSkipClass::GeneratedName => (
@@ -3410,6 +3409,20 @@ fn is_excluded_from_preview_analysis(
                     ))
         }
         LanguageId::Rust | LanguageId::Perl => false,
+    }
+}
+
+/// What the excluded-path limitation says an adapter skips. The TypeScript/JS
+/// adapter also refuses docs sites and tool configuration scripts (#13088,
+/// #15947); the Python adapter applies neither rule, so its sentence must not
+/// name them.
+fn excluded_path_skip_kinds(language: LanguageId) -> &'static str {
+    match language {
+        LanguageId::TypeScript => {
+            "generated files, vendored, dependency, build-output and cache directories, \
+             docs sites and tool configuration scripts"
+        }
+        _ => "generated files and vendored, dependency, build-output and cache directories",
     }
 }
 
@@ -10415,6 +10428,17 @@ index 0000000..1111111 100644
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn excluded_path_skip_kinds_name_typescript_only_rules_for_typescript_only() {
+        let typescript = excluded_path_skip_kinds(LanguageId::TypeScript);
+        assert!(typescript.contains("docs sites"));
+        assert!(typescript.contains("tool configuration scripts"));
+        let python = excluded_path_skip_kinds(LanguageId::Python);
+        assert!(!python.contains("docs sites"));
+        assert!(!python.contains("tool configuration"));
+        assert!(python.contains("build-output and cache directories"));
     }
 
     #[test]
