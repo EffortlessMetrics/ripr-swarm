@@ -340,11 +340,15 @@ its enclosing module; a gated `use` a macro's tokens emit (a
 `cfg_if::cfg_if!` block, a `macro_rules!` emitting a gated `pub use`, an
 import a macro emits in the test module); and a
 gated alias of a module that only re-exports the owner (`#[cfg(not(test))]
-use api as imp;`), since only the owner's own chain is matched (#15037); and
-an `include!` through a renamed macro (`use core::include as inc;`), whose
-owner file is still gated when no `mod` declares it. The
-unary-tail reading keeps its own refusals for these; the constant-tail
-reading has no such second check, so on that path these limits can credit.
+use api as imp;`), since only the owner's own chain is matched (#15037);
+a gated glob of such a re-export facade module (#15037); an `include!` whose
+path a forwarding macro passes through its arguments (a macro-emitted item);
+and an `include!` through a renamed macro (`use core::include as inc;`),
+whose owner file is still gated when no `mod` declares it. These limits can
+credit on either tail path: the unary-tail reading's own refusals catch some
+(a `cfg_if!` block beside a stand-in) but not, for example, a
+`macro_rules!`-emitted gated `pub use` beside a stand-in that is not a
+function.
 
 ## Required Evidence
 

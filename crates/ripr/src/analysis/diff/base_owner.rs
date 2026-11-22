@@ -19,7 +19,7 @@
 
 use super::{ChangedFile, reconstruct_old_lines_with_origins};
 use ra_ap_syntax::{
-    AstNode, AstToken, SyntaxKind, SyntaxNode,
+    AstNode, AstToken, SyntaxKind, SyntaxNode, SyntaxToken,
     ast::{self, HasName, HasVisibility},
 };
 use std::collections::BTreeSet;
@@ -557,13 +557,9 @@ fn macro_scope_reaches(scopes: &BTreeSet<MacroScope>, file: &Path) -> bool {
 /// an inline module, a non-literal value) reaches every owner
 /// (#15104).
 ///
-/// Gates outside `mod` declarations are read too (#14952, #15035; the
-/// rules and limits are in RIPR-SPEC-0001, "Base-owner cfg gates"): a gated
-/// `use` naming the owner or aliasing a module of its chain (sysroot roots
-/// and redundant test imports excepted), an owner file with no declaration,
-/// an `include!` that may name the owner file, and a macro that may emit a
-/// module into its package. A diff touching any of these, on either side,
-/// counts as a change to what it gates.
+/// Gates outside `mod` declarations follow RIPR-SPEC-0001, "Base-owner cfg
+/// gates" (#14952, #15035); a diff touching one, on either side, counts as
+/// a change to what it gates.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ModuleDeclarations {
     /// Names of declarations with a `cfg`/`cfg_attr` on themselves, an
@@ -1112,11 +1108,10 @@ fn owner_names(function: &ast::Fn, name: &str) -> BTreeSet<String> {
 /// Whether some path in `files` names `owner_file`. An owner path that
 /// cannot be normalized counts as named whenever any file is.
 fn included(files: &BTreeSet<Vec<String>>, owner_file: &Path) -> bool {
-    // Case-insensitively, as `#[path]` targets: a case-insensitive file
-    // system may resolve another spelling to the owner file.
-    let lower = |path: &[String]| -> Vec<String> {
-        path.iter().map(|part| part.to_ascii_lowercase()).collect()
-    };
+    // Case-insensitively (Unicode), as `#[path]` targets: a case-insensitive
+    // file system may resolve another spelling to the owner file.
+    let lower =
+        |path: &[String]| -> Vec<String> { path.iter().map(|part| part.to_lowercase()).collect() };
     match normalized_path(owner_file) {
         Some(owner) => files
             .iter()
@@ -1572,14 +1567,18 @@ fn defines_concat_macro(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool
     imported || defines_concat_by_tokens(root, select)
 }
 
-/// Whether an unrenamed leaf of the `use` item `node` binds one of `names`
-/// (a rename `as name` is read from tokens).
+/// Whether a leaf of the `use` item `node` binds one of `names`, by its
+/// rename (`as name`) or else its last segment.
 fn use_leaf_binds(node: &SyntaxNode, names: &[&str]) -> bool {
     node.descendants()
         .filter_map(ast::UseTree::cast)
         .filter(|tree| tree.use_tree_list().is_none() && tree.star_token().is_none())
-        .filter(|leaf| leaf.rename().is_none())
         .any(|leaf| {
+            if let Some(rename) = leaf.rename() {
+                return rename
+                    .name()
+                    .is_some_and(|name| names.contains(&unraw(name.text())));
+            }
             let mut path = use_leaf_path(&leaf);
             if path.last().is_some_and(|segment| segment == "self") {
                 path.pop();
@@ -1591,8 +1590,9 @@ fn use_leaf_binds(node: &SyntaxNode, names: &[&str]) -> bool {
 
 /// Whether something `select` keeps binds `core` or `std` in a module
 /// (#15035 round-8 review): a `use` leaf or rename (`use crate::paths as
-/// core;`, also in macro tokens) or a `mod core`/`mod std`, which a
-/// qualified `core::concat!` may then name.
+/// core;`; inside macro tokens, any `as core`) or a `mod core`/`mod std`,
+/// which a qualified `core::concat!` may then name. A cast `x as core`
+/// outside macro tokens is no binding.
 fn binds_sysroot_name(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool) -> bool {
     const NAMES: [&str; 2] = ["core", "std"];
     let items = root.descendants().any(|node| {
@@ -1609,14 +1609,14 @@ fn binds_sysroot_name(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool) 
         .collect();
     items
         || tokens.windows(2).any(|pair| {
-            matches!(pair, [keyword, name] if keyword.text() == "as"
+            matches!(pair, [keyword, name] if macro_token_as(keyword)
                 && NAMES.contains(&unraw(name.text()))
                 && name.parent().is_none_or(|parent| select(&parent)))
         })
 }
 
 /// The token half of [`defines_concat_macro`]: a `concat` after `macro`,
-/// `macro_rules !` or `as`.
+/// `macro_rules !` or (inside macro tokens) `as`.
 fn defines_concat_by_tokens(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool) -> bool {
     let tokens: Vec<_> = root
         .descendants_with_tokens()
@@ -1633,10 +1633,22 @@ fn defines_concat_by_tokens(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> 
                 .and_then(|at| tokens.get(at))
                 .map(|token| token.text())
         };
-        let defined = matches!(before(1), Some("macro" | "as"))
+        let defined = before(1) == Some("macro")
+            || index
+                .checked_sub(1)
+                .is_some_and(|at| macro_token_as(&tokens[at]))
             || (before(1) == Some("!") && before(2) == Some("macro_rules"));
         defined && token.parent().is_none_or(|parent| select(&parent))
     })
+}
+
+/// Whether `token` is an `as` inside macro tokens, where a rename is not
+/// parsed as a `use` item.
+fn macro_token_as(token: &SyntaxToken) -> bool {
+    token.text() == "as"
+        && token
+            .parent_ancestors()
+            .any(|node| node.kind() == SyntaxKind::TOKEN_TREE)
 }
 
 /// The value of a plain or raw string literal token with no escapes.
@@ -1998,7 +2010,7 @@ fn normalized(path: &Path) -> Option<PathBuf> {
                     out.push("..");
                 }
             }
-            Component::Normal(name) => out.push(name.to_str()?.to_ascii_lowercase()),
+            Component::Normal(name) => out.push(name.to_str()?.to_lowercase()),
             Component::RootDir | Component::Prefix(_) => out.push(component.as_os_str()),
         }
     }

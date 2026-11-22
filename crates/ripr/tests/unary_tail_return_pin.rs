@@ -1123,32 +1123,32 @@ fn real_f_class(inline: bool, items: &str) -> Result<(ExposureClass, Finding), S
 #[test]
 fn a_cfg_gate_on_the_owner_reexport_is_not_exposed() -> Result<(), String> {
     let mut wrong = Vec::new();
-    for (inline, items) in [
+    for (inline, items, expected) in [
         (
             true,
             format!("#[cfg(not(test))]\npub use real::f;\n{CONST_TWIN}"),
+            ExposureClass::PropagationUnknown,
         ),
         (
             false,
             format!("mod real;\n#[cfg(not(test))]\npub use real::f;\n{CONST_TWIN}"),
+            ExposureClass::PropagationUnknown,
         ),
         // A glob re-export gates every item of the module.
         (
             true,
             format!("#[cfg(not(test))]\npub use real::*;\n{CONST_TWIN}"),
+            ExposureClass::NoStaticPath,
         ),
         // `cfg_attr` may carry a `cfg`.
         (
             true,
             format!("#[cfg_attr(test, cfg(any()))]\npub use real::f;\n{CONST_TWIN}"),
+            ExposureClass::PropagationUnknown,
         ),
     ] {
         let (class, finding) = real_f_class(inline, &items)?;
-        if !matches!(
-            class,
-            ExposureClass::PropagationUnknown | ExposureClass::NoStaticPath
-        ) || finding.ripr.propagate.state == StageState::Yes
-        {
+        if class != expected || finding.ripr.propagate.state == StageState::Yes {
             wrong.push(format!("{items}: {class:?} {:?}", finding.ripr.propagate));
         }
     }

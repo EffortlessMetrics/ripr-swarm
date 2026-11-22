@@ -5,14 +5,9 @@
 //! it: the constant tail (#14852, `true` to `false`) and the unary tail
 //! (#14815, `-x` to `x`).
 //!
-//! In each gated shape the tests can run a stand-in (`fake::stub`) that
-//! returns the new value on both sides, so `cargo test` cannot tell the
-//! versions apart: the shape must read `propagation_unknown` without the
-//! propagation witness. Each control (the same fixture without the gate)
-//! keeps main's class, with the witness unless that class is
-//! `propagation_unknown`. On the unary tail main itself refuses several
-//! controls through its own same-name, rename, `include!` and
-//! `macro_rules!` checks.
+//! Each gated shape lets the tests run a stand-in (`fake::stub`) returning
+//! the new value on both sides, so it must read `propagation_unknown`
+//! without the propagation witness; each control keeps main's class.
 
 use ripr::ExposureClass::{
     self, Exposed as E, InfectionUnknown as IU, PropagationUnknown as PU, WeaklyExposed as W,
@@ -396,7 +391,7 @@ fn a_redundant_gated_test_import_is_not_a_gate() -> Result<(), String> {
     check(rows! {
         row("gated super import in the test module", test_import("mod real;\npub use real::ready;\n", "use super::*;\n    #[cfg(unix)]\n    use super::ready;"), [W, W]),
         gap("gated rename in the test module", test_import(ITEMS, "use super::*;\n    #[cfg(unix)]\n    use super::fake::stub as ready;")),
-        gap("gated super import beside another glob", test_import(ITEMS, "use crate::fake::*;\n    #[cfg(unix)]\n    use super::ready;")),
+        gap("gated super import beside another glob", lib("src/real.rs", ITEMS, "use crate::fake::*;\n    #[cfg(unix)]\n    use super::ready;", |path| vec![("src/fake.rs", path.stub() + "pub use self::stub as ready;\n")])),
         gap("private gated rename at file scope", real(format!("{ITEMS}#[cfg(test)]\nuse fake::stub as ready;\n"))),
     })
 }
@@ -419,6 +414,7 @@ fn gates_must_name_crate_local_paths() -> Result<(), String> {
         gap("bare local rename to the owner's name", direct("mod real;\nmod fake;\n#[cfg(unix)]\nuse fake::stub as ready;\n")),
         gap("self glob over the owner's module", prelude("mod prelude;\n#[cfg(unix)]\npub use self::prelude::*;\n")),
         gap("include resolving to the owner's file", direct("mod real;\n#[cfg(unix)]\nmod shim {\n    include!(\"real.rs\");\n}\n")),
+        gap("include of the owner file in a Unicode case variant", lib("src/kit.rs", "mod kit;\n#[cfg(unix)]\nmod shim {\n    include!(\"\u{212A}it.rs\");\n}\n", "use crate::kit::ready;", none)),
     })
 }
 
@@ -463,8 +459,8 @@ fn a_gated_module_alias_is_a_gate() -> Result<(), String> {
             aliased("mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nuse real as imp;\n#[cfg(test)]\nuse alt as imp;\n"),
             aliased("mod real;\nmod fake;\nmod alt;\nuse real as imp;\n"), CREDITED),
         pair("gated pub crate module alias",
-            aliased("mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\npub use crate::real as imp;\n#[cfg(test)]\npub use crate::alt as imp;\n"),
-            aliased("mod real;\nmod fake;\nmod alt;\npub use crate::real as imp;\n"), CREDITED),
+            aliased("pub mod real;\nmod fake;\npub mod alt;\n#[cfg(not(test))]\npub use crate::real as imp;\n#[cfg(test)]\npub use crate::alt as imp;\n"),
+            aliased("pub mod real;\nmod fake;\npub mod alt;\npub use crate::real as imp;\n"), CREDITED),
         pair("gated module alias in a use list",
             aliased("mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nuse crate::{real as imp};\n#[cfg(test)]\nuse crate::{alt as imp};\n"),
             aliased("mod real;\nmod fake;\nmod alt;\nuse crate::{real as imp};\n"), CREDITED),
@@ -472,8 +468,8 @@ fn a_gated_module_alias_is_a_gate() -> Result<(), String> {
             aliased("mod real;\nmod fake;\nmod alt;\n#[cfg(not(test))]\nuse self::real::{self as imp};\n#[cfg(test)]\nuse self::alt::{self as imp};\n"),
             aliased("mod real;\nmod fake;\nmod alt;\nuse self::real::{self as imp};\n"), CREDITED),
         pair("gated alias behind an ungated alias chain",
-            aliased("mod real;\nmod fake;\nmod alt;\nmod sel {\n    #[cfg(not(test))]\n    pub use crate::real as inner;\n    #[cfg(test)]\n    pub use crate::alt as inner;\n}\nuse sel::inner as imp;\n"),
-            aliased("mod real;\nmod fake;\nmod alt;\nmod sel {\n    pub use crate::real as inner;\n}\nuse sel::inner as imp;\n"), CREDITED),
+            aliased("pub mod real;\nmod fake;\npub mod alt;\nmod sel {\n    #[cfg(not(test))]\n    pub use crate::real as inner;\n    #[cfg(test)]\n    pub use crate::alt as inner;\n}\nuse sel::inner as imp;\n"),
+            aliased("pub mod real;\nmod fake;\npub mod alt;\nmod sel {\n    pub use crate::real as inner;\n}\nuse sel::inner as imp;\n"), CREDITED),
         pair("gated import of same-named modules in two directories",
             two("mod a;\nmod b;\nmod fake;\n#[cfg(not(test))]\nuse a::imp;\n#[cfg(test)]\nuse b::imp;\n"),
             two("mod a;\nmod b;\nmod fake;\nuse a::imp;\n"), [E, PU]),
@@ -569,7 +565,7 @@ fn a_macro_call_in_the_test_module_keeps_the_gate() -> Result<(), String> {
     check(rows! {
         pair("gated super import beside a module-level macro call",
             lib("src/real.rs", ITEMS, "use super::*;\n    #[cfg(unix)]\n    use super::ready;\n    test_imports!();", none),
-            lib("src/real.rs", ITEMS, "use super::*;\n    use super::ready;\n    test_imports!();", none), [W, W]),
+            lib("src/real.rs", ITEMS.replace("as ready", "as other_ready"), "use super::*;\n    use super::ready;\n    test_imports!();", none), [W, W]),
     })
 }
 
@@ -956,8 +952,8 @@ fn concat_include(prefix: &str, concat: &str) -> Vec<(&'static str, String)> {
 fn a_shadowed_concat_include_path_is_opaque() -> Result<(), String> {
     const SHADOWING_CONCAT: &str = "macro_rules! concat {\n    ($n:literal) => {\n        ::core::concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\")\n    };\n}\nmod real;\npub use real::ready;\npub mod imp;\n";
     const SRC_PATH_MACRO: &str = "mod real;\n#[macro_export]\nmacro_rules! src_path {\n    ($name:literal) => {\n        ::core::concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\")\n    };\n}\npub use real::ready;\npub mod imp;\n";
-    const RENAMED_CORE: &str =
-        "extern crate self as core;\nmod real;\npub use real::ready;\npub mod imp;\n";
+    const RENAMED_CORE: &str = "extern crate self as core;\n#[macro_export]\nmacro_rules! concat {\n    ($($t:tt)*) => {\n        \"real.rs\"\n    };\n}\nmod real;\npub use real::ready;\npub mod imp;\n";
+    const PATHS: &str = "#[macro_export]\nmacro_rules! real_path {\n    ($($t:tt)*) => {\n        \"real.rs\"\n    };\n}\npub mod paths {\n    pub use crate::real_path as concat;\n}\nmod real;\npub use real::ready;\npub mod imp;\n";
     let bare: Extra = |_| concat_include("", "concat");
     let core: Extra = |_| concat_include("", "core::concat");
     check(rows! {
@@ -969,7 +965,12 @@ fn a_shadowed_concat_include_path_is_opaque() -> Result<(), String> {
         pair("core concat under a crate renamed to core",
             lib("src/real.rs", RENAMED_CORE, GLOB, core), lib("src/real.rs", OWNER_AND_IMP, GLOB, core), [W, PU]),
         pair("core concat under an import renamed to core",
-            lib("src/real.rs", OWNER_AND_IMP, GLOB, |_| concat_include("use crate::paths as core;\n", "core::concat")),
+            lib("src/real.rs", PATHS, GLOB, |_| concat_include("use crate::paths as core;\n", "core::concat")),
             lib("src/real.rs", OWNER_AND_IMP, GLOB, core), [W, PU]),
+        row("cast to a type named core elsewhere", lib("src/real.rs", format!("{OWNER_AND_IMP}mod other;\n"), GLOB, |_| {
+            let mut files = concat_include("", "core::concat");
+            files.push(("src/other.rs", "type core = u8;\npub fn cast(x: u16) -> u8 {\n    x as core\n}\n".into()));
+            files
+        }), [W, PU]),
     })
 }
