@@ -4,7 +4,7 @@
 use super::common::fixture_git::{fixture_git_ok, fixture_git_output};
 use super::{DeclaredHunkScratch, run_command, unique_external_workspace};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -58,10 +58,13 @@ fn analyzed(root: &Path, base: &str) -> TestResult<(String, u64)> {
     Ok((identity, lines))
 }
 
-#[test]
-fn ambient_git_diff_settings_do_not_change_the_analyzed_input() -> TestResult {
-    let root = unique_external_workspace("diff-ambient-settings")?;
-    let _cleanup = DeclaredHunkScratch(root.clone());
+/// One commit with a stimulus for each ambient setting: a function reorder
+/// that myers and histogram split differently, a test insertion the indent
+/// heuristic slides, two inexact renames, and source files over 100 bytes.
+/// Returns the workspace guard, its root and the base commit.
+fn ambient_fixture(label: &str) -> TestResult<(DeclaredHunkScratch, PathBuf, String)> {
+    let root = unique_external_workspace(label)?;
+    let cleanup = DeclaredHunkScratch(root.clone());
     fs::create_dir_all(root.join("src"))?;
     fs::write(
         root.join("Cargo.toml"),
@@ -109,17 +112,26 @@ fn ambient_git_diff_settings_do_not_change_the_analyzed_input() -> TestResult {
     fixture_git_ok(&root, &["add", "."])?;
     fixture_git_ok(&root, &["commit", "-qm", "change"])?;
 
+    Ok((cleanup, root, base))
+}
+
+/// The five settings, each paired with the value that changed the patch.
+const HOSTILE: [(&str, &str); 5] = [
+    ("diff.algorithm", "histogram"),
+    ("diff.indentHeuristic", "false"),
+    ("diff.renameLimit", "1"),
+    ("core.bigFileThreshold", "100"),
+    ("core.abbrev", "12"),
+];
+
+#[test]
+fn ambient_git_diff_settings_do_not_change_the_analyzed_input() -> TestResult {
+    let (_cleanup, root, base) = ambient_fixture("diff-ambient-settings")?;
     let range = format!("{base}...HEAD");
     let raw_default = fixture_git_output(&root, &["diff", &range])?;
     let expected = analyzed(&root, &base)?;
     assert!(expected.1 > 0, "the fixture analyzed no changed lines");
-    for (setting, value) in [
-        ("diff.algorithm", "histogram"),
-        ("diff.indentHeuristic", "false"),
-        ("diff.renameLimit", "1"),
-        ("core.bigFileThreshold", "100"),
-        ("core.abbrev", "12"),
-    ] {
+    for (setting, value) in HOSTILE {
         fixture_git_ok(&root, &["config", setting, value])?;
         // Pin the stimulus: plain git under this setting gives another patch.
         let raw = fixture_git_output(&root, &["diff", &range])?;
@@ -128,6 +140,71 @@ fn ambient_git_diff_settings_do_not_change_the_analyzed_input() -> TestResult {
             analyzed(&root, &base)?,
             expected,
             "{setting}={value} changed the analyzed input"
+        );
+        fixture_git_ok(&root, &["config", "--unset", setting])?;
+    }
+    Ok(())
+}
+
+/// The packet a pull-request workflow records (`reports ci-packet`, step
+/// "Capture pull request diff") is captured through the same pinned argv as
+/// analysis (#9365), so no ambient setting changes the recorded bytes.
+#[test]
+fn ci_packet_diff_capture_ignores_ambient_git_diff_settings() -> TestResult {
+    let (_cleanup, root, base) = ambient_fixture("ci-packet-ambient-settings")?;
+    fixture_git_ok(&root, &["update-ref", "refs/remotes/origin/main", &base])?;
+    let capture = || -> TestResult<Vec<u8>> {
+        let output = super::run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &[
+                "reports",
+                "ci-packet",
+                "--root",
+                ".",
+                "--step",
+                "Capture pull request diff",
+            ],
+            &[
+                ("GITHUB_EVENT_NAME", "pull_request"),
+                ("GITHUB_BASE_REF", "main"),
+                ("GITHUB_EVENT_PATH", ""),
+            ],
+        )?;
+        assert!(
+            output.status.success(),
+            "ci-packet capture failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(fs::read(root.join("target/ripr/reports/pr.diff"))?)
+    };
+    let range = format!("{base}...HEAD");
+    let raw_default = fixture_git_output(&root, &["diff", &range])?;
+    let expected = capture()?;
+    let text = String::from_utf8_lossy(&expected).into_owned();
+    // Pin the default capture: both renames, text sections, full blob ids.
+    assert_eq!(text.matches("rename from ").count(), 2, "{text}");
+    assert!(!text.contains("Binary files"), "{text}");
+    let full = fixture_git_output(&root, &["rev-parse", "HEAD"])?
+        .trim()
+        .len();
+    for line in text.lines().filter(|line| line.starts_with("index ")) {
+        let ids = line["index ".len()..]
+            .split_whitespace()
+            .next()
+            .and_then(|ids| ids.split_once(".."));
+        assert!(
+            ids.is_some_and(|(old, new)| old.len() == full && new.len() == full),
+            "abbreviated index line {line:?}"
+        );
+    }
+    for (setting, value) in HOSTILE {
+        fixture_git_ok(&root, &["config", setting, value])?;
+        let raw = fixture_git_output(&root, &["diff", &range])?;
+        assert_ne!(raw, raw_default, "{setting}={value} does not discriminate");
+        assert!(
+            capture()? == expected,
+            "{setting}={value} changed the captured pr.diff"
         );
         fixture_git_ok(&root, &["config", "--unset", setting])?;
     }

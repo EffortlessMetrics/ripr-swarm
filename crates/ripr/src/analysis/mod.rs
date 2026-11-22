@@ -102,6 +102,8 @@ pub(crate) use diff::bare_repository_message;
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+// The `ci-packet` capture through the same assembly (#9365).
+pub(crate) use diff::load_ci_packet_diff_bytes;
 #[cfg(test)]
 pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
