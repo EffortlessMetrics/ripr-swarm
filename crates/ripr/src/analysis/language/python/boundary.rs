@@ -222,12 +222,22 @@ pub(super) fn python_boundary_evidence(
     // When the two comparisons share no operand (a slice bound and its
     // literal moved together), one input can satisfy both, so the equality
     // alone is not the discriminator: the two results must differ.
+    // A slice of the same name is not independent of another slice of it
+    // either: `tag[:4] == "mus"` holds only where `tag[:3] == "mus"` does, so
+    // the new equality alone would name an input both versions treat alike.
+    let two_results = match (&old_equality_operands, &operands) {
+        (Some((old_left, old_right)), Some((left, right))) if changed_comparison => {
+            (old_left != left && old_right != right)
+                || [old_left, old_right, left, right]
+                    .into_iter()
+                    .any(|operand| literal_slice(operand).is_some())
+        }
+        _ => false,
+    };
     let discriminator = operands
         .as_ref()
         .map(|(left, right)| match &old_equality_operands {
-            Some((old_left, old_right))
-                if changed_comparison && old_left != left && old_right != right =>
-            {
+            Some((old_left, old_right)) if two_results => {
                 format!("({left} == {right}) != ({old_left} == {old_right})")
             }
             _ => format!("{left} == {right}"),
@@ -297,7 +307,17 @@ pub(super) fn python_boundary_evidence(
         .then_some(walk)
     });
     if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
-        for (operand, other) in [(left, right), (right, left)] {
+        // A changed `!=` comparison reads its old operands against the same
+        // call arguments, so a rebound old operand is as unplaceable as a
+        // rebound new one.
+        let old_pairs = old_equality_operands
+            .as_ref()
+            .filter(|_| negated)
+            .map(|(old_left, old_right)| [(old_left, old_right), (old_right, old_left)]);
+        for (operand, other) in [(left, right), (right, left)]
+            .into_iter()
+            .chain(old_pairs.into_iter().flatten())
+        {
             let small_bound = static_operand(other, &constants)
                 .and_then(|value| value.parse::<f64>().ok())
                 .is_some_and(|value| value.abs() < 9_007_199_254_740_992.0);
@@ -318,8 +338,10 @@ pub(super) fn python_boundary_evidence(
                 // the tests also pass inputs the reader could not see, the
                 // unread input fails closed the same as an unrebound one
                 // (#15287), still without naming a repair target.
+                // A changed `!=` comparison is credited only on a read
+                // difference, so it fails closed here too.
                 return Some(PythonBoundaryEvidence {
-                    activation: if unread_inputs {
+                    activation: if unread_inputs || negated {
                         BoundaryActivation::UnreadInput
                     } else {
                         BoundaryActivation::Unresolved
@@ -366,7 +388,9 @@ pub(super) fn python_boundary_evidence(
             })
         }));
     }
-    if observed_values.is_empty() {
+    // A changed `!=` comparison is judged on every recognized call, including
+    // one that passes nothing and takes the parameter's literal default.
+    if observed_values.is_empty() && !(negated && !rows.is_empty()) {
         // A recognized strong call whose arguments went unread (a `*` unpack,
         // a bare name it could not bind) is test-side input the analysis could
         // not see. A call it did read (a list display, a constructor call) and
@@ -534,6 +558,21 @@ pub(super) fn python_boundary_evidence(
             let old_equal = old_values
                 .as_ref()
                 .and_then(|(old_left, old_right)| literals_equal(old_left, old_right));
+            // `literals_equal` compares string bodies as written, so an
+            // escape (`"\u006dusl"`) could read unequal to the text it
+            // spells. For `!=` such a value is unread.
+            let escaped = |value: &String| negated && value.contains('\\');
+            let escaped_operand = [&left, &right]
+                .into_iter()
+                .chain(old_equality_operands.iter().flat_map(|(l, r)| [l, r]))
+                .any(|operand| {
+                    resolve_gate_operand(operand, row, &constants).is_some_and(|v| escaped(&v))
+                });
+            let (new_equal, old_equal) = if escaped_operand {
+                (None, None)
+            } else {
+                (new_equal, old_equal)
+            };
             match (new_equal, old_equal) {
                 (Some(new_equal), Some(old_equal)) => {
                     same_result |= new_equal == old_equal;
@@ -673,7 +712,7 @@ pub(super) fn python_boundary_evidence(
         )
     } else if let Some((old_left, old_right)) = &old_equality_operands
         && same_result
-        && (*old_left != left && *old_right != right)
+        && two_results
     {
         let operator = if negated { "!=" } else { "==" };
         format!(
@@ -1446,6 +1485,18 @@ fn equality_predicate_gate(condition: &str, old_line_text: Option<&str>) -> Opti
         return None;
     };
     let old_operands = comparison_operands(&old_condition, *old_start, *old_len);
+    // The text around the `!=` comparison changed too (`n != 11 and on` ->
+    // `n != 10 or on`): a call can split the whole conditions without
+    // splitting the comparisons, so the comparison-only witness does not
+    // apply and the edit stays outside the gate.
+    if negated
+        && let (Some(old), Some(new)) =
+            (&old_operands, comparison_operands(condition, *start, *len))
+        && comparison_surroundings(&old_condition, *old_start, *old_len, old)
+            != comparison_surroundings(condition, *start, *len, &new)
+    {
+        return None;
+    }
     // An unchanged `!=` comparison is not what the edit changed: an input on
     // the equality skips the arm and says nothing about the changed text.
     if negated
@@ -1459,6 +1510,23 @@ fn equality_predicate_gate(condition: &str, old_line_text: Option<&str>) -> Opti
         old_operands,
         negated,
     })
+}
+
+/// The condition text outside one comparison, whitespace removed: what sits
+/// before its left operand and after its right operand.
+fn comparison_surroundings(
+    condition: &str,
+    operator_start: usize,
+    operator_len: usize,
+    (left, right): &(String, String),
+) -> Option<String> {
+    let before = condition.get(..operator_start)?.trim_end();
+    let after = condition.get(operator_start + operator_len..)?.trim_start();
+    let around = [
+        before.strip_suffix(left.as_str())?,
+        after.strip_prefix(right.as_str())?,
+    ];
+    Some(around.concat().split_whitespace().collect())
 }
 
 /// Byte offset and length of every `!=` comparison outside string literals
@@ -1544,6 +1612,7 @@ fn resolve_gate_operand(
     };
     let (lower, upper) = (index(lower, 0)?, index(upper, length)?);
     let slice: String = characters.get(lower..upper.max(lower))?.iter().collect();
+    // ASCII only: a non-ASCII slice stays unresolved.
     slice
         .chars()
         .all(|ch| ch == ' ' || (ch.is_ascii_graphic() && !matches!(ch, '"' | '\'')))

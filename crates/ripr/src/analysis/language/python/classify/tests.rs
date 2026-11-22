@@ -3666,6 +3666,7 @@ fn slice_comparison_change_fails_closed_on_unread_shapes() -> Result<(), String>
     )?;
     assert!(!observed(&rebound, "tag[:3] == \"mus\""), "{rebound:?}");
     assert!(rebound.activation.observed_values.is_empty(), "{rebound:?}");
+    assert_ne!(rebound.class, ExposureClass::Exposed, "{rebound:?}");
     // A stepped slice and a computed bound are not read.
     for (before, after) in [
         (
@@ -3690,6 +3691,90 @@ fn slice_comparison_change_fails_closed_on_unread_shapes() -> Result<(), String>
         "from src.subject import is_musl\n\ndef test_musx():\n    assert is_musl(\"mu\\x73x\") is True\n",
     )?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// A call that passes nothing takes the parameter's literal default, and the
+/// default is judged like any other input: one both versions treat alike
+/// earns nothing, one they split does.
+#[test]
+fn slice_comparison_change_reads_a_default_only_call() -> Result<(), String> {
+    for (default, exposed) in [("musllinux", false), ("musx", true)] {
+        let source = format!(
+            "def is_musl(tag=\"{default}\"):\n    if tag[:3] != \"mus\":\n        return False\n    return True\n"
+        );
+        let finding = classify_replaced_case(
+            &source,
+            "from src.subject import is_musl\n\ndef test_default():\n    assert is_musl() is True\n",
+            2,
+            "    if tag[:4] != \"musl\":",
+            "    if tag[:3] != \"mus\":",
+        )?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{default}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Two slices of one name are not independent: every input with `tag[:4] ==
+/// "mus"` also has `tag[:3] == "mus"`, so the repair target names the pair of
+/// results and not the new equality alone.
+#[test]
+fn slice_bound_change_names_the_two_results_as_the_repair_target() -> Result<(), String> {
+    let after = "    if tag[:4] != \"mus\":";
+    let source = MUSL_SOURCE.replace("    if tag[:3] != \"mus\":", after);
+    let finding = classify_replaced_case(
+        &source,
+        "from src.subject import is_musl\n\ndef test_many():\n    assert is_musl(\"many\") is False\n",
+        2,
+        "    if tag[:3] != \"mus\":",
+        after,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "(tag[:4] == \"mus\") != (tag[:3] == \"mus\")").is_some(),
+        "{finding:?}"
+    );
+    assert!(
+        missing_boundary(&finding, "tag[:4] == \"mus\"").is_none(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+/// An escape in a compared literal is not decoded, so it is never the read
+/// difference a changed `!=` comparison needs: `"\\u006dusl"` spells `musl`
+/// and `"musllinux"` matches both versions.
+#[test]
+fn slice_comparison_change_does_not_read_an_escaped_literal() -> Result<(), String> {
+    let finding = classify_replaced_case(
+        MUSL_SOURCE,
+        "from src.subject import is_musl\n\ndef test_musl():\n    assert is_musl(\"musllinux\") is True\n",
+        2,
+        "    if tag[:4] != \"\\u006dusl\":",
+        "    if tag[:3] != \"mus\":",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// When the text around the `!=` comparison changes with it, a call can split
+/// the whole conditions without splitting the comparisons. `(20, False)`
+/// enters neither comparison's equality and still tells `and` from `or`, so
+/// the comparison-only witness does not apply.
+#[test]
+fn inequality_change_with_changed_surroundings_stays_outside_the_gate() -> Result<(), String> {
+    let finding = classify_case(
+        "def ne(n, on):\n    if n != 10 or on:\n        return True\n    return False\n",
+        "from src.subject import ne\n\ndef test_ne():\n    assert ne(20, False) == True\n",
+        2,
+        "    if n != 11 and on:",
+        "    if n != 10 or on:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
     Ok(())
 }
 
