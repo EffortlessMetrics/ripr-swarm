@@ -1632,6 +1632,7 @@ mod tests {
                 id: "probe:src_lib_rs:21:error_path".to_string(),
                 canonical_gap: None,
                 probe: Probe {
+                    before_condition: None,
                     id: ProbeId("probe:src_lib_rs:21:error_path".to_string()),
                     location: SourceLocation::new("src/lib.rs", 21, 1),
                     owner: None,
@@ -1715,6 +1716,7 @@ mod tests {
                 id: "probe:src_lib_rs:34:weak_signal".to_string(),
                 canonical_gap: None,
                 probe: Probe {
+                    before_condition: None,
                     id: ProbeId("probe:src_lib_rs:34:weak_signal".to_string()),
                     location: SourceLocation::new("src/lib.rs", 34, 1),
                     owner: None,
@@ -2686,6 +2688,7 @@ mod tests {
                 id: "probe:src_lib_rs:13:static_unknown".to_string(),
                 canonical_gap: None,
                 probe: Probe {
+                    before_condition: None,
                     id: ProbeId("probe:src_lib_rs:13:static_unknown".to_string()),
                     location: SourceLocation::new("src/lib.rs", 13, 1),
                     owner: None,
@@ -2823,6 +2826,7 @@ mod tests {
             normalized_discriminator: "amount>=threshold".to_string(),
         });
         finding.probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_pricing.py:2:python_preview".to_string()),
             location: SourceLocation::new("src/pricing.py", 2, 5),
             owner: None,
@@ -2885,6 +2889,7 @@ mod tests {
             normalized_discriminator: "return_value".to_string(),
         });
         finding.probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
             location: SourceLocation::new("lib/My/App.pm", 8, 5),
             owner: Some(SymbolId(
@@ -3055,6 +3060,7 @@ mod tests {
                 id: "probe:src_pricing_ts:5:predicate".to_string(),
                 canonical_gap: None,
                 probe: Probe {
+                    before_condition: None,
                     id: ProbeId("probe:src_pricing_ts:5:predicate".to_string()),
                     location: SourceLocation::new(PathBuf::from(r"src\pricing.ts"), 5, 1),
                     owner: None,

@@ -1298,6 +1298,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             normalized_discriminator: "total == 10000".to_string(),
         }),
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:test:1".to_string()),
             location: SourceLocation::new("src/lib.rs", 12, 5),
             owner: Some(crate::domain::SymbolId("symbol:checkout".to_string())),
@@ -3496,14 +3497,15 @@ mod tests {
     }
 
     /// #15420: `ripr_get_gap` names the old condition when `before` is the
-    /// whole old line, and leaves the field out when `before` is already the
-    /// condition. `before` is unchanged either way.
+    /// whole old line and the producer carried one, and leaves the field out
+    /// when `before` is already the condition. `before` is unchanged either way.
     #[test]
     fn get_gap_names_the_old_condition_of_a_whole_old_line() -> Result<(), String> {
         let mut finding = finding()?;
         finding.probe.family = crate::domain::ProbeFamily::Predicate;
         finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
         finding.probe.after = Some("total > 200".to_string());
+        finding.probe.before_condition = Some("total >= 100".to_string());
         let root = Path::new("repo");
         let core = gap_evidence_core(&finding, "gap:test:1", root, &ready_readiness())?;
         if core["changed_behavior"]["before_condition"] != "total >= 100"

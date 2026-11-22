@@ -551,6 +551,7 @@ mod tests {
         let escaped = r#"(true, false) => "old\n","#;
         let arrow = "(true, false) =>";
         let mut probe = Probe {
+            before_condition: None,
             id: crate::domain::ProbeId("tuple-current-source".to_string()),
             location: crate::domain::SourceLocation::new("src/lib.rs", 4, 1),
             owner: None,

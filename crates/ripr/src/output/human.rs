@@ -8875,6 +8875,7 @@ mod tests {
         finding.probe.family = crate::domain::ProbeFamily::Predicate;
         finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
         finding.probe.after = Some("total > 200".to_string());
+        finding.probe.before_condition = Some("total >= 100".to_string());
 
         let rendered = render_finding(&finding);
 
@@ -8922,12 +8923,26 @@ mod tests {
         arm.probe.after = Some("x if a > 2 =>".to_string());
         assert!(!render_finding(&arm).contains(note));
 
-        // The old condition row (#15420) appears only when the whole old
-        // line has one readable head: a cut `before` and a two-head or
-        // `if let` line print none, though the last two keep the note.
+        // The old condition row (#15420) prints the condition the producer
+        // carried, and only over a whole old line: a line with none carried
+        // keeps the note without a row, and a carried value beside a cut
+        // `before` is not printed.
         let row = "old condition:";
-        assert!(predicate("while n >= 1 { n -= 1 }", "n > 2").contains("old condition: n >= 1\n"));
-        assert!(!predicate("total >= 100", "total > 200").contains(row));
+        let carried = |before: &str, after: &str, condition: &str| {
+            let mut finding = sample_finding();
+            finding.probe.family = crate::domain::ProbeFamily::Predicate;
+            finding.probe.before = Some(before.to_string());
+            finding.probe.after = Some(after.to_string());
+            finding.probe.before_condition = Some(condition.to_string());
+            render_finding(&finding)
+        };
+        assert!(
+            carried("while n >= 1 { n -= 1 }", "n > 2", "n >= 1")
+                .contains("old condition: n >= 1\n")
+        );
+        let uncarried = predicate("while n >= 1 { n -= 1 }", "n > 2");
+        assert!(uncarried.contains(note) && !uncarried.contains(row));
+        assert!(!carried("total >= 100", "total > 200", "total >= 100").contains(row));
         let two_heads = predicate("if a > 1 { 1 } else if b > 2 { 2 }", "b > 3");
         assert!(two_heads.contains(note) && !two_heads.contains(row));
         let pattern = predicate("if let Shape { side } = shape { side }", "side > 3");
@@ -9878,6 +9893,7 @@ mod tests {
             normalized_discriminator: "return_value".to_string(),
         });
         finding.probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
             location: SourceLocation::new("lib/My/App.pm", 8, 5),
             owner: Some(SymbolId(
@@ -10307,6 +10323,7 @@ mod tests {
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:sample.rs:7:predicate".to_string()),
                 location: SourceLocation::new("src/sample.rs", 7, 3),
                 owner: None,
@@ -10387,6 +10404,7 @@ mod tests {
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:1:static_unknown".to_string()),
                 location: SourceLocation::new("src/lib.rs", 1, 1),
                 owner: None,

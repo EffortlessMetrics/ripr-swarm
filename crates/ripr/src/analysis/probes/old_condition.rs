@@ -6,47 +6,59 @@
 //! condition (`if total >= 100 { total - 10 } ..` to
 //! `if total > 200 { total - 25 } ..`), `before` stays the whole old line on
 //! purpose: classifiers rebuild the old owner from it. Display surfaces then
-//! pair a whole line with a bare condition. This module reads the old
-//! condition out of that line so they can show both sides at one
-//! granularity, without changing `probe.before`.
+//! pair a whole line with a bare condition. The producer calls this module
+//! with both lines to read the old condition (`probe.before_condition`), so
+//! display surfaces can show both sides at one granularity without changing
+//! `probe.before`.
 
 use crate::domain::{Finding, LanguageId, ProbeFamily};
 
 /// Whether a Rust-shaped predicate finding pairs a whole old line that opens
 /// a block with an `after` that is only a condition.
 pub(crate) fn before_is_whole_line_over_condition(finding: &Finding) -> bool {
-    whole_line_and_condition(finding).is_some()
+    finding.probe.family == ProbeFamily::Predicate
+        && finding
+            .probe
+            .before
+            .as_deref()
+            .zip(finding.probe.after.as_deref())
+            .is_some_and(|(before, after)| whole_line_and_condition(before, after).is_some())
 }
 
-/// The `if`/`while` condition of the old line, when `before` is a whole old
-/// line over a condition-only `after` and the line has exactly one head whose
-/// condition ends at its block. `None` when that is not established: a
-/// second head on the line, an `if let` or `while let` (a struct pattern
-/// brace is not the block), a match guard, a block expression inside the
-/// condition, a comparison or boolean operator anywhere else on the line
-/// (a predicate probe also covers a comparison in a branch body, so the
-/// probe may be that one), or an old condition that does not start with the
-/// identifier `after` starts with.
+/// The old condition the producer paired with `after` (`probe.before_condition`),
+/// for a Rust predicate finding whose `before` is still the whole old line.
+/// Display surfaces read it here and derive nothing themselves: the new line
+/// is needed to establish the pairing and a finding does not carry it.
 pub(crate) fn old_condition_of_whole_line(finding: &Finding) -> Option<String> {
-    if !matches!(finding.language, None | Some(LanguageId::Rust)) {
+    if !matches!(finding.language, None | Some(LanguageId::Rust))
+        || !before_is_whole_line_over_condition(finding)
+    {
         return None;
     }
-    let (before, after) = whole_line_and_condition(finding)?;
-    // The new condition is expected to be an edit of the old one. When the
-    // two do not start with the same identifier the pairing is not
-    // established: the probe may be a comparison the new line gained
-    // somewhere else.
-    condition_of_single_head(before)
-        .filter(|condition| same_leading_identifier(condition, after))
-        .map(str::to_string)
+    finding.probe.before_condition.clone()
 }
 
-fn whole_line_and_condition(finding: &Finding) -> Option<(&str, &str)> {
-    if finding.probe.family != ProbeFamily::Predicate {
-        return None;
-    }
-    let before = finding.probe.before.as_deref()?.trim();
-    let after = finding.probe.after.as_deref()?.trim();
+/// The `if`/`while` condition of the old line, for a predicate whose `after`
+/// is the condition of the one head on the new line while `before` is the
+/// whole old line. `None` when that is not established on either line: a
+/// second head anywhere on the line (also nested in a call argument), an
+/// `if let` or `while let` (a struct pattern brace is not the block), a
+/// match guard, a block expression inside the condition, a comparison or
+/// boolean operator outside the head's condition, a new line whose head
+/// condition is not `after` (the changed predicate is then somewhere else on
+/// the line, such as a comparison the branch body gained), an old condition
+/// equal to `after` (the condition did not change), or an old condition that
+/// does not start with the identifier `after` starts with.
+pub(super) fn old_condition_for_edit(new_line: &str, after: &str, before: &str) -> Option<String> {
+    let (before, after) = whole_line_and_condition(before, after)?;
+    let old = condition_of_single_head(before)?;
+    let new = condition_of_single_head(new_line.trim())?;
+    (new == after && old != after && same_leading_identifier(old, after)).then(|| old.to_string())
+}
+
+fn whole_line_and_condition<'a>(before: &'a str, after: &'a str) -> Option<(&'a str, &'a str)> {
+    let before = before.trim();
+    let after = after.trim();
     if before == after || crate::analysis::mask_comments_and_strings(after).contains('{') {
         return None;
     }
@@ -97,9 +109,11 @@ fn condition_of_single_head(line: &str) -> Option<&str> {
                 .position(|byte| !is_word_byte(*byte))
                 .map_or(bytes.len(), |len| at + len);
             let word = masked.get(at..word_end)?;
-            if depth == 0 && matches!(word, "if" | "while") {
+            if matches!(word, "if" | "while") {
+                // A head nested in a call argument or index counts too:
+                // which head's condition changed is then not established.
                 heads += 1;
-                if start.is_none() {
+                if depth == 0 && start.is_none() {
                     start = Some(word_end);
                 }
             } else if depth == 0
@@ -203,7 +217,62 @@ fn is_word_byte(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{condition_of_single_head, same_leading_identifier};
+    use super::{condition_of_single_head, old_condition_for_edit, same_leading_identifier};
+
+    /// The pairing needs both lines: the new line's one head must hold
+    /// `after` as its condition.
+    #[test]
+    fn pairs_the_old_condition_only_when_the_new_head_holds_the_changed_predicate() {
+        let old = "if total >= 100 { total - 10 } else { total }";
+        assert_eq!(
+            old_condition_for_edit(
+                "if total > 200 { total - 25 } else { total }",
+                "total > 200",
+                old
+            )
+            .as_deref(),
+            Some("total >= 100")
+        );
+        for (new_line, after, before) in [
+            // The branch body gained the comparison; the guard is unchanged.
+            (
+                "if total > 5 { (total > 100) as i32 } else { 1 }",
+                "total > 100",
+                "if total > 5 { total - 10 } else { 0 }",
+            ),
+            // Only the arms changed: the condition is not its own old side.
+            (
+                "if a > b { b } else { a }",
+                "a > b",
+                "if a > b { a } else { b }",
+            ),
+            // A nested head on either line.
+            (
+                "if s.outer_ready() { consume(if s.inner() { 1 } else { 2 }) } else { 0 }",
+                "s.outer_ready()",
+                "if s.outer() { consume(if s.inner() { 1 } else { 3 }) } else { 0 }",
+            ),
+            // `before` already cut, or `after` a whole line.
+            ("if total > 200 { a }", "total > 200", "total >= 100"),
+            (
+                "if total > 200 { total - 25 } else { total }",
+                "if total > 200 { total - 25 } else { total }",
+                old,
+            ),
+            // The new condition names something else first.
+            (
+                "if limit > 200 { total - 25 } else { total }",
+                "limit > 200",
+                old,
+            ),
+        ] {
+            assert_eq!(
+                old_condition_for_edit(new_line, after, before),
+                None,
+                "{before} -> {new_line}"
+            );
+        }
+    }
 
     #[test]
     fn pairs_only_conditions_that_start_with_the_same_identifier() {
@@ -273,6 +342,9 @@ mod tests {
             // No head, or a head only inside brackets.
             "total >= 100",
             "call(if a > 1 { 1 } else { 2 })",
+            // A second head nested in a call argument of the branch body.
+            "if s.outer() { consume(if s.inner() { 1 } else { 2 }) } else { 0 }",
+            "if s.outer() { v[if s.inner() { 1 } else { 2 }] } else { 0 }",
             "S { a: 1 }",
         ] {
             assert_eq!(condition_of_single_head(line), None, "{line}");

@@ -1018,6 +1018,7 @@ mod tests {
         finding.class = ExposureClass::WeaklyExposed;
         finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
         finding.probe.after = Some("total > 200".to_string());
+        finding.probe.before_condition = Some("total >= 100".to_string());
         let witness = DiagnosticWitness::from_finding(&finding)
             .ok_or_else(|| "a weak finding should produce a witness".to_string())?;
         assert_eq!(
@@ -1029,9 +1030,10 @@ mod tests {
         Ok(())
     }
 
-    /// The field is absent, not guessed, when `before` is already cut, when
-    /// the old line's head is not established, for a preview language, and
-    /// for a family whose `before` is not a condition.
+    /// The field is absent when the producer carried no old condition (the
+    /// witness derives none from `before`), and a carried one is not shown
+    /// beside a cut `before`, a whole-line `after`, a preview language, or a
+    /// family whose `before` is not a condition.
     #[test]
     fn witness_omits_the_old_condition_when_it_is_not_established() -> Result<(), String> {
         let witness = |before: &str, after: &str, edit: fn(&mut Finding)| {
@@ -1039,6 +1041,7 @@ mod tests {
             finding.class = ExposureClass::WeaklyExposed;
             finding.probe.before = Some(before.to_string());
             finding.probe.after = Some(after.to_string());
+            finding.probe.before_condition = Some("total >= 100".to_string());
             edit(&mut finding);
             DiagnosticWitness::from_finding(&finding)
                 .ok_or_else(|| "a weak finding should produce a witness".to_string())
@@ -1046,8 +1049,9 @@ mod tests {
         let whole = "if total >= 100 { total - 10 } else { total }";
         for (before, after, edit) in [
             ("total >= 100", "total > 200", (|_| {}) as fn(&mut Finding)),
-            ("if a > 1 { 1 } else if b > 2 { 2 }", "b > 3", |_| {}),
-            ("if let Shape { side } = shape { side }", "side > 3", |_| {}),
+            (whole, "total > 200", |finding| {
+                finding.probe.before_condition = None;
+            }),
             (
                 whole,
                 "if total > 200 { total - 25 } else { total }",
@@ -1087,6 +1091,7 @@ mod tests {
             id: "probe:pricing:88:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing:88:error_path".to_string()),
                 location: SourceLocation::new("src/pricing.rs", 88, 1),
                 owner: Some(SymbolId("pricing::discount".to_string())),

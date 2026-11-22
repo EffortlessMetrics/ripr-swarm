@@ -199,3 +199,63 @@ fn a_branch_body_comparison_is_not_paired_with_the_unchanged_guard() -> Result<(
     }
     Ok(())
 }
+
+/// The new line gained a comparison in the branch body while the guard
+/// stayed (#15420 review). The old line holds no other comparison, so only
+/// the new line shows that the changed predicate is not the head's.
+#[test]
+fn a_comparison_the_new_body_gained_is_not_paired_with_the_unchanged_guard() -> Result<(), String> {
+    let old = "if total > 5 { total - 10 } else { 0 }";
+    let new = "if total > 5 { (total > 100) as u32 } else { 1 }";
+    let findings = TempRepo::create(&source(new), &diff(old, new))?.findings()?;
+    let predicates: Vec<&Finding> = findings
+        .iter()
+        .filter(|finding| finding.probe.family == ProbeFamily::Predicate)
+        .collect();
+    assert!(
+        predicates.iter().any(
+            |finding| finding.probe.after.as_deref() == Some("total > 100")
+                && finding.probe.before.as_deref() == Some(old)
+        ),
+        "premise: the gained comparison is a predicate probe over the whole old line, got {findings:?}"
+    );
+    for finding in predicates {
+        assert_eq!(finding.probe.before_condition, None, "{finding:?}");
+        if let Some(witness) = DiagnosticWitness::from_finding(finding) {
+            assert_eq!(witness.before_condition, None, "{witness:?}");
+        }
+    }
+    Ok(())
+}
+
+/// Only the branch bodies changed: an unchanged condition is not reported
+/// as its own old side.
+#[test]
+fn an_unchanged_condition_is_not_paired_with_itself() -> Result<(), String> {
+    let old = "if total > 5 { total - 10 } else { total }";
+    let new = "if total > 5 { total } else { total - 10 }";
+    let findings = TempRepo::create(&source(new), &diff(old, new))?.findings()?;
+    assert!(!findings.is_empty(), "premise: the arm swap is a finding");
+    for finding in &findings {
+        assert_eq!(finding.probe.before_condition, None, "{finding:?}");
+    }
+    Ok(())
+}
+
+/// A head nested in a call argument: which head changed is not established.
+#[test]
+fn a_nested_head_on_the_line_is_not_paired() -> Result<(), String> {
+    let old = "if total >= 100 { u32::from(if total > 500 { 1u8 } else { 2 }) } else { 0 }";
+    let new = "if total > 200 { u32::from(if total > 500 { 1u8 } else { 3 }) } else { 0 }";
+    let findings = TempRepo::create(&source(new), &diff(old, new))?.findings()?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.probe.family == ProbeFamily::Predicate),
+        "premise: a predicate finding, got {findings:?}"
+    );
+    for finding in &findings {
+        assert_eq!(finding.probe.before_condition, None, "{finding:?}");
+    }
+    Ok(())
+}

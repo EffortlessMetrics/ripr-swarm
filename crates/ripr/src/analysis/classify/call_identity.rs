@@ -6952,6 +6952,7 @@ fn integration_rename_case() {
         let index = renamed_other_index();
         let (owner, _) = renamed_other_parts(&index, "real_case")?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(owner.id.clone()),
@@ -7427,6 +7428,7 @@ fn raw_definition_case() {
         let index = std_glob_index();
         let (owner, _) = std_glob_parts(&index, "std_glob_only_case")?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(owner.id.clone()),
@@ -7688,6 +7690,7 @@ fn raw_definition_case() {
             return;
         };
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:render".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId(owner.id.0.clone())),

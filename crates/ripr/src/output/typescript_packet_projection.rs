@@ -1817,6 +1817,7 @@ pub(crate) mod tests {
             id: "probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string()),
                 location: SourceLocation::new("src/discount.ts", 3, 1),
                 owner: Some(SymbolId(

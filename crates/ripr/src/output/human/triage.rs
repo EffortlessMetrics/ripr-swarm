@@ -2811,6 +2811,7 @@ mod tests {
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation::new("src/lib.rs", 1, 1),
                 owner: None,

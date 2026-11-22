@@ -6801,6 +6801,7 @@ mod diagnostic_policy_tests {
             id: "probe:pricing:42:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing:42:predicate".to_string()),
                 location: SourceLocation {
                     file: std::path::PathBuf::from("src/pricing.rs"),
@@ -9079,6 +9080,7 @@ mod lsp_next_step_parity_tests {
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_discount.ts:typescript_preview:2396aec1".to_string()),
                 location: SourceLocation::new("src/discount.ts", 2, 1),
                 owner: Some(SymbolId(
@@ -9319,6 +9321,7 @@ mod canonical_group_member_tests {
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation {
                     file: std::path::PathBuf::from("src/lib.rs"),
