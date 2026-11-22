@@ -1249,7 +1249,6 @@ impl DiffOnlyNote {
         let kind = match self.source {
             DiffOnlySource::BuildScript => "a Cargo build script",
             DiffOnlySource::RepoAutomation => "repository automation",
-            DiffOnlySource::DeclaredOutsideSrc => "a crate source declared outside src",
         };
         let file = if code {
             format!("`{}`", self.file)

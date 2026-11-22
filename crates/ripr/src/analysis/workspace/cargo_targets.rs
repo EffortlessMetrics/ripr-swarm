@@ -1462,7 +1462,9 @@ where
     I: IntoIterator<Item = &'a Path>,
 {
     let files = files.into_iter().collect::<Vec<_>>();
-    let mut manifests: BTreeMap<PathBuf, DeclaredCargoTargets> = BTreeMap::new();
+    // Per package: its declared targets and its linked production roots.
+    let mut manifests: BTreeMap<PathBuf, (DeclaredCargoTargets, BTreeSet<(PathBuf, PathBuf)>)> =
+        BTreeMap::new();
     let mut context = SourceRoleContext::empty();
     // (owning package dir, module dir) for each declared crate root that
     // sits in its own directory, both lexically resolved and anchored.
@@ -1473,12 +1475,18 @@ where
             continue;
         };
         if !manifests.contains_key(&root) {
-            let targets = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml"))
-                .map(|text| declared_targets_from_manifest(&text, &root))
+            let text = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")).ok();
+            let targets = text
+                .as_deref()
+                .map(|text| declared_targets_from_manifest(text, &root))
                 .unwrap_or_default();
-            manifests.insert(root.clone(), targets);
+            let linked = text
+                .as_deref()
+                .map(|text| linked_production_roots(workspace_root, &root, text))
+                .unwrap_or_default();
+            manifests.insert(root.clone(), (targets, linked));
         }
-        if let Some(targets) = manifests.get(&root) {
+        if let Some((targets, linked)) = manifests.get(&root) {
             context
                 .declared_test_targets
                 .extend(strip_root(workspace_root, &targets.tests));
@@ -1515,20 +1523,13 @@ where
             // directory or a `src/lib.rs -> ../real/lib.rs` root. Declare the
             // root where it lands, and the directory its modules load from
             // (beside the link, resolved), when both stay in the workspace.
-            let candidates = resolved
-                .iter()
-                .cloned()
-                .chain(["lib.rs", "main.rs"].map(|name| package_dir.join("src").join(name)));
-            for target in candidates {
-                let Some((physical_root, physical_dir)) = linked_target(workspace_root, &target)
-                else {
-                    continue;
-                };
-                context
-                    .declared_production_sources
-                    .extend(strip_root(workspace_root, &BTreeSet::from([physical_root])));
-                if !package_dir.starts_with(&physical_dir) {
-                    module_dirs.insert((package_dir.clone(), physical_dir));
+            for (physical_root, physical_dir) in linked {
+                context.declared_production_sources.extend(strip_root(
+                    workspace_root,
+                    &BTreeSet::from([physical_root.clone()]),
+                ));
+                if !package_dir.starts_with(physical_dir) {
+                    module_dirs.insert((package_dir.clone(), physical_dir.clone()));
                 }
             }
         }
@@ -1553,6 +1554,24 @@ where
         }
     }
     context
+}
+
+/// The production roots Cargo builds for the package in `package_dir`
+/// (anchored), by the shared manifest target rules (`autobins`, `autolib`,
+/// a `[lib] path` replacing `src/lib.rs`), that reach their file through a
+/// symlink: each as [`linked_target`] lands it. A root Cargo does not build
+/// is never resolved, so a stale link beside it adds nothing (#16045
+/// review). The seam cache keys on this set, since a link can move without
+/// any file content changing.
+pub(crate) fn linked_production_roots(
+    workspace_root: &Path,
+    package_dir: &Path,
+    manifest_text: &str,
+) -> BTreeSet<(PathBuf, PathBuf)> {
+    super::module_graph::manifest_production_roots(workspace_root, manifest_text, package_dir)
+        .iter()
+        .filter_map(|root| linked_target(workspace_root, &lexical(&normalize(root))))
+        .collect()
 }
 
 /// Where a Cargo target path lands through symlinks, as (root file, module

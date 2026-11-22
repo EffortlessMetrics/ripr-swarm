@@ -28,6 +28,7 @@ pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
     CargoHarnessVerdict, ManifestInventory, context_for_files,
     declared_crate_root_paths_from_manifest, explicit_target_roots_are_covered,
+    linked_production_roots,
 };
 pub(crate) use module_graph::{
     apply_module_graph_evidence, covered_rust_source_manifest_dirs, discovers_targets,

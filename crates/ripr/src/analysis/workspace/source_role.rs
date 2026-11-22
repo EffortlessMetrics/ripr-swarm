@@ -409,21 +409,32 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
         SourceRole::ProductionLikeTestInfrastructure => true,
         _ if context.module_graph_orphans.contains(&normalize(path)) => false,
         role if role.seeds_production_findings() => true,
-        _ => diff_only_source(path, context).is_some(),
+        _ => declared_outside_src(path, context) || diff_only_source(path, context).is_some(),
     }
 }
 
 /// Whether `path` enters the repo seam inventory: a production role, or a
 /// crate root a manifest declares outside `src` and the files that package
-/// owns below it ([`DiffOnlySource::DeclaredOutsideSrc`]). A declared root is
-/// a library or binary target like `src/lib.rs`, so its seams are repairable
-/// from the package's tests, and `ripr check` offers a repair start only for
-/// a spot this inventory lists (#16045). Build scripts and `xtask/` stay out:
-/// no test target exercises them, so a ranked seam there could never be
+/// owns below it. A declared root is a library or binary target like
+/// `src/lib.rs`, so its seams are repairable from the package's tests, and
+/// `ripr check` offers a repair start only for a spot this inventory lists
+/// (#16045). Build scripts and `xtask/` stay out ([`DiffOnlySource`]): no
+/// test target exercises them, so a ranked seam there could never be
 /// repaired.
 pub(crate) fn seeds_repo_seams(path: &Path, context: &SourceRoleContext) -> bool {
-    classify_with(path, context).seeds_production_findings()
-        || diff_only_source(path, context) == Some(DiffOnlySource::DeclaredOutsideSrc)
+    classify_with(path, context).seeds_production_findings() || declared_outside_src(path, context)
+}
+
+/// A crate root a manifest declares outside `src`, or a file below it, that
+/// no module-graph evidence orphans and no manifest builds as a build script.
+fn declared_outside_src(path: &Path, context: &SourceRoleContext) -> bool {
+    let normalized = normalize(path);
+    matches!(
+        diff_only_candidate(path, context),
+        Some(DiffOnlyCandidate::Declarable)
+    ) && !context.module_graph_orphans.contains(&normalized)
+        && !context.build_scripts.contains(&normalized)
+        && context.declared_production_sources.contains(&normalized)
 }
 
 /// The evidence-role shapes [`seeds_diff_probes`] seeds when changed but
@@ -436,13 +447,11 @@ pub(crate) enum DiffOnlySource {
     BuildScript,
     /// Repository automation under the root `xtask/`.
     RepoAutomation,
-    /// A crate root a manifest declares outside `src`, or a file below it.
-    DeclaredOutsideSrc,
 }
 
-/// Which diff-only shape `path` is, if any: `None` for production files
-/// (they are in the inventory), test evidence, data, and files no module
-/// tree reaches.
+/// Which diff-only shape `path` is, if any: `None` for production files and
+/// declared roots outside `src` (they are in the inventory, #16045), test
+/// evidence, data, and files no module tree reaches.
 pub(crate) fn diff_only_source(path: &Path, context: &SourceRoleContext) -> Option<DiffOnlySource> {
     let normalized = normalize(path);
     if context.module_graph_orphans.contains(&normalized) {
@@ -452,11 +461,6 @@ pub(crate) fn diff_only_source(path: &Path, context: &SourceRoleContext) -> Opti
         DiffOnlyCandidate::Automation => Some(DiffOnlySource::RepoAutomation),
         DiffOnlyCandidate::Declarable if context.build_scripts.contains(&normalized) => {
             Some(DiffOnlySource::BuildScript)
-        }
-        DiffOnlyCandidate::Declarable
-            if context.declared_production_sources.contains(&normalized) =>
-        {
-            Some(DiffOnlySource::DeclaredOutsideSrc)
         }
         DiffOnlyCandidate::Declarable => None,
     }
@@ -977,9 +981,11 @@ mod tests {
             !super::seeds_diff_probes(Path::new("lib/odd.rs"), &SourceRoleContext::empty()),
             "without the manifest declaration a loose file stays non-production"
         );
+        // A declared root is in the repo inventory, so it is no diff-only
+        // shape pilot would name as left out (#16045).
         assert_eq!(
             super::diff_only_source(Path::new("lib/odd.rs"), &context),
-            Some(super::DiffOnlySource::DeclaredOutsideSrc)
+            None
         );
         assert_eq!(
             super::diff_only_source(Path::new("lib/fixtures/sample.rs"), &context),
