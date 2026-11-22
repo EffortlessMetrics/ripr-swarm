@@ -530,13 +530,13 @@ async fn running_refresh_admits_observers_and_holds_snapshot_readers() -> Result
     require_pending(&mut transport).await
 }
 
-/// A tool other than `ripr_refresh`, and a refresh-named argument of another
-/// method, never open the second slot.
+/// Without a running refresh nothing opens the second slot: a snapshot read
+/// and a status call behind it are admitted strictly one at a time.
 #[tokio::test]
 async fn only_a_refresh_tool_call_opens_the_second_slot() -> Result<(), String> {
     let mut transport = refresh_lane_transport(
         b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_list_gaps\",\"arguments\":{}}}\n\
-{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"resources/read\",\"params\":{\"name\":\"ripr_refresh\",\"uri\":\"ripr://workspace/status\"}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_workspace_status\",\"arguments\":{}}}\n\
 {\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{}}\n",
     );
     require_request(&mut transport, 1).await?;
