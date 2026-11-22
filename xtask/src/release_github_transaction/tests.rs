@@ -538,7 +538,8 @@ fn an_authorization_for_another_request_or_subject_set_is_refused() -> Result<()
         decide(&request, &exact, &empty_remote()).decision,
         Decision::Proceed { .. }
     ));
-    let variants: Vec<(&str, fn(&mut VerifiedAuthorization) -> Result<(), String>)> = vec![
+    type Change = fn(&mut VerifiedAuthorization) -> Result<(), String>;
+    let variants: Vec<(&str, Change)> = vec![
         ("other request", |a| {
             a.transaction_request_id = stable_request()?.request_id()?;
             Ok(())
