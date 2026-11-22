@@ -10,18 +10,29 @@ use std::path::{Path, PathBuf};
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceKindV1 {
+    /// Embedded at compile time, such as with `include_str!` or
+    /// `include_bytes!`.
     CompileTimeEmbedded,
+    /// Read at run time from a literal path.
     RuntimeLiteralRead,
+    /// A test fixture or test data file.
     FixtureOrTestdata,
+    /// A golden or snapshot file.
     GoldenOrSnapshot,
+    /// A schema or grammar file.
     SchemaOrGrammar,
+    /// A template or an input to generated code.
     TemplateOrGeneratedInput,
+    /// A resource a test harness declares.
     DeclaredHarnessResource,
+    /// A configuration file.
     ConfigurationInput,
+    /// A resource whose path could not be resolved statically.
     OpaqueOrDynamicResource,
 }
 
 impl ResourceKindV1 {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::CompileTimeEmbedded => "compile_time_embedded",
@@ -43,14 +54,20 @@ impl ResourceKindV1 {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceAccessKindV1 {
+    /// A literal repository path.
     ExactLiteralRepositoryPath,
+    /// An exact binding through a macro or test harness.
     ExactMacroOrHarnessBinding,
+    /// An exact binding declared in a manifest.
     ExactDeclaredManifestBinding,
+    /// A directory or pattern that may cover more files than are used.
     ConservativeDirectoryOrPatternBinding,
+    /// A dynamic or unresolved reference.
     DynamicOrUnresolved,
 }
 
 impl ResourceAccessKindV1 {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ExactLiteralRepositoryPath => "exact_literal_repository_path",
@@ -64,48 +81,78 @@ impl ResourceAccessKindV1 {
     }
 }
 
+/// Whether a resource exists in one snapshot.
 #[derive(
     Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ResourcePresenceV1 {
+    /// The resource exists.
     Present,
+    /// The resource does not exist.
     Absent,
+    /// Presence could not be determined.
     Unknown,
 }
 
+/// How completely an edge names the resources a consumer depends on.
 #[derive(
     Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceCompletenessClassV1 {
+    /// The edge names the exact resource.
     Exact,
+    /// The edge may cover more resources than are used.
     Conservative,
+    /// The resource could not be resolved.
     Opaque,
 }
 
 /// One producer-owned resource dependency edge.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ResourceDependencyEdgeV1 {
+    /// Stable id for the edge, minted from [`Self::semantic_digest`].
     pub edge_id: String,
+    /// Digest of the edge's kind, path, consumer, access kind and completeness.
+    /// See [`Self::mint_semantic_digest`].
     pub semantic_digest: String,
+    /// What kind of resource this is.
     pub resource_kind: ResourceKindV1,
+    /// Repository-relative path of the resource.
     pub resource_path: PathBuf,
+    /// Content digest of the resource, or a marker when it is missing or
+    /// unresolved.
     pub content_identity: String,
+    /// The symbol that depends on the resource.
     pub consumer_id: SymbolId,
+    /// The file that contains the reference.
     pub consumer_file: PathBuf,
+    /// The line of the reference in [`Self::consumer_file`].
     pub consumer_line: usize,
+    /// How the consumer names the resource.
     pub access_kind: ResourceAccessKindV1,
+    /// Short code naming the rule that resolved the edge, such as
+    /// `include_str_literal`.
     pub resolution_basis: String,
+    /// Whether the resource exists in the base snapshot.
     pub base_presence: ResourcePresenceV1,
+    /// Whether the resource exists in the head snapshot.
     pub head_presence: ResourcePresenceV1,
+    /// How completely the edge names the resource.
     pub completeness_class: ResourceCompletenessClassV1,
+    /// For an unresolved edge, the reason it could not be resolved.
     pub first_unresolved_edge: Option<String>,
+    /// Limitations that apply to this edge.
     pub limitations: Vec<String>,
+    /// What the edge does not claim, such as `may_depend_only` or
+    /// `no_test_adequacy`.
     pub non_claims: Vec<String>,
 }
 
 impl ResourceDependencyEdgeV1 {
+    /// Digest the edge's identity as a `sha256:` string. Path separators are
+    /// normalized to `/`; content and presence are not part of the digest.
     pub fn mint_semantic_digest(
         resource_kind: ResourceKindV1,
         resource_path: &Path,
@@ -130,6 +177,7 @@ impl ResourceDependencyEdgeV1 {
         format!("sha256:{:x}", Sha256::digest(canonical.as_bytes()))
     }
 
+    /// The edge id for a semantic digest.
     pub fn mint_edge_id(semantic_digest: &str) -> String {
         format!("resource-edge:{semantic_digest}")
     }
