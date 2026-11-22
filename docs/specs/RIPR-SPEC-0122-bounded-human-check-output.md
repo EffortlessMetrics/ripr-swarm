@@ -616,6 +616,34 @@ fill in the old stub first. Human output also escapes control and bidi
 characters in the stub text and in the `Inputs`, `Receiver:` and `Fill in:`
 lines, since they carry repository text.
 
+A match-arm stub writes the input the changed arm's own pattern names instead
+of a labelled `todo!()` for that parameter (#8361), for example `ev =
+Event::Fail` for `(State::Running, Event::Fail) => ..` on `match (self.state,
+ev)`, or `n = 2` for `2 => ..` on `match n`. The value is written only when:
+
+- the scrutinee is a bare parameter or a tuple of bare parameters and `self`
+  fields of the stub's owner function, the match is not inside a closure, and
+  the arm has no guard;
+- the parameter's sub-pattern (the first alternative of an or-pattern) is an
+  integer, char, bool or, for a `&str` parameter, string literal without
+  escapes or a raw prefix, written exactly as the arm spells it; or, in an inline test module that sees the
+  owner's items, a two-segment `Type::Variant` path naming a unit variant of
+  the one enum the file declares under the parameter's declared (non-reference)
+  type name, when no other item, rename, import other than through `super::`
+  or `self::`, or item-position macro gives that name another meaning;
+- every earlier arm differs from it at some position by a provably different
+  value: integers compared by parsed value, unescaped char and string literals
+  by text, distinct unit variants of that same enum. A constant, range,
+  binding or other pattern counts as possibly equal;
+- the owner's parameter is not declared `mut`, and nothing before the match
+  rebinds it, assigns it or names it inside a macro call.
+
+When the arm also constrains a `self` field, the receiver line names that
+state (for example "set it so `self.state` matches `State::Running`"),
+because a built receiver may start in another state. The input reaches the
+arm once the receiver is in that state; the expected value stays a `todo!()`.
+Human output lists the inputs on the `Inputs from the changed code:` line.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema

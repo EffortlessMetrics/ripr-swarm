@@ -2476,3 +2476,190 @@ mod tests {{
     }
     Ok(())
 }
+
+/// #8361: a match-arm stub writes the value the changed arm's own pattern
+/// names for each parameter it decides, and keeps the fill-in otherwise.
+#[test]
+fn match_arm_stub_writes_the_input_the_arm_pattern_names() -> Result<(), String> {
+    let machine = "#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum State { Idle, Running, Done, Failed }
+#[derive(Debug, Clone, Copy)]
+pub enum Event { Start, Finish, Fail, Reset }
+pub struct Machine { state: State }
+impl Machine {
+    pub fn new() -> Self { Machine { state: State::Idle } }
+    pub fn step(&mut self, ev: Event) -> Result<State, String> {
+        let next = match (self.state, ev) {
+            (State::Idle, Event::Start) => State::Running,
+            (State::Running, Event::Finish) => State::Done,
+            (State::Running, Event::Fail) => State::Done,
+            (_, Event::Reset) => State::Idle,
+            (s, e) => return Err(format!(\"invalid {:?} in {:?}\", e, s)),
+        };
+        self.state = next;
+        Ok(next)
+    }
+}
+";
+    let numbers = |body: &str| format!("pub fn secs(n: u8) -> u32 {{\n{body}}}\n");
+    let cases: Vec<(String, &str, Option<&str>)> = vec![
+        (
+            machine.to_string(),
+            "(State::Running, Event::Fail) => State::Done",
+            Some("ev = Event::Fail"),
+        ),
+        (
+            numbers("    match n {\n        1 => 60,\n        2 => 120,\n        _ => 0,\n    }\n"),
+            "2 => 120",
+            Some("n = 2"),
+        ),
+        (
+            numbers("    match n {\n        1 | 3 => 60,\n        2 | 4 => 120,\n        _ => 0,\n    }\n"),
+            "2 | 4 => 120",
+            Some("n = 2"),
+        ),
+        // A guard can still refuse the value.
+        (
+            numbers("    match n {\n        1 => 60,\n        2 if n > 0 => 120,\n        _ => 0,\n    }\n"),
+            "2 if n > 0 => 120",
+            None,
+        ),
+        // An earlier binding arm may take it first.
+        (
+            numbers("    match n {\n        x if x > 5 => 60,\n        2 => 120,\n        _ => 0,\n    }\n"),
+            "2 => 120",
+            None,
+        ),
+        // So may an earlier guarded arm on the same value.
+        (
+            numbers("    match n {\n        2 if n > 9 => 60,\n        2 => 120,\n        _ => 0,\n    }\n"),
+            "2 => 120",
+            None,
+        ),
+        // The parameter is rebound before the match.
+        (
+            numbers("    let n = n + 1;\n    match n {\n        1 => 60,\n        2 => 120,\n        _ => 0,\n    }\n"),
+            "2 => 120",
+            None,
+        ),
+        (
+            "pub fn unit(s: &str) -> u32 {\n    match s {\n        \"m\" => 60,\n        \"h\" => 3600,\n        _ => 1,\n    }\n}\n".to_string(),
+            "\"h\" => 3600",
+            Some("s = \"h\""),
+        ),
+        (
+            "pub enum Mode { A, B }\npub fn cost(m: Mode) -> u32 {\n    match m {\n        Mode::A => 1,\n        Mode::B => 2,\n    }\n}\n".to_string(),
+            "Mode::B => 2",
+            Some("m = Mode::B"),
+        ),
+        // A reference parameter would need `&Mode::B`.
+        (
+            "pub enum Mode { A, B }\npub fn cost(m: &Mode) -> u32 {\n    match m {\n        Mode::A => 1,\n        Mode::B => 2,\n    }\n}\n".to_string(),
+            "Mode::B => 2",
+            None,
+        ),
+        // A tuple element that is neither a parameter nor receiver state.
+        (
+            "pub fn pick(n: u8) -> u32 {\n    let k = n / 2;\n    match (k, n) {\n        (0, 1) => 1,\n        (1, 2) => 2,\n        _ => 0,\n    }\n}\n".to_string(),
+            "(1, 2) => 2",
+            None,
+        ),
+        // A literal is written as spelled, spaces included.
+        (
+            "pub fn unit(s: &str) -> u32 {\n    match s {\n        \"per hour\" => 3600,\n        _ => 1,\n    }\n}\n".to_string(),
+            "\"per hour\" => 3600",
+            Some("s = \"per hour\""),
+        ),
+        (
+            "pub fn kind(c: char) -> u8 {\n    match c {\n        ' ' => 1,\n        _ => 0,\n    }\n}\n".to_string(),
+            "' ' => 1",
+            Some("c = ' '"),
+        ),
+        // A `mut` parameter may change before the match.
+        (
+            "fn bump(n: &mut u8) { *n += 1; }\npub fn secs(mut n: u8) -> u32 {\n    bump(&mut n);\n    match n {\n        1 => 60,\n        2 => 120,\n        _ => 0,\n    }\n}\n".to_string(),
+            "2 => 120",
+            None,
+        ),
+        // A macro call before the match may rebind it.
+        (
+            numbers("    double!(n);\n    match n {\n        1 => 60,\n        2 => 120,\n        _ => 0,\n    }\n"),
+            "2 => 120",
+            None,
+        ),
+        // Earlier arms are compared by value: `0x2` already takes 2.
+        (
+            numbers("    match n {\n        0x2 => 60,\n        2 | 4 => 120,\n        _ => 0,\n    }\n"),
+            "2 | 4 => 120",
+            None,
+        ),
+        // ...and `1_0` is not 2.
+        (
+            numbers("    match n {\n        1_0 => 60,\n        2u8 => 120,\n        _ => 0,\n    }\n"),
+            "2u8 => 120",
+            Some("n = 2u8"),
+        ),
+        // A constant may equal the value.
+        (
+            "pub struct Limits;\nimpl Limits { pub const TWO: u8 = 2; }\npub fn secs(n: u8) -> u32 {\n    match n {\n        Limits::TWO => 60,\n        2 => 120,\n        _ => 0,\n    }\n}\n".to_string(),
+            "2 => 120",
+            None,
+        ),
+        // A renamed import may name the same variant.
+        (
+            "pub enum Mode { A, B }\nuse Mode as M;\npub fn cost(m: Mode) -> u32 {\n    match m {\n        M::B => 1,\n        Mode::B => 2,\n        Mode::A => 3,\n    }\n}\n".to_string(),
+            "Mode::B => 2",
+            None,
+        ),
+        // A path that is not a unit variant of a file-local enum.
+        (
+            "pub enum Mode { A, B(u8) }\npub fn cost(m: Mode) -> u32 {\n    match m {\n        Mode::A => 1,\n        _ => 2,\n    }\n}\n".to_string(),
+            "Mode::A => 1",
+            Some("m = Mode::A"),
+        ),
+    ];
+    for (source, arm, expected) in cases {
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            arm,
+            SeamKind::MatchArm,
+            RequiredDiscriminator::MatchArmTaken {
+                arm: arm.to_string(),
+            },
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        let derived: Vec<&str> = stub.derived_inputs.iter().map(String::as_str).collect();
+        match expected {
+            Some(input) => {
+                assert_eq!(derived, vec![input], "{arm}: {}", stub.text);
+                if source.contains("self.state") {
+                    assert!(
+                        stub.text
+                            .contains("set it so `self.state` matches `State::Running`"),
+                        "{arm}: the receiver line names the arm's state: {}",
+                        stub.text
+                    );
+                }
+                let (binding, value) = input.split_once(" = ").ok_or("binding = value")?;
+                assert!(
+                    stub.text.contains(&format!("{binding}: "))
+                        && stub.text.contains(&format!(" = {value};")),
+                    "{arm}: {}",
+                    stub.text
+                );
+                assert!(
+                    !stub
+                        .fill_ins
+                        .iter()
+                        .any(|f| f.contains(&format!("`{binding}`"))),
+                    "{arm}: {:?}",
+                    stub.fill_ins
+                );
+            }
+            None => assert!(derived.is_empty(), "{arm}: {derived:?} {}", stub.text),
+        }
+    }
+    Ok(())
+}
