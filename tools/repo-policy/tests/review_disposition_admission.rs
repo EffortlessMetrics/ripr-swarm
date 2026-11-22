@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 11] = [
+    let cases: [(&str, bool); 14] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -768,10 +768,58 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             "SOURCE_REVIEW_READY\nIt is not true that no source blockers remain.",
             false,
         ),
+        // #15980 review: Markdown emphasis is formatting, not content. A
+        // refutation wrapped in single `*` or `_` must refuse exactly like the
+        // plain form; bold is already stripped by normalize_body and is the
+        // control that keeps the plain path covered.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. *That is false.*",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. _That is false._",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. **That is false.**",
+            false,
+        ),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
         expect_outcome(&check_reviews(&reviews, &head)?, admit, body)?;
+    }
+    // #15980 review: the verdict carrier strips the resolved negated phrases
+    // before its alternative scan, so "no source blocking findings found" is
+    // not read as "blocking"; a real alternative, a later blocker sentence and
+    // an italicized refutation still refuse.
+    let verdict_cases: [(String, bool); 4] = [
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found"
+            ),
+            true,
+        ),
+        (
+            format!("SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - blocking findings found"),
+            false,
+        ),
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found. The build is red."
+            ),
+            false,
+        ),
+        (
+            format!(
+                "SOURCE_REVIEW_READY\nVERDICT: APPROVE {head} - no source blocking findings found. *That is false.*"
+            ),
+            false,
+        ),
+    ];
+    for (body, admit) in verdict_cases {
+        let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, &body)]);
+        expect_outcome(&check_reviews(&reviews, &head)?, admit, &body)?;
     }
     Ok(())
 }

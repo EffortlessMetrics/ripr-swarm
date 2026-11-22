@@ -160,6 +160,11 @@ needed. That is false.` still refuse (#14355). The cue sets are closed
 enumerations, so a phrasing outside them is not detected. The check is
 same-sentence/line only: a refutation on a separate line, such as `It is not
 true.` followed by `No changes are needed.`, is not detected.
+A negated blocker phrase is a resolved finding too: `No source blocker found.`
+and `no source blockers remain` admit, while `Blocker found.` and a later
+blocker sentence such as `No source blocker found. The build is red.` still
+refuse; the cue set is closed, and a refutation after the phrase — including an
+italicized `*That is false.*` — still refuses (#15980).
 Both carriers screen later lines the same way, so a residual written as plain
 narration (`Residual: the hosted lane on this head has not run.`) admits under
 either, while a retraction word used as narration (`the withdrawn attribution`)

@@ -262,7 +262,10 @@ REFUTES_NEGATION = re.compile(
 # prose that merely contains a cue word ("Nothing is wrong", "The wrong file")
 # does not.
 REFUTATION_AFTER = re.compile(
-    r"^[ \t]*[.!;]?[ \t]*"
+    # #15980 review: a leading run of Markdown emphasis or quote markers is
+    # formatting, not content. `normalize_body` strips `**`/`__` but not single
+    # `*`/`_`, so "*That is false.*" must refute exactly like "That is false.".
+    r"^[ \t]*[.!;]?[ \t]*[*_>~]*[ \t]*"
     r"(?:"
     r"(?:that|this|it|i)\b[ \t]*(?:is|'s|\u2019s|am|was|are)?[ \t]*"
     r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"
@@ -413,9 +416,13 @@ def verdict_disposition(line: str) -> bool | None:
     if approve is None:
         return False
     remainder = _strip_negated_verdict_words(stripped[approve.end() :])
+    # #15980 review: strip the resolved negated phrases before the alternative
+    # scan, so "no source blocking findings found" is not read as "blocking".
+    # Both scans then read the same stripped text.
+    remainder = strip_negated_blocker(strip_negated_change(remainder))
     if VERDICT_ALTERNATIVE.search(remainder) is not None:
         return False
-    if NEGATION.search(strip_negated_blocker(strip_negated_change(remainder))) is not None:
+    if NEGATION.search(remainder) is not None:
         return False
     return None
 
