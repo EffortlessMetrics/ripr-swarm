@@ -11851,16 +11851,21 @@ mod tests {
         // #11738: a numeric literal aliases no parameter, even through a
         // literal pattern the alias scans would otherwise read as a binding.
         let literal_patterns = function(
-            "pub fn score(raw_amount: Option<i32>, threshold: i32) -> bool {\n    if let Some(17) = raw_amount { return true; }\n    match raw_amount {\n        Some(17) => true,\n        _ => false,\n    }\n}",
+            "pub fn score(raw_amount: Option<i32>, threshold: i32) -> bool {\n    if let Some(17) = raw_amount { return true; }\n    if let Some(-1) = raw_amount { return false; }\n    if let Some(2u8) = raw_amount { return true; }\n    match raw_amount {\n        Some(17) => true,\n        _ => false,\n    }\n}",
         );
         let literal_parameters = function_parameters(&literal_patterns);
-        assert!(body_contains_wrapped_local_alias(
-            &literal_patterns.body,
-            "Some",
-            "17",
-            "raw_amount"
-        ));
         for literal in ["17", "-1", "2u8"] {
+            // Premise: the raw scan reads each literal pattern as an alias,
+            // so the answer below is the literal rule, not a missed scan.
+            assert!(
+                body_contains_wrapped_local_alias(
+                    &literal_patterns.body,
+                    "Some",
+                    literal,
+                    "raw_amount"
+                ),
+                "{literal}"
+            );
             assert_eq!(
                 boundary_local_operand_parameter(
                     &literal_patterns,
