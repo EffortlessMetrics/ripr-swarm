@@ -25123,6 +25123,15 @@ async fn unanalyzed_hover_text(
     if !settled {
         return Err("the opening refresh did not settle".to_string());
     }
+    // The untouched-state case reads whatever the opening refresh left, so a
+    // failed opening refresh would turn it into the failed case (#16104).
+    if state.is_none() && backend.analysis_attempt_state_for_test() == AnalysisAttemptState::Failed
+    {
+        return Err(format!(
+            "the opening refresh must not fail: {:?}",
+            backend.analysis_failure_for_test()
+        ));
+    }
     // `c.rs` is on disk but no analysis read it.
     let path_c = fixture.root.join("src").join("c.rs");
     std::fs::write(&path_c, QUARANTINE_TEXT_B)

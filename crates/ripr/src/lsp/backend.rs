@@ -2287,6 +2287,11 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn analysis_failure_for_test(&self) -> Option<AnalysisFailure> {
+        self.analysis_health_snapshot().failure
+    }
+
+    #[cfg(test)]
     pub(super) fn clear_latest_analysis_for_test(&self) {
         if let Ok(mut latest) = self.latest_analysis.lock() {
             *latest = None;
