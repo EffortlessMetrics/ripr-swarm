@@ -2806,7 +2806,8 @@ pub(crate) fn ts_returned_expression_unexercised(
 //
 // Some edits differ only for one named input class: `??` -> `||` only for a
 // falsy non-nullish operand, a dropped `.trim()` only for whitespace-padded
-// input, and a changed destructured default only when the field is omitted.
+// input, a changed destructured default only when the field is omitted, and
+// an added `|| d` / `?? d` fallback only when its operand is falsy / nullish.
 // An exact oracle on other inputs passes on both versions, so `Exposed`
 // requires a related strong assertion whose owner call supplies that class.
 // Anything unparseable keeps `witnessed == false` for a detected shape
@@ -2816,7 +2817,19 @@ pub(crate) fn ts_returned_expression_unexercised(
 enum TsInputClassKind {
     FalsyNonNullish,
     WhitespacePadded,
-    OmittedDestructuredField { field: String },
+    OmittedDestructuredField {
+        field: String,
+    },
+    /// A fallback added to (or removed from) an operand: `x` <-> `x || d`
+    /// differs only when `x` is falsy (nullish included), `x` <-> `x ?? d`
+    /// only when it is nullish. `operand` is the source text of `x`;
+    /// `accessed` is true when it reads a field or position (`opts.name`,
+    /// `parts[1]`) rather than a bare binding.
+    AddedFallback {
+        nullish_only: bool,
+        operand: String,
+        accessed: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2855,6 +2868,23 @@ impl TsInputClassChange {
                     "The change to `{owner_name}` only differs when the destructured field `{field}` is omitted, and no related test calls `{owner_name}` without supplying `{field}`; an exact assertion on a call that supplies it passes on both versions. Add a call that omits `{field}`."
                 );
             }
+            TsInputClassKind::AddedFallback {
+                nullish_only,
+                operand,
+                ..
+            } => {
+                let (class, example) = if *nullish_only {
+                    ("null or undefined", "null or undefined")
+                } else {
+                    (
+                        "missing or falsy (undefined, null, \"\", 0, or false)",
+                        "missing, empty, 0, or false",
+                    )
+                };
+                return format!(
+                    "The change to `{owner_name}` only differs when `{operand}` is {class}, and no related test is seen to call `{owner_name}` with an input that makes it so; an exact assertion on the tested inputs passes on both versions. Add a call whose input leaves `{operand}` {example}."
+                );
+            }
         };
         format!(
             "The change to `{owner_name}` only differs for {class}, and no related test calls `{owner_name}` with {example}; an exact assertion on the tested inputs passes on both versions. Add a call with {example}."
@@ -2891,21 +2921,78 @@ impl TsInputClassChange {
                     && value.trim() == "undefined"
             });
         }
+        if let TsInputClassKind::AddedFallback {
+            nullish_only,
+            accessed,
+            ..
+        } = &self.kind
+        {
+            // An omitted argument is not a witness: a parameter default
+            // (not recorded on the owner) would replace it on both versions.
+            let Some(argument) = arguments.get(index) else {
+                return false;
+            };
+            return match ts_input_class_nested_value(argument, &self.target) {
+                Some(value) => match value.trim() {
+                    "null" => true,
+                    // `undefined` reaches a field or position read as is,
+                    // but a bare binding may carry a default that absorbs
+                    // it, exactly like an omitted argument.
+                    "undefined" | "void 0" => *accessed,
+                    _ => !nullish_only && ts_is_falsy_non_nullish_literal(&value),
+                },
+                None => *accessed && ts_input_class_slot_absent(argument, &self.target),
+            };
+        }
         let Some(argument) = arguments.get(index) else {
             return false;
         };
         let Some(value) = ts_input_class_nested_value(argument, &self.target) else {
             return false;
         };
-        match self.kind {
+        match &self.kind {
             TsInputClassKind::FalsyNonNullish => ts_is_falsy_non_nullish_literal(&value),
             TsInputClassKind::WhitespacePadded => {
                 ts_is_padded_string_literal(&value)
                     || (self.optional_trim && matches!(value.trim(), "null" | "undefined"))
             }
-            TsInputClassKind::OmittedDestructuredField { .. } => false,
+            TsInputClassKind::OmittedDestructuredField { .. }
+            | TsInputClassKind::AddedFallback { .. } => false,
         }
     }
+}
+
+/// Whether a literal `argument` provably has no value at the target's field
+/// or position, so the operand reads `undefined`: an object literal without
+/// the key, or an array literal shorter than the position. A spread, a
+/// shorthand or computed key, or a non-literal argument is unreadable.
+fn ts_input_class_slot_absent(argument: &str, target: &TsInputClassTarget) -> bool {
+    let argument = argument.trim();
+    let entries_of = |open: char, close: char| -> Option<Vec<String>> {
+        let inner = argument.strip_prefix(open)?.strip_suffix(close)?;
+        if inner.trim().is_empty() {
+            return Some(Vec::new());
+        }
+        let entries = balanced_call_arguments(&format!("{inner})"))?;
+        (!entries
+            .iter()
+            .any(|entry| entry.trim().starts_with("...") || entry.trim().starts_with('[')))
+        .then_some(entries)
+    };
+    if let Some(field) = &target.field {
+        return entries_of('{', '}').is_some_and(|entries| {
+            entries.iter().all(|entry| {
+                let head = entry.split_once(':').map_or(entry.as_str(), |(key, _)| key);
+                // A method shorthand (`sep() {}`) names its key before `(`.
+                let head = head.split_once('(').map_or(head, |(key, _)| key);
+                head.trim().trim_matches(['"', '\'']) != field.as_str()
+            })
+        });
+    }
+    if let Some(position) = target.position {
+        return entries_of('[', ']').is_some_and(|entries| entries.len() <= position);
+    }
+    false
 }
 
 /// The value of `argument` at the target's field/position, or the argument
@@ -3179,6 +3266,146 @@ fn ts_input_class_change(
     }
     // A changed destructured default as the only change.
     ts_destructured_default_change(old_trim, new_trim, owner)
+        // An added (or removed) `|| d` / `?? d` fallback as the only change.
+        .or_else(|| ts_added_fallback_change(old_trim, new_trim, owner))
+}
+
+/// The added-fallback shape (#15285 case 4): one line is the other with a
+/// single ` || <default>` or ` ?? <default>` removed, e.g.
+/// `out[k] = kv[1]` <-> `out[k] = kv[1] || ''`.
+///
+/// The guarded operand is the expression before the operator, after any
+/// assignment. Only a plain access path (`name`, `name.field`, `name[0]`,
+/// `name['key']`) can be traced to a call argument; any other operand, and a
+/// path whose base is not a parameter (`kv` above is a local), keeps
+/// `index: None`, so no call is read as supplying the class (fail closed).
+fn ts_added_fallback_change(
+    old_line: &str,
+    new_line: &str,
+    owner: &TypeScriptOwner,
+) -> Option<TsInputClassChange> {
+    for (with, without) in [(new_line, old_line), (old_line, new_line)] {
+        if with.chars().count() <= without.chars().count() {
+            continue;
+        }
+        let masked: Vec<char> = ts_mask_literals_and_comments(with).chars().collect();
+        let masked_text: String = masked.iter().collect();
+        for operator in ["||", "??"] {
+            let mut search_from = 0usize;
+            while let Some(at) = ts_masked_find_from(&masked_text, operator, search_from) {
+                search_from = at + operator.len();
+                // `||=` / `??=` assign; they are not a fallback expression.
+                if masked.get(at + operator.len()) == Some(&'=') {
+                    continue;
+                }
+                let mut start = at;
+                while start > 0 && masked[start - 1].is_whitespace() {
+                    start -= 1;
+                }
+                // The default runs to the end of the enclosing expression.
+                let mut end = at + operator.len();
+                let mut depth = 0usize;
+                while let Some(ch) = masked.get(end) {
+                    match ch {
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' | '}' if depth == 0 => break,
+                        ')' | ']' | '}' => depth -= 1,
+                        ';' | ',' if depth == 0 => break,
+                        _ => {}
+                    }
+                    end += 1;
+                }
+                if ts_remove_char_span(with, start, end - start).as_deref() != Some(without) {
+                    continue;
+                }
+                let default: String = with
+                    .chars()
+                    .skip(at + operator.len())
+                    .take(end - at - operator.len())
+                    .collect();
+                if default.trim().is_empty() {
+                    continue;
+                }
+                let before: String = with.chars().take(start).collect();
+                let masked_before: String = masked.iter().take(start).collect();
+                let operand = ts_fallback_operand(&before, &masked_before);
+                if operand.is_empty() {
+                    return None;
+                }
+                // One access at most: a deeper path (`a.b.c`) reads through
+                // a value the argument reader does not follow.
+                let accesses = operand.chars().filter(|ch| matches!(ch, '.' | '[')).count();
+                let simple = accesses <= 1
+                    && operand.chars().all(|ch| {
+                        ch.is_alphanumeric()
+                            || matches!(ch, '_' | '$' | '.' | '[' | ']' | '"' | '\'')
+                    });
+                let target = simple
+                    .then(|| ts_input_class_target(&operand, owner))
+                    .flatten()
+                    .unwrap_or(TsInputClassTarget {
+                        index: None,
+                        field: None,
+                        position: None,
+                    });
+                return Some(TsInputClassChange {
+                    kind: TsInputClassKind::AddedFallback {
+                        nullish_only: operator == "??",
+                        operand,
+                        accessed: accesses == 1,
+                    },
+                    target,
+                    optional_trim: false,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// The operand a fallback guards: the tail of `before` after the last
+/// `(`, `[`, `{`, `,`, `;`, `:`, `?` or plain assignment `=` that sits outside
+/// every bracket pair closed later in `before`.
+fn ts_fallback_operand(before: &str, masked_before: &str) -> String {
+    let masked: Vec<char> = masked_before.chars().collect();
+    let mut cut = 0usize;
+    let mut depth = 0usize;
+    for index in (0..masked.len()).rev() {
+        let ch = masked[index];
+        match ch {
+            ')' | ']' | '}' => {
+                depth += 1;
+                continue;
+            }
+            '(' | '[' | '{' if depth > 0 => {
+                depth -= 1;
+                continue;
+            }
+            _ if depth > 0 => continue,
+            _ => {}
+        }
+        let assignment = ch == '='
+            && masked.get(index + 1) != Some(&'=')
+            && masked.get(index + 1) != Some(&'>')
+            && !index
+                .checked_sub(1)
+                .and_then(|prev| masked.get(prev))
+                .is_some_and(|prev| matches!(prev, '=' | '!' | '<' | '>'));
+        let optional_chain = ch == '?' && masked.get(index + 1) == Some(&'.');
+        if assignment || (matches!(ch, '(' | '[' | '{' | ',' | ';' | ':' | '?') && !optional_chain)
+        {
+            cut = index + 1;
+            break;
+        }
+    }
+    let tail: String = before.chars().skip(cut).collect();
+    let tail = tail.trim();
+    let tail = ["return ", "await ", "yield "]
+        .iter()
+        .fold(tail, |tail, keyword| {
+            tail.strip_prefix(keyword).map_or(tail, str::trim_start)
+        });
+    tail.to_string()
 }
 
 /// The destructured-default shape: both lines share one `{ ... }` pattern
