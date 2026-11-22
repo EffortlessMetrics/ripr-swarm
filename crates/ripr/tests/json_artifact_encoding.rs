@@ -202,3 +202,108 @@ fn a_truncated_utf16_check_artifact_is_refused_by_name() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// `baseline diff --baseline baseline.json --current current.json`, where
+/// each file holds `baseline` or `current` in its own encoding. Returns the
+/// exit code, the `Items:` line and stderr.
+fn baseline_diff_of(
+    root: &Path,
+    baseline: &[u8],
+    current: &[u8],
+) -> Result<(Option<i32>, String, String), String> {
+    fs::write(root.join("baseline.json"), baseline).map_err(|error| format!("write: {error}"))?;
+    fs::write(root.join("current.json"), current).map_err(|error| format!("write: {error}"))?;
+    let output = run(
+        root,
+        env!("CARGO_BIN_EXE_ripr"),
+        &[
+            "baseline",
+            "diff",
+            "--baseline",
+            "baseline.json",
+            "--current",
+            "current.json",
+            "--out",
+            "delta.json",
+            "--out-md",
+            "delta.md",
+        ],
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let items = stdout
+        .lines()
+        .find(|line| line.starts_with("Items:"))
+        .unwrap_or_default()
+        .to_string();
+    Ok((
+        output.status.code(),
+        items,
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
+}
+
+/// `baseline diff` reads its two JSON flags through the report-input reader,
+/// a different path from `baseline create` (Devin review on #16142). Each
+/// spelling of either input must compare the way the UTF-8 pair does.
+#[test]
+fn baseline_diff_reads_both_inputs_in_a_powershell_encoding() -> Result<(), String> {
+    let (root, check_json) = workspace_and_check_json()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let baseline_output = baseline_from(&root, check_json.as_bytes())?;
+    if !baseline_output.status.success() {
+        return Err(format!(
+            "baseline create failed\n{}",
+            String::from_utf8_lossy(&baseline_output.stderr)
+        ));
+    }
+    let baseline = String::from_utf8(baseline_output.stdout)
+        .map_err(|error| format!("baseline stdout: {error}"))?;
+    let current = "{}\n";
+
+    let control = baseline_diff_of(&root, baseline.as_bytes(), current.as_bytes())?;
+    if control.2.contains("could not read") {
+        return Err(format!("the UTF-8 control was refused\n{}", control.2));
+    }
+
+    let with_mark = |text: &str| {
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend(text.as_bytes());
+        bytes
+    };
+    let mut failures = Vec::new();
+    for (name, baseline_bytes, current_bytes) in [
+        (
+            "UTF-8 marked baseline",
+            with_mark(&baseline),
+            current.as_bytes().to_vec(),
+        ),
+        (
+            "UTF-16LE baseline",
+            powershell_redirect_bytes(&baseline),
+            current.as_bytes().to_vec(),
+        ),
+        (
+            "UTF-8 marked current",
+            baseline.as_bytes().to_vec(),
+            with_mark(current),
+        ),
+        (
+            "UTF-16LE current",
+            baseline.as_bytes().to_vec(),
+            powershell_redirect_bytes(current),
+        ),
+    ] {
+        let got = baseline_diff_of(&root, &baseline_bytes, &current_bytes)?;
+        if got.0 != control.0 || got.1 != control.1 || got.2.contains("could not read") {
+            failures.push(format!(
+                "{name}: exit {:?} {:?}, UTF-8 gave exit {:?} {:?}\n{}",
+                got.0, got.1, control.0, control.1, got.2
+            ));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}

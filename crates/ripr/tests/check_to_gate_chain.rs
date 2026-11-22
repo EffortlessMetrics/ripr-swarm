@@ -359,6 +359,25 @@ fn powershell_redirect_bytes(text: &str) -> Vec<u8> {
     bytes
 }
 
+/// `content_hash` the gate decision records for its `pr_guidance` input,
+/// wherever the subject nests it.
+fn recorded_pr_guidance_hash(value: &Value) -> Option<&str> {
+    match value {
+        Value::Object(map) => map
+            .get("pr_guidance")
+            .and_then(|input| input.get("content_hash"))
+            .and_then(Value::as_str)
+            .or_else(|| map.values().find_map(recorded_pr_guidance_hash)),
+        Value::Array(items) => items.iter().find_map(recorded_pr_guidance_hash),
+        _ => None,
+    }
+}
+
+fn sha256_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("sha256:{:x}", Sha256::digest(bytes))
+}
+
 /// #15936: the gate's `--pr-guidance` input is hashed from the bytes as
 /// written and parsed from the same bytes, so it had its own reader. A
 /// guidance document saved in a Windows PowerShell 5.1 encoding must give the
@@ -382,6 +401,12 @@ fn gate_reads_pr_guidance_in_the_encodings_powershell_writes() -> Result<(), Str
     // spelling must reproduce.
     let (control, control_exit) = evaluate_gate(&fixture.0, COMMENTS_JSON)?;
     let control_status = control.get("status").and_then(Value::as_str);
+    let control_hash = sha256_of(comments.as_bytes());
+    if recorded_pr_guidance_hash(&control) != Some(control_hash.as_str()) {
+        return Err(format!(
+            "UTF-8 control does not record pr_guidance hash {control_hash}\n{control}"
+        ));
+    }
     if control_status != Some("blocked") || control_exit != Some(3) {
         return Err(format!(
             "UTF-8 control should block with exit 3, got {control_status:?} exit {control_exit:?}\n{control}"
@@ -405,13 +430,21 @@ fn gate_reads_pr_guidance_in_the_encodings_powershell_writes() -> Result<(), Str
             powershell_redirect_bytes(&comments),
         ),
     ] {
-        std::fs::write(fixture.0.join(relative), bytes)
+        std::fs::write(fixture.0.join(relative), &bytes)
             .map_err(|error| format!("write {relative}: {error}"))?;
         let (gate, exit) = evaluate_gate(&fixture.0, relative)?;
         let status = gate.get("status").and_then(Value::as_str);
         if status != control_status || exit != control_exit {
             failures.push(format!(
                 "{name}: got {status:?} exit {exit:?}, UTF-8 gave {control_status:?} exit {control_exit:?}\n{gate}"
+            ));
+        }
+        // The subject hash covers the file as written, not the decoded text.
+        let expected = sha256_of(&bytes);
+        let recorded = recorded_pr_guidance_hash(&gate);
+        if recorded != Some(expected.as_str()) {
+            failures.push(format!(
+                "{name}: recorded pr_guidance hash {recorded:?}, the file as written hashes {expected}"
             ));
         }
     }

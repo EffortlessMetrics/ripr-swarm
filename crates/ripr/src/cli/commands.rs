@@ -2084,7 +2084,18 @@ impl SuppliedInputReads {
         label: &str,
         path: &Path,
     ) -> Result<String, String> {
-        let read = self.read(flag, label, path)?;
+        // A JSON flag names a ripr artifact a shell redirect may have
+        // written, so read it in the PowerShell 5.1 encodings too (#15936).
+        let read = crate::bounded_input::read_artifact_text(path).map_err(|err| {
+            format!(
+                "read {label} {} failed: {err}",
+                output::baseline_delta::display_path(path)
+            )
+        });
+        if let Err(err) = &read {
+            self.failures.push(format!("{flag}: {err}"));
+        }
+        let read = read?;
         if let Err(err) = serde_json::from_str::<serde_json::Value>(&read) {
             self.failures.push(format!(
                 "{flag}: {label} {} is not valid JSON: {err}",
