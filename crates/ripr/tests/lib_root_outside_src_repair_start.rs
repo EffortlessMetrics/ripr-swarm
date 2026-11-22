@@ -366,3 +366,41 @@ fn retargeting_a_crate_root_link_moves_the_repo_inventory_cache_key() -> Result<
     }
     Ok(())
 }
+
+#[test]
+fn pilot_ranks_a_root_outside_src_instead_of_calling_it_left_out() -> Result<(), String> {
+    // #16084 review: pilot named a changed file below `[lib] path` as "a
+    // crate source declared outside src, which pilot's repo-wide ranking
+    // leaves out", though the repo inventory now ranks it. An exact boundary
+    // test leaves the changed spot nothing to rank, which is when pilot
+    // explains the change's files.
+    let exact = "#[test]\nfn boundary() {\n    assert_eq!(my_pkg::pricing::discount(99), 99);\n    assert_eq!(my_pkg::pricing::discount(100), 90);\n    assert_eq!(my_pkg::pricing::discount(101), 91);\n}\n";
+    let repo = repo(
+        "pilot",
+        &[
+            file(
+                "Cargo.toml",
+                format!("{PACKAGE}\n[lib]\npath = \"source/entry.rs\"\n"),
+            ),
+            file("source/entry.rs", "pub mod pricing;\n"),
+            file("tests/d.rs", exact),
+        ],
+        "source/pricing.rs",
+    )?;
+    let pilot = ripr(&repo.root, &["pilot", "--quiet"])?;
+    let out = text(&pilot.stdout);
+    // The change's checked spot is gripped, so pilot explains the change.
+    if pilot.status.code() != Some(0) || !out.contains("on a line changed since main has no gap") {
+        return Err(format!(
+            "fixture: pilot must complete and explain the gripped change (exit {:?}):\n{out}\n{}",
+            pilot.status.code(),
+            text(&pilot.stderr)
+        ));
+    }
+    if out.contains("declared outside src") || out.contains("ranking leaves out") {
+        return Err(format!(
+            "pilot must not call a ranked root outside src left out:\n{out}"
+        ));
+    }
+    Ok(())
+}
