@@ -146,6 +146,21 @@ fn ambient_git_diff_settings_do_not_change_the_analyzed_input() -> TestResult {
     Ok(())
 }
 
+/// Whether this git is 2.40 or later, from `git version 2.43.0` (vendor
+/// suffixes such as `.windows.1` or ` (Apple Git-154)` follow the numbers).
+fn git_reads_driver_algorithm(version: &str) -> TestResult<bool> {
+    let mut numbers = version
+        .trim()
+        .strip_prefix("git version ")
+        .ok_or_else(|| format!("unrecognized git version line {version:?}"))?
+        .split(|ch: char| !ch.is_ascii_digit())
+        .map(str::parse::<u32>);
+    let (Some(Ok(major)), Some(Ok(minor))) = (numbers.next(), numbers.next()) else {
+        return Err(format!("unrecognized git version line {version:?}").into());
+    };
+    Ok((major, minor) >= (2, 40))
+}
+
 /// A per-path diff driver names its own algorithm, and git lets that win over
 /// the `diff.algorithm` config pin; only the `--diff-algorithm` flag outranks
 /// it. A `*.rs diff=<driver>` attribute line is ordinary, so a user whose
@@ -161,18 +176,29 @@ fn a_diff_driver_algorithm_does_not_change_the_analyzed_input() -> TestResult {
     assert!(expected.1 > 0, "the fixture analyzed no changed lines");
     fs::write(root.join(".git/info/attributes"), "*.rs diff=plain\n")?;
     fixture_git_ok(&root, &["config", "diff.plain.algorithm", "histogram"])?;
-    // Pin the stimulus twice: the driver changes plain git's patch, and it
-    // still does under the config pin that holds for `diff.algorithm`.
+    // Git reads `diff.<driver>.algorithm` since 2.40. An older git ignores
+    // it, so there the two plain patches match and only the last assertion
+    // applies. From 2.40 on, pin the stimulus twice: the driver changes plain
+    // git's patch, and it still does under the `diff.algorithm` config pin.
     let raw = fixture_git_output(&root, &["diff", &range])?;
-    assert_ne!(
-        raw, raw_default,
-        "the driver algorithm does not discriminate"
-    );
-    let config_pinned = fixture_git_output(&root, &["-c", "diff.algorithm=myers", "diff", &range])?;
-    assert_eq!(
-        config_pinned, raw,
-        "the config pin now outranks a driver algorithm; this case no longer needs the flag"
-    );
+    let version = fixture_git_output(&root, &["--version"])?;
+    if git_reads_driver_algorithm(&version)? {
+        assert_ne!(
+            raw, raw_default,
+            "the driver algorithm does not discriminate"
+        );
+        let config_pinned =
+            fixture_git_output(&root, &["-c", "diff.algorithm=myers", "diff", &range])?;
+        assert_eq!(
+            config_pinned, raw,
+            "the config pin now outranks a driver algorithm; this case no longer needs the flag"
+        );
+    } else {
+        assert_eq!(
+            raw, raw_default,
+            "{version:?} predates driver algorithms yet changed the patch"
+        );
+    }
     assert_eq!(
         analyzed(&root, &base)?,
         expected,
