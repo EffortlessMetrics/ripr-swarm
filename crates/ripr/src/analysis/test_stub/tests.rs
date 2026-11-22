@@ -2617,6 +2617,42 @@ impl Machine {
             "Mode::A => 1",
             Some("m = Mode::A"),
         ),
+        // A raw-identifier rebinding names the same local.
+        (
+            numbers("    let r#n = n + 1;\n    match n {\n        1 => 60,\n        2 => 120,\n        _ => 0,\n    }\n"),
+            "2 => 120",
+            None,
+        ),
+        // A local constant of the name shadows the parameter in the block.
+        (
+            numbers("    match n {\n        1 => 60,\n        2 => 120,\n        _ => 0,\n    }\n    #[allow(non_upper_case_globals)]\n    const n: u8 = 1;\n"),
+            "2 => 120",
+            None,
+        ),
+        // A `cfg` on the arm may remove it from the test build.
+        (
+            numbers("    match n {\n        #[cfg(not(test))]\n        2 => 120,\n        _ => 0,\n    }\n"),
+            "2 => 120",
+            None,
+        ),
+        // A nested match header is not the enclosing arm.
+        (
+            "pub fn route(mode: u8, input: u8) -> u8 {\n    match mode {\n        1 => match input {\n            0 => 1,\n            _ => 2,\n        },\n        _ => 0,\n    }\n}\n".to_string(),
+            "match input",
+            None,
+        ),
+        // A bare uppercase state pattern may be a constant, not a binding.
+        (
+            "pub const RUNNING: u8 = 1;\npub struct M { state: u8 }\nimpl M {\n    pub fn new() -> Self { M { state: 0 } }\n    pub fn step(&self, n: u8) -> u8 {\n        match (self.state, n) {\n            (RUNNING, 2) => 4,\n            _ => 0,\n        }\n    }\n}\n".to_string(),
+            "(RUNNING, 2) => 4",
+            Some("n = 2"),
+        ),
+        // A one-element tuple scrutinee.
+        (
+            numbers("    match (n,) {\n        (1,) => 60,\n        (2,) => 120,\n        _ => 0,\n    }\n"),
+            "(2,) => 120",
+            Some("n = 2"),
+        ),
     ];
     for (source, arm, expected) in cases {
         let seam = seam_at(
@@ -2634,7 +2670,14 @@ impl Machine {
         match expected {
             Some(input) => {
                 assert_eq!(derived, vec![input], "{arm}: {}", stub.text);
-                if source.contains("self.state") {
+                if source.contains("RUNNING") {
+                    assert!(
+                        stub.text
+                            .contains("set it so `self.state` matches `RUNNING`"),
+                        "{arm}: a constant state pattern is named: {}",
+                        stub.text
+                    );
+                } else if source.contains("self.state") {
                     assert!(
                         stub.text
                             .contains("set it so `self.state` matches `State::Running`"),

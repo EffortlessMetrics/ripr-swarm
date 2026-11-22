@@ -622,24 +622,28 @@ Event::Fail` for `(State::Running, Event::Fail) => ..` on `match (self.state,
 ev)`, or `n = 2` for `2 => ..` on `match n`. The value is written only when:
 
 - the scrutinee is a bare parameter or a tuple of bare parameters and `self`
-  fields of the stub's owner function, the match is not inside a closure, and
-  the arm has no guard;
+  fields of the stub's owner function, the match is not inside a closure,
+  the seam sits on the arm's own pattern (not a nested `match` in its body),
+  neither the arm nor an earlier one carries an attribute such as `cfg`,
+  and the arm has no guard;
 - the parameter's sub-pattern (the first alternative of an or-pattern) is an
   integer, char, bool or, for a `&str` parameter, string literal without
-  escapes or a raw prefix, written exactly as the arm spells it; or, in an inline test module that sees the
-  owner's items, a two-segment `Type::Variant` path naming a unit variant of
-  the one enum the file declares under the parameter's declared (non-reference)
-  type name, when no other item, rename, import other than through `super::`
+  escapes or a raw prefix, written exactly as the arm spells it; or, in an
+  inline test module that sees the owner's items, a two-segment
+  `Type::Variant` path naming a unit variant of the one enum the file
+  declares under the parameter's declared (non-reference) type name, when no other item, rename, import other than through `super::`
   or `self::`, or item-position macro gives that name another meaning;
 - every earlier arm differs from it at some position by a provably different
   value: integers compared by parsed value, unescaped char and string literals
   by text, distinct unit variants of that same enum. A constant, range,
   binding or other pattern counts as possibly equal;
-- the owner's parameter is not declared `mut`, and nothing before the match
-  rebinds it, assigns it or names it inside a macro call.
+- the owner's parameter is not declared `mut`, no `const`, `static` or `fn`
+  of its name sits in the body, and nothing before the match rebinds it
+  (`r#n` included), assigns it or names it inside a macro call.
 
-When the arm also constrains a `self` field, the receiver line names that
-state (for example "set it so `self.state` matches `State::Running`"),
+When the arm also constrains a `self` field (anything but `_` or a plain
+lowercase binding, since a bare `RUNNING` may be a constant), the receiver
+line names that state (for example "set it so `self.state` matches `State::Running`"),
 because a built receiver may start in another state. The input reaches the
 arm once the receiver is in that state; the expected value stays a `todo!()`.
 Human output lists the inputs on the `Inputs from the changed code:` line.

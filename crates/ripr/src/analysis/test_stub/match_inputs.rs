@@ -30,7 +30,7 @@
 use super::super::seams::RepoSeam;
 use super::super::syntax::fn_signature::OwnerSignature;
 use super::super::syntax::parse_clean_source_file;
-use ra_ap_syntax::ast::{self, HasName};
+use ra_ap_syntax::ast::{self, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize};
 
 /// What the changed arm's own pattern decides.
@@ -88,7 +88,9 @@ fn derive(
         .filter_map(ast::MatchArm::cast)
         .filter(|arm| arm.syntax().text_range().contains(offset))
         .max_by_key(|arm| arm.syntax().text_range().start())?;
-    if arm.guard().is_some() {
+    // A match-arm seam sits at the arm's `=>`; an offset inside the arm's
+    // body (a nested `match` header, say) is not this arm.
+    if arm.guard().is_some() || offset > arm.fat_arrow_token()?.text_range().end() {
         return None;
     }
     let arm_list = arm.syntax().parent().and_then(ast::MatchArmList::cast)?;
@@ -105,9 +107,20 @@ fn derive(
     {
         return None;
     }
-    let slots = scrutinee_slots(&match_expr.expr()?, signature)?;
+    // An attribute (`#[cfg(not(test))]`) on this or an earlier arm may
+    // remove it from the test build.
+    if arm_list
+        .arms()
+        .take_while(|other| {
+            other.syntax().text_range().start() <= arm.syntax().text_range().start()
+        })
+        .any(|other| other.attrs().next().is_some())
+    {
+        return None;
+    }
+    let (slots, is_tuple) = scrutinee_slots(&match_expr.expr()?, signature)?;
     let pattern_slots = |pat: ast::Pat| -> Option<Vec<ast::Pat>> {
-        if slots.len() == 1 {
+        if !is_tuple {
             return Some(vec![pat]);
         }
         let ast::Pat::TuplePat(tuple) = pat else {
@@ -137,7 +150,7 @@ fn derive(
                 }
             }
             Slot::State(field) => {
-                if catches_all(pat) {
+                if catches_all(pat, &file) {
                     chosen.push(None);
                     continue;
                 }
@@ -199,7 +212,8 @@ fn derive(
     Some(found)
 }
 
-fn scrutinee_slots(expr: &ast::Expr, signature: &OwnerSignature) -> Option<Vec<Slot>> {
+/// The scrutinee's slots, and whether it is a tuple (`(n,)` included).
+fn scrutinee_slots(expr: &ast::Expr, signature: &OwnerSignature) -> Option<(Vec<Slot>, bool)> {
     let slot = |expr: &ast::Expr| -> Option<Slot> {
         match expr {
             ast::Expr::PathExpr(path) => {
@@ -208,10 +222,12 @@ fn scrutinee_slots(expr: &ast::Expr, signature: &OwnerSignature) -> Option<Vec<S
                     return None;
                 }
                 let name = path.segment()?.name_ref()?.text().to_string();
-                let param = signature
-                    .params
-                    .iter()
-                    .find(|param| param.name.as_deref() == Some(name.as_str()))?;
+                let param = signature.params.iter().find(|param| {
+                    param
+                        .name
+                        .as_deref()
+                        .is_some_and(|declared| unraw(declared) == unraw(&name))
+                })?;
                 Some(Slot::Param(name, normalized(&param.ty), param.ty.clone()))
             }
             ast::Expr::FieldExpr(field) => {
@@ -227,6 +243,7 @@ fn scrutinee_slots(expr: &ast::Expr, signature: &OwnerSignature) -> Option<Vec<S
             _ => None,
         }
     };
+    let is_tuple = matches!(expr, ast::Expr::TupleExpr(_));
     let slots = match expr {
         ast::Expr::TupleExpr(tuple) => tuple
             .fields()
@@ -244,14 +261,14 @@ fn scrutinee_slots(expr: &ast::Expr, signature: &OwnerSignature) -> Option<Vec<S
     let mut names: Vec<&str> = slots
         .iter()
         .filter_map(|slot| match slot {
-            Slot::Param(name, ..) => Some(name.as_str()),
+            Slot::Param(name, ..) => Some(unraw(name)),
             Slot::State(_) => None,
         })
         .collect();
     let count = names.len();
     names.sort_unstable();
     names.dedup();
-    (names.len() == count).then_some(slots)
+    (names.len() == count).then_some((slots, is_tuple))
 }
 
 fn first_alternative(pat: &ast::Pat) -> ast::Pat {
@@ -479,10 +496,28 @@ fn full_use_path(tree: &ast::UseTree) -> Vec<String> {
     segments
 }
 
-fn catches_all(pat: &ast::Pat) -> bool {
+/// `_`, or a plain lowercase binding. A bare identifier can also name a
+/// constant or an imported unit variant (`RUNNING`), so an uppercase one, or
+/// one the file declares as a `const` or `static`, does not count.
+fn catches_all(pat: &ast::Pat, file: &SourceFile) -> bool {
     match pat {
         ast::Pat::WildcardPat(_) => true,
-        ast::Pat::IdentPat(ident) => ident.pat().is_none(),
+        ast::Pat::IdentPat(ident) => {
+            let Some(name) = ident.name() else {
+                return false;
+            };
+            let text = name.text().to_string();
+            let name = unraw(&text);
+            ident.pat().is_none()
+                && name.starts_with(|c: char| c.is_lowercase() || c == '_')
+                && !file.syntax().descendants().any(|node| {
+                    matches!(node.kind(), SyntaxKind::CONST | SyntaxKind::STATIC)
+                        && node
+                            .children()
+                            .find_map(ast::Name::cast)
+                            .is_some_and(|n| unraw(n.text()) == name)
+                })
+        }
         _ => false,
     }
 }
@@ -503,8 +538,22 @@ fn unstable_before(owner: &ast::Fn, name: &str, match_expr: &ast::MatchExpr) -> 
             ast::Pat::IdentPat(ident) => Some(ident),
             _ => None,
         })
-        .any(|ident| ident.name().is_some_and(|n| n.text() == name) && ident.mut_token().is_some());
-    if declared_mut {
+        .any(|ident| {
+            ident.name().is_some_and(|n| unraw(n.text()) == unraw(name))
+                && ident.mut_token().is_some()
+        });
+    // A value item of the name anywhere in the body shadows the parameter
+    // for the whole block.
+    let local_item = body.syntax().descendants().any(|node| {
+        matches!(
+            node.kind(),
+            SyntaxKind::CONST | SyntaxKind::STATIC | SyntaxKind::FN
+        ) && node
+            .children()
+            .find_map(ast::Name::cast)
+            .is_some_and(|n| unraw(n.text()) == unraw(name))
+    });
+    if declared_mut || local_item {
         return true;
     }
     let start = match_expr.syntax().text_range().start();
@@ -516,7 +565,7 @@ fn unstable_before(owner: &ast::Fn, name: &str, match_expr: &ast::MatchExpr) -> 
 
 fn binds_or_assigns(node: &SyntaxNode, name: &str) -> bool {
     if let Some(ident) = ast::IdentPat::cast(node.clone()) {
-        return ident.name().is_some_and(|n| n.text() == name);
+        return ident.name().is_some_and(|n| unraw(n.text()) == unraw(name));
     }
     if let Some(bin) = ast::BinExpr::cast(node.clone()) {
         let assigns = matches!(bin.op_kind(), Some(ast::BinaryOp::Assignment { .. }));
@@ -529,7 +578,7 @@ fn binds_or_assigns(node: &SyntaxNode, name: &str) -> bool {
 fn mentions(node: &SyntaxNode, name: &str) -> bool {
     node.descendants_with_tokens()
         .filter_map(|element| element.into_token())
-        .any(|token| token.kind() == SyntaxKind::IDENT && token.text() == name)
+        .any(|token| token.kind() == SyntaxKind::IDENT && unraw(token.text()) == unraw(name))
 }
 
 /// An integer literal's value: optional `-`, `0x`/`0o`/`0b` radix,
@@ -592,6 +641,11 @@ fn is_str_ref(raw: &str) -> bool {
         None => rest,
     };
     rest.trim() == "str"
+}
+
+/// An identifier without its `r#` raw prefix, for comparing names.
+fn unraw(name: &str) -> &str {
+    name.strip_prefix("r#").unwrap_or(name)
 }
 
 fn normalized(text: &str) -> String {
