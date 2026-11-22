@@ -1,10 +1,10 @@
 # Golden Output Changes
 
-## Pending - corpus cache generation 1.190 for the #6732 and #12876 merge
+## Pending - corpus cache generation 1.192 for the #6732 and #12876 merge
 
 The one-hop blanket-impl reach withholding (#6732) and the std-rooted import
-exemption (#12876) both land, which bumps the analyzer cache schema to 1.190.
-Move the portable unchanged-attempt snapshots to 1.190, recompute the
+exemption (#12876) both land, which bumps the analyzer cache schema to 1.192 (main claimed 1.191).
+Move the portable unchanged-attempt snapshots to 1.192, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent verify
 commitments and receipt byte hashes, and recapture the honesty reports whose
 header carried an older generation (artifact, source_subject and
