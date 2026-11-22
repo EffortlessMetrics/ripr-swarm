@@ -1377,6 +1377,73 @@ pub(super) struct HiddenImpls {
     trait_defaults: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     /// Trait names of blanket impls (`impl<T: Bound> Trait for T`).
     blanket_traits: std::collections::BTreeSet<String>,
+    /// Macro calls that write the items of a blanket impl (the impl's trait,
+    /// the macro, the words of its arguments).
+    blanket_macro_calls: Vec<(String, String, std::collections::BTreeSet<String>)>,
+    /// Every `macro_rules!`/`macro` definition, by macro name.
+    macro_definitions: std::collections::BTreeMap<String, Vec<MacroDefinition>>,
+    /// Item-level invocations (macro name, words of the arguments).
+    item_macro_invocations: Vec<(String, std::collections::BTreeSet<String>)>,
+}
+
+/// What one macro definition's own text can put into its expansion.
+#[derive(Default)]
+struct MacroDefinition {
+    words: std::collections::BTreeSet<String>,
+    /// Names of the macros its text invokes.
+    invokes: Vec<String>,
+    /// It names a function, or the macro it invokes, by a metavariable
+    /// (`fn $name`, `$callback!(..)`), so its text does not list the method
+    /// names it can write.
+    opaque: bool,
+}
+
+impl MacroDefinition {
+    fn read(text: &str) -> Self {
+        let bytes = text.as_bytes();
+        let mut definition = Self {
+            words: words_of(text).into_iter().map(String::from).collect(),
+            ..Self::default()
+        };
+        for (at, _) in text.match_indices("fn") {
+            let whole =
+                !text[..at].ends_with(is_word_char) && !text[at + 2..].starts_with(is_word_char);
+            if whole && text[at + 2..].trim_start().starts_with('$') {
+                definition.opaque = true;
+            }
+        }
+        for (bang, _) in text.match_indices('!') {
+            if !text[bang + 1..].trim_start().starts_with(['(', '[', '{']) {
+                continue;
+            }
+            let before = text[..bang].trim_end();
+            let spaced = before.len() != bang;
+            let start = before
+                .rfind(|ch: char| !is_word_char(ch))
+                .map_or(0, |at| at + 1);
+            let name = &before[start..];
+            // `if !(a)` and `return !{ .. }` negate; a bare `!(` has no name.
+            if name.is_empty() || (spaced && NEGATION_HEADS.contains(&name)) {
+                continue;
+            }
+            if start > 0 && bytes[start - 1] == b'$' {
+                definition.opaque = true;
+            } else if name != "macro_rules" {
+                definition.invokes.push(name.to_string());
+            }
+        }
+        definition
+    }
+}
+
+/// Keywords an expression-position `!(`, `![` or `!{` can follow after a
+/// space, where the `!` negates and invokes nothing.
+const NEGATION_HEADS: &[&str] = &[
+    "if", "while", "return", "match", "in", "else", "break", "yield", "move",
+];
+
+fn is_word_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
 }
 
 /// Macros of `std`/`core` that expand to expressions or diagnostics, never to
@@ -1489,7 +1556,9 @@ impl HiddenImpls {
                         let text = masked_text(tokens.syntax());
                         let words = words_of(&text);
                         if let Some(name) = macro_call_name(call) {
-                            self.item_macro_sites.push((name, words.is_empty()));
+                            self.item_macro_sites.push((name.clone(), words.is_empty()));
+                            self.item_macro_invocations
+                                .push((name, words.iter().map(|word| word.to_string()).collect()));
                         }
                         self.item_macro_words
                             .extend(words.into_iter().map(String::from));
@@ -1520,6 +1589,10 @@ impl HiddenImpls {
             if writes_impl {
                 self.impl_macro_names.insert(name.clone());
             }
+            self.macro_definitions
+                .entry(name.clone())
+                .or_default()
+                .push(MacroDefinition::read(&text));
             self.defined_macros.insert(name);
         }
     }
@@ -1626,15 +1699,34 @@ impl HiddenImpls {
         if !generic {
             return;
         }
-        if let Some(trait_name) = imp.trait_().and_then(|t| referent_trait_name(&t)) {
-            self.blanket_traits.insert(trait_name);
+        let trait_name = imp.trait_().and_then(|t| referent_trait_name(&t));
+        if let Some(trait_name) = &trait_name {
+            self.blanket_traits.insert(trait_name.clone());
         }
         if let Some(items) = imp.assoc_item_list() {
             for item in items.assoc_items() {
-                if let ast::AssocItem::Fn(f) = item
-                    && let Some(name) = f.name()
-                {
-                    self.blanket_methods.insert(name.text().to_string());
+                match item {
+                    ast::AssocItem::Fn(f) => {
+                        if let Some(name) = f.name() {
+                            self.blanket_methods.insert(name.text().to_string());
+                        }
+                    }
+                    // `impl<T: Buf> Buf for &mut T { forward!(); }`: the
+                    // methods are not listed. An unnamed trait or macro reads
+                    // as "", which matches no trait and no definition.
+                    ast::AssocItem::MacroCall(call) => {
+                        let words = call
+                            .token_tree()
+                            .map(|tokens| masked_text(tokens.syntax()))
+                            .map(|text| words_of(&text).into_iter().map(String::from).collect())
+                            .unwrap_or_default();
+                        self.blanket_macro_calls.push((
+                            trait_name.clone().unwrap_or_default(),
+                            macro_call_name(&call).unwrap_or_default(),
+                            words,
+                        ));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1651,6 +1743,119 @@ impl HiddenImpls {
             || self.item_macro_words.contains(self_type)
             || self.blanket_default_defines(name)
             || self.unresolved_macro_may_write_impl(self_type)
+    }
+
+    /// [`Self::may_define`] for a method call on a value of `self_type` that
+    /// `owner_trait`'s impl for it would otherwise take. It reads two sources
+    /// by what they can write, not only by the type they mention:
+    ///
+    /// - a workspace macro that names the type counts only when its
+    ///   expansion can hold a `fn name` (see [`Self::macro_may_write_fn`]),
+    ///   so `fmt_impl!(Debug, BytesMut)` says nothing about `advance_mut`;
+    /// - a blanket impl whose items a macro writes counts when that macro can
+    ///   write a `fn name`, unless it implements `owner_trait` itself: one
+    ///   trait's method selects its impl by the receiver's type, and
+    ///   coherence keeps a blanket impl of that trait from covering a type
+    ///   with its own impl.
+    ///
+    /// Every other source answers as in [`Self::may_define`].
+    fn may_define_method(&self, self_type: &str, name: &str, owner_trait: &str) -> bool {
+        self.unreadable_source
+            || self.blanket_methods.contains(name)
+            || self
+                .blanket_macro_calls
+                .iter()
+                .any(|(blanket, macro_name, words)| {
+                    blanket != owner_trait
+                        && (words.contains(name)
+                            || self.macro_may_write_fn(
+                                macro_name,
+                                name,
+                                &mut std::collections::BTreeSet::new(),
+                            ))
+                })
+            || self
+                .derives
+                .get(self_type)
+                .is_some_and(|d| d.unreadable || d.methods.contains(name))
+            || self.blanket_default_defines(name)
+            || self.unresolved_macro_may_write_impl(self_type)
+            || self.macro_naming_type_may_write_fn(self_type, name)
+    }
+
+    /// Whether a macro whose definition or item-level invocation names
+    /// `self_type` can write a `fn name`.
+    fn macro_naming_type_may_write_fn(&self, self_type: &str, name: &str) -> bool {
+        let defined_with_type = self
+            .macro_definitions
+            .iter()
+            .filter(|(_, definitions)| {
+                definitions
+                    .iter()
+                    .any(|definition| definition.words.contains(self_type))
+            })
+            .map(|(macro_name, _)| macro_name.as_str());
+        let invoked_with_type = self
+            .item_macro_invocations
+            .iter()
+            .filter(|(_, words)| words.contains(self_type))
+            .map(|(macro_name, _)| macro_name.as_str());
+        let mut seen = std::collections::BTreeSet::new();
+        defined_with_type
+            .chain(invoked_with_type)
+            .any(|macro_name| self.macro_may_write_fn(macro_name, name, &mut seen))
+    }
+
+    /// Whether an expansion of `macro_name` can hold the identifier `name`,
+    /// which a `fn name` needs. The identifier reaches an expansion from the
+    /// definition's own text, from the arguments of an invocation, or from a
+    /// macro the definition invokes. A macro the workspace does not define, a
+    /// definition that names a function or its callee by a metavariable, and
+    /// a non-std macro it invokes that the workspace does not define are not
+    /// readable, so they answer yes.
+    fn macro_may_write_fn<'a>(
+        &'a self,
+        macro_name: &'a str,
+        name: &str,
+        seen: &mut std::collections::BTreeSet<&'a str>,
+    ) -> bool {
+        if !seen.insert(macro_name) {
+            return false;
+        }
+        let Some(definitions) = self.macro_definitions.get(macro_name) else {
+            return true;
+        };
+        if definitions
+            .iter()
+            .any(|definition| definition.opaque || definition.words.contains(name))
+        {
+            return true;
+        }
+        let passed_by_an_invocation = self
+            .item_macro_invocations
+            .iter()
+            .chain(&self.body_macro_sites)
+            .any(|(invoked, words)| invoked == macro_name && words.contains(name))
+            || self.macro_definitions.values().flatten().any(|definition| {
+                definition.words.contains(name)
+                    && definition
+                        .invokes
+                        .iter()
+                        .any(|invoked| invoked == macro_name)
+            });
+        if passed_by_an_invocation {
+            return true;
+        }
+        definitions
+            .iter()
+            .flat_map(|definition| &definition.invokes)
+            .any(|invoked| {
+                if self.macro_definitions.contains_key(invoked) {
+                    self.macro_may_write_fn(invoked, name, seen)
+                } else {
+                    !is_std_expression_macro(invoked)
+                }
+            })
     }
 
     /// A workspace trait with a default body for `name` that a blanket impl
@@ -1762,6 +1967,28 @@ fn unindexed_impl_may_define(owner: &FunctionSummary, index: &RustIndex) -> bool
         .call_identity_memos
         .hidden_impls(index)
         .may_define(&self_type, owner.name.as_str())
+}
+
+/// [`unindexed_impl_may_define`] for a method call on a value of the owner's
+/// self type, where `owner` is `owner_trait`'s impl method for that type.
+/// Macros and macro-written blanket impls are read by what they can write
+/// (`HiddenImpls::may_define_method`); every other source answers alike.
+pub(super) fn unindexed_impl_may_take_method_call(
+    owner: &FunctionSummary,
+    owner_trait: &str,
+    index: &RustIndex,
+) -> bool {
+    let Some(self_type) = impl_self_type_name(&owner.id.0) else {
+        return true;
+    };
+    index
+        .call_identity_memos
+        .hidden_impls(index)
+        .may_define_method(
+            &self_type,
+            owner.name.strip_prefix("r#").unwrap_or(&owner.name),
+            owner_trait,
+        )
 }
 
 /// Whether the test body brings another item in under the impl type's name, by

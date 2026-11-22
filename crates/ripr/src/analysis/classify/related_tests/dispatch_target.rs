@@ -4,7 +4,9 @@
 //! it: `Unit.advance()` runs `impl Counter for Unit { fn advance }` when that
 //! impl defines one. A trait impl method is not what `Square(3).area()` runs
 //! when `Square` also has an inherent `area(&self)`, because inherent methods
-//! take method-call syntax first.
+//! take method-call syntax first. An inherent `area(self)` takes it too when
+//! the receiver is an owned `Square`: the by-value step comes before the `&`
+//! step that finds the trait impl (#15428).
 //!
 //! These readings only refuse, and only on positive evidence. Every call of
 //! the name in the test has to resolve, by the same receiver typing the
@@ -16,8 +18,8 @@
 use super::{
     FunctionContainer, FunctionSummary, RustIndex, TestSummary, call_site_resolves_to_type,
     compact_impl_type_name, first_argument_span, ident_boundary, ident_ending_at,
-    impl_self_type_name, impl_trait_name_from_path, mask_comments_and_strings, method_call_sites,
-    owner_trait_name,
+    impl_self_type_name, impl_trait_name_from_path, live_let_statement_before,
+    mask_comments_and_strings, matching_open, method_call_sites, owner_trait_name,
 };
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
@@ -155,25 +157,36 @@ pub(super) fn inherent_twin_takes_every_call(
         return false;
     }
     // Method probing tries each receiver step (by value, `&`, `&mut`) in
-    // turn, inherent before trait only within one step, so the twin takes the
-    // call only when it has the same receiver kind. Its self type must be the
-    // same spelling, so `impl Square<u8>` never stands for `Square<u16>`.
+    // turn, inherent before trait only within one step. A twin with the
+    // owner's receiver kind is found at the owner's step and takes every
+    // call. A twin with an earlier kind takes the call only when probing
+    // starts at the type itself, so only for a receiver that is an owned
+    // value (#15428): `(&Square(3)).area()` starts at `&Square`, where a
+    // trait `&self` method is a by-value match and comes first. A twin with
+    // a later kind never takes it. Its self type must be the same spelling,
+    // so `impl Square<u8>` never stands for `Square<u16>`.
     let Some(owner_receiver) = receiver_kind(&owner.body) else {
         return false;
     };
-    let twin_has_self_receiver = index.functions().iter().any(|function| {
-        twin_ids.contains(&function.id.0.as_str())
-            && function.item.has_self_param
-            && receiver_kind(&function.body) == Some(owner_receiver)
-            && !is_cfg_gated(function, index)
-            && declared_pub(function, index)
-            && matches!(
-                &function.item.container,
-                FunctionContainer::Inherent { self_ty: other }
-                    if compact_spelling(other) == compact_spelling(self_ty)
-            )
-    });
-    if !twin_has_self_receiver || !declared_once(&base, index) {
+    let twin_receivers: Vec<ReceiverKind> = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            twin_ids.contains(&function.id.0.as_str())
+                && function.item.has_self_param
+                && !is_cfg_gated(function, index)
+                && declared_pub(function, index)
+                && matches!(
+                    &function.item.container,
+                    FunctionContainer::Inherent { self_ty: other }
+                        if compact_spelling(other) == compact_spelling(self_ty)
+                )
+        })
+        .filter_map(|function| receiver_kind(&function.body))
+        .collect();
+    let at_the_owner_step = twin_receivers.contains(&owner_receiver);
+    let at_an_earlier_step = twin_receivers.iter().any(|twin| *twin < owner_receiver);
+    if !(at_the_owner_step || at_an_earlier_step) || !declared_once(&base, index) {
         return false;
     }
     let masked = mask_comments_and_strings(&test.body);
@@ -190,6 +203,57 @@ pub(super) fn inherent_twin_takes_every_call(
     }
     sites.all(|at| {
         call_site_resolves_to_type(&masked, at, name, &base, None, &masked, &test.body, true)
+            && (at_the_owner_step || receiver_is_an_owned_value(&masked, at, &base, &test.body))
+    })
+}
+
+/// Whether the call at byte `at` of the masked test body `text`, already
+/// resolved to the type `base`, is a path call (`Square::area(..)`, where an
+/// inherent method is found before any trait's) or has a receiver that is an
+/// owned `base`: the unit value, a constructor call or struct literal
+/// written in place, or a `let` binding of one with no reference in its
+/// annotation or initializer. A parenthesised receiver, a borrowed one and
+/// a binding this cannot read are not established as owned.
+fn receiver_is_an_owned_value(text: &str, at: usize, base: &str, scope_body: &str) -> bool {
+    let bytes = text.as_bytes();
+    if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
+        return true;
+    }
+    if at == 0 || bytes[at - 1] != b'.' {
+        return false;
+    }
+    if let Some(receiver) = ident_ending_at(text, at - 1) {
+        if receiver == base {
+            return true;
+        }
+        let lets = text
+            .get(..at)
+            .and_then(|before| before.rfind(';').map(|end| &before[..=end]))
+            .unwrap_or("");
+        return live_let_statement_before(lets, text, scope_body, receiver, at)
+            .and_then(|statement| statement.split_once('='))
+            .is_some_and(|(pattern, initializer)| {
+                !pattern.contains('&') && !initializer.trim_start().starts_with('&')
+            });
+    }
+    let mut close = at - 1;
+    while close > 0 && bytes[close - 1].is_ascii_whitespace() {
+        close -= 1;
+    }
+    let Some(close) = close.checked_sub(1) else {
+        return false;
+    };
+    let open_byte = match bytes[close] {
+        b')' => b'(',
+        b'}' => b'{',
+        _ => return false,
+    };
+    // `Square(3)` and `Square { side: 3 }` open right after a path; a
+    // parenthesised or block expression does not.
+    matching_open(bytes, close, open_byte, bytes[close]).is_some_and(|open| {
+        text[..open]
+            .trim_end()
+            .ends_with(|ch: char| ch.is_alphanumeric() || ch == '_')
     })
 }
 
@@ -334,7 +398,8 @@ fn receiver_kind(body: &str) -> Option<ReceiverKind> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Ordered as method probing tries the steps for an owned receiver.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum ReceiverKind {
     Value,
     Shared,

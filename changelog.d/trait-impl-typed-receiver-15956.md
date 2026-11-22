@@ -1,0 +1,3 @@
+<!-- section: Fixed -->
+- A test that calls a Rust trait impl method on a value built by an associated function of the type (`BytesMut::with_capacity(8).advance_mut(1)`) is now linked to the method by a direct call when that function's declaration returns the type; only `new`, `default` and `from` were read before. The link stays name-only when the type has another method of that name or an impl ripr cannot list could define one (#15956).
+- A test whose owned receiver runs an inherent by-value method (`fn area(self)`) before a trait `&self` impl of the same name is no longer linked to the trait impl by a direct call; a borrowed receiver keeps the link (#15428).

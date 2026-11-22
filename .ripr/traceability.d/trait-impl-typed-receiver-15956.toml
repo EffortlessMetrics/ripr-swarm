@@ -1,0 +1,18 @@
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_receiver_built_by_an_indexed_constructor_reaches_the_trait_impl",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_typed_receiver_reaches_only_its_own_types_impl",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_receiver_the_index_cannot_type_stays_name_only",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::another_method_of_the_name_on_the_type_withholds_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::an_impl_the_type_name_does_not_select_stays_name_only",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_generic_type_with_one_impl_reaches_it",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_macro_that_cannot_write_the_method_leaves_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver/tests.rs::a_macro_that_may_write_the_method_withholds_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::an_owned_receiver_runs_an_inherent_by_value_twin_first",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::a_receiver_not_established_as_owned_keeps_the_relation",
+  "crates/ripr/src/analysis/classify/related_tests/dispatch_target/tests.rs::an_earlier_twin_step_is_read_for_each_receiver_kind",
+]
+code = [
+  "crates/ripr/src/analysis/classify/related_tests/trait_receiver.rs",
+]

@@ -42,6 +42,7 @@ mod operator_dispatch;
 mod parse_dispatch;
 mod path_arg;
 mod std_receiver;
+mod trait_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
 
 pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
@@ -8826,6 +8827,13 @@ fn owner_call_relation_reason_gated(
             && impl_trait_name(&owner.id.0).is_some_and(|impl_trait| {
                 fully_qualified_call_names_impl(test, owner_name, &impl_type, &impl_trait)
             }))
+        || trait_receiver::typed_receiver_runs_trait_impl(
+            test,
+            owner,
+            &impl_type,
+            index,
+            trust_unplaced_standard_root,
+        )
     {
         RelationReason::DirectOwnerCall
     } else {

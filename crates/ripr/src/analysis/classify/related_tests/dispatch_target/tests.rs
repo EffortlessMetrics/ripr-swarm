@@ -193,6 +193,72 @@ fn a_twin_with_another_receiver_kind_keeps_the_relation() -> Result<(), String> 
     Ok(())
 }
 
+/// `Square` implements `Shape::area(&self)` and has an inherent `area(self)`.
+fn by_value_twin() -> String {
+    SHAPE.replace("pub fn area(&self)", "pub fn area(self)")
+}
+
+/// #15428: an owned `Square` receiver starts method probing at the by-value
+/// step, which finds the inherent `area(self)` before the `&` step reaches
+/// the trait impl.
+#[test]
+fn an_owned_receiver_runs_an_inherent_by_value_twin_first() -> Result<(), String> {
+    let production = by_value_twin();
+    for body in [
+        "assert_eq!(Square(3).area(), 9);",
+        "let s = Square(3); assert_eq!(s.area(), 9);",
+        "let mut s = Square(3); s.0 = 4; assert_eq!(s.area(), 9);",
+        "assert_eq!(Square::area(Square(3)), 9);",
+        "assert_eq!(Square(3).area(), 9); let s = Square(4); assert_eq!(s.area(), 9);",
+    ] {
+        assert!(!direct(&production, TRAIT_AREA, body)?, "{body}");
+    }
+    Ok(())
+}
+
+/// A borrowed receiver starts probing at `&Square`, where the trait's
+/// `&self` method is a by-value match and comes before the inherent
+/// `area(self)`. A parenthesised receiver is not read as owned and keeps
+/// the relation too, and so does a test where one call of several may run
+/// the trait impl.
+#[test]
+fn a_receiver_not_established_as_owned_keeps_the_relation() -> Result<(), String> {
+    let production = by_value_twin();
+    for body in [
+        "assert_eq!((&Square(3)).area(), 9);",
+        "let s = &Square(3); assert_eq!(s.area(), 9);",
+        "let s: &Square = &Square(3); assert_eq!(s.area(), 9);",
+        "assert_eq!((Square(3)).area(), 9);",
+        "assert_eq!(Square(3).area(), 9); let s = &Square(4); assert_eq!(s.area(), 9);",
+    ] {
+        assert!(direct(&production, TRAIT_AREA, body)?, "{body}");
+    }
+    Ok(())
+}
+
+/// The by-value rule orders every pair of kinds: an inherent `&self` comes
+/// before a trait `&mut self` for an owned receiver, and no inherent kind
+/// comes before a by-value trait method.
+#[test]
+fn an_earlier_twin_step_is_read_for_each_receiver_kind() -> Result<(), String> {
+    let exclusive_trait = SHAPE
+        .replace("fn area(&self) -> u32;", "fn area(&mut self) -> u32;")
+        .replace(
+            "fn area(&self) -> u32 { self.0 * self.0 }",
+            "fn area(&mut self) -> u32 { self.0 * self.0 }",
+        );
+    let owned = "let mut s = Square(3); assert_eq!(s.area(), 9);";
+    assert!(!direct(&exclusive_trait, TRAIT_AREA, owned)?);
+    let exclusive_both = exclusive_trait.replace("pub fn area(&self)", "pub fn area(self)");
+    assert!(!direct(&exclusive_both, TRAIT_AREA, owned)?);
+    assert!(direct(
+        &exclusive_both,
+        TRAIT_AREA,
+        "let s = &mut Square(3); assert_eq!(s.area(), 9);"
+    )?);
+    Ok(())
+}
+
 /// An override the test build may not compile, a namesake `Fast` in another
 /// module, or an override of one instantiation of a generic trait does not
 /// establish that `Fast.advance()` skips the default.
