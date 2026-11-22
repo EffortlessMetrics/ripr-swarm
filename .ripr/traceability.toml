@@ -12926,6 +12926,8 @@ tests = [
   "crates/ripr/src/lsp/watched_source_drift.rs::tests::rewritten_script_source_without_diagnostics_drifts",
   "crates/ripr/src/lsp/watched_source_drift.rs::tests::script_sources_in_dependency_and_build_directories_do_not_drift",
   "crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_clean_source_refreshes_in_every_language",
+  "crates/ripr/src/lsp/watched_source_drift.rs::tests::declared_handwritten_and_excluded_script_paths_follow_configuration",
+  "crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_declared_handwritten_source_refreshes",
 ]
 fixtures = []
 code = [
