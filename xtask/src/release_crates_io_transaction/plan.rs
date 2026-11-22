@@ -170,7 +170,9 @@ pub(crate) struct PackageObservation {
 pub(crate) struct RegistryInventory {
     pub(crate) packages: Vec<PackageObservation>,
     /// Packages for which an upload was already attempted under this
-    /// authorization, whatever the reported outcome.
+    /// authorization, whatever the reported outcome. Matched by registry
+    /// name (`-`/`_` and letter case ignored); a name outside the request's
+    /// set rejects the inventory.
     pub(crate) attempted: BTreeSet<String>,
 }
 
@@ -207,6 +209,8 @@ pub(crate) enum StopKind {
     RequestRejected,
     AuthorizationMismatch,
     NotAuthorized,
+    /// The inventory names an attempt for a package outside the request.
+    InventoryRejected,
     RegistryUnavailable,
     ImmutableConflict,
     /// An upload was already attempted under this authorization and the
@@ -351,6 +355,26 @@ pub(crate) fn decide(
             ),
         );
     }
+    let in_set: BTreeSet<String> = request
+        .packages
+        .iter()
+        .map(|package| registry_name(&package.name))
+        .collect();
+    let attempted: BTreeSet<String> = inventory
+        .attempted
+        .iter()
+        .map(|name| registry_name(name))
+        .collect();
+    if let Some(foreign) = attempted.difference(&in_set).next() {
+        return planned(
+            Some(request_id),
+            Vec::new(),
+            stop(
+                StopKind::InventoryRejected,
+                format!("the attempt record names `{foreign}`, which is not in the package set"),
+            ),
+        );
+    }
     let states: Vec<(String, PackageState)> = request
         .packages
         .iter()
@@ -370,6 +394,19 @@ pub(crate) fn decide(
             stop(StopKind::ImmutableConflict, detail),
         );
     }
+    // An unknown state anywhere can hide a conflict, so it also stops before
+    // any upload: the conflict rule is only as strong as the observation.
+    if let Some((name, _)) = states
+        .iter()
+        .find(|(_, state)| *state == PackageState::HoldAmbiguous)
+    {
+        let detail = format!("the registry state of `{name}` could not be established");
+        return planned(
+            Some(request_id),
+            states,
+            stop(StopKind::RegistryUnavailable, detail),
+        );
+    }
     let decision = match states
         .iter()
         .find(|(_, state)| *state != PackageState::ExactExisting)
@@ -377,11 +414,7 @@ pub(crate) fn decide(
         None => Decision::Proceed {
             step: Step::Complete,
         },
-        Some((name, PackageState::HoldAmbiguous)) => stop(
-            StopKind::RegistryUnavailable,
-            format!("the registry state of `{name}` could not be established"),
-        ),
-        Some((name, _)) if inventory.attempted.contains(name) => stop(
+        Some((name, _)) if attempted.contains(&registry_name(name)) => stop(
             StopKind::AttemptConsumed,
             format!("an upload of `{name}` was already attempted under this authorization"),
         ),

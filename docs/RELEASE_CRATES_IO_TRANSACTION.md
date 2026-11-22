@@ -59,18 +59,26 @@ Each call reads one fresh inventory and returns at most one step.
 | Present but bytes unreadable, unavailable, unobserved or observed twice | `hold_ambiguous` |
 
 ```text
+attempt record names a package
+  outside the set                    -> stop inventory_rejected
 any package in conflict              -> stop immutable_conflict, before any upload
+any package ambiguous                -> stop registry_unavailable, before any upload
 every package exact                  -> complete (nothing uploaded)
 first package that is not exact:
-  ambiguous                          -> stop registry_unavailable
   upload already attempted           -> stop attempt_consumed
   crates_io_publish not allowed      -> stop not_authorized
   absent                             -> publish that package
 ```
 
-Only the first non-exact package is considered, so a dependent is never
-uploaded before its dependency is public with the exact bytes. A timeout, a
-rate limit or index propagation delay is `hold_ambiguous`, not absence.
+An upload is proposed only when every package in the set reads as absent or
+exact. An unknown state can hide a conflict, so a support package is not
+uploaded while the facade's state is unread. Among those, only the first
+non-exact package is considered, so a dependent is never uploaded before its
+dependency is public with the exact bytes. A timeout, a rate limit or index
+propagation delay is `hold_ambiguous`, not absence.
+
+The attempt record is matched by registry name, so `ripr_contract` and
+`Ripr-Contract` consume the attempt for `ripr-contract`.
 
 `attempt_consumed` means an upload was started under this authorization and
 the registry still does not show the package. The outcome of that upload is
@@ -82,10 +90,11 @@ or `package_set_published_exact`.
 
 ## Proof
 
-`cargo test -p xtask release_crates_io_transaction` runs 8 tests. One sweeps
+`cargo test -p xtask release_crates_io_transaction` runs 9 tests. One sweeps
 all 144 combinations of six registry states for each of two packages and four
 attempt records, and checks that an upload is proposed only for an absent,
-unattempted package whose dependency is exact, and never beside a conflict.
+unattempted package whose dependency is exact, while every other package
+reads as absent or exact.
 
 These tests exercise the decision against stand-in inventories. They do not
 show that a real registry read produces a correct inventory, or that the

@@ -180,6 +180,24 @@ fn the_facade_waits_for_a_readable_exact_support_package() -> Result<(), String>
             "{label}"
         );
     }
+    // Support absent and the facade unknown: no support upload either, since
+    // the unread facade could be a conflict that the set cannot get past.
+    let unread_facade = RegistryObservation::Present {
+        yanked: false,
+        downloaded_sha256: None,
+    };
+    for (label, state) in [
+        ("facade unavailable", unavailable()),
+        ("facade bytes unread", unread_facade),
+    ] {
+        let remote = inventory(&request, &[RegistryObservation::Absent, state]);
+        let planned = decide(&request, &auth, &remote);
+        assert_eq!(
+            stop_of(&planned.decision)?,
+            StopKind::RegistryUnavailable,
+            "{label}"
+        );
+    }
     // An observation missing for a package, or given twice, is not absence.
     let mut missing = inventory(&request, &[exact(support), RegistryObservation::Absent]);
     missing.packages.pop();
@@ -279,6 +297,44 @@ fn a_partial_publication_is_held_with_its_exact_prefix_retained() -> Result<(), 
     let planned = decide(&request, &auth, &unread);
     assert_eq!(stop_of(&planned.decision)?, StopKind::RegistryUnavailable);
     assert_eq!(planned.aggregate, AggregateState::PartialPublicationHold);
+    Ok(())
+}
+
+#[test]
+fn the_attempt_record_is_matched_by_registry_name_and_bound_to_the_set() -> Result<(), String> {
+    let request = split()?;
+    let auth = authorization(&request, true)?;
+    let support = &request.packages[0];
+    // Another spelling of the same registry name still consumes the attempt.
+    for spelling in ["ripr_contract", "Ripr-Contract", "RIPR_CONTRACT"] {
+        let mut remote = inventory(
+            &request,
+            &[RegistryObservation::Absent, RegistryObservation::Absent],
+        );
+        remote.attempted.insert(spelling.to_string());
+        assert_eq!(
+            stop_of(&decide(&request, &auth, &remote).decision)?,
+            StopKind::AttemptConsumed,
+            "{spelling}"
+        );
+    }
+    let mut facade = inventory(&request, &[exact(support), RegistryObservation::Absent]);
+    facade.attempted.insert("RIPR".to_string());
+    assert_eq!(
+        stop_of(&decide(&request, &auth, &facade).decision)?,
+        StopKind::AttemptConsumed
+    );
+    // An attempt for a package outside the set rejects the inventory rather
+    // than being ignored.
+    let mut foreign = inventory(
+        &request,
+        &[RegistryObservation::Absent, RegistryObservation::Absent],
+    );
+    foreign.attempted.insert("ripr-other".to_string());
+    assert_eq!(
+        stop_of(&decide(&request, &auth, &foreign).decision)?,
+        StopKind::InventoryRejected
+    );
     Ok(())
 }
 
@@ -446,7 +502,10 @@ fn no_registry_state_yields_a_repeat_out_of_order_or_conflicting_upload() -> Res
                         assert!(!conflict, "upload of {name} proposed beside a conflict");
                         assert!(!remote.attempted.contains(&name), "{name} uploaded twice");
                         if name == "ripr-contract" {
+                            // The facade must be readable as absent or exact:
+                            // an unknown facade can hide a conflict.
                             assert_eq!(first_index, 0);
+                            assert!(matches!(second_index, 0 | 1), "facade state {second_index}");
                         } else {
                             assert_eq!((first_index, second_index), (1, 0));
                         }
