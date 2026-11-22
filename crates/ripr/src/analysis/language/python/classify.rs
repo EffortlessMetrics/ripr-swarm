@@ -1160,6 +1160,16 @@ fn classify_change_for_owner_inner<'a>(
         .and_then(|old| {
             super::default_equal_keyword::default_equal_keyword(old, line_text, file, owners)
         });
+    // A header edit that only moves the positional-only `/` marker (#16011)
+    // changes behavior only for a call that passes a moved parameter by
+    // keyword. With no strong related call doing so, the edit is unconfirmed.
+    let positional_only_gap = super::positional_only_marker::positional_only_marker_gap(
+        old_line_text,
+        line_text,
+        owner,
+        &related_candidates,
+        &focus,
+    );
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
@@ -1713,6 +1723,7 @@ fn classify_change_for_owner_inner<'a>(
         && alignment.observes()
         && changed_default_exercised_ok
         && default_keyword.is_none()
+        && positional_only_gap.is_none()
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
@@ -1781,6 +1792,25 @@ fn classify_change_for_owner_inner<'a>(
             vec![format!(
                 "A strong Python oracle reaches `{}`, but the added argument `{}` equals the declared default of every workspace `{}` the call can reach, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name.",
                 owner.name, keyword.argument, keyword.callee,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(params) = &positional_only_gap
+    {
+        // Only a call that passes a moved parameter by keyword runs
+        // differently after a `/` marker edit (#16011).
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the edit only changes which parameters are positional-only, and no related call passes {} by keyword; static evidence cannot confirm the changed signature is discriminated. Add a test that calls `{}` with {} by keyword.",
+                owner.name,
+                format_param_name_list(params),
+                owner.name,
+                format_param_name_list(params),
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -2245,6 +2275,24 @@ fn classify_change_for_owner_inner<'a>(
         } else if default_keyword.is_some() && changed_default_override.is_none() {
             // A restated default has no value for a test input to discriminate.
             Vec::new()
+        } else if let Some(params) = positional_only_gap
+            .as_ref()
+            .filter(|_| changed_default_override.is_none())
+        {
+            vec![MissingDiscriminatorFact {
+                value: format!(
+                    "call `{}` with {} by keyword",
+                    owner.name,
+                    format_param_name_list(params)
+                ),
+                reason: format!(
+                    "the change at line {line} only moves the positional-only marker, and no related call passes {} by keyword",
+                    format_param_name_list(params)
+                ),
+                flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
         } else if let Some(params) = &changed_default_override {
             // The override downgrade names a specific, actionable missing
             // discriminator — "call the owner WITHOUT the changed-default

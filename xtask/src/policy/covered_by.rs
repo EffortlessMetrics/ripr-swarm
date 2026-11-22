@@ -450,7 +450,7 @@ fn unquote(value: &str) -> String {
 mod tests {
     use super::{
         CoveredByEntry, collect_clippy_exception_violations, parse_and_check_exceptions,
-        read_covered_by_entries, validate_entry,
+        parse_clippy_exceptions_ledger, read_covered_by_entries, validate_entry,
     };
     use crate::policy::test_inventory::TestInventory;
     use std::collections::BTreeMap;
@@ -934,5 +934,96 @@ expires = "2026-12-01"
             covered_by_line: 42,
             commands: commands.iter().map(|command| command.to_string()).collect(),
         }
+    }
+
+    /// A complete exception block whose `id` sits on the block's first line.
+    fn complete_block(id: &str, extra: &str) -> String {
+        format!(
+            "[[exception]]\nid = \"{id}\"\nlint = \"clippy::a\"\npath = \"p.rs\"\nselector = \"s\"\nowner = \"o\"\nreason = \"r\"\ncovered_by = \"cargo test -p xtask no_panic\"\n{extra}"
+        )
+    }
+
+    /// A violation names the line of the offending block's `id`, wherever the
+    /// key sits in the block and however it is quoted, and an entry with no
+    /// `id` is named by its `[[exception]]` header line. Fixture lines:
+    /// 3 header, 4 id; 12 indented header, 15 single-quoted id; 18 header.
+    #[test]
+    fn ledger_violations_name_the_id_line_or_the_header_line() {
+        let text = format!(
+            "# exceptions\n\n{}\n  [[exception]]\n# note\nlint = \"clippy::b\"\nid = 'clippy-exception-0002'\npath = \"p.rs\"\n\n[[exception]]\nlint = \"clippy::c\"\n",
+            complete_block("clippy-exception-0001", "")
+        );
+        assert_eq!(text.lines().nth(14), Some("id = 'clippy-exception-0002'"));
+        assert_eq!(text.lines().nth(17), Some("[[exception]]"));
+        let (entries, violations) = parse_clippy_exceptions_ledger(&text);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.id.as_str(), entry.block_line))
+                .collect::<Vec<_>>(),
+            vec![("clippy-exception-0001", 4)]
+        );
+        assert_eq!(
+            violations,
+            vec![
+                "policy/clippy-exceptions.toml:15 `clippy-exception-0002` missing required fields: selector, owner, reason, covered_by".to_string(),
+                "policy/clippy-exceptions.toml:18 missing required fields: id, path, selector, owner, reason, covered_by".to_string(),
+            ]
+        );
+    }
+
+    /// The id search stops at the next block. The first block's `id` is
+    /// written without spaces, a form the line search does not match, so the
+    /// search runs on; it must stop at the next header and fall back to the
+    /// first block's header line rather than name the later block's `id`
+    /// line (6) that carries the same id.
+    #[test]
+    fn id_line_search_stops_at_the_next_block() {
+        let text = format!(
+            "[[exception]]\nid=\"clippy-exception-0009\"\nlint = \"clippy::a\"\n\n{}",
+            complete_block("clippy-exception-0009", "")
+        );
+        assert_eq!(text.lines().nth(5), Some("id = \"clippy-exception-0009\""));
+        let (entries, violations) = parse_clippy_exceptions_ledger(&text);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            violations,
+            vec!["policy/clippy-exceptions.toml:1 `clippy-exception-0009` missing required fields: path, selector, owner, reason, covered_by".to_string()]
+        );
+    }
+
+    /// Duplicate and expiry findings name the id line of the copy that
+    /// carries them, and blank `covered_by` array items are dropped rather
+    /// than validated as commands.
+    #[test]
+    fn row_findings_name_their_own_id_line_and_blank_commands_are_dropped() {
+        let text = format!(
+            "{}\n{}\n{}",
+            complete_block("clippy-exception-0001", ""),
+            complete_block("clippy-exception-0001", ""),
+            complete_block("clippy-exception-0003", "expires = \"2026-09-21\"\n").replace(
+                "covered_by = \"cargo test -p xtask no_panic\"",
+                "covered_by = [\" \", \"cargo test -p xtask no_panic\", \"\"]"
+            )
+        );
+        let (entries, violations) = parse_and_check_exceptions(&text, TODAY);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.block_line, entry.commands.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (2, vec!["cargo test -p xtask no_panic".to_string()]),
+                (11, vec!["cargo test -p xtask no_panic".to_string()]),
+                (20, vec!["cargo test -p xtask no_panic".to_string()]),
+            ]
+        );
+        assert_eq!(
+            violations,
+            vec![
+                "policy/clippy-exceptions.toml:11 duplicate exception id `clippy-exception-0001`.".to_string(),
+                "policy/clippy-exceptions.toml:20 `clippy-exception-0003` has expires `2026-09-21` before today `2026-09-22`. Renew, remove, or drop the exception.".to_string(),
+            ]
+        );
     }
 }

@@ -5898,7 +5898,10 @@ mod tests {
         // #16009: `python_class_attr_value_unread_weakly_exposed` keeps a class
         // attribute value no test reads through its readers weakly exposed;
         // its card names `_PER_YEAR` and stays direct-aligned.
-        if (direct, no_strong, orthogonal, family_selection) != (27, 36, 49, 2) {
+        // #16011: `python_positional_only_marker_no_exposed_credit` keeps a
+        // `/` marker edit no related call passes by keyword weakly exposed;
+        // its card names the keyword call and stays direct-aligned.
+        if (direct, no_strong, orthogonal, family_selection) != (28, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

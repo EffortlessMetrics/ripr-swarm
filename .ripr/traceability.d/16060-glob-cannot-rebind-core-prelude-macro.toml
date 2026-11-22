@@ -1,0 +1,11 @@
+# A glob import cannot rebind a core prelude macro at a bare call (#16060).
+[[extend]]
+id = "RIPR-SPEC-0369"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/glob_prelude_macros.rs::a_foreign_glob_reports_no_site_for_a_core_prelude_macro",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/glob_prelude_macros.rs::every_other_binding_of_a_core_prelude_name_keeps_its_site",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/glob_prelude_macros.rs::a_foreign_glob_does_not_refuse_the_standard_assertions",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+]

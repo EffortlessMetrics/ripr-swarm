@@ -13,9 +13,8 @@ Start here:
   File: ./src/lib.rs:4
   Static exposure: unknown (severity: note, confidence 0.64)
   Why unknown: the analysis could not determine a static exposure state
-  Not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use alloc::vec::*;` at
-    src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different
-    `assert_eq!`
+  Not credited: `assert_eq!` in pins at tests/buf_tests.rs:12: `pub use alloc::vec::*;` at
+    src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different `vec!`
   Changed behavior: 10 <= value
   Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs
     as the standard macro on the path that reaches this change (for example the file did not parse,

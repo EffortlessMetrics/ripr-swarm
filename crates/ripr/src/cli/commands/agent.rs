@@ -1397,12 +1397,17 @@ fn run_agent_receipt_for_attempt(
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
-    let verify_json = crate::bounded_input::read_to_string(&verify_path).map_err(|err| {
-        format!(
-            "read agent receipt verify JSON {} failed: {err}",
-            output::outcome::display_path(&verify_path)
-        )
-    })?;
+    // Keep the bytes as written: the receipt's provenance hashes the file,
+    // and the focused-finish custody check compares against those bytes.
+    // Only the parse reads them decoded, so a PowerShell 5.1 redirect
+    // (UTF-16 or a UTF-8 mark) parses as the UTF-8 file (#15936).
+    let (verify_bytes, verify_json) =
+        crate::bounded_input::read_artifact_bytes_and_text(&verify_path).map_err(|err| {
+            format!(
+                "read agent receipt verify JSON {} failed: {err}",
+                output::outcome::display_path(&verify_path)
+            )
+        })?;
     let validated =
         app::agent_receipt::validate_agent_receipt_verify_json(&options.root, &verify_json)?;
     // #9103 (RIPR-SPEC-0311): a receipt for a gap is issued only over a verify
@@ -1519,7 +1524,7 @@ fn run_agent_receipt_for_attempt(
             &expected.attempt_id,
             expected,
             rendered.as_bytes(),
-            verify_json.as_bytes(),
+            &verify_bytes,
             custody,
         )?;
     }

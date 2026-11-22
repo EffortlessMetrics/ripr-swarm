@@ -3,8 +3,14 @@ use super::*;
 const GATE: &str = "pub fn gate(value: u32) -> bool {\n    10 <= value\n}\n";
 const PINS: &str = "use demo::gate;\n\n#[test]\nfn pins() {\n    assert_eq!(gate(10), true);\n}\n";
 
+/// An unindexed `#[macro_use]` crate, which saturates the ambiguity pass
+/// that a foreign glob alone no longer does (#16060).
+const SATURATING: (&str, &str) = ("src/macro_use.rs", "#[macro_use]\nextern crate other;\n");
+
 fn parity(files: &[(&str, &str)]) {
-    let index = index(files);
+    let mut files = files.to_vec();
+    files.push(SATURATING);
+    let index = index(&files);
     let syntax = OwnerPinSyntax::default();
     let _ = syntax.trusted_macro_ambiguities(&index);
     assert!(
@@ -42,7 +48,7 @@ fn parity(files: &[(&str, &str)]) {
 
 fn scoped(container: &str) {
     let tests = format!(
-        "{container} {{\n    macro_rules! assert_eq {{\n        ($($tokens:tt)*) => {{}};\n    }}\n}}\n\n{PINS}"
+        "{container} {{\n    macro_rules! vec {{\n        ($($tokens:tt)*) => {{}};\n    }}\n}}\n\n{PINS}"
     );
     let files = [
         (CONVERGENCE_GLOB, "pub use rayon::prelude::*;\n"),
@@ -51,7 +57,7 @@ fn scoped(container: &str) {
     ];
     let index = index(&files);
     let syntax = OwnerPinSyntax::default();
-    let selected = syntax.workspace_macro_site("assert_eq", None, &index);
+    let selected = syntax.workspace_macro_site("vec", None, &index);
     assert!(
         matches!(selected, Some((path, site)) if path == Path::new(CONVERGENCE_GLOB)
         && site.scope.is_none() && matches!(site.kind, MacroBindingKind::ForeignGlob(_)))
@@ -115,12 +121,10 @@ fn reconstructed_parity_same_line_public_first() {
 fn reconstructed_parity_rebinding_and_root_control() {
     let index = convergence_index();
     let syntax = OwnerPinSyntax::default();
+    assert!(matches!(syntax.workspace_macro_site("vec", None, &index),
+        Some((path, MacroBindingSite { kind: MacroBindingKind::Definition, .. })) if path == Path::new(LIB)));
     assert!(
-        matches!(syntax.workspace_macro_site("matches", None, &index),
-        Some((path, MacroBindingSite { kind: MacroBindingKind::Definition, .. })) if path == Path::new(LIB))
-    );
-    assert!(
-        matches!(syntax.workspace_macro_site("matches", Some(Path::new(TESTS)), &index),
+        matches!(syntax.workspace_macro_site("vec", Some(Path::new(TESTS)), &index),
         Some((path, MacroBindingSite { kind: MacroBindingKind::ForeignGlob(_), .. })) if path == Path::new(CONVERGENCE_GLOB))
     );
     assert!(syntax.workspace_scan_passes() <= 2);
