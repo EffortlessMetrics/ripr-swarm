@@ -898,10 +898,8 @@ fn call_qualifier_conflicts(text: &str, name: &str, wrapper_qualifier: Option<&s
                 .map(|(position, _)| position)
                 .last()
                 .map(|start| &prefix[start..]);
-            if let Some(qualifier) = qualifier {
-                if qualifier != wrapper_qualifier {
-                    return true;
-                }
+            if qualifier.is_some_and(|qualifier| qualifier != wrapper_qualifier) {
+                return true;
             }
         }
     }
