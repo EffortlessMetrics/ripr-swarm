@@ -557,9 +557,9 @@ fn release_note_command_deltas_require_candidate_cli_proof() -> TestResult {
     git(&root, &["commit", "-qm", "original commands"])?;
     fs::write(
         root.join(note),
-        "# Release\n\nRun `ripr check --diff \"new file\" --json` here.\n",
+        "# Release\nNew prose.\n\nUse `ripr check --diff \"old file\" --json`.\n",
     )?;
-    git(&root, &["commit", "-qam", "reword prose and example value"])?;
+    git(&root, &["commit", "-qam", "reword surrounding prose"])?;
     let safe = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
     if !safe.plan.is_docs_eligible() || !safe.violations.is_empty() {
         return Err(safe.render().into());
@@ -581,6 +581,25 @@ fn release_note_command_deltas_require_candidate_cli_proof() -> TestResult {
             .any(|r| r.contains("candidate CLI proof required"))
         {
             return Err(format!("{label}: {}", report.render()).into());
+        }
+    }
+    for (before, after) in [
+        ("ripr check", "ripr bogus"),
+        ("ripr check [--json]", "ripr check [--bad-flag]"),
+        ("ripr check \\\n  [--json]", "ripr check \\\n  [--bad-flag]"),
+    ] {
+        fs::write(root.join(note), before)?;
+        git(&root, &["commit", "-qam", "original opaque example"])?;
+        fs::write(root.join(note), after)?;
+        git(&root, &["commit", "-qam", "changed opaque example"])?;
+        let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+        if !report
+            .plan
+            .widen_reasons
+            .iter()
+            .any(|r| r.contains("cargo test -p xtask --test ripr_public_guide_contract"))
+        {
+            return Err(format!("opaque example {after:?}: {}", report.render()).into());
         }
     }
     for (name, body, requires_cli) in [

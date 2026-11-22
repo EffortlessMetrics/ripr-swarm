@@ -15,9 +15,9 @@
 //! `check-capability-producers`, goldens, and the not-yet-ported
 //! product-free gates listed in [`RETAINED_PRODUCT_FREE_GATES`].
 
-// The public-guide contract executes these same parsed command paths and flags against ripr.
-#[path = "../../../crates/ripr/tests/common/doc_invocations.rs"]
-mod invocation_parser;
+/// Pure public-guide contract helpers shared with the portable candidate help harness.
+#[path = "../../../crates/ripr/tests/common/help_contract.rs"]
+pub mod guide_help_contract;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -800,7 +800,7 @@ fn check_disposition(root: &Path, violations: &mut Vec<String>) -> Result<(), St
 pub fn run_docs_gate(root: &Path, changed: &[String]) -> Result<DocsGateReport, String> {
     if changed.iter().any(|path| release_notes(&normalize(path))) {
         return Ok(widen_report(changed, vec![
-            "release-note CLI contract requires committed before/after inputs; use --base and --head or run full proof".into(),
+            "release-note CLI contract requires committed before/after inputs; use --base and --head or run the protected docs gate including cargo test -p xtask --test ripr_public_guide_contract".into(),
         ]));
     }
     check_scoped_tree(root, changed)
@@ -1072,7 +1072,7 @@ pub fn command(args: &[String]) -> Result<(), String> {
     println!("{}", report.render());
     if !report.plan.is_docs_eligible() {
         return Err(format!(
-            "docs-gate: widening to full proof ({} reason(s)); run cargo xtask precommit",
+            "docs-gate: widening to full proof ({} reason(s)); run the protected docs gate, including cargo xtask precommit and its Markdown contract tests",
             report.plan.widen_reasons.len()
         ));
     }
@@ -1193,12 +1193,27 @@ fn release_notes(path: &str) -> bool {
 /// The line number locates a failure in prose. Only command paths and flags
 /// reach the public-guide contract's candidate help lookup.
 fn same_documented_commands(before: &str, after: &str) -> bool {
-    fn commands(text: &str) -> impl Iterator<Item = invocation_parser::DocInvocation> {
-        invocation_parser::doc_invocations(text)
+    fn commands(text: &str) -> impl Iterator<Item = (Vec<String>, Vec<String>)> {
+        guide_help_contract::doc_invocations(text)
             .into_iter()
-            .map(|(_, invocation)| invocation)
+            .map(|invocation| (invocation.words, invocation.flags))
+    }
+    // Bare commands and bracketed option examples can be absent from the
+    // flag oracle. Retain their source lines (and shell continuations) as
+    // opaque inputs so an unrecognized spelling can only widen the route.
+    fn potential_command_lines(text: &str) -> impl Iterator<Item = &str> {
+        let mut continued = false;
+        text.lines().filter(move |line| {
+            let selected = continued
+                || line.as_bytes().windows(5).any(|span| {
+                    span.eq_ignore_ascii_case(b"ripr ") || span.eq_ignore_ascii_case(b"ripr\t")
+                });
+            continued = selected && line.trim_end().ends_with('\\');
+            selected
+        })
     }
     commands(before).eq(commands(after))
+        && potential_command_lines(before).eq(potential_command_lines(after))
 }
 
 /// Read before/after blob identities from the same three-dot diff as the path roster.
@@ -1252,7 +1267,7 @@ fn revision_changes(
             ("A", "000000", "100644") if release_notes(path) => {
                 match markdown_blob(checkout, new_blob) {
                     Ok(new) if !same_documented_commands("", &new) => {
-                        risks.push(format!("{path}: new documented command paths or flags; candidate CLI proof required"));
+                        risks.push(format!("{path}: new documented CLI example; candidate CLI proof required: cargo test -p xtask --test ripr_public_guide_contract"));
                     }
                     Err(reason) => risks.push(format!("{path}: {reason}; full proof required")),
                     Ok(_) => (),
@@ -1271,7 +1286,7 @@ fn revision_changes(
                             risks.push(format!("{path}: removed Markdown anchor #{missing}; full incoming-link check required"));
                         }
                         if release_notes(path) && !same_documented_commands(&old, &new) {
-                            risks.push(format!("{path}: documented command paths or flags changed; candidate CLI proof required"));
+                            risks.push(format!("{path}: documented CLI example changed; candidate CLI proof required: cargo test -p xtask --test ripr_public_guide_contract"));
                         }
                     }
                     Err(reason) => risks.push(format!("{path}: {reason}; full proof required")),
