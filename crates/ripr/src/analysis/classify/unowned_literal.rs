@@ -112,7 +112,7 @@ fn outside_string_literals(text: &str) -> Option<String> {
     }
     kept.push_str(text.get(at..)?);
     let quotes_kept = kept.matches('"').count();
-    (quotes_kept % 2 == 0).then_some(kept)
+    quotes_kept.is_multiple_of(2).then_some(kept)
 }
 
 #[cfg(test)]
