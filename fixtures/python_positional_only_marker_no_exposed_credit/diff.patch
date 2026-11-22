@@ -1,0 +1,7 @@
+diff --git a/src/lib.py b/src/lib.py
+--- a/src/lib.py
++++ b/src/lib.py
+@@ -1,2 +1,2 @@
+-def key(self, *args, **kwargs):
++def key(self, /, *args, **kwargs):
+     return args

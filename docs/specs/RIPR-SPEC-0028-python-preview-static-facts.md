@@ -2144,6 +2144,20 @@ the line's own reading.
 
 Tests: `deleted_lines_tests.rs::literal_keyword_argument_line_takes_the_call_shape`.
 
+A one-line `def` header edit whose only runtime difference is the position of
+the positional-only `/` marker (#16011) changes behavior only for a call that
+passes a moved parameter by keyword. Unless a related test with a strong
+oracle calls the owner with a moved parameter by keyword (by its own name, an
+import alias or a module receiver), the edit reads `weakly_exposed` and the
+missing discriminator names that keyword call. A call
+whose arguments the reader cannot account for (`**options`) does not count as
+such a call.
+
+Tests: `positional_only_marker_tests.rs::positional_calls_do_not_expose_a_marker_only_edit`,
+`positional_only_marker_tests.rs::a_keyword_call_on_a_moved_parameter_keeps_exposed`,
+`positional_only_marker_tests.rs::an_aliased_keyword_call_keeps_exposed`,
+`positional_only_marker_tests.rs::marker_only_edits_name_the_moved_parameters`.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed
