@@ -6391,6 +6391,29 @@ pub(crate) fn commonjs_default_binding(import: &TypeScriptImport, owner: &TypeSc
         && owner.class_name.is_none()
 }
 
+/// `digest(...)` where the test's loop header bound `digest` to the same-named
+/// member of each namespace import in a file-level table that lists `import`
+/// (#13592, unjs/ohash): one iteration runs `import.local.digest(...)`, so the
+/// call is the namespace member call written once for every implementation.
+/// The binding is the loop's own `const`, so nothing in the body can rebind
+/// it except a body-local declaration, which the guard below refuses.
+fn loop_namespace_member_call(
+    import: &TypeScriptImport,
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+) -> bool {
+    !owner.exported_as_default
+        && test.scope_bindings.iter().any(|binding| {
+            binding.name == owner.name
+                && binding
+                    .namespace_member_of
+                    .iter()
+                    .any(|namespace| *namespace == import.local)
+        })
+        && contains_call_name(&test.body_text, &owner.name)
+        && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
+}
+
 fn import_references_owner_call(
     import: &TypeScriptImport,
     test: &TypeScriptTest,
@@ -6407,7 +6430,8 @@ fn import_references_owner_call(
     }
     if import.namespace {
         return !owner.commonjs_whole_function
-            && contains_member_call_name(body_text, &import.local, &owner.name);
+            && (contains_member_call_name(body_text, &import.local, &owner.name)
+                || loop_namespace_member_call(import, test, owner));
     }
     // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
     // default { name }` object holds the owner reaches it as

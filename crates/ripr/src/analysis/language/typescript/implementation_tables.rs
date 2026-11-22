@@ -1,0 +1,297 @@
+//! One suite run over several implementations of a module (#13592, unjs/ohash).
+//!
+//! ```ts
+//! import * as cryptoJS from "../src/crypto/js";
+//! import * as cryptoNode from "../src/crypto/node";
+//! const impls = { js: cryptoJS, node: cryptoNode };
+//! for (const [name, { digest }] of Object.entries(impls)) {
+//!   it(name, () => expect(digest("x")).toBe("..."));
+//! }
+//! ```
+//!
+//! Each iteration binds `digest` to the export of one namespace import, so the
+//! test calls `cryptoJS.digest` on one iteration and `cryptoNode.digest` on
+//! another: the same call a namespace member call (`cryptoJS.digest(...)`)
+//! writes out. Without this the loop binding only shadows, and no test calls
+//! the export or anything it reaches.
+//!
+//! Admitted, and nothing else:
+//! - the table is a file-level `const` bound to an object literal whose
+//!   property values (`{ js: cryptoJS }` or `{ cryptoJS }`), or an array
+//!   literal whose elements, are identifiers; at least one names a namespace
+//!   import;
+//! - every other mention of the table name in the file is the argument of
+//!   `Object.entries(` or `Object.values(`, or the iterable after `of`, so no
+//!   write can swap an entry;
+//! - the loop is `for (const [_, { m }] of Object.entries(T))`,
+//!   `for (const { m } of Object.values(T))`, or, over an array table,
+//!   `for (const { m } of T)`, and `m` is shorthand: no rename, default or
+//!   rest. The member read is the binding's own name.
+
+use super::*;
+use oxc_ast::ast::{BindingProperty, ForOfStatement, ForStatementLeft};
+
+/// File-level `const` tables of namespace imports, by table name.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ImplementationTables {
+    tables: Vec<ImplementationTable>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ImplementationTable {
+    name: String,
+    /// `true` for an array literal, `false` for an object literal.
+    array: bool,
+    /// The namespace import locals among its values, in source order.
+    namespaces: Vec<String>,
+}
+
+impl ImplementationTables {
+    pub(crate) fn of_program(
+        statements: &[Statement<'_>],
+        source: &str,
+        imports: &[TypeScriptImport],
+    ) -> Self {
+        let namespace = |name: &str| {
+            imports
+                .iter()
+                .any(|import| import.namespace && import.local == name)
+        };
+        let mut tables = Vec::new();
+        for statement in statements {
+            let declaration = match statement {
+                Statement::VariableDeclaration(declaration) => declaration,
+                Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                    Some(Declaration::VariableDeclaration(declaration)) => declaration,
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                || declaration.declare
+            {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                let (BindingPattern::BindingIdentifier(identifier), Some(init)) =
+                    (&declarator.id, &declarator.init)
+                else {
+                    continue;
+                };
+                let Some((array, values)) = identifier_values(init) else {
+                    continue;
+                };
+                let namespaces: Vec<String> = values
+                    .into_iter()
+                    .filter(|value| namespace(value))
+                    .collect();
+                let name = identifier.name.as_str();
+                if namespaces.is_empty()
+                    || !only_enumerated(source, name, identifier.span.start as usize)
+                {
+                    continue;
+                }
+                tables.push(ImplementationTable {
+                    name: name.to_string(),
+                    array,
+                    namespaces,
+                });
+            }
+        }
+        // A name declared twice at file level is a syntax error; refuse both.
+        let duplicated: Vec<String> = tables
+            .iter()
+            .filter(|table| {
+                tables
+                    .iter()
+                    .filter(|other| other.name == table.name)
+                    .count()
+                    > 1
+            })
+            .map(|table| table.name.clone())
+            .collect();
+        tables.retain(|table| !duplicated.contains(&table.name));
+        Self { tables }
+    }
+
+    /// The names a `for...of` header binds to a member of the table's
+    /// namespace imports, each with those namespace locals. `shadowed` says
+    /// whether a scope between the file and the loop rebinds a name.
+    pub(crate) fn loop_members(
+        &self,
+        statement: &Statement<'_>,
+        shadowed: impl Fn(&str) -> bool,
+    ) -> Vec<(String, Vec<String>)> {
+        let Statement::ForOfStatement(for_of) = statement else {
+            return Vec::new();
+        };
+        self.for_of_members(for_of, &shadowed).unwrap_or_default()
+    }
+
+    fn for_of_members(
+        &self,
+        for_of: &ForOfStatement<'_>,
+        shadowed: &impl Fn(&str) -> bool,
+    ) -> Option<Vec<(String, Vec<String>)>> {
+        if for_of.r#await {
+            return None;
+        }
+        let ForStatementLeft::VariableDeclaration(declaration) = &for_of.left else {
+            return None;
+        };
+        let [declarator] = declaration.declarations.as_slice() else {
+            return None;
+        };
+        let (table_name, enumeration) = iterated_table(&for_of.right)?;
+        if shadowed(table_name) {
+            return None;
+        }
+        let table = self.tables.iter().find(|table| table.name == table_name)?;
+        let pattern = match (enumeration, table.array, &declarator.id) {
+            // `Object.entries(T)` yields `[key, value]` pairs.
+            (Enumeration::Entries, _, BindingPattern::ArrayPattern(pair)) => {
+                if pair.rest.is_some() || pair.elements.len() != 2 {
+                    return None;
+                }
+                pair.elements.get(1)?.as_ref()?
+            }
+            (Enumeration::Values, _, pattern) | (Enumeration::Direct, true, pattern) => pattern,
+            _ => return None,
+        };
+        let BindingPattern::ObjectPattern(object) = pattern else {
+            return None;
+        };
+        if object.rest.is_some() {
+            return None;
+        }
+        let members: Vec<(String, Vec<String>)> = object
+            .properties
+            .iter()
+            .filter_map(shorthand_member)
+            .map(|member| (member, table.namespaces.clone()))
+            .collect();
+        Some(members)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Enumeration {
+    Entries,
+    Values,
+    Direct,
+}
+
+/// The table identifier a `for...of` iterates, and how.
+fn iterated_table<'a>(right: &'a Expression<'a>) -> Option<(&'a str, Enumeration)> {
+    match right.without_parentheses() {
+        Expression::Identifier(identifier) => Some((identifier.name.as_str(), Enumeration::Direct)),
+        Expression::CallExpression(call) => {
+            let Expression::StaticMemberExpression(member) = &call.callee else {
+                return None;
+            };
+            if call.optional
+                || !matches!(&member.object, Expression::Identifier(object) if object.name == "Object")
+            {
+                return None;
+            }
+            let enumeration = match member.property.name.as_str() {
+                "entries" => Enumeration::Entries,
+                "values" => Enumeration::Values,
+                _ => return None,
+            };
+            let [Argument::Identifier(table)] = call.arguments.as_slice() else {
+                return None;
+            };
+            Some((table.name.as_str(), enumeration))
+        }
+        _ => None,
+    }
+}
+
+/// `{ digest }`: the key is the bound name, with no default.
+fn shorthand_member(property: &BindingProperty<'_>) -> Option<String> {
+    if property.computed {
+        return None;
+    }
+    let key = property.key.static_name()?;
+    let BindingPattern::BindingIdentifier(binding) = &property.value else {
+        return None;
+    };
+    (binding.name.as_str() == key.as_ref()).then(|| key.to_string())
+}
+
+/// `{ js: cryptoJS, cryptoNode }` or `[cryptoJS, cryptoNode]` with every
+/// value a plain identifier: `(is_array, values)`.
+fn identifier_values(init: &Expression<'_>) -> Option<(bool, Vec<String>)> {
+    match init.without_parentheses() {
+        Expression::ObjectExpression(object) => {
+            let mut values = Vec::new();
+            for property in &object.properties {
+                let ObjectPropertyKind::ObjectProperty(property) = property else {
+                    return None;
+                };
+                if property.computed
+                    || property.method
+                    || property.kind != oxc_ast::ast::PropertyKind::Init
+                {
+                    return None;
+                }
+                let Expression::Identifier(value) = &property.value else {
+                    return None;
+                };
+                values.push(value.name.to_string());
+            }
+            (!values.is_empty()).then_some((false, values))
+        }
+        Expression::ArrayExpression(array) => {
+            let mut values = Vec::new();
+            for element in &array.elements {
+                let Some(Expression::Identifier(value)) = element.as_expression() else {
+                    return None;
+                };
+                values.push(value.name.to_string());
+            }
+            (!values.is_empty()).then_some((true, values))
+        }
+        _ => None,
+    }
+}
+
+/// Every mention of `name` in `source` other than its declaration at
+/// `declared_at` is the argument of `Object.entries(` / `Object.values(` or
+/// the iterable after `of`. A comment or string that mentions the name
+/// refuses the table, which only ever withholds reach.
+fn only_enumerated(source: &str, name: &str, declared_at: usize) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let mut from = 0;
+    while let Some(found) = source.get(from..).and_then(|rest| rest.find(name)) {
+        let start = from + found;
+        let end = start + name.len();
+        from = end;
+        let before = source
+            .get(..start)
+            .and_then(|text| text.chars().next_back());
+        let after = source.get(end..).and_then(|text| text.chars().next());
+        if before.is_some_and(is_ident) || after.is_some_and(is_ident) {
+            continue;
+        }
+        if start == declared_at {
+            continue;
+        }
+        let prefix = source.get(..start).unwrap_or("").trim_end();
+        let enumerated = prefix.ends_with("Object.entries(") || prefix.ends_with("Object.values(");
+        let iterated = prefix.ends_with(" of")
+            && prefix
+                .get(..prefix.len().saturating_sub(2))
+                .and_then(|text| text.chars().next_back())
+                .is_some_and(char::is_whitespace);
+        let closes = source
+            .get(end..)
+            .map(str::trim_start)
+            .is_some_and(|rest| rest.starts_with(')'));
+        if !((enumerated || iterated) && closes) {
+            return false;
+        }
+    }
+    true
+}

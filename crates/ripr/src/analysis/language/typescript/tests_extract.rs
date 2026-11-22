@@ -238,6 +238,11 @@ fn extract_tests_expanding_suite_factories(
             admission,
             hook_calls,
             tap_arguments: super::tap::RegistrationArguments::of_program(&ret.program),
+            implementation_tables: super::implementation_tables::ImplementationTables::of_program(
+                &ret.program.body,
+                source,
+                &imports,
+            ),
             ..TestScope::default()
         };
         scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
@@ -1240,11 +1245,29 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         if let Some((loop_bindings, body)) = loop_body_from_statement(stmt, scope) {
             // A `for`/`for...of`/`for...in` or `.forEach` callback body
             // registers its tests once per iteration; its loop variables or
-            // callback parameters shadow every enclosing binding.
+            // callback parameters shadow every enclosing binding. A member
+            // destructured from a table of namespace imports is that member
+            // of each namespace (#13592).
+            let members = scope.implementation_tables.loop_members(stmt, |name| {
+                scope
+                    .levels
+                    .iter()
+                    .skip(1)
+                    .flatten()
+                    .any(|(bound, _, _)| bound == name)
+            });
             scope.levels.push(
                 loop_bindings
                     .into_iter()
-                    .map(|name| (name, ScopeValue::Other, Phase::Declaration))
+                    .map(|name| {
+                        let value = members
+                            .iter()
+                            .find(|(member, _)| *member == name)
+                            .map_or(ScopeValue::Other, |(_, namespaces)| {
+                                ScopeValue::NamespaceMember(namespaces.clone())
+                            });
+                        (name, value, Phase::Declaration)
+                    })
                     .collect(),
             );
             scope.iterables.push(Vec::new());
@@ -1508,6 +1531,9 @@ pub(crate) struct TestScope {
     /// The object-row table loop whose body is being walked (#11196).
     row_loop: Option<RowLoop>,
     tap_arguments: super::tap::RegistrationArguments,
+    /// File-level tables of namespace imports a loop may run a suite over
+    /// (#13592, unjs/ohash).
+    implementation_tables: super::implementation_tables::ImplementationTables,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1535,6 +1561,9 @@ enum ScopeValue {
     Constructed(String),
     /// Anything else, including a shadowing function, class or parameter.
     Other,
+    /// A loop header's `{ name }` destructured from each entry of a table of
+    /// namespace imports: the same-named member of each listed namespace.
+    NamespaceMember(Vec<String>),
 }
 
 impl TestScope {
@@ -1591,13 +1620,15 @@ impl TestScope {
                     }
                     Some((value, phase)) if *phase != Phase::Declaration => match value {
                         ScopeValue::Constructed(constructor) => Some(constructor.clone()),
-                        ScopeValue::Declared | ScopeValue::Other => None,
+                        ScopeValue::Declared
+                        | ScopeValue::Other
+                        | ScopeValue::NamespaceMember(_) => None,
                     },
                     _ => {
                         let mut constructors = writes.iter().filter_map(|(value, _)| match value {
                             ScopeValue::Declared => None,
                             ScopeValue::Constructed(constructor) => Some(Some(constructor)),
-                            ScopeValue::Other => Some(None),
+                            ScopeValue::Other | ScopeValue::NamespaceMember(_) => Some(None),
                         });
                         let first = constructors.next().flatten();
                         first
@@ -1605,9 +1636,17 @@ impl TestScope {
                             .cloned()
                     }
                 };
+                // Only a loop header binds a namespace member, once.
+                let namespace_member_of = match writes.as_slice() {
+                    [(ScopeValue::NamespaceMember(namespaces), Phase::Declaration)] => {
+                        namespaces.clone()
+                    }
+                    _ => Vec::new(),
+                };
                 resolved.push(TypeScriptScopeBinding {
                     name: name.to_string(),
                     constructed_by,
+                    namespace_member_of,
                     // `levels` is the test's own parameters, then the
                     // enclosing levels innermost first; the last is the file.
                     file_level: depth > 0 && depth == levels.len() - 1,

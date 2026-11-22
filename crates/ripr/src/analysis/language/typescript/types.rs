@@ -361,6 +361,13 @@ pub(crate) struct TypeScriptScopeBinding {
     /// tests), is only declared, or anything else in the file could rebind
     /// the name or the class.
     pub(crate) constructed_by: Option<String>,
+    /// The namespace import locals whose same-named member `name` holds on
+    /// each iteration, when `name` is a loop header's shorthand destructure
+    /// from a file-level table of namespace imports (#13592, unjs/ohash):
+    /// `for (const [, { digest }] of Object.entries({ js: cryptoJS }))`.
+    /// Empty for every other binding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) namespace_member_of: Vec<String>,
     /// `true` when the innermost binding of `name` is a file-level
     /// declaration. Such a name cannot shadow an import (redeclaring an
     /// imported name is a syntax error); it is the owner itself in a

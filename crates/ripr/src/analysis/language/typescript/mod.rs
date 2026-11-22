@@ -205,6 +205,7 @@ mod unused_default_guard;
 mod assertion_helper;
 mod boolean_pin_guard;
 mod close_to_guard;
+mod implementation_tables;
 #[cfg(test)]
 #[path = "tests/issue7483_masker_tests.rs"]
 mod issue7483_masker_tests;
