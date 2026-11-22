@@ -1448,12 +1448,14 @@ fn parse_path_glob_patterns(field: &str, values: &[String]) -> Result<Vec<String
             ));
         }
         let trimmed = value.trim();
-        parse_relative_path(field, trimmed)?;
+        // Before the shared path parser, which normalizes `.` to an empty
+        // path and would answer with its generic path example instead.
         if trimmed == "." {
             return Err(format!(
                 "{field} must identify a file pattern, not `.`; name the generated files, for example `src/generated/**`"
             ));
         }
+        parse_relative_path(field, trimmed)?;
         if !seen.insert(trimmed) {
             return Err(format!(
                 "{field} lists `{trimmed}` more than once; remove the duplicate"
@@ -1549,7 +1551,7 @@ fn parse_overrides(
                 .is_none_or(overrides::PartialOraclePolicy::is_empty)
         {
             return Err(format!(
-                "[[overrides]] entry {} must override severity or oracles; add a severity or oracles table to the entry, or remove it",
+                "[[overrides]] entry {} must override severity or oracles; set at least one severity or oracles value in the entry, for example `severity.findings.weakly_exposed = \"info\"`, or remove the entry",
                 index + 1
             )
             .into());
@@ -2199,7 +2201,7 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(format!(
-            "{field} must not be empty; give a repository-relative path, or remove the entry"
+            "{field} must not be empty; give a repository-relative path"
         ));
     }
     if trimmed.contains('\\') {

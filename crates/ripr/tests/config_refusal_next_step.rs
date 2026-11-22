@@ -29,7 +29,7 @@ const CASES: &[(&str, &str)] = &[
     ),
     (
         "[[overrides]]\npath = \"crates/alpha/**\"\n",
-        "[[overrides]] entry 1 must override severity or oracles; add a severity or oracles table to the entry, or remove it",
+        "[[overrides]] entry 1 must override severity or oracles; set at least one severity or oracles value in the entry, for example `severity.findings.weakly_exposed = \"info\"`, or remove the entry",
     ),
     (
         "[languages.rust]\ngenerated_file_patterns = [\"../generated/**/*.rs\"]\n",
@@ -37,7 +37,15 @@ const CASES: &[(&str, &str)] = &[
     ),
     (
         "[languages.rust]\ngenerated_file_patterns = [\"\"]\n",
-        "languages.rust.generated_file_patterns must not be empty; give a repository-relative path, or remove the entry",
+        "languages.rust.generated_file_patterns must not be empty; give a repository-relative path",
+    ),
+    (
+        "[languages.rust]\ngenerated_file_patterns = [\".\"]\n",
+        "languages.rust.generated_file_patterns must identify a file pattern, not `.`; name the generated files, for example `src/generated/**`",
+    ),
+    (
+        "[profiles.bun_ub]\ntest_roots = [\"test/**/*.ts\"]\nbridge_hints = \"\"\n",
+        "profiles.bun_ub.bridge_hints must not be empty; give a repository-relative path",
     ),
     (
         "[languages.python]\nhandwritten_files = [\"src/*.py\"]\n",
@@ -79,5 +87,37 @@ fn config_validate_refusals_name_their_fix() -> Result<(), String> {
         Ok(())
     } else {
         Err(failures.join("\n---\n"))
+    }
+}
+
+/// Following the override refusal's own example clears it, so the advice is
+/// a working repair rather than a restatement of the rule.
+#[test]
+fn config_validate_accepts_the_override_repair_it_suggests() -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!(
+        "ripr-config-refusal-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _guard = ScratchDir(dir.clone());
+    std::fs::create_dir_all(&dir).map_err(|error| format!("create scratch dir: {error}"))?;
+    std::fs::write(
+        dir.join("ripr.toml"),
+        "[[overrides]]\npath = \"crates/alpha/**\"\nseverity.findings.weakly_exposed = \"info\"\n",
+    )
+    .map_err(|error| format!("write ripr.toml: {error}"))?;
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&dir)
+        .args(["config", "validate", "--root", "."])
+        .output()
+        .map_err(|error| format!("spawn ripr: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected the suggested override to validate, got {:?}:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ))
     }
 }

@@ -1,2 +1,2 @@
-crates/ripr/tests/config_refusal_next_step.rs|Command::new|1|cli-tests|Runs the built ripr binary (CARGO_BIN_EXE_ripr) as `config validate` on one bad ripr.toml per case in a scratch temp dir to pin each refusal's next step. No shell, network, or repository mutation; bounded by `.output()`.
+crates/ripr/tests/config_refusal_next_step.rs|Command::new|2|cli-tests|Runs the built ripr binary (CARGO_BIN_EXE_ripr) as `config validate` on one bad ripr.toml per case, plus the suggested override repair, in a scratch temp dir to pin each refusal's next step. No shell, network, or repository mutation; bounded by `.output()`.
 crates/ripr/tests/config_refusal_next_step.rs|use std::process::Command|1|cli-tests|Import for the exact-binary spawn site described above.
