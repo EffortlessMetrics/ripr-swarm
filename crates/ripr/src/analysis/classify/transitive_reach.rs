@@ -154,8 +154,12 @@ pub(in crate::analysis) struct TransitiveReachIndex<'a> {
     /// walk reads only the immutable graph, so an owner's set never changes
     /// within a run, but every seam of one owner asked again: on a repo-wide
     /// walk the repeated reverse walk was the largest single cost.
-    reaching: Mutex<HashMap<String, Arc<HashSet<&'a str>>>>,
+    reaching: Mutex<HashMap<String, ReachingSlot<'a>>>,
 }
+
+/// One owner name's memoized reverse walk: filled once, shared by every seam
+/// of that owner.
+type ReachingSlot<'a> = Arc<OnceLock<Arc<HashSet<&'a str>>>>;
 
 /// Per-owner-name answers of the two transitive witness searches.
 #[derive(Default)]
@@ -2228,29 +2232,24 @@ impl<'a> TransitiveReachIndex<'a> {
             .collect()
     }
 
-    /// The memoized [`ReachGraph::names_reaching`] set of `owner_name`,
-    /// computed without holding the lock: the walk is pure, so a racing
-    /// worker can only insert an equal set.
+    /// The memoized [`ReachGraph::names_reaching`] set of `owner_name`. The
+    /// map lock covers only the slot lookup; the walk runs under the slot's
+    /// own `OnceLock`, so workers that miss the same owner together wait for
+    /// one walk instead of each running it, and other owners are not blocked.
     fn names_reaching(&self, owner_name: &str) -> Arc<HashSet<&'a str>> {
-        if let Some(reaching) = self
-            .reaching
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(owner_name)
-        {
-            return Arc::clone(reaching);
-        }
-        let mut reaching = self.graph().names_reaching(owner_name);
-        // Kept for the whole run, so drop the growth slack.
-        reaching.shrink_to_fit();
-        let reaching = Arc::new(reaching);
-        Arc::clone(
-            self.reaching
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .entry(owner_name.to_string())
-                .or_insert(reaching),
-        )
+        let slot = {
+            let mut memo = self.reaching.lock().unwrap_or_else(PoisonError::into_inner);
+            match memo.get(owner_name) {
+                Some(slot) => Arc::clone(slot),
+                None => Arc::clone(memo.entry(owner_name.to_string()).or_default()),
+            }
+        };
+        Arc::clone(slot.get_or_init(|| {
+            let mut reaching = self.graph().names_reaching(owner_name);
+            // Kept for the whole run, so drop the growth slack.
+            reaching.shrink_to_fit();
+            Arc::new(reaching)
+        }))
     }
 
     /// Drop the memoized reverse walks. They are recomputable, so a windowed
@@ -4470,7 +4469,7 @@ mod tests {
         assert_ne!(sorted(&mid), sorted(&leaf));
         assert!(!mid.contains("side"), "{mid:?}");
 
-        // Racing workers all end on one entry equal to the walk.
+        // Racing workers all get the one stored set, equal to the walk.
         let racing: Vec<Arc<HashSet<&str>>> = std::thread::scope(|scope| {
             let workers: Vec<_> = (0..4)
                 .map(|_| scope.spawn(|| reach.names_reaching("top")))
@@ -4482,10 +4481,11 @@ mod tests {
         });
         assert_eq!(racing.len(), 4);
         let stored = reach.names_reaching("top");
-        for set in &racing {
-            assert_eq!(sorted(set), sorted(&reach.graph().names_reaching("top")));
-        }
-        assert!(racing.iter().any(|set| Arc::ptr_eq(set, &stored)));
+        assert_eq!(
+            sorted(&stored),
+            sorted(&reach.graph().names_reaching("top"))
+        );
+        assert!(racing.iter().all(|set| Arc::ptr_eq(set, &stored)));
 
         // A window clear drops the entries; the next lookup recomputes an
         // equal set in a new allocation.
