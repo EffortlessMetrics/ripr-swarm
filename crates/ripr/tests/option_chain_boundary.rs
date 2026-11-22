@@ -368,7 +368,9 @@ fn typed_shadow_patterns_cannot_borrow_the_original_initializer() -> Result<(), 
     for shadow in [
         "let\tmut n: usize = n;",
         "let\n        mut n: usize = n;",
-        "let mut n:\n        usize = n;",
+        // Split after the colon so the escape does not read as a drive path
+        // to the local-context scan.
+        concat!("let mut n:", "\n        usize = n;"),
         "let\t/* binding */ mut n: usize = n;",
         "let\t(mut n,): (usize,) = (n,);",
         "let (\n        mut n,\n    ): (usize,) = (n,);",

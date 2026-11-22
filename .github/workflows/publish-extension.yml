@@ -181,10 +181,9 @@ jobs:
       - name: Reuse the VSIX already attached to the release
         id: existing
         run: |
-          # One VSIX per release: the other channel's dispatch promotes the
-          # bytes the first dispatch attached. A name on the Release proves
-          # nothing, so the operator carries the first run's digest in
-          # `vsix_sha256` and the downloaded bytes must match it.
+          # One VSIX per release: the other channel's dispatch promotes the bytes
+          # the first dispatch attached. A name on the Release proves nothing, so the
+          # operator passes the first run's digest in `vsix_sha256` and the bytes must match.
           version="${RAW_VERSION#v}"
           vsix="dist/ripr-${version}.vsix"
           mkdir -p dist
