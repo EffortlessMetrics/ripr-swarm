@@ -98,4 +98,3 @@
   "stop_reasons": [],
   "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions."
 }
-

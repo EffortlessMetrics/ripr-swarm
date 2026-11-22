@@ -53,24 +53,36 @@ pub(crate) fn version_key(rel: &str) -> &'static str {
         .map_or("schema_version", |(_, key)| key)
 }
 
-/// `assess` for a schema that pins its version under `key`: the pin is
-/// moved to `schema_version` in both copies first, so a changed pin is the
-/// same sanctioned bump signal under either key.
+/// `assess` for a schema that pins its version under `key`: the pin and any
+/// `schema_version` property swap names in both copies first, so a changed
+/// pin is the same sanctioned bump signal under either key, and a separate
+/// `schema_version` property is still compared (under `key`'s name) rather
+/// than overwritten.
 pub(crate) fn assess_with_version_key(old: &Value, new: &Value, key: &str) -> Compat {
     if key == "schema_version" {
         return assess(old, new);
     }
+    let swap = |name: &str| match name {
+        "schema_version" => Some(key),
+        other if other == key => Some("schema_version"),
+        _ => None,
+    };
     let rename = |schema: &Value| {
         let mut schema = schema.clone();
-        if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut)
-            && let Some(pin) = properties.remove(key)
-        {
-            properties.insert("schema_version".to_string(), pin);
+        if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+            let pin = properties.remove(key);
+            let declared = properties.remove("schema_version");
+            if let Some(pin) = pin {
+                properties.insert("schema_version".to_string(), pin);
+            }
+            if let Some(declared) = declared {
+                properties.insert(key.to_string(), declared);
+            }
         }
         if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
             for name in required.iter_mut() {
-                if name.as_str() == Some(key) {
-                    *name = Value::String("schema_version".to_string());
+                if let Some(swapped) = name.as_str().and_then(swap) {
+                    *name = Value::String(swapped.to_string());
                 }
             }
         }
@@ -986,6 +998,16 @@ mod tests {
         // Read under the default key, the same bump is an unsanctioned const
         // change, so the override is what admits it.
         assert!(matches!(assess(&old, &bumped), Compat::Violations(_)));
+        // A separate `schema_version` property beside the overridden pin is
+        // still compared: tightening it without a bump is caught.
+        let mut declared = old.clone();
+        declared["properties"]["schema_version"] = json!({"type": "string"});
+        let mut tightened_declared = declared.clone();
+        tightened_declared["properties"]["schema_version"] = json!({"enum": ["only"]});
+        assert!(matches!(
+            assess_with_version_key(&declared, &tightened_declared, "version"),
+            Compat::Violations(_)
+        ));
     }
 
     #[test]

@@ -28,17 +28,30 @@ const CONTEXT_SCHEMA: &str = "schemas/ripr/context.schema.json";
 const CHECK_SCHEMA: &str = "schemas/ripr/check.schema.json";
 
 /// Committed fixtures whose findings together reach every variant the
-/// coverage test names, chosen from a survey of every fixture's packets.
-const COVERING_FIXTURES: [&str; 8] = [
-    "python_ranking_noise_control",
-    "rust_constant_tail_change",
-    "rust_path_keyword_affinity",
-    "typescript_oracle_helper_gated",
-    "error_variant_wrapper_wrong_receiver_pin",
-    "returned_closure_arithmetic_masking",
-    "guarded_result_match_positive",
-    "collection_argument_guarded",
+/// coverage test names, chosen from a survey of every fixture's packets,
+/// each with whether this build analyzes its language. The preview-language
+/// fixtures produce no finding in a `--no-default-features --features
+/// lang-rust` build, so they are skipped there.
+const COVERING_FIXTURES: [(&str, bool); 8] = [
+    (
+        "python_ranking_noise_control",
+        cfg!(feature = "lang-python"),
+    ),
+    ("rust_constant_tail_change", true),
+    ("rust_path_keyword_affinity", true),
+    (
+        "typescript_oracle_helper_gated",
+        cfg!(feature = "lang-typescript"),
+    ),
+    ("error_variant_wrapper_wrong_receiver_pin", true),
+    ("returned_closure_arithmetic_masking", true),
+    ("guarded_result_match_positive", true),
+    ("collection_argument_guarded", true),
 ];
+
+/// Variants only the preview-language fixtures reach: their confidence caps
+/// and a discriminator with no flow sink.
+const PREVIEW_ONLY_VARIANTS: [&str; 2] = ["confidence_basis", "flow_sink=null"];
 
 static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -50,8 +63,8 @@ fn ripr(args: &[&str]) -> Result<std::process::Output, String> {
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
 
-/// Stdout of a `ripr` run that must exit 0, parsed as JSON.
-fn ripr_json(args: &[&str]) -> Result<Value, String> {
+/// Stdout of a `ripr` run that must exit 0.
+fn ripr_stdout(args: &[&str]) -> Result<Vec<u8>, String> {
     let output = ripr(args)?;
     if output.status.code() != Some(0) {
         return Err(format!(
@@ -60,12 +73,43 @@ fn ripr_json(args: &[&str]) -> Result<Value, String> {
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    serde_json::from_slice(&output.stdout).map_err(|error| {
+    Ok(output.stdout)
+}
+
+/// Stdout of a `ripr` run that must exit 0, parsed as JSON.
+fn ripr_json(args: &[&str]) -> Result<Value, String> {
+    let stdout = ripr_stdout(args)?;
+    serde_json::from_slice(&stdout).map_err(|error| {
         format!(
             "ripr {args:?} JSON did not parse: {error}\nstdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
+            String::from_utf8_lossy(&stdout)
         )
     })
+}
+
+/// `json` with every whitespace byte outside a string removed: what
+/// `--format json-compact` must write for the same document.
+fn minified(json: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(json.len());
+    let (mut in_string, mut escaped) = (false, false);
+    for &byte in json {
+        if in_string {
+            out.push(byte);
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+        } else if byte == b'"' {
+            in_string = true;
+            out.push(byte);
+        } else if !byte.is_ascii_whitespace() {
+            out.push(byte);
+        }
+    }
+    out
 }
 
 /// The ids of every finding `ripr check --json` reports for `scope`.
@@ -87,7 +131,9 @@ fn finding_ids(scope: &[&str]) -> Result<Vec<String>, String> {
         .collect()
 }
 
-/// The context packet of every finding in `scope`, labelled by fixture and id.
+/// The context packet of every finding in `scope`, labelled by fixture and
+/// id. Each `--format json-compact` run must write the `--json` bytes with
+/// every whitespace byte outside a string removed.
 fn packets_for(label: &str, scope: &[&str]) -> Result<Vec<(String, Value)>, String> {
     let ids = finding_ids(scope)?;
     if ids.is_empty() {
@@ -97,7 +143,18 @@ fn packets_for(label: &str, scope: &[&str]) -> Result<Vec<(String, Value)>, Stri
     for id in ids {
         let mut args = vec!["context", "--json", "--at", id.as_str()];
         args.extend_from_slice(scope);
-        packets.push((format!("{label} {id}"), ripr_json(&args)?));
+        let packet = ripr_json(&args)?;
+        let pretty = ripr_stdout(&args)?;
+        let mut compact_args = vec!["context", "--format", "json-compact", "--at", id.as_str()];
+        compact_args.extend_from_slice(scope);
+        let compact = ripr_stdout(&compact_args)?;
+        if compact.trim_ascii_end() != minified(&pretty).as_slice() {
+            return Err(format!(
+                "{label} {id}: --format json-compact must write the --json packet without whitespace:\n{}",
+                String::from_utf8_lossy(&compact)
+            ));
+        }
+        packets.push((format!("{label} {id}"), packet));
     }
     Ok(packets)
 }
@@ -105,7 +162,10 @@ fn packets_for(label: &str, scope: &[&str]) -> Result<Vec<(String, Value)>, Stri
 fn fixture_packets() -> Result<Vec<(String, Value)>, String> {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
     let mut packets = Vec::new();
-    for name in COVERING_FIXTURES {
+    for (name, analyzed) in COVERING_FIXTURES {
+        if !analyzed {
+            continue;
+        }
         let root = fixtures.join(name).join("input").display().to_string();
         let diff = fixtures.join(name).join("diff.patch").display().to_string();
         packets.extend(packets_for(
@@ -157,38 +217,11 @@ fn git_fixture() -> Result<PathBuf, String> {
     Ok(root)
 }
 
-/// The git fixture's packets, each also checked to be written byte-for-byte
-/// minified under `--format json-compact`.
+/// The git fixture's packets.
 fn git_packets() -> Result<Vec<(String, Value)>, String> {
     let root = git_fixture()?;
     let root_arg = root.display().to_string();
-    let produced = (|| {
-        let scope = ["--root", root_arg.as_str()];
-        let packets = packets_for("git fixture", &scope)?;
-        for (label, packet) in &packets {
-            let id = packet["probe"]["id"].as_str().unwrap_or_default();
-            let output = ripr(&[
-                "context",
-                "--format",
-                "json-compact",
-                "--at",
-                id,
-                "--root",
-                root_arg.as_str(),
-            ])?;
-            let compact: Value = serde_json::from_slice(&output.stdout)
-                .map_err(|error| format!("{label}: json-compact did not parse: {error}"))?;
-            if output.status.code() != Some(0)
-                || output.stdout.trim_ascii_end().contains(&b'\n')
-                || compact != *packet
-            {
-                return Err(format!(
-                    "{label}: --format json-compact must write the --json packet without whitespace"
-                ));
-            }
-        }
-        Ok::<_, String>(packets)
-    })();
+    let produced = packets_for("git fixture", &["--root", root_arg.as_str()]);
     // A failed run keeps the fixture for inspection.
     if produced.is_ok() {
         let _ = std::fs::remove_dir_all(&root);
@@ -261,6 +294,23 @@ fn context_json_conforms_for_every_finding_of_the_covering_fixtures() -> Result<
         conforms(packet, &schema, label)?;
         reached.extend(variants(packet));
     }
+    // A TypeScript test titled with an empty string keeps the empty title in
+    // `related_tests[].name` and `witness.fix_site.test_name`; the schema
+    // admits it.
+    let mut untitled = packets
+        .iter()
+        .map(|(_, packet)| packet)
+        .find(|packet| {
+            packet["witness"].get("fix_site").is_some()
+                && packet["related_tests"]
+                    .as_array()
+                    .is_some_and(|tests| !tests.is_empty())
+        })
+        .cloned()
+        .ok_or("no packet has a related test and a fix site")?;
+    untitled["related_tests"][0]["name"] = json!("");
+    untitled["witness"]["fix_site"]["test_name"] = json!("");
+    conforms(&untitled, &schema, "an empty test title")?;
     let mut expected: BTreeSet<String> = [
         "source_currentness=candidate_current",
         "source_currentness=base_deleted",
@@ -294,6 +344,11 @@ fn context_json_conforms_for_every_finding_of_the_covering_fixtures() -> Result<
         "static_unknown",
     ] {
         expected.insert(format!("classification={class}"));
+    }
+    if COVERING_FIXTURES.iter().any(|(_, analyzed)| !analyzed) {
+        for variant in PREVIEW_ONLY_VARIANTS {
+            expected.remove(variant);
+        }
     }
     let missed: Vec<&String> = expected.difference(&reached).collect();
     if missed.is_empty() {
