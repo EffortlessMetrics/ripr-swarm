@@ -9,9 +9,11 @@
 //!
 //! The oracle is the pull report (`workspace/diagnostic`): it is the complete
 //! served set of the committed snapshot, so no publish has to be awaited or
-//! counted. Three members are excluded from the comparison, by name: a
-//! `resultId` and a `snapshot_id` name the refresh attempt, and
-//! `snapshot_profile_budget_identity` is compared separately where it matters.
+//! counted. Members that name the refresh attempt are excluded from the
+//! comparison, by name: `resultId`, `snapshot_id`, `generated_at`, and the two
+//! identities derived from the attempt, `snapshot_profile_budget_identity`
+//! and `complete_evidence_identity`. The budget outcome itself is compared
+//! through its counts and byte totals in the workspace status.
 //!
 //! The cases pin three ways the two sessions used to disagree:
 //!

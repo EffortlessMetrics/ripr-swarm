@@ -43,7 +43,7 @@ pub(super) fn committed_source_watchers(
     root_uri: Option<&Uri>,
     absolute_root: &str,
 ) -> Vec<LSPAny> {
-    let extensions = ["rs", "py", "pm", "pl", "t"]
+    let extensions = ["rs", "py", "pm", "pl", "t", "psgi"]
         .iter()
         .chain(crate::analysis::TYPESCRIPT_SOURCE_EXTENSIONS)
         .chain(crate::analysis::JAVASCRIPT_SOURCE_EXTENSIONS)
@@ -257,8 +257,10 @@ fn event_drifts_committed_source(
 /// which costs at most one interactive refresh for a `touch`.
 ///
 /// Dependency, environment and build directories are left out so an install
-/// or a build that rewrites thousands of files schedules nothing. The two
-/// predicates are the producers' own walk rules.
+/// or a build that rewrites thousands of files schedules nothing. The
+/// predicates are each producer's own static walk rule. A configured
+/// handwritten-file override inside an excluded TypeScript directory is not
+/// consulted here; such a file refreshes on save or on `ripr.refresh`.
 fn is_uncaptured_script_source(relative: &Path) -> bool {
     if relative
         .extension()
@@ -266,12 +268,21 @@ fn is_uncaptured_script_source(relative: &Path) -> bool {
     {
         return false;
     }
-    if crate::analysis::route(relative).is_none() {
-        return false;
-    }
+    // Each language's own walk rule: Python environments are not TypeScript
+    // exclusions, and TypeScript build output is not a Python exclusion.
+    let excluded_by_adapter = match crate::analysis::route(relative) {
+        None | Some(crate::domain::LanguageId::Rust) => return false,
+        Some(crate::domain::LanguageId::Python) => {
+            crate::config::is_detectable_excluded_python_path(relative)
+        }
+        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript) => {
+            crate::config::is_detectable_excluded_typescript_path(relative)
+                || crate::config::is_detectable_generated_typescript_path(relative)
+        }
+        Some(crate::domain::LanguageId::Perl) => false,
+    };
     let normalized = relative.to_string_lossy().replace('\\', "/");
-    !crate::analysis::path_enters_ignored_dir(&normalized)
-        && !crate::config::is_detectable_excluded_python_path(relative)
+    !excluded_by_adapter && !crate::analysis::path_enters_ignored_dir(&normalized)
 }
 
 #[cfg(test)]
@@ -531,6 +542,63 @@ mod tests {
         write(&root.0, "src/index.js", b"rewritten\n")?;
         let changed = [event(&root.0, "src/index.js", FileChangeType::CHANGED)?];
         assert!(drifts(&root.0, &sources, &[], &changed, &[]));
+        Ok(())
+    }
+
+    /// Each language is held to its own walk rule. `env` is a Python
+    /// environment name and an ordinary TypeScript directory; `out` is
+    /// TypeScript build output and an ordinary Python package name.
+    #[test]
+    fn script_exclusions_follow_the_language_of_the_file() -> Result<(), String> {
+        let root = temp_root("script-language-rules")?;
+        let sources = ConsumedRustSources::default();
+        for (relative, expected) in [
+            ("src/env/pricing.ts", true),
+            ("env/lib/site.py", false),
+            ("out/bundle.js", false),
+            ("dist/index.ts", false),
+            ("out/report.py", true),
+            ("app.psgi", true),
+        ] {
+            if let Some(parent) = root.0.join(relative).parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("create dir: {err}"))?;
+            }
+            write(&root.0, relative, b"rewritten\n")?;
+            let changed = [event(&root.0, relative, FileChangeType::CHANGED)?];
+            assert_eq!(
+                drifts(&root.0, &sources, &[], &changed, &[]),
+                expected,
+                "{relative}"
+            );
+        }
+        Ok(())
+    }
+
+    /// A drift rule only matters for a path the client is asked to report:
+    /// every extension the router sends to an adapter is in the change glob.
+    #[test]
+    fn change_registration_covers_every_routed_extension() -> Result<(), String> {
+        let watchers = committed_source_watchers(None, "/workspace");
+        let change_glob = watchers
+            .iter()
+            .find(|watcher| watcher.get("kind") == Some(&serde_json::json!(WATCH_CHANGE)))
+            .and_then(|watcher| watcher.get("globPattern"))
+            .and_then(|glob| glob.as_str())
+            .ok_or_else(|| format!("no change registration in {watchers:?}"))?;
+        let listed = change_glob
+            .rsplit_once('{')
+            .and_then(|(_, tail)| tail.strip_suffix('}'))
+            .ok_or_else(|| format!("change glob lists no extensions: {change_glob}"))?
+            .split(',')
+            .collect::<Vec<_>>();
+        for extension in ["rs", "py", "ts", "tsx", "js", "pm", "pl", "t", "psgi"] {
+            let routed = crate::analysis::route(Path::new(&format!("file.{extension}")));
+            assert!(routed.is_some(), "fixture: .{extension} must be routed");
+            assert!(
+                listed.contains(&extension),
+                ".{extension} is routed to an adapter but missing from the change glob {change_glob}"
+            );
+        }
         Ok(())
     }
 

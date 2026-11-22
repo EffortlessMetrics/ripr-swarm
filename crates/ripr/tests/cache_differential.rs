@@ -714,11 +714,21 @@ fn warm_runs_match_cold_runs_over_generated_edit_sequences() -> Result<(), Strin
 
 #[test]
 fn warm_runs_match_cold_runs_on_the_shipped_example_projects() -> Result<(), String> {
-    for (example, need_seams) in [
-        ("rust-discount-threshold", true),
-        ("python-bulk-discount", false),
-        ("typescript-discount-threshold", false),
-    ] {
+    // A preview adapter that is not compiled in reports no finding, so its
+    // example is compared only where the adapter exists.
+    let examples = [
+        ("rust-discount-threshold", true, cfg!(feature = "lang-rust")),
+        ("python-bulk-discount", false, cfg!(feature = "lang-python")),
+        (
+            "typescript-discount-threshold",
+            false,
+            cfg!(feature = "lang-typescript"),
+        ),
+    ];
+    if !examples.iter().any(|(_, _, compiled)| *compiled) {
+        return Err("no language adapter is compiled in; nothing was compared".to_string());
+    }
+    for (example, need_seams, _) in examples.into_iter().filter(|(_, _, compiled)| *compiled) {
         let mut scratch = example_subject(example)?;
         let observed = run_sequence(&mut scratch, seed(), steps())?;
         require_evidence(&observed, example, need_seams)?;
@@ -776,20 +786,23 @@ fn concurrent_runs_on_one_cache_match_a_cold_run() -> Result<(), String> {
             let cold_cache = scratch.fresh_cache();
             let cold = run(&root, &cold_cache, format)?;
             findings = findings.max(count_array(&cold.document, "findings"));
-            let children = (0..PROCESSES)
-                .map(|_| {
-                    check_command(&root, &shared, format, false)
-                        .spawn()
-                        .map_err(|error| format!("start concurrent ripr failed: {error}"))
+            // Every started process is waited for before any failure is
+            // returned, so a failed step leaves no run behind.
+            let started: Vec<_> = (0..PROCESSES)
+                .map(|_| check_command(&root, &shared, format, false).spawn())
+                .collect();
+            let outputs: Vec<_> = started
+                .into_iter()
+                .map(|child| {
+                    child
+                        .and_then(std::process::Child::wait_with_output)
+                        .map_err(|error| format!("concurrent ripr failed to run: {error}"))
                 })
-                .collect::<Result<Vec<_>, String>>()?;
-            for (index, child) in children.into_iter().enumerate() {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|error| format!("wait for concurrent ripr failed: {error}"))?;
+                .collect();
+            for (index, output) in outputs.into_iter().enumerate() {
                 require_equal(
                     &cold,
-                    &answer(&output),
+                    &answer(&output?),
                     &format!("concurrent ({} of {PROCESSES})", index + 1),
                     format,
                     seed,
@@ -809,6 +822,10 @@ fn concurrent_runs_on_one_cache_match_a_cold_run() -> Result<(), String> {
 /// A file rewritten and then restored to its exact bytes while a run is in
 /// flight. Whatever that run read, nothing it stored may be served for the
 /// restored workspace: the next warm run must equal a cold run.
+///
+/// The offsets are spread, and at least one rewrite must land while its run
+/// is still alive. Which phase of the run the rewrite met is not observed, so
+/// this is a stress over several offsets, not a pinned interleaving.
 #[test]
 fn edits_made_during_a_run_do_not_poison_the_cache() -> Result<(), String> {
     let mut scratch = generated_subject("mid-run")?;
@@ -826,6 +843,7 @@ fn edits_made_during_a_run_do_not_poison_the_cache() -> Result<(), String> {
     let warm = scratch.fresh_cache();
     let sources = source_files(&root)?;
     let mut findings = 0;
+    let mut overlapped = 0usize;
     for format in FORMATS {
         for round in 0..4u64 {
             let Some(victim) = rng.pick(&sources).cloned() else {
@@ -838,18 +856,28 @@ fn edits_made_during_a_run_do_not_poison_the_cache() -> Result<(), String> {
                 .map(|(text, _)| text)
                 .unwrap_or_else(|| format!("{original}\n"));
             let delay = Duration::from_millis(5 + 20 * round);
-            let child = check_command(&root, &warm, format, false)
+            let mut child = check_command(&root, &warm, format, false)
                 .spawn()
                 .map_err(|error| format!("start ripr failed: {error}"))?;
             std::thread::sleep(delay);
-            std::fs::write(&absolute, &transient)
-                .map_err(|error| format!("write {} failed: {error}", victim.display()))?;
+            let rewritten = std::fs::write(&absolute, &transient)
+                .map_err(|error| format!("write {} failed: {error}", victim.display()));
+            // The rewrite landed inside the run only if the run had not
+            // exited by then.
+            let still_running = matches!(child.try_wait(), Ok(None));
             std::thread::sleep(delay);
-            std::fs::write(&absolute, &original)
-                .map_err(|error| format!("restore {} failed: {error}", victim.display()))?;
-            child
+            let restored = std::fs::write(&absolute, &original)
+                .map_err(|error| format!("restore {} failed: {error}", victim.display()));
+            // The run is waited for before any failure is returned.
+            let waited = child
                 .wait_with_output()
-                .map_err(|error| format!("wait for ripr failed: {error}"))?;
+                .map_err(|error| format!("wait for ripr failed: {error}"));
+            rewritten?;
+            restored?;
+            waited?;
+            if still_running {
+                overlapped += 1;
+            }
             // The racing run's own answer is not compared: it may have read
             // either version. The workspace is back to `original` now.
             let cold_cache = scratch.fresh_cache();
@@ -872,6 +900,12 @@ fn edits_made_during_a_run_do_not_poison_the_cache() -> Result<(), String> {
     }
     if findings == 0 {
         return Err("fixture: the dirty workspace reported no finding".to_string());
+    }
+    if overlapped == 0 {
+        return Err(
+            "fixture: every run had exited before its file was rewritten; no edit landed during a run"
+                .to_string(),
+        );
     }
     Ok(())
 }
