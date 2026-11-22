@@ -25,7 +25,7 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
-use ra_ap_syntax::ast::HasArgList;
+use ra_ap_syntax::ast::{HasArgList, HasName};
 use ra_ap_syntax::{AstNode, ast};
 
 mod bound_result;
@@ -318,7 +318,7 @@ fn test_pairs_boundary_input_with_oracle(
             activation,
             scope,
             &calls_resolve,
-            assertion.line,
+            (assertion.line, None),
         );
         if !assertion_admitted(test, assertion)
             || !(assertion_is_discriminating(assertion) || owner_pinned(test, assertion))
@@ -1136,7 +1136,7 @@ fn boundary_bound_locals(
     activation: &ActivationEvidence,
     scope: super::argument_fold::FoldScope<'_>,
     calls_resolve: &dyn Fn(&str, usize) -> bool,
-    before_assertion_line: usize,
+    before: (usize, Option<usize>),
 ) -> Vec<String> {
     // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
     // does not keep the shadowed boundary result. A post-let mutation
@@ -1150,7 +1150,7 @@ fn boundary_bound_locals(
     // stays on the original line so a quoted boundary argument
     // (`gate("alpha")`) is still visible; mutation walks the mask.
     // Line-start `let` keeps an unmutated binding inside a block pairing.
-    // Mutations on or after `before_assertion_line` must not void an earlier
+    // Mutations after the observation must not void an earlier
     // assertion's valid pairing (#7042 item 1). Bindings are tracked per
     // brace depth so an inner block's mutation does not void an outer binding
     // (#7042 item 3).
@@ -1161,10 +1161,18 @@ fn boundary_bound_locals(
     let mut pending = String::new();
     for (offset, original_line) in test.body.lines().enumerate() {
         let line_number = test.start_line + offset;
-        if line_number > before_assertion_line {
+        if line_number > before.0 {
             break;
         }
         let masked_line = masked_lines.get(offset).copied().unwrap_or(original_line);
+        // A helper may share its line with an earlier reassignment or a
+        // later shadow. Stop at the actual call, keeping only its prefix.
+        let (original_line, masked_line) = match before {
+            (line, Some(column)) if line_number == line => {
+                (&original_line[..column], &masked_line[..column])
+            }
+            _ => (original_line, masked_line),
+        };
         let bound = let_binding_name(masked_line).and_then(|_| let_binding_name(original_line));
         if let Some(name) = bound.as_deref() {
             // Only this binding's initializer supplies its result. An
@@ -1416,6 +1424,119 @@ fn owner_call_activates_boundary(
     !result.block_tail
         && sites.len() == 1
         && activation_marks_boundary_call(activation, call, &test.file)
+}
+
+/// Eager helper call statements in the test itself. Keep the syntax node
+/// with its complete arguments so both the values and the observation
+/// position belong to this call, even when the invocation spans lines.
+pub(in crate::analysis) fn test_helper_call_arguments(
+    test: &TestSummary,
+    helper: &str,
+    index: &RustIndex,
+) -> Vec<(ast::CallExpr, Vec<String>)> {
+    let body = index
+        .source_syntax
+        .parse_fragment(&test.body)
+        .and_then(|parse| parse.tree().syntax().children().find_map(ast::Fn::cast))
+        .and_then(|function| function.body())
+        .and_then(|body| body.stmt_list());
+    let Some(body) = body else { return Vec::new() };
+    body.statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .chain(body.tail_expr())
+        .filter_map(|expression| match expression {
+            ast::Expr::CallExpr(call) if call.expr()?.syntax().text() == helper => {
+                let arguments = call
+                    .arg_list()?
+                    .args()
+                    .map(|arg| arg.syntax().text().to_string())
+                    .collect();
+                Some((call, arguments))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A test-local asserting helper can receive the owner result as a value
+/// (including a clone), or through an invoked zero-argument callback. Verify
+/// the input of this argument's own call, independently of other statements.
+pub(in crate::analysis) fn helper_argument_is_boundary_call(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    argument: &str,
+    helper_call: &ast::CallExpr,
+    activation: &ActivationEvidence,
+    index: &RustIndex,
+) -> bool {
+    let argument = argument.trim();
+    let expression = argument.strip_prefix("||").unwrap_or(argument).trim();
+    let expression = expression.strip_suffix(".clone()").unwrap_or(expression);
+    let scope = super::argument_fold::FoldScope::of_test(test, index);
+    let resolves = |text: &str, line| {
+        super::call_identity::boundary_owner_calls_resolve(index, owner, test, text, line)
+    };
+    let whole_owner_call = |text: &str| {
+        super::owner_pin::direct_call_name(text) == Some(owner.name.as_str())
+            || (owner.item.container == FunctionContainer::Free
+                && path_qualified_whole_call(text, &owner.name).is_some())
+    };
+    let start = helper_call.syntax().text_range().start();
+    let Some(prefix) = test.body.get(..usize::from(start)) else {
+        return false;
+    };
+    let line = test.start_line + prefix.bytes().filter(|byte| *byte == b'\n').count();
+    if argument_is_plain_identifier(expression) {
+        // Only declarations preceding the observation can shadow the
+        // line-start binding that boundary_bound_locals recognizes.
+        let Some(function) = helper_call.syntax().ancestors().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let preceding_bindings = function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+            .filter(|name| name.syntax().text_range().end() <= start && name.text() == expression)
+            .count();
+        if preceding_bindings != 1 {
+            return false;
+        }
+        let column = prefix.rsplit('\n').next().map_or(0, str::len);
+        return boundary_bound_locals(
+            probe,
+            owner,
+            test,
+            activation,
+            scope,
+            &|binding, line| {
+                let initializer = binding
+                    .split_once('=')
+                    .map_or(binding, |(_, rhs)| rhs)
+                    .trim();
+                whole_owner_call(initializer)
+                    && resolves(initializer, line)
+                    && (line_owner_call_count(test, line, owner) <= 1
+                        || owner_call_sites(initializer, owner).iter().any(|args| {
+                            argument_list_activates_boundary(probe, owner, test, args, scope)
+                        }))
+            },
+            (line, Some(column)),
+        )
+        .iter()
+        .any(|name| name == expression);
+    }
+    if !whole_owner_call(expression) || !resolves(expression, line) {
+        return false;
+    }
+    let calls = owner_call_sites(expression, owner);
+    matches!(calls.as_slice(), [args] if argument_list_activates_boundary(
+        probe, owner, test, args, scope
+    ))
 }
 
 fn argument_list_activates_boundary(

@@ -1225,7 +1225,14 @@ fn evidence_for_seam_with_context<'a>(
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
-    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let discriminate = discriminate_evidence(
+        seam,
+        &credited,
+        owner_fn,
+        context.index,
+        pin_syntax,
+        activate.state == StageState::Yes && missing_discriminators.is_empty(),
+    );
 
     // One admission per test file for this seam: the verdict depends only on
     // the (test file, seam file) pair, and a file's tests share it (#5361).
@@ -3105,7 +3112,14 @@ pub(crate) fn compact_evidence_for_seam(
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
-    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let discriminate = discriminate_evidence(
+        seam,
+        &credited,
+        owner_fn,
+        context.index,
+        pin_syntax,
+        activate.state == StageState::Yes && missing_discriminators.is_empty(),
+    );
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
@@ -5432,6 +5446,7 @@ fn discriminate_evidence(
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    boundary_activated: bool,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -5520,6 +5535,29 @@ fn discriminate_evidence(
             (false, OracleStrength::Strong | OracleStrength::Medium) => StageState::Weak,
         }
     };
+    if state == StageState::Yes
+        && boundary_activated
+        && seam.kind() == SeamKind::PredicateBoundary
+        && comparison_operands(seam.expression()).is_some()
+        && let Some(owner) = owner_fn
+        && related
+            .iter()
+            .any(|test| test.body_calls().any(|call| call.name == owner.name))
+        && !boundary_oracle_paired(
+            seam,
+            owner,
+            related,
+            index,
+            pin_syntax,
+            boolean_pin.as_ref(),
+        )
+    {
+        return StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            super::classify::same_test_pairing_missing_summary(),
+        );
+    }
     // #14496: name the gate that actually refused. The parenthetical used to
     // print `best_matching != None` as "kind-match", so any refusal that was
     // not a kind mismatch (a branch-reach refusal, a #8121/#12189/#11398
@@ -5545,6 +5583,135 @@ fn discriminate_evidence(
         summary.push_str(&contradictions.join("; "));
     }
     StageEvidence::new(state, Confidence::Medium, summary)
+}
+
+/// Judge each test's oracle against its own activation rows. An exact check
+/// at a different input cannot lend its strength to a bare boundary call.
+fn boundary_oracle_paired(
+    seam: &RepoSeam,
+    owner: &FunctionSummary,
+    related: &[&TestSummary],
+    index: &RustIndex,
+    syntax: &super::classify::OwnerPinSyntax,
+    boolean_pin: Option<&BooleanBoundaryPin<'_>>,
+) -> bool {
+    let probe = boolean_boundary_pin::predicate_probe(seam, owner);
+    related.iter().any(|test| {
+        if test.assertions.is_empty() || test_has_contradicted_assertion(test, Some(owner), index) {
+            return false;
+        }
+        let activation = super::classify::activation_and_boundary_input(
+            &probe,
+            Some(owner),
+            &[test],
+            &[],
+            None,
+            index,
+            false,
+            None,
+        );
+        let admitted = |test: &TestSummary, oracle: &OracleFact| {
+            oracle_discriminates_seam_in_test(seam, oracle, test, Some(owner), index, syntax)
+        };
+        let pinned = |test: &TestSummary, oracle: &OracleFact| {
+            boolean_pin.is_some_and(|pin| pin.admits(test, oracle, index, syntax))
+        };
+        super::classify::has_same_test_boundary_oracle_pairing(
+            &probe,
+            Some(owner),
+            &[test],
+            &activation.activation,
+            &admitted,
+            &pinned,
+            &|test, oracle| syntax.helper_loan(test, oracle, index),
+            None,
+            index,
+        ) || (activation.unresolved_boundary.is_none()
+            && activation.activation.missing_discriminators.is_empty()
+            && test.assertions.iter().any(|oracle| {
+                // Test-local assertion transfer has already checked callback
+                // execution. Keep its credit when the call result is passed
+                // to the helper that supplied this test's exact assertion.
+                !(test.start_line..=test.end_line).contains(&oracle.line)
+                    && super::classify::assertion_is_discriminating(oracle)
+                    && admitted(test, oracle)
+                    && rust_index::find_owner_function(index, &test.file, oracle.line).is_some_and(
+                        |helper| {
+                            super::classify::test_helper_call_arguments(test, &helper.name, index)
+                                .into_iter()
+                                .any(|(call, arguments)| {
+                                    compared_helper_arguments(helper, oracle, &arguments).any(
+                                        |arg| {
+                                            super::classify::helper_argument_is_boundary_call(
+                                                &probe,
+                                                owner,
+                                                test,
+                                                arg,
+                                                &call,
+                                                &activation.activation,
+                                                index,
+                                            )
+                                        },
+                                    )
+                                })
+                        },
+                    )
+            }))
+    })
+}
+
+/// Project this exact helper assertion back to the argument it reads. The
+/// helper body is the equality alone, optionally preceded by a single
+/// binding of a callback's result. Neither a discarded argument nor an
+/// oracle comparing two copies of the same value establishes a pairing.
+fn compared_helper_arguments<'a>(
+    helper: &FunctionSummary,
+    oracle: &OracleFact,
+    arguments: &'a [String],
+) -> impl Iterator<Item = &'a str> {
+    let parameters = whole_signature_parameters(helper);
+    let operands = super::classify::assertion_comparison_operands(&oracle.text);
+    let body = helper
+        .body
+        .split_once('{')
+        .and_then(|(_, body)| body.trim_end().strip_suffix('}'));
+    let equality = oracle.text.trim().trim_end_matches(';').trim();
+    let prefix = body.and_then(|body| {
+        body.trim()
+            .trim_end_matches(';')
+            .trim_end()
+            .strip_suffix(equality)
+    });
+    let pair = operands.zip(prefix).filter(|(operands, _)| {
+        equality.starts_with("assert_eq!") && operands[0].trim() != operands[1].trim()
+    });
+    [0, 1].into_iter().filter_map(move |side| {
+        let (operands, prefix) = pair?;
+        let position = |name: &str| parameters.iter().position(|param| param == name.trim());
+        let expected = operands[1 - side].trim();
+        let expected = position(expected)
+            .and_then(|at| arguments.get(at))
+            .map_or(expected, String::as_str);
+        if !matches!(expected.trim(), "true" | "false") && !is_plain_literal_pattern(expected) {
+            return None;
+        }
+        let subject = operands[side].trim();
+        let prefix = prefix.trim();
+        if prefix.is_empty() {
+            let actual = arguments.get(position(subject)?)?.trim();
+            return (!actual.starts_with("||")).then_some(actual);
+        }
+        let (binding, value) = prefix
+            .strip_prefix("let ")?
+            .strip_suffix(';')?
+            .split_once('=')?;
+        if binding.trim() != subject {
+            return None;
+        }
+        let callback = value.trim().strip_suffix("()")?.trim();
+        let actual = arguments.get(position(callback)?)?.trim();
+        actual.starts_with("||").then_some(actual)
+    })
 }
 
 /// Owner-relative oracle strength and any static-contradiction disclosure.

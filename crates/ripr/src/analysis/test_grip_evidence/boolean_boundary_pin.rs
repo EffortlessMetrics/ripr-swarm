@@ -20,6 +20,22 @@ pub(super) struct BooleanBoundaryPin<'a> {
     pin: OwnerReturnPin,
 }
 
+pub(super) fn predicate_probe(seam: &RepoSeam, owner: &FunctionSummary) -> Probe {
+    Probe {
+        before_condition: None,
+        id: ProbeId(format!("repo-boundary:{}", seam.id().as_str())),
+        location: SourceLocation::new(seam.file().to_path_buf(), seam.display_line(), 1),
+        owner: Some(owner.id.clone()),
+        family: ProbeFamily::Predicate,
+        delta: DeltaKind::Unknown,
+        before: None,
+        after: Some(seam.expression().to_string()),
+        expression: seam.expression().to_string(),
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    }
+}
+
 impl<'a> BooleanBoundaryPin<'a> {
     pub(super) fn establish(
         seam: &RepoSeam,
@@ -42,19 +58,7 @@ impl<'a> BooleanBoundaryPin<'a> {
         }
         // This is a private input to the existing predicate authorities,
         // not a diff claim or a general seam-to-probe conversion.
-        let probe = Probe {
-            before_condition: None,
-            id: ProbeId(format!("repo-boolean-boundary:{}", seam.id().as_str())),
-            location: SourceLocation::new(seam.file().to_path_buf(), seam.display_line(), 1),
-            owner: Some(owner.id.clone()),
-            family: ProbeFamily::Predicate,
-            delta: DeltaKind::Unknown,
-            before: None,
-            after: Some(seam.expression().to_string()),
-            expression: seam.expression().to_string(),
-            expected_sinks: Vec::new(),
-            required_oracles: Vec::new(),
-        };
+        let probe = predicate_probe(seam, owner);
         let pin = OwnerReturnPin::establish(&probe, owner, index)?;
         pin.is_unconditional_boolean_tail()
             .then_some(Self { owner, probe, pin })
