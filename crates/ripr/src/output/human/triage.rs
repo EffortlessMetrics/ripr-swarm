@@ -3580,8 +3580,9 @@ mod tests {
         backslash_root.root = PathBuf::from(["C:", "tmp", "probe win space"].join(r"\"));
         let raw = backslash_root.root.display().to_string();
         // Independent slash-stable contract: forward-slash join of the
-        // same components, not `display_path` output.
-        let expected = ["C:", "tmp", "probe win space"].join("/");
+        // same components, not `display_path` output. On Unix the backslash
+        // is a file-name byte, spelled `%5C` (#15908).
+        let expected = ["C:", "tmp", "probe win space"].join(if cfg!(unix) { "%5C" } else { "/" });
         if raw == expected {
             return Err(format!(
                 "fixture lost its discriminator: raw display {raw:?} already matches {expected:?}"

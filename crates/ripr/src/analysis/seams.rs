@@ -1152,7 +1152,9 @@ mod tests {
             SeamKind::PredicateBoundary,
             88,
         );
-        assert_eq!(unix.id(), windows.id());
+        // A backslash is a separator on Windows only; on Unix `src\pricing.rs`
+        // is a different file and keeps its own seam ID (#15908).
+        assert_eq!(unix.id() == windows.id(), !cfg!(unix));
     }
 
     #[test]

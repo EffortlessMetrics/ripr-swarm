@@ -694,6 +694,19 @@ pub(crate) fn stable_display_path_text(path: &Path) -> String {
     stable_native_path_text(path).replace('\\', "/")
 }
 
+/// [`stable_path_text`] with the separator rule taken from `windows` instead
+/// of the host, for renderers whose platform flag makes Windows behavior
+/// testable on every host. With `windows` set a backslash is a separator and
+/// renders as `/`; otherwise this is the host encoder (on Unix a literal
+/// backslash stays `%5C`, #15908).
+pub(crate) fn stable_path_text_on(path: &Path, windows: bool) -> String {
+    if windows {
+        stable_display_path_text(path)
+    } else {
+        stable_path_text(path)
+    }
+}
+
 /// Retain native source identity before display normalization. On Unix a
 /// backslash is a literal filename byte, so reserve `%5C` for it; a literal
 /// percent spelling has already been escaped by the shared native encoder.
@@ -852,8 +865,11 @@ fn render_finding_location_text(
                 .any(|component| matches!(component, Component::ParentDir))
         });
     match relative {
-        Some(relative) => format!("{relative_prefix}{}", stable_path_text(relative)),
-        None => stable_path_text(&file),
+        Some(relative) => format!(
+            "{relative_prefix}{}",
+            stable_path_text_on(relative, windows)
+        ),
+        None => stable_path_text_on(&file, windows),
     }
 }
 

@@ -2283,9 +2283,13 @@ mod evidence_path_separator_tests {
         if windows.contains('\\') {
             return Err(format!("evidence_path kept a backslash: {windows}"));
         }
-        if windows
-            != "related test tests/discount.test.ts:4 applies the discount uses strong exact value oracle"
-        {
+        // On Unix a backslash is a file-name byte, spelled `%5C` (#15908).
+        let expected = if cfg!(unix) {
+            "related test tests%5Cdiscount.test.ts:4 applies the discount uses strong exact value oracle"
+        } else {
+            "related test tests/discount.test.ts:4 applies the discount uses strong exact value oracle"
+        };
+        if windows != expected {
             return Err(format!("unexpected evidence_path line: {windows}"));
         }
         let posix = related_line("tests/discount.test.ts")?;

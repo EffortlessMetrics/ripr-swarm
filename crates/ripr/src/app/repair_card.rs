@@ -965,8 +965,15 @@ mod tests {
     #[test]
     fn selected_target_file_uses_portable_separators() -> Result<(), String> {
         // Native separators must never leak into the machine-readable card
-        // (#5440). Backslashes survive a Path round-trip on every platform,
-        // so this pins the normalization without needing Windows.
+        // (#5440). On Unix a backslash is a file-name byte and is spelled
+        // `%5C` instead (#15908), so the card still never carries a raw `\`.
+        let host = |path: &str| {
+            if cfg!(unix) {
+                path.replace('/', "%5C")
+            } else {
+                path.to_string()
+            }
+        };
         let existing = readiness(
             RepairRouteState::Ready,
             RepairTargetSelection::Existing(TestTargetEvidence::fixture(
@@ -978,7 +985,8 @@ mod tests {
         let instruction = instruction(FixInstructionState::FixSiteReady);
         let card = build_repair_card(&base_input(&instruction, &existing))?;
         match card.selected_target {
-            Some(RepairCardTarget::Existing { ref file, .. }) if file == "tests/pricing.rs" => {}
+            Some(RepairCardTarget::Existing { ref file, .. })
+                if *file == host("tests/pricing.rs") => {}
             ref other => return Err(format!("existing target file was not portable: {other:?}")),
         }
         let proposed = readiness(
@@ -993,7 +1001,7 @@ mod tests {
         );
         let card = build_repair_card(&base_input(&instruction, &proposed))?;
         match card.selected_target {
-            Some(RepairCardTarget::Proposed { ref file, .. }) if file == "tests/new.rs" => {}
+            Some(RepairCardTarget::Proposed { ref file, .. }) if *file == host("tests/new.rs") => {}
             ref other => return Err(format!("proposed target file was not portable: {other:?}")),
         }
         Ok(())

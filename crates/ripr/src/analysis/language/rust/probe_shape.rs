@@ -467,7 +467,14 @@ mod tests {
             &ProbeFamily::Predicate,
             "if amount >= discount_threshold {",
         )?;
-        assert_eq!(gap.file, "src/pricing.rs");
+        // A backslash is a separator on Windows and a file-name byte, spelled
+        // `%5C`, on Unix (#15908).
+        let expected = if cfg!(unix) {
+            "src%5Cpricing.rs"
+        } else {
+            "src/pricing.rs"
+        };
+        assert_eq!(gap.file, expected);
         assert_eq!(gap.owner, "discounted_total");
         Ok(())
     }

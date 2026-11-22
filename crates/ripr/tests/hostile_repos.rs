@@ -409,10 +409,11 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
         reported_paths.push(path.strip_prefix("./").unwrap_or(path).to_owned());
     }
     // The renderer writes every path with forward slashes (and a leading
-    // `./`), so a literal backslash in a file name is reported as a separator.
+    // `./`). A literal backslash is a file-name byte on Unix and is spelled
+    // `%5C`, never reported as a separator (#15908).
     let mut expected_paths: Vec<String> = names
         .iter()
-        .map(|name| format!("src/{}", name.replace('\\', "/")))
+        .map(|name| format!("src/{}", name.replace('\\', "%5C")))
         .collect();
     expected_paths.sort();
     reported_paths.sort();

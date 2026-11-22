@@ -3505,7 +3505,14 @@ fn normalize_repo_relative_path(path: &Path) -> Result<String, String> {
     if raw.trim().is_empty() {
         return Err("path is empty".to_string());
     }
-    if raw.starts_with('/')
+    // Fail closed on Windows-shaped roots and traversal on every host: a
+    // name like `\\server\share\x.rs` or `..\x.rs` is a legal Unix file
+    // name, but no repair needs one, and admitting it would let the same
+    // text escape the repository on Windows.
+    if raw.split(['/', '\\']).any(|segment| segment == "..") {
+        return Err("path contains parent traversal".to_string());
+    }
+    if raw.starts_with(['/', '\\'])
         || raw
             .as_bytes()
             .get(1)
@@ -7081,7 +7088,15 @@ mod tests {
     fn parent_drive_and_unc_paths_fail_closed() -> Result<(), String> {
         let drive_path = format!("{}:\\tests\\pricing.rs", 'C');
         let unc_path = ["", "", "server", "share", "test.rs"].join("\\");
-        for path in ["../tests/pricing.rs".to_string(), drive_path, unc_path] {
+        // `..\` and a leading `\` fail closed on every host, including Unix
+        // where they are legal file-name bytes (#15908).
+        let backslash_parent = ["..", "tests", "pricing.rs"].join("\\");
+        for path in [
+            "../tests/pricing.rs".to_string(),
+            backslash_parent,
+            drive_path,
+            unc_path,
+        ] {
             let verdict = evaluate_edit_cage(
                 &policy()?,
                 &AttemptDelta {
