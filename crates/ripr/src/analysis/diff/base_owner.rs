@@ -504,6 +504,21 @@ fn normalized_path(file: &Path) -> Option<Vec<String>> {
     Some(parts)
 }
 
+/// Where a `concat` shadow in `file` reaches: its package, or every package
+/// when `source` mentions `macro_export` at all.
+fn concat_scope(file: &Path, source: &str) -> MacroScope {
+    MacroScope::of(file, source.contains("macro_export"))
+}
+
+/// Whether some scope in `a` reaches some scope in `b`.
+fn scopes_meet(a: &BTreeSet<MacroScope>, b: &BTreeSet<MacroScope>) -> bool {
+    !a.is_empty()
+        && !b.is_empty()
+        && (a.contains(&MacroScope::Workspace)
+            || b.contains(&MacroScope::Workspace)
+            || !a.is_disjoint(b))
+}
+
 /// Whether one normalized path is a component suffix of the other, so a
 /// path read relative to another root still matches.
 fn same_file(a: &[String], b: &[String]) -> bool {
@@ -612,15 +627,16 @@ pub(crate) struct ModuleDeclarations {
     changed_sysroot: BTreeSet<String>,
     /// The diff touched an `extern crate .. as` naming a sysroot crate.
     changed_sysroot_shadow: bool,
-    /// Some read file defines a macro named `concat`, which shadows the
-    /// built-in wherever it is in scope (#15035 round-7 review).
-    concat_shadowed: bool,
-    /// The diff touched such a definition.
-    changed_concat_shadow: bool,
-    /// Some read `include!` trusted the literals of a bare `concat!`.
-    bare_concat_include: bool,
-    /// The diff touched such an `include!`.
-    changed_bare_concat_include: bool,
+    /// Where a read file defines or imports a macro named `concat`, which
+    /// shadows the built-in wherever it is in scope (#15035 round-7 review):
+    /// its package, or any package when the file exports macros.
+    concat_shadowed: BTreeSet<MacroScope>,
+    /// Where the diff touched such a definition.
+    changed_concat_shadow: BTreeSet<MacroScope>,
+    /// The packages of read `include!`s that trusted a bare `concat!`.
+    bare_concat_include: BTreeSet<MacroScope>,
+    /// The packages of such `include!`s the diff touched.
+    changed_bare_concat_include: BTreeSet<MacroScope>,
     /// Some read `include!` trusted the literals of a `core::`/`std::`
     /// qualified `concat!`, which a crate renamed to a sysroot name may
     /// supply instead.
@@ -758,8 +774,14 @@ impl ModuleDeclarations {
             reading.retargeted |= gates.opaque_include;
             reading.retarget_opaque |= gates.opaque_include;
             reading.sysroot_shadowed |= gates.shadows_sysroot;
-            reading.concat_shadowed |= gates.defines_concat;
-            reading.bare_concat_include |= gates.bare_concat;
+            if gates.defines_concat {
+                reading.concat_shadowed.insert(concat_scope(file, source));
+            }
+            if gates.bare_concat {
+                reading
+                    .bare_concat_include
+                    .insert(MacroScope::of(file, false));
+            }
             reading.qualified_concat_include |= gates.qualified_concat;
             reading.binds_sysroot |= gates.binds_sysroot;
         }
@@ -794,13 +816,20 @@ impl ModuleDeclarations {
         // With a user macro named `concat` anywhere, a bare `concat!` in an
         // `include!` may expand to any path, so such an `include!` reaches
         // every owner, as an opaque one does.
-        let shadowed = reading.concat_shadowed || reading.changed_concat_shadow;
-        if shadowed && reading.bare_concat_include {
+        // A shadow reaches only an `include!` of its own package, unless
+        // its file exports macros (#15035 round-9: a `#[macro_use] extern
+        // crate` in one member does not rebind `concat!` in another).
+        let shadowed: BTreeSet<MacroScope> = reading
+            .concat_shadowed
+            .union(&reading.changed_concat_shadow)
+            .cloned()
+            .collect();
+        if scopes_meet(&shadowed, &reading.bare_concat_include) {
             reading.retargeted = true;
             reading.retarget_opaque = true;
         }
-        if (shadowed && reading.changed_bare_concat_include)
-            || (reading.changed_concat_shadow && reading.bare_concat_include)
+        if scopes_meet(&shadowed, &reading.changed_bare_concat_include)
+            || scopes_meet(&reading.changed_concat_shadow, &reading.bare_concat_include)
         {
             reading.changed_retarget = true;
             reading.retarget_opaque = true;
@@ -913,8 +942,14 @@ impl ModuleDeclarations {
         self.changed_retarget |= gates.opaque_include;
         self.retarget_opaque |= gates.opaque_include;
         self.changed_sysroot_shadow |= gates.shadows_sysroot;
-        self.changed_concat_shadow |= gates.defines_concat;
-        self.changed_bare_concat_include |= gates.bare_concat;
+        if gates.defines_concat {
+            self.changed_concat_shadow
+                .insert(concat_scope(file, source));
+        }
+        if gates.bare_concat {
+            self.changed_bare_concat_include
+                .insert(MacroScope::of(file, false));
+        }
         self.changed_qualified_concat_include |= gates.qualified_concat;
         self.changed_binds_sysroot |= gates.binds_sysroot;
     }
