@@ -26,8 +26,9 @@
 //!   syntax, and the file uses no dynamic attribute access;
 //! - no oracle-eligible related test uses a fixture, a setup receiver or a
 //!   value helper, inspects attributes by name (`vars(c)`), imports a reader
-//!   under another name, hands a local it binds to a call (`dump(c)`, which
-//!   may read the container from another module), calls a method of its own
+//!   under another name, lets a name it binds escape other than through an
+//!   attribute access (`dump(c)`, `[c]`, `other = c`; a function in another
+//!   module may read the container), calls a method of its own
 //!   test class other than an assertion, or names the container or a reader.
 //!
 //! A test that calls any reader keeps the existing verdict, even a reader
@@ -232,7 +233,7 @@ pub(super) fn python_self_container_reader_gap(
                             .unwrap_or(import.imported.as_str()),
                     )
             })
-            || hands_local_to_call(&test.body_text)
+            || test_local_escapes(&test.body_text)
             || calls_own_helper_method(&test.body_text)
             || mentions_identifier(&test.body_text, attr)
             || readers
@@ -280,37 +281,53 @@ fn has_inert_argument(line: &str) -> bool {
         && !mentions_identifier(argument, "yield")
 }
 
-/// Whether the test passes a name it binds (`c = Clock(1)`, `with .. as c`)
-/// as a call argument, so a function this file cannot list may read it.
-fn hands_local_to_call(body: &str) -> bool {
-    let locals: Vec<&str> = body
+/// Whether a name the test binds (`c = Clock(1)`, `with .. as c`,
+/// `for c in ..`) escapes: any use other than its binding or an attribute
+/// access (`c.tick(2)`) may hand it to a function this file cannot list,
+/// as in `dump(c)`, `[c]`, `other = c` or `holder.c = c`.
+fn test_local_escapes(body: &str) -> bool {
+    let code_lines: Vec<&str> = body
         .lines()
+        .map(|line| line.split('#').next().unwrap_or(line))
+        .collect();
+    let locals: Vec<&str> = code_lines
+        .iter()
         .filter_map(|line| {
-            let code = line.split('#').next().unwrap_or(line).trim();
+            let code = line.trim();
             if let Some((_, target)) = code.rsplit_once(" as ") {
                 return Some(target.trim_end_matches(':').trim());
             }
+            if let Some(rest) = code.strip_prefix("for ") {
+                return rest.split_once(" in ").map(|(target, _)| target.trim());
+            }
             let (target, value) = code.split_once('=')?;
             let target = target.split(':').next().unwrap_or(target).trim();
-            (!value.starts_with('=')
-                && !target.ends_with(['!', '<', '>', '+', '-', '*', '/', '%', '|', '&', '^']))
-            .then_some(target)
+            (!value.starts_with('=')).then_some(target)
         })
         .filter(|name| is_simple_python_identifier(name))
         .collect();
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     locals.iter().any(|name| {
-        body.match_indices(name).any(|(start, _)| {
-            let before = body[..start].trim_end().chars().next_back();
-            let after = body[start + name.len()..].trim_start().chars().next();
-            let whole = !body[..start].chars().next_back().is_some_and(is_word)
-                && !body[start + name.len()..]
+        code_lines.iter().any(|line| {
+            line.match_indices(name).any(|(start, _)| {
+                let before = &line[..start];
+                let after = &line[start + name.len()..];
+                if before
                     .chars()
-                    .next()
-                    .is_some_and(is_word);
-            whole
-                && matches!(before, Some('(' | ',' | '=' | '*'))
-                && matches!(after, Some(')' | ','))
+                    .next_back()
+                    .is_some_and(|ch| is_word(ch) || ch == '.')
+                    || after.chars().next().is_some_and(is_word)
+                {
+                    return false;
+                }
+                let next = after.trim_start();
+                let binding = (before.trim().is_empty()
+                    && (next.starts_with(':')
+                        || (next.starts_with('=') && !next.starts_with("=="))))
+                    || before.trim_end().ends_with(" as")
+                    || (before.trim() == "for" && next.starts_with("in "));
+                !binding && !next.starts_with('.')
+            })
         })
     })
 }

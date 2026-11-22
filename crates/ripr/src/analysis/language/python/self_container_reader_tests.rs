@@ -207,12 +207,22 @@ fn test_side_hidden_reads_keep_the_oracle_verdict() -> Result<(), String> {
     )?;
     assert_eq!(by_name.class, ExposureClass::Exposed, "vars: {by_name:?}");
 
-    let handed = analyze(
-        "handed",
-        CLOCK_PY,
-        &tests_then("    assert dump(c) == [3]\n"),
-    )?;
-    assert_eq!(handed.class, ExposureClass::Exposed, "handed: {handed:?}");
+    for (label, after) in [
+        ("handed", "    assert dump(c) == [3]\n"),
+        ("handed-in-list", "    assert dump([c][0]) == [3]\n"),
+        ("rebound", "    other = c\n    assert dump(other) == [3]\n"),
+        (
+            "loop",
+            "    for item in [c]:\n        assert dump(item) == [3]\n",
+        ),
+    ] {
+        let escaped = analyze(label, CLOCK_PY, &tests_then(after))?;
+        assert_eq!(
+            escaped.class,
+            ExposureClass::Exposed,
+            "{label}: {escaped:?}"
+        );
+    }
 
     let helper = analyze(
         "helper-method",

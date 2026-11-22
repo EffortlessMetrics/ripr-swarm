@@ -350,7 +350,8 @@ one changed raise only (#12952); the general class-only table row stays weak.
    reader; a dunder method is a reader; the file uses `getattr`, `setattr`,
    `vars` or `__dict__`; or a related test uses a fixture, a setup receiver
    or a value helper, uses one of those dynamic spellings, imports a reader
-   under another name, hands a name it binds to a call (a reader in another
+   under another name, lets a name it binds escape other than through an
+   attribute access (`dump(c)`, `[c]`, `other = c`; a reader in another
    file), or calls a method of its own test class other than an assertion.
    A reader in another file is otherwise not seen, which is why only
    single-underscore names are read. Module-level containers (`LOG.append`)
