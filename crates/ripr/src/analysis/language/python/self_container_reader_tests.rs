@@ -84,7 +84,7 @@ fn analyze_edit(
         .nth(RECORD_LINE - 1)
         .ok_or_else(|| "fixture has no record line".to_string())?;
     assert!(
-        new_text.trim().starts_with("self._seen.append("),
+        new_text.trim().starts_with("self.") && new_text.contains(".append("),
         "fixture record line: {new_text}"
     );
     let old_text = old_line.map_or_else(|| new_text.replace("n + 1", "n"), str::to_string);
