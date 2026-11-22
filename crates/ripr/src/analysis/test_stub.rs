@@ -885,6 +885,8 @@ fn stub_body(
     let mut lines = vec![scope_import.to_string()];
     let mut fill_ins = Vec::new();
     let mut derived_inputs = Vec::new();
+    // `(binding, value)` for each input written as a concrete value.
+    let mut written_inputs: Vec<(String, String)> = Vec::new();
     let mut receiver_setup = None;
     let mut boundary = boundary_inputs(seam, signature);
     if matches!(path_scope, PathScope::Integration(_)) {
@@ -1006,6 +1008,7 @@ fn stub_body(
             (None, Some((_, value))) => {
                 lines.push(format!("{keyword} {binding}: {binding_ty} = {value};"));
                 derived_inputs.push(format!("{binding} = {value}"));
+                written_inputs.push((binding.clone(), value.clone()));
             }
             (None, None) => {
                 let label = format!("ripr: choose `{binding}`{}", input_hint(seam, &binding));
@@ -1107,6 +1110,34 @@ fn stub_body(
                     signature.name
                 ),
             };
+            // #8361: when the written inputs decide the owner's path to a
+            // constant, the label names what the changed code (and, for a
+            // relational boundary, its neighbor operator) returns there. The
+            // value is never written as `expected`: the change may be the bug.
+            let hint = matches!(traits, ValueTraits::PartialEqAndDebug)
+                .then(|| {
+                    expected_value::expected_value(
+                        seam,
+                        signature,
+                        source,
+                        &written_inputs,
+                        matches!(path_scope, PathScope::ChildModule),
+                    )
+                })
+                .flatten();
+            let label = match hint {
+                Some(hint) => {
+                    let neighbor = hint
+                        .neighbor
+                        .map(|(op, value)| format!("; with `{op}` it returns {value}"))
+                        .unwrap_or_default();
+                    format!(
+                        "{label} (the changed code returns {}{neighbor}; keep the intended one)",
+                        hint.changed
+                    )
+                }
+                None => label,
+            };
             match traits {
                 ValueTraits::PartialEqAndDebug => {
                     lines.push(format!(
@@ -1115,17 +1146,14 @@ fn stub_body(
                     ));
                     let observed = if inline_call { call.as_str() } else { "actual" };
                     lines.push(format!("assert_eq!({observed}, expected);"));
+                    fill_ins.push(label);
                 }
-                // `PartialEq` or `Debug` is not visible for the return
-                // type, so no generated comparison is sure to compile (a
-                // Debug-text comparison also needs `format!`, which no_std
-                // crates lack): the assertion itself is the fill-in.
                 ValueTraits::Unknown => {
                     lines.push("let _ = &actual;".to_string());
                     lines.push(format!("todo!(\"{}\");", escape(&label)));
+                    fill_ins.push(label);
                 }
             }
-            fill_ins.push(label);
         }
     }
     if unit_return {
@@ -2002,6 +2030,7 @@ fn escape(text: &str) -> String {
         .replace('}', "}}")
 }
 
+mod expected_value;
 mod match_inputs;
 mod receiver;
 

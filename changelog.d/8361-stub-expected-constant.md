@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr agent stub` now names the candidate expected values in the `expected` fill-in when the inputs it wrote decide a plain `if`/`match` path to a constant: what the changed code returns, and for a changed `>`/`<` comparison what it returns with `>=`/`<=` instead (for example "the changed code returns (0, "retail"); with `>=` it returns (20, "bulk")"). The value itself stays a `todo!()` for you to choose (#8361).

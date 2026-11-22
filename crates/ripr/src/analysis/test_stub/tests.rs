@@ -2706,3 +2706,163 @@ impl Machine {
     }
     Ok(())
 }
+
+/// #8361: when the written inputs decide the owner's path to a constant, the
+/// `expected` fill-in names what the changed code returns (and, for a
+/// relational boundary, what the neighbor operator returns); the value
+/// itself stays a `todo!()`. Anything the evaluation cannot decide gets no
+/// hint.
+#[test]
+fn expected_fill_in_names_what_the_changed_code_returns() -> Result<(), String> {
+    let module = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let arm = |text: &str| RequiredDiscriminator::MatchArmTaken {
+        arm: text.to_string(),
+    };
+    let cases: Vec<(String, &str, SeamKind, RequiredDiscriminator, Option<&str>)> = vec![
+        (
+            format!(
+                "pub fn tier(qty: u32) -> (u32, &'static str) {{\n    if qty > 10 {{ (20, \"bulk\") }} else {{ (0, \"retail\") }}\n}}\n{module}"
+            ),
+            "qty > 10",
+            SeamKind::PredicateBoundary,
+            boundary("qty == 10"),
+            Some(
+                "(the changed code returns (0, \"retail\"); with `>=` it returns (20, \"bulk\"); keep the intended one)",
+            ),
+        ),
+        (
+            format!(
+                "pub fn secs(n: u8) -> u32 {{\n    match n {{\n        1 => 60,\n        2 => 120,\n        _ => 0,\n    }}\n}}\n{module}"
+            ),
+            "2 => 120",
+            SeamKind::MatchArm,
+            arm("2 => 120"),
+            Some("(the changed code returns 120; keep the intended one)"),
+        ),
+        // Early returns and prelude wrappers.
+        (
+            format!(
+                "#[derive(Debug, PartialEq)]\npub enum E {{ Big, Neg }}\npub fn check(n: i32) -> Result<i32, E> {{\n    if n < 0 {{\n        return Err(E::Neg);\n    }}\n    if n >= 100 {{\n        return Err(E::Big);\n    }}\n    Ok(n)\n}}\n{module}"
+            ),
+            "n >= 100",
+            SeamKind::PredicateBoundary,
+            boundary("n == 100"),
+            Some(
+                "(the changed code returns Err(E::Big); with `>` it returns Ok(100); keep the intended one)",
+            ),
+        ),
+        // A computed result on the taken path is not a constant.
+        (
+            format!(
+                "pub fn tax(n: u32) -> u32 {{\n    if n >= 10 {{ n * 2 }} else {{ 0 }}\n}}\n{module}"
+            ),
+            "n >= 10",
+            SeamKind::PredicateBoundary,
+            boundary("n == 10"),
+            None,
+        ),
+        // A `let` in the body may change what the path reads.
+        (
+            format!(
+                "pub fn tier(qty: u32) -> u32 {{\n    let q = qty;\n    if q > 10 {{ 1 }} else {{ 0 }}\n}}\n{module}"
+            ),
+            "q > 10",
+            SeamKind::PredicateBoundary,
+            boundary("q == 10"),
+            None,
+        ),
+        // A guard on an earlier arm leaves the arm undecided.
+        (
+            format!(
+                "pub fn secs(n: u8) -> u32 {{\n    match n {{\n        x if x > 5 => 60,\n        2 => 120,\n        _ => 0,\n    }}\n}}\n{module}"
+            ),
+            "2 => 120",
+            SeamKind::MatchArm,
+            arm("2 => 120"),
+            None,
+        ),
+        // A binding arm (`b => b`) may shadow a parameter or be a constant.
+        (
+            format!(
+                "pub fn secs(n: u8) -> u32 {{\n    match n {{\n        1 => 60,\n        2 => 120,\n        other => 0,\n    }}\n}}\n{module}"
+            ),
+            "2 => 120",
+            SeamKind::MatchArm,
+            arm("2 => 120"),
+            Some("(the changed code returns 120; keep the intended one)"),
+        ),
+        (
+            format!(
+                "pub fn secs(n: u8) -> u32 {{\n    match n {{\n        1 => 60,\n        other => 1,\n        2 => 120,\n    }}\n}}\n{module}"
+            ),
+            "2 => 120",
+            SeamKind::MatchArm,
+            arm("2 => 120"),
+            None,
+        ),
+        // A condition on an input the stub did not write.
+        (
+            format!(
+                "pub fn pick(a: u32, b: u32) -> u32 {{\n    if b > 3 {{ return 9; }}\n    if a > 10 {{ 1 }} else {{ 0 }}\n}}\n{module}"
+            ),
+            "a > 10",
+            SeamKind::PredicateBoundary,
+            boundary("a == 10"),
+            None,
+        ),
+        // A statement-position `if` discards its value: the owner returns 3.
+        (
+            format!(
+                "pub fn f(qty: u32) -> u32 {{\n    if qty > 10 {{ 1 }} else {{ 2 }};\n    3\n}}\n{module}"
+            ),
+            "qty > 10",
+            SeamKind::PredicateBoundary,
+            boundary("qty == 10"),
+            None,
+        ),
+        // An attribute may remove a statement from the test build.
+        (
+            format!(
+                "pub fn f(qty: u32) -> u32 {{\n    if qty > 10 {{ return 5; }}\n    #[cfg(not(test))]\n    return 1;\n    2\n}}\n{module}"
+            ),
+            "qty > 10",
+            SeamKind::PredicateBoundary,
+            boundary("qty == 10"),
+            None,
+        ),
+        // A redeclared or imported prelude name (`Ok`) refuses for the file.
+        (
+            format!(
+                "#[derive(Debug, PartialEq)]\npub enum R {{ Ok(u8), No }}\nuse R::Ok;\npub fn f(n: u8) -> R {{\n    if n > 3 {{ Ok(1) }} else {{ R::No }}\n}}\n{module}"
+            ),
+            "n > 3",
+            SeamKind::PredicateBoundary,
+            boundary("n == 3"),
+            None,
+        ),
+    ];
+    for (source, needle, kind, required, hint) in cases {
+        let seam = seam_at("src/lib.rs", &source, needle, kind, required)?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        // The value itself always stays a fill-in.
+        let expected = stub
+            .fill_ins
+            .iter()
+            .find(|f| f.contains("should return"))
+            .ok_or_else(|| format!("{needle}: expected fill-in: {:?}", stub.fill_ins))?;
+        assert!(
+            stub.text.contains("let expected: ") && stub.text.contains("= todo!("),
+            "{needle}: {}",
+            stub.text
+        );
+        match hint {
+            Some(hint) => assert!(expected.ends_with(hint), "{needle}: {expected}"),
+            None => assert!(
+                !expected.contains("the changed code returns"),
+                "{needle}: {expected}"
+            ),
+        }
+    }
+    Ok(())
+}
