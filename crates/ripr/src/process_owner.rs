@@ -557,8 +557,23 @@ impl OwnedProcess {
                 {
                     self.test_group_kills += 1;
                 }
-                match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
-                    Ok(()) | Err(rustix::io::Errno::SRCH) => {
+                let signalled =
+                    match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
+                        Ok(()) => Ok(()),
+                        Err(error) => {
+                            // Re-observe after the refusal: the leader may
+                            // have exited between the first observation and
+                            // the signal.
+                            let leader_exited = self.observe_owned_exit()?;
+                            group_signal_outcome(
+                                error,
+                                leader_exited,
+                                ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM,
+                            )
+                        }
+                    };
+                match signalled {
+                    Ok(()) => {
                         #[cfg(target_os = "linux")]
                         {
                             self.group_settlement_deadline =
@@ -827,6 +842,37 @@ fn wait_for_linux_group_quiescence(group: u32, deadline: Instant) -> std::io::Re
         std::thread::sleep(
             Duration::from_millis(1).min(deadline.saturating_duration_since(Instant::now())),
         );
+    }
+}
+
+/// Whether this kernel answers a group signal with `EPERM` when every
+/// remaining member is a zombie. Darwin's `kill(2)` skips zombies while it
+/// walks the group and reports `EPERM`, not `ESRCH`, when it found no member
+/// to signal; Linux reports `ESRCH`. Our unreaped leader is exactly such a
+/// zombie once it has exited, so on Darwin an exited childless tree returns
+/// `EPERM` (#16104).
+#[cfg(unix)]
+const ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM: bool = cfg!(target_vendor = "apple");
+
+/// Classify a refused `SIGKILL` to the owned process group.
+///
+/// `ESRCH` means no member remains: the group is settled. `EPERM` is the
+/// same answer on a kernel that reports a zombie-only group that way, but
+/// only when the owned leader is observed exited: a live leader is always
+/// signallable by its owner, so `EPERM` with a live leader is a real
+/// refusal and stays an error. A surviving member this owner may not
+/// signal would draw the same Darwin answer; no signal from this owner
+/// could stop it either. Every other error is returned unchanged.
+#[cfg(unix)]
+fn group_signal_outcome(
+    error: rustix::io::Errno,
+    leader_exited: bool,
+    zombie_only_group_is_eperm: bool,
+) -> Result<(), rustix::io::Errno> {
+    match error {
+        rustix::io::Errno::SRCH => Ok(()),
+        rustix::io::Errno::PERM if zombie_only_group_is_eperm && leader_exited => Ok(()),
+        error => Err(error),
     }
 }
 
@@ -1986,6 +2032,36 @@ mod tests {
         assert!(owned.terminate_tree().is_err());
         assert_eq!(owned.test_group_kills, 1, "no signal after leader reap");
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn group_signal_outcome_reads_eperm_as_settled_only_for_an_exited_darwin_leader() {
+        use rustix::io::Errno;
+        // ESRCH is settled on every kernel, whatever the leader observation.
+        for (leader_exited, darwin) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            assert_eq!(
+                group_signal_outcome(Errno::SRCH, leader_exited, darwin),
+                Ok(())
+            );
+        }
+        // Darwin answers a zombie-only group with EPERM (#16104).
+        assert_eq!(group_signal_outcome(Errno::PERM, true, true), Ok(()));
+        // A live leader is always signallable by its owner: EPERM is real.
+        assert_eq!(
+            group_signal_outcome(Errno::PERM, false, true),
+            Err(Errno::PERM)
+        );
+        // Linux reports a zombie-only group as ESRCH, so EPERM is real there.
+        assert_eq!(
+            group_signal_outcome(Errno::PERM, true, false),
+            Err(Errno::PERM)
+        );
+        assert_eq!(
+            group_signal_outcome(Errno::INVAL, true, true),
+            Err(Errno::INVAL)
+        );
     }
 
     #[cfg(unix)]

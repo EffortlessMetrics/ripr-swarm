@@ -1825,9 +1825,12 @@ mod tests {
     fn pilot_extension_notice_fires_at_first_phase_boundary() -> Result<(), String> {
         // Negative control for a single long recv through the whole budget:
         // the extension callback must fire at the first-phase boundary, not
-        // only after the combined budget elapses (#5322).
+        // only after the combined budget elapses (#5322). The extension is
+        // long so the two outcomes stay hundreds of milliseconds apart: a
+        // loaded runner delayed a correct notice to 81 ms against a 60 ms
+        // bound (#16104), while the regression fires only after 640 ms.
         const FIRST_MS: u64 = 40;
-        const EXTENSION_MS: u64 = 60;
+        const EXTENSION_MS: u64 = 600;
         let started = Instant::now();
         let notice_at = std::cell::Cell::new(None::<Duration>);
         let result = run_pilot_analysis_with_timeout::<(), _>(
@@ -1848,7 +1851,7 @@ mod tests {
             "default-plus-extension run must emit the extension notice".to_string()
         })?;
         assert!(
-            notice <= Duration::from_millis(FIRST_MS + 20),
+            notice < Duration::from_millis(FIRST_MS + EXTENSION_MS / 2),
             "extension notice must fire at the first-phase boundary, not after the whole budget; got {notice:?}"
         );
         assert!(

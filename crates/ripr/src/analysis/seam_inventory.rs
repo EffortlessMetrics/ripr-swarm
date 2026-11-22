@@ -13131,7 +13131,9 @@ marker = "libtest_mimic::Trial"
     /// Two files differing only in invalid UTF-8 bytes must not merge in
     /// scope: scoping one leaves its sibling out (#6884). Unix-only:
     /// only Unix admits invalid-byte file names.
-    #[cfg(unix)]
+    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+    // #16104), so the stimulus cannot exist on an Apple host.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn scoped_sets_keep_invalid_byte_names_distinct() -> Result<(), String> {
         use std::ffi::{OsStr, OsString};

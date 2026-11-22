@@ -668,7 +668,9 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+    // #16104), so the stimulus cannot exist on an Apple host.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn fanout_input_identity_keeps_non_utf8_paths_without_panicking() -> Result<(), String> {
         use std::os::unix::ffi::OsStringExt;

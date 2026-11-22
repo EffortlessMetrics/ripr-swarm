@@ -1185,7 +1185,9 @@ mod tests {
 
     /// Ambient `core.quotePath=false` must not let raw non-UTF-8 path bytes
     /// reach the lossy decode, where distinct files collapse onto U+FFFD.
-    #[cfg(unix)]
+    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+    // #16104), so the stimulus cannot exist on an Apple host.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn derive_diff_keeps_non_utf8_paths_distinct_under_hostile_quote_path() -> Result<(), String> {
         use std::os::unix::ffi::OsStrExt;

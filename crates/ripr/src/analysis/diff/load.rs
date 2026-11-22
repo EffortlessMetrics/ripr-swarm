@@ -3602,7 +3602,9 @@ mod tests {
     // module's local fixture helpers provide.
 
     #[test]
-    #[cfg(unix)]
+    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+    // #16104), so the stimulus cannot exist on an Apple host.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     fn given_quote_path_disabled_repo_when_diff_loaded_then_non_ascii_paths_keep_identity()
     -> std::io::Result<()> {
         use std::ffi::OsStr;
@@ -3685,7 +3687,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+    // #16104), so the stimulus cannot exist on an Apple host.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     fn given_quote_path_disabled_repo_when_diff_loaded_then_raw_byte_and_mimic_names_stay_distinct()
     -> std::io::Result<()> {
         use std::ffi::OsStr;

@@ -3586,7 +3586,9 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+    // #16104), so the stimulus cannot exist on an Apple host.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn project_root_keeps_exact_git_path_bytes() -> Result<(), String> {
         use std::os::unix::ffi::OsStringExt;

@@ -7254,7 +7254,9 @@ mod tests {
         cleanup(&decoy)
     }
 
-    #[cfg(unix)]
+    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+    // #16104), so the stimulus cannot exist on an Apple host.
+    #[cfg(all(unix, not(target_vendor = "apple")))]
     #[test]
     fn ledger_command_context_preserves_non_utf8_alias_parent_traversal() -> Result<(), String> {
         use std::os::unix::ffi::OsStringExt;
