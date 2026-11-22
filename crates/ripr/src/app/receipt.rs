@@ -186,14 +186,22 @@ pub(crate) fn check_receipt(
     opts: &ReceiptCheckOptions,
 ) -> Result<(String, ReceiptCrossRefResult), String> {
     let path = resolve_check_path(opts)?;
-    let displayed = crate::output::path::display_path(&path);
+    // The path as ripr opens it. `display_path` is a stable identity encoding
+    // that escapes `%` again, and a default receipt file name already contains
+    // `%XX`; it printed a name no file has (#15899).
+    let displayed = crate::output::path::human_path_text(&path.to_string_lossy(), cfg!(windows));
 
     let content = crate::bounded_input::read_to_string(&path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
+            let pass_path = if opts.path.is_none() {
+                "or pass the receipt file with `--path` if it is stored under another name"
+            } else {
+                "or pass the correct path"
+            };
             format!(
                 "receipt at {displayed} not found or unreadable. Write one first with \
                  `ripr receipt write` (see `ripr receipt write --help` for the required flags), \
-                 or pass the correct path"
+                 {pass_path}"
             )
         } else {
             format!("receipt at {displayed} not found or unreadable: {err}")
@@ -612,19 +620,45 @@ fn missing_current_head_error(value: &serde_json::Value, path: &Path) -> String 
     )
 }
 
-/// The file name `ripr receipt write` used before default paths were
-/// percent-encoded (0.10 and earlier): the raw canonical gap id. Only ids
-/// that cannot name another directory qualify.
+/// The path `ripr receipt write` used before default file names were
+/// percent-encoded (0.10 and earlier): the raw canonical gap id joined onto
+/// the receipts directory. 0.10 created a directory for every `/` in the id,
+/// so the receipt for an ordinary Rust gap (`gap:rust:src/lib.rs:...`) sits
+/// in a nested path below the receipts directory (#15899).
+///
+/// Only an id whose every component is an ordinary name qualifies: no empty
+/// id, no root, drive prefix or `..`, no backslash and no control character.
+/// That is the lexical half of the confinement; `legacy_receipt_is_confined`
+/// is the filesystem half.
 fn legacy_receipt_default_path(canonical_gap_id: &str) -> Option<PathBuf> {
-    let unsafe_component = canonical_gap_id.is_empty()
-        || canonical_gap_id.contains(['/', '\\'])
-        || canonical_gap_id.contains("..")
-        || canonical_gap_id.chars().any(|c| c.is_control());
-    if unsafe_component {
+    if canonical_gap_id.is_empty()
+        || canonical_gap_id
+            .chars()
+            .any(|c| c == '\\' || c.is_control())
+    {
+        return None;
+    }
+    let ordinary_names_only = Path::new(canonical_gap_id)
+        .components()
+        .all(|component| matches!(component, std::path::Component::Normal(_)));
+    if !ordinary_names_only {
         return None;
     }
     let legacy = PathBuf::from(RECEIPT_DEFAULT_DIRECTORY).join(format!("{canonical_gap_id}.json"));
     (legacy != receipt_default_path(canonical_gap_id)).then_some(legacy)
+}
+
+/// Whether the 0.10 receipt at `legacy` is a file that really lives inside
+/// the receipts directory. Both sides are canonicalized, so a link anywhere
+/// on the nested path that leads out of the directory is refused, while a
+/// `target` directory that is itself a link still works.
+fn legacy_receipt_is_confined(base: &Path, legacy: &Path) -> bool {
+    let directory = std::fs::canonicalize(base.join(RECEIPT_DEFAULT_DIRECTORY));
+    let receipt = std::fs::canonicalize(base.join(legacy));
+    match (directory, receipt) {
+        (Ok(directory), Ok(receipt)) => receipt.starts_with(&directory) && receipt.is_file(),
+        _ => false,
+    }
 }
 
 fn resolve_check_path(opts: &ReceiptCheckOptions) -> Result<PathBuf, String> {
@@ -644,11 +678,11 @@ fn resolve_check_path_from(opts: &ReceiptCheckOptions, base: &Path) -> Result<Pa
             if std::fs::symlink_metadata(base.join(&current)).is_ok() {
                 return Ok(current);
             }
-            // #4737: a receipt written by ripr 0.10 sits at the raw gap-id
-            // file name. Resolve it so the check reports what is wrong with
+            // #4737, #15899: a receipt written by ripr 0.10 sits at the raw
+            // gap-id path. Resolve it so the check reports what is wrong with
             // it rather than claiming no receipt exists.
             Ok(legacy_receipt_default_path(gap)
-                .filter(|legacy| base.join(legacy).exists())
+                .filter(|legacy| legacy_receipt_is_confined(base, legacy))
                 .unwrap_or(current))
         }
         (None, None) => Err(
@@ -1769,7 +1803,16 @@ mod tests {
 
     #[test]
     fn legacy_receipt_path_refuses_ids_that_name_another_directory() {
-        for gap in ["", "gap/../../etc", "..", "gap\\x", "gap\nx"] {
+        for gap in [
+            "",
+            "gap/../../etc",
+            "..",
+            "gap/..",
+            "../gap",
+            "/etc/gap",
+            "gap\\x",
+            "gap\nx",
+        ] {
             assert_eq!(legacy_receipt_default_path(gap), None, "{gap:?}");
         }
         // An id the encoding leaves unchanged has no separate legacy name.
@@ -1778,6 +1821,161 @@ mod tests {
             legacy_receipt_default_path("gap:rust:a"),
             Some(PathBuf::from(RECEIPT_DEFAULT_DIRECTORY).join("gap:rust:a.json"))
         );
+        // #15899: an ordinary Rust gap id embeds the file path, and 0.10
+        // wrote it as nested directories below the receipts directory. Two
+        // dots inside a name (a range predicate) are not a parent directory.
+        assert_eq!(
+            legacy_receipt_default_path(LEGACY_NESTED_GAP),
+            Some(
+                PathBuf::from(RECEIPT_DEFAULT_DIRECTORY)
+                    .join("gap:rust:src")
+                    .join("lib.rs:total:predicate:n==0..10.json")
+            )
+        );
+    }
+
+    const LEGACY_NESTED_GAP: &str = "gap:rust:src/lib.rs:total:predicate:n==0..10";
+
+    fn legacy_nested_base(label: &str) -> Result<PathBuf, String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-receipt-legacy-nested-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join(RECEIPT_DEFAULT_DIRECTORY))
+            .map_err(|e| format!("create dir failed: {e}"))?;
+        Ok(base)
+    }
+
+    fn gap_check_opts(gap: &str) -> ReceiptCheckOptions {
+        ReceiptCheckOptions {
+            gap: Some(gap.to_string()),
+            path: None,
+            ledger: None,
+            json: false,
+        }
+    }
+
+    /// #15899: the nested 0.10 path resolves, and the current encoded file
+    /// still wins when both exist. Unix only: Windows cannot create the
+    /// colon-named directory 0.10 wrote.
+    #[cfg(unix)]
+    #[test]
+    fn receipt_check_resolves_a_0_10_nested_gap_id_path() -> Result<(), String> {
+        let base = legacy_nested_base("resolve")?;
+        let opts = gap_check_opts(LEGACY_NESTED_GAP);
+        let encoded = receipt_default_path(LEGACY_NESTED_GAP);
+        let legacy = PathBuf::from(RECEIPT_DEFAULT_DIRECTORY)
+            .join("gap:rust:src")
+            .join("lib.rs:total:predicate:n==0..10.json");
+
+        let nothing = resolve_check_path_from(&opts, &base);
+        let nested_dir =
+            std::fs::create_dir_all(base.join(RECEIPT_DEFAULT_DIRECTORY).join("gap:rust:src"));
+        let legacy_written = std::fs::write(base.join(&legacy), "{}");
+        let only_legacy = resolve_check_path_from(&opts, &base);
+        let encoded_written = std::fs::write(base.join(&encoded), "{}");
+        let both = resolve_check_path_from(&opts, &base);
+        let _ = std::fs::remove_dir_all(&base);
+
+        nested_dir.map_err(|e| format!("create nested dir failed: {e}"))?;
+        legacy_written.map_err(|e| format!("write legacy failed: {e}"))?;
+        encoded_written.map_err(|e| format!("write encoded failed: {e}"))?;
+        assert_eq!(nothing?, encoded);
+        assert_eq!(only_legacy?, legacy);
+        assert_eq!(both?, encoded);
+        Ok(())
+    }
+
+    /// A link on the nested path that leads out of the receipts directory is
+    /// not followed: the lookup falls back to the current path, whether the
+    /// link is the nested directory or the receipt file itself. A receipts
+    /// tree reached through a linked `target` is still inside itself.
+    #[cfg(unix)]
+    #[test]
+    fn receipt_check_does_not_follow_a_0_10_path_out_of_the_receipts_directory()
+    -> Result<(), String> {
+        use std::os::unix::fs::symlink;
+        let encoded = receipt_default_path(LEGACY_NESTED_GAP);
+        let legacy = PathBuf::from(RECEIPT_DEFAULT_DIRECTORY)
+            .join("gap:rust:src")
+            .join("lib.rs:total:predicate:n==0..10.json");
+        let file_name = "lib.rs:total:predicate:n==0..10.json";
+        let opts = gap_check_opts(LEGACY_NESTED_GAP);
+
+        // The nested directory is a link to a directory outside.
+        let base = legacy_nested_base("dir-link")?;
+        let outside = base.join("outside");
+        let setup = std::fs::create_dir_all(&outside)
+            .and_then(|()| std::fs::write(outside.join(file_name), "{}"))
+            .and_then(|()| {
+                symlink(
+                    &outside,
+                    base.join(RECEIPT_DEFAULT_DIRECTORY).join("gap:rust:src"),
+                )
+            });
+        let reachable = base.join(&legacy).exists();
+        let dir_link = resolve_check_path_from(&opts, &base);
+        let _ = std::fs::remove_dir_all(&base);
+        setup.map_err(|e| format!("dir-link setup failed: {e}"))?;
+        assert!(
+            reachable,
+            "the escaping receipt must exist through the link"
+        );
+        assert_eq!(dir_link?, encoded);
+
+        // The receipt file is a link to a file outside.
+        let base = legacy_nested_base("file-link")?;
+        let outside = base.join("outside.json");
+        let nested = base.join(RECEIPT_DEFAULT_DIRECTORY).join("gap:rust:src");
+        let setup = std::fs::create_dir_all(&nested)
+            .and_then(|()| std::fs::write(&outside, "{}"))
+            .and_then(|()| symlink(&outside, nested.join(file_name)));
+        let reachable = base.join(&legacy).exists();
+        let file_link = resolve_check_path_from(&opts, &base);
+        let _ = std::fs::remove_dir_all(&base);
+        setup.map_err(|e| format!("file-link setup failed: {e}"))?;
+        assert!(
+            reachable,
+            "the escaping receipt must exist through the link"
+        );
+        assert_eq!(file_link?, encoded);
+
+        // `target` itself is a link: the receipt is still inside the
+        // receipts directory, so it resolves.
+        let base = legacy_nested_base("target-link")?;
+        let real_target = base.join("real-target");
+        let nested = real_target.join("ripr/receipts/gap:rust:src");
+        let setup = std::fs::remove_dir_all(base.join("target"))
+            .and_then(|()| std::fs::create_dir_all(&nested))
+            .and_then(|()| std::fs::write(nested.join(file_name), "{}"))
+            .and_then(|()| symlink(&real_target, base.join("target")));
+        let target_link = resolve_check_path_from(&opts, &base);
+        let _ = std::fs::remove_dir_all(&base);
+        setup.map_err(|e| format!("target-link setup failed: {e}"))?;
+        assert_eq!(target_link?, legacy);
+        Ok(())
+    }
+
+    /// #15899: the not-found message names the file ripr looked for. The
+    /// default file name already contains `%XX`; it must not be escaped again.
+    #[test]
+    fn receipt_check_not_found_prints_the_path_it_looked_at() -> Result<(), String> {
+        let gap = "gap:rust:src/absent_15899.rs:f:predicate:a==b";
+        let Err(err) = check_receipt(&gap_check_opts(gap)) else {
+            return Err("a missing receipt must not check".to_string());
+        };
+        let looked_at =
+            "target/ripr/receipts/gap%3Arust%3Asrc%2Fabsent_15899.rs%3Af%3Apredicate%3Aa==b.json";
+        assert_eq!(receipt_default_path(gap), PathBuf::from(looked_at));
+        assert!(
+            err.contains(&format!("receipt at {looked_at} not found")),
+            "{err}"
+        );
+        assert!(!err.contains("%25"), "{err}");
+        // A `--gap` lookup that finds nothing names the `--path` route.
+        assert!(err.contains("`--path`"), "{err}");
+        Ok(())
     }
 
     #[test]

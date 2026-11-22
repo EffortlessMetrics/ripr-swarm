@@ -162,6 +162,9 @@ mod qualified_owner_observation;
 #[path = "cli_smoke/recall_tradeoff.rs"]
 mod recall_tradeoff;
 #[cfg(unix)]
+#[path = "cli_smoke/receipt_legacy_nested.rs"]
+mod receipt_legacy_nested;
+#[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
 #[cfg(unix)]

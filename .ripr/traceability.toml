@@ -8305,6 +8305,11 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::receipt_help_exits_zero_smoke",
   "crates/ripr/tests/cli_smoke.rs::agent_receipt_legacy_alias_still_dispatches_smoke",
   "crates/ripr/tests/cli_smoke.rs::receipt_default_long_gap_path_round_trips_smoke",
+  "crates/ripr/tests/cli_smoke/receipt_legacy_nested.rs::receipt_check_gap_explains_a_0_10_receipt_for_a_rust_gap_id",
+  "crates/ripr/tests/cli_smoke/receipt_legacy_nested.rs::receipt_check_gap_finds_a_0_10_receipt_under_a_linked_target",
+  "crates/ripr/tests/cli_smoke/receipt_legacy_nested.rs::receipt_check_gap_does_not_follow_a_0_10_path_out_of_the_receipts_directory",
+  "crates/ripr/tests/cli_smoke/receipt_legacy_nested.rs::receipt_check_gap_prefers_the_current_file_over_a_0_10_receipt",
+  "crates/ripr/tests/cli_smoke/receipt_legacy_nested.rs::receipt_check_gap_names_the_file_it_looked_for_and_the_path_route",
   # canonical_receipt_command field rule: TypeScript preview packet emitter
   "crates/ripr/src/cli/commands.rs::tests::typescript_preview_receipt_command_parses_as_receipt_write",
   "crates/ripr/src/cli/commands.rs::tests::typescript_preview_receipt_command_is_not_ripr_outcome",
