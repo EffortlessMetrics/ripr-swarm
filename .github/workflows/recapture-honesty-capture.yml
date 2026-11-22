@@ -1,0 +1,81 @@
+name: Recapture honesty capture
+
+# Scratch route for one recapture that needs a POSIX host (#15670).
+#
+# The honesty corpus captures embed an absolute POSIX root, so a Windows
+# checkout cannot produce one that passes `check-local-context`. This job
+# stages the subject at the corpus root convention (`/tmp/sj-<subject>`) on
+# ubuntu-latest, runs the recapture, and uploads the result as an artifact.
+#
+# It commits nothing and writes nothing back to the branch: the owner commits
+# the artifact on the PR branch so the review trail stays intact.
+
+on:
+  push:
+    branches: ['scratch/recapture-15670']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recapture-honesty-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  recapture:
+    name: Recapture branch-local-rebound-let
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+
+      - name: Build ripr
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p ripr
+
+      - name: Stage the subject at the corpus root convention
+        shell: bash
+        run: |
+          set -euo pipefail
+          subject=fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/branch-local-rebound-let
+          test -f "$subject/Cargo.toml"
+          rm -rf /tmp/sj-branch-local-rebound-let
+          cp -r "$subject" /tmp/sj-branch-local-rebound-let
+          ls -R /tmp/sj-branch-local-rebound-let
+
+      - name: Recapture
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/rust-repo-exposure-branch-local-rebound-let.json"
+          ./target/debug/ripr check \
+            --root /tmp/sj-branch-local-rebound-let \
+            --mode draft \
+            --format repo-exposure-json > "$out"
+          test -s "$out"
+          wc -c "$out"
+          python3 - "$out" <<'PY'
+          import json, sys
+          doc = json.load(open(sys.argv[1]))
+          print("root:", doc["artifact"]["repository"]["root"])
+          print("schema:", doc["schema_version"])
+          print("seams:", len(doc.get("seams", [])))
+          print("grip:", doc.get("metrics", {}).get("strongly_gripped"), doc.get("metrics", {}).get("weakly_gripped"))
+          PY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: recaptured-capture
+          path: ${{ runner.temp }}/rust-repo-exposure-branch-local-rebound-let.json
+          if-no-files-found: error
