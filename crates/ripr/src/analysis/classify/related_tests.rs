@@ -1977,15 +1977,13 @@ fn find_related_tests_with_candidates<'a>(
             // is a call fact, so it outranks the name and file proximity
             // below; it still never establishes reach to the owner.
             RelationReason::SeamCalleeCall
-        } else if same_test_file {
-            // Test file uses the probe's source stem or one of the canonical
-            // `_test`/`_tests` companion conventions. Checked before the
-            // name-only reason so a test that is both sorts at least as high
-            // as a same-file-only test, matching the priority values.
-            RelationReason::SameTestFile
         } else if owner_name_in_test {
             // Test name contains the owner function name.
             RelationReason::OwnerNamedTest
+        } else if same_test_file {
+            // Test file uses the probe's source stem or one of the canonical
+            // `_test`/`_tests` companion conventions.
+            RelationReason::SameTestFile
         } else {
             // A path or test-name token substring is the broadest, least
             // precise match branch. `same_file_or_named` guarantees that one
@@ -17275,7 +17273,7 @@ let r = try_parse_summary();",
 
         assert_eq!(related.len(), 1, "{related:?}");
         assert_ne!(related[0].1, RelationReason::SeamCalleeCall, "{related:?}");
-        assert_eq!(related[0].1, RelationReason::SameTestFile, "{related:?}");
+        assert_eq!(related[0].1, RelationReason::OwnerNamedTest, "{related:?}");
     }
 
     #[test]
@@ -17329,9 +17327,7 @@ let r = try_parse_summary();",
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1, "{related:?}");
-        // The test is both same-file and owner-named; the same-file reason is
-        // checked first so it sorts at least as high as a same-file-only test.
-        assert_eq!(related[0].1, RelationReason::SameTestFile, "{related:?}");
+        assert_eq!(related[0].1, RelationReason::OwnerNamedTest, "{related:?}");
         assert!(!related[0].1.establishes_reach(true), "{related:?}");
     }
 

@@ -317,9 +317,12 @@ impl RelationReason {
             // #5335: a captured callee call is a call fact, so it outranks
             // name and file proximity; it still establishes no owner reach.
             Self::SeamCalleeCall => 3,
-            Self::SameTestFile => 4,
+            // The classification checks the owner-named reason before the
+            // same-file reason, so a test that is both must not sort after a
+            // same-file-only test (#5335).
+            Self::OwnerNamedTest => 4,
             Self::SameModule => 5,
-            Self::OwnerNamedTest => 6,
+            Self::SameTestFile => 6,
             Self::ImportPathAffinity => 7,
             // Re-export chain follows: same priority as import-path affinity —
             // the inference is explicit in-source but involves one hop of indirection.
