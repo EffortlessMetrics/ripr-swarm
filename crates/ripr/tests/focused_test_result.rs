@@ -2371,6 +2371,11 @@ fn a_proposal_file_appearing_after_the_gate_cannot_finish_unrecorded() -> Result
     )?;
     let manifest = manifest(root, &attempt)?;
     assert!(terminal_roles(&manifest).is_empty(), "{manifest}");
+    // A missing result is not charged at the finish authority either (#16164).
+    assert!(
+        manifest["after_refusal_count"].is_null() && manifest["last_after_refusal"].is_null(),
+        "{manifest}"
+    );
     Ok(())
 }
 
@@ -2401,6 +2406,12 @@ fn a_failing_result_the_gate_did_not_check_cannot_finish() -> Result<(), String>
     assert_refused_and_unrecorded(root, &attempt, &output, "not a counted passing run")?;
     let manifest = manifest(root, &attempt)?;
     assert!(terminal_roles(&manifest).is_empty(), "{manifest}");
+    // A supplied failing result is still charged (#16164).
+    assert_eq!(
+        manifest["after_refusal_count"],
+        serde_json::json!(1),
+        "{manifest}"
+    );
     Ok(())
 }
 

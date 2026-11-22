@@ -1103,6 +1103,12 @@ explains the requirement from the committed command rather than from a
 recorded refusal. A supplied result that the gate refuses still counts as a
 retry exactly as before.
 
+Limits: an attempt begun before this amendment keeps its old committed command
+without the flag, so status does not name the requirement for it (its
+missing-result refusals are still uncharged). The retained packet's
+`repair_after_command` and the repair card's next action do not carry the flag;
+following either reaches the uncharged refusal, which names it.
+
 ## Amendment (#13205): a proposed new-test target is preflighted read-only
 
 Before an attempt follows a new-test proposal, one shared preflight
