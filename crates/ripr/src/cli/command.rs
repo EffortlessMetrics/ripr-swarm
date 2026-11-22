@@ -75,9 +75,7 @@ impl CliCommand {
             // arguments so an extra token is never silently discarded (#9867).
             Some("--help" | "-h") if wants_all(&command_args) => match command_args.len() {
                 1 => Ok(Self::HelpAll),
-                _ => Err(
-                    "usage: ripr --help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands".to_string(),
-                ),
+                _ => Err(strict_route_usage("--help --all", &command_args[1..])),
             },
             None | Some("--help" | "-h") => Ok(Self::Help),
             // `ripr help` (no subcommand) prints the top-level help, identical
@@ -92,10 +90,7 @@ impl CliCommand {
                 if wants_all(&command_args) {
                     return match command_args.len() {
                         1 => Ok(Self::HelpAll),
-                        _ => Err(
-                            "usage: ripr help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
-                                .to_string(),
-                        ),
+                        _ => Err(strict_route_usage("help --all", &command_args[1..])),
                     };
                 }
                 // `ripr help --json` is the versioned machine-discovery route
@@ -103,10 +98,7 @@ impl CliCommand {
                 if command_args.first().is_some_and(|arg| arg == "--json") {
                     return match command_args.len() {
                         1 => Ok(Self::HelpJson),
-                        _ => Err(
-                            "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
-                                .to_string(),
-                        ),
+                        _ => Err(strict_route_usage("help --json", &command_args[1..])),
                     };
                 }
                 // `ripr help workflow [name]` is the bounded workflow-discovery
@@ -137,12 +129,14 @@ impl CliCommand {
             Some(command) => match crate::cli::command_catalog::resolve_top_level(command) {
                 Some(entry) => {
                     reject_unsupported_extended_help(entry.dispatch, command, &command_args)?;
-                    Ok(match cli_command_from_dispatch(entry.dispatch, command_args) {
-                        CliCommand::FirstPr(args) if command == "start-here" => {
-                            CliCommand::StartHere(args)
-                        }
-                        other => other,
-                    })
+                    Ok(
+                        match cli_command_from_dispatch(entry.dispatch, command_args) {
+                            CliCommand::FirstPr(args) if command == "start-here" => {
+                                CliCommand::StartHere(args)
+                            }
+                            other => other,
+                        },
+                    )
                 }
                 None => {
                     // `ripr --bogus check` typed a command after the stray
@@ -310,6 +304,20 @@ fn cli_command_from_dispatch(
         CommandDispatch::Continue => CliCommand::Continue(command_args),
         CommandDispatch::Status => CliCommand::Status(command_args),
     }
+}
+
+/// The usage refusal of a strict one-flag route (`--help --all`, `help --all`,
+/// `help --json`). `extras` are the arguments after the route's own flag; the
+/// first is recorded as a stray argument, so a JSON-requested run gets the
+/// `cli_refusal` document the contract promises for that class (#16072).
+pub(super) fn strict_route_usage(route: &str, extras: &[String]) -> String {
+    let message = format!(
+        "usage: ripr {route} (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
+    );
+    if let Some(extra) = extras.first() {
+        crate::cli::usage_refusal::note_unknown_argument(extra, &message, "ripr --help");
+    }
+    message
 }
 
 fn unknown_command_error(command: &str, command_typed: bool) -> String {
