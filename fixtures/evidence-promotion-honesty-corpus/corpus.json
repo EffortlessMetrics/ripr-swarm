@@ -21543,6 +21543,78 @@
       ]
     },
     {
+      "id": "rust_return_value_name_only_comparison_tail_far_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_return_value_name_only_comparison_tail_far_input",
+      "vector": "a_name_only_comparison_tail_return_sink_does_not_promote_a_far_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_return_value_name_only_comparison_tail_far_input_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_return_value_name_only_comparison_tail_far_input",
+      "vector": "a_name_only_comparison_tail_does_not_promote_a_far_input_predicate",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_tail_if_path_arms_far_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_tail_if_path_arms_far_input",
+      "vector": "a_tail_if_path_arm_return_sink_does_not_promote_a_far_input",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_appended_char_arm",
       "language": "rust",
       "tier": "pure",
