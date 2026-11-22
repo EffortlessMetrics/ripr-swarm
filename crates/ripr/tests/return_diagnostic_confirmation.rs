@@ -1240,6 +1240,71 @@ fn discarded_owner_result_cannot_lend_identity_to_an_unrelated_exact_oracle() ->
     Ok(())
 }
 
+/// #12010 (public ripr #1751): discrimination binds in one oracle. A strong
+/// exact oracle on the owner's result that the wording change cannot flip
+/// (`ends_with("consistency")`) supplies reach and strength without a change
+/// reference; an exact oracle that quotes the changed wording on an
+/// unrelated value supplies a change reference without identity. Neither notices the
+/// wording change alone, so together they must not read `exposed`, whether
+/// they sit in one test or two and in either order. The bound oracle keeps
+/// its credit beside either half.
+#[test]
+fn identity_and_change_reference_split_across_oracles_cannot_combine() -> Result<(), String> {
+    let prelude = "use rust_catalog_description_structural_oracle::default_check_description;\n";
+    let strength_only = "assert_eq!(default_check_description().ends_with(\"consistency\"), true);";
+    let change_reference_only = "let _ = default_check_description();\nlet other = \"verifies catalog consistency\";\nassert_eq!(other, \"verifies catalog consistency\");";
+    let bound = "assert_eq!(default_check_description(), \"verifies catalog consistency\");";
+    let one_test = |body: &str| format!("{prelude}#[test] fn wording() {{\n{body}\n}}\n");
+    let two_tests = |first: &str, second: &str| {
+        format!(
+            "{prelude}#[test] fn first() {{\n{first}\n}}\n#[test] fn second() {{\n{second}\n}}\n"
+        )
+    };
+    let cases = [
+        ("strength alone", one_test(strength_only), "weakly_exposed"),
+        (
+            "change reference alone",
+            one_test(change_reference_only),
+            "weakly_exposed",
+        ),
+        (
+            "split in one test, strength first",
+            one_test(&format!("{strength_only}\n{change_reference_only}")),
+            "weakly_exposed",
+        ),
+        (
+            "split in one test, change reference first",
+            one_test(&format!("{change_reference_only}\n{strength_only}")),
+            "weakly_exposed",
+        ),
+        (
+            "split across tests, strength first",
+            two_tests(strength_only, change_reference_only),
+            "weakly_exposed",
+        ),
+        (
+            "split across tests, change reference first",
+            two_tests(change_reference_only, strength_only),
+            "weakly_exposed",
+        ),
+        ("bound alone", one_test(bound), "exposed"),
+        (
+            "bound beside strength-only oracle",
+            two_tests(strength_only, bound),
+            "exposed",
+        ),
+        (
+            "bound beside change-reference-only oracle",
+            two_tests(change_reference_only, bound),
+            "exposed",
+        ),
+    ];
+    for (name, test, expected) in cases {
+        assert_eq!(check(&test)?, expected, "{name}:\n{test}");
+    }
+    Ok(())
+}
+
 /// Preserve the established persisted-effect observer while refusing an
 /// assertion on a different instance after the same owner call.
 #[test]
