@@ -3,6 +3,10 @@
 //! assertion's credit (#14116). Both macros expand to a literal, so neither
 //! can return or skip a later assertion. A rebinding of the name in reach
 //! still refuses the pin, as for every other trusted macro (RIPR-SPEC-0197).
+//! `include_str!` and `include_bytes!` expand to a literal read from a file
+//! at build time, so a test that reads a fixture with them, or sits beside
+//! a helper whose `include_str!(concat!(env!(..), ..))` mentions `env`,
+//! keeps the same credit.
 
 use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
@@ -103,6 +107,40 @@ fn a_test_that_reads_its_build_environment_pins_like_one_that_does_not() -> Resu
 }
 
 #[test]
+fn a_test_that_reads_an_included_file_pins_like_one_that_does_not() -> Result<(), String> {
+    let helper = "fn manifest() -> &'static str {\n    include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/Cargo.toml\"))\n}\n";
+    assert!(helper.contains("include_str!(concat!(env!("));
+    for (prelude, lead) in [
+        (
+            "",
+            "let _spec = include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/Cargo.toml\"));",
+        ),
+        (
+            "",
+            "let _bytes = include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/Cargo.toml\"));",
+        ),
+        ("", "let _spec = include_str!(\"../Cargo.toml\");"),
+        (
+            "use std::include_str;\n",
+            "let _spec = include_str!(\"../Cargo.toml\");",
+        ),
+        // The helper's `include_str!` mentions `env`, which the test also
+        // calls; the mention defines nothing.
+        (
+            helper,
+            "let _dir = env!(\"CARGO_MANIFEST_DIR\"); let _ = manifest();",
+        ),
+    ] {
+        assert_eq!(
+            class_with(prelude, lead)?,
+            ExposureClass::Exposed,
+            "an included file cannot leave the test: {prelude:?} {lead:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_rebound_build_environment_macro_keeps_the_assertion_uncredited() -> Result<(), String> {
     for (prelude, lead) in [
         // A local definition may hide a `return` before the assertions.
@@ -125,6 +163,31 @@ fn a_rebound_build_environment_macro_keeps_the_assertion_uncredited() -> Result<
         (
             "use demo::core;\nuse core::option_env;\n",
             "option_env!(\"RIPR_UNSET\");",
+        ),
+        (
+            "macro_rules! include_str { ($path:expr) => { return }; }\n",
+            "include_str!(\"../Cargo.toml\");",
+        ),
+        (
+            "use demo::include_bytes;\n",
+            "include_bytes!(\"../Cargo.toml\");",
+        ),
+        // A nested macro in a trusted macro's operand is a literal only when
+        // it is a standard built-in that nothing rebinds. `format!` takes
+        // any expression, so both controls compile and return early.
+        (
+            "macro_rules! concat { ($($t:tt)*) => {{ return; \"\" }}; }\n",
+            "let _ = format!(\"{}\", concat!(\"Cargo\", \".toml\"));",
+        ),
+        (
+            "macro_rules! leave { () => {{ return; \"\" }}; }\n",
+            "let _ = format!(\"{}\", leave!());",
+        ),
+        // An untrusted macro whose arguments mention `include_str` may
+        // define it.
+        (
+            "wrap! { macro_rules! include_str { ($path:expr) => { return }; } }\n",
+            "include_str!(\"../Cargo.toml\");",
         ),
         // An unrelated macro called in the test stays opaque.
         ("macro_rules! leave { () => { return }; }\n", "leave!();"),

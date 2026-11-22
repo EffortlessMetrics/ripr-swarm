@@ -986,12 +986,25 @@ general combinator, callback or mutation adequacy.
    binds the root name itself (`use other::std;`) takes the root over, so
    `use std::env;` then refuses; any other import, definition or
    macro-argument mention of the name still refuses.
+   `include_str!` and `include_bytes!` join them on the same terms: each
+   expands to a literal read from a file at build time, so its arguments
+   are a path expression and a mention of `env` there
+   (`include_str!(concat!(env!("CARGO_MANIFEST_DIR"), ..))`) defines
+   nothing. A local definition or non-standard import of either name still
+   refuses.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
    unqualified nested `matches!`, `format!` or `vec!` expands to one call
    over operands the scan already reads, so it is admitted and its name
    joins this binding check (see "Literal `matches!` pins", "Rendered scalar
-   pins" and "Exact projections"). A path before the nested name (`std::format!`) refuses; inside
+   pins" and "Exact projections"). In a test's own assertion context the
+   compile-time literal built-ins (`concat!`, `env!`, `option_env!`,
+   `stringify!`, `cfg!`, `line!`, `column!`, `file!`, `module_path!`,
+   `include_str!`, `include_bytes!`) are admitted the same way (#14116):
+   each expands to a literal, and their names join the binding check. The
+   binding-blind callback-helper scan and the owner-side return scan keep
+   refusing them nested, and the owner-side scan keeps refusing the include
+   pair at any position. A path before the nested name (`std::format!`) refuses; inside
    a token tree `::` lexes as two `:` tokens, which count as a path. Any visible
    workspace definition/import binding of a trusted macro, a foreign glob,
    `macro_use`, `no_implicit_prelude`, or macro-generation arguments naming a

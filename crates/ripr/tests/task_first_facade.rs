@@ -424,6 +424,9 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
 
 /// An explicit check base is not retained by bare repair. A clean main branch
 /// can therefore have a real diff gap even when the seam inventory is empty.
+/// The gap sits two commits back, behind a docs-only commit, so the range
+/// bare `ripr check` and bare repair read on this clean branch (the last
+/// commit, #16082) is not the explicit check's range.
 #[cfg(feature = "lang-python")]
 #[test]
 fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(), String> {
@@ -447,8 +450,11 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     .map_err(|e| e.to_string())?;
     run_git(root, &["add", "pricing.py"])?;
     git_commit(root, "change")?;
+    std::fs::write(root.join("README.md"), "pricing\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "README.md"])?;
+    git_commit(root, "docs")?;
 
-    let check = run_ripr(root, &["check", "--base", "HEAD^"])?;
+    let check = run_ripr(root, &["check", "--base", "HEAD~2"])?;
     assert_exit(&check, 0, "explicit-base check");
     let check_out = stdout_text(&check);
     let gap = "gap:python:pricing.py:price:predicate_boundary:predicate:amount-10_if_amount>100_else_amount";
@@ -464,7 +470,7 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     assert!(
         start_line.contains(gap)
             && start_line.contains("--base")
-            && start_line.contains("HEAD^")
+            && start_line.contains("HEAD~2")
             && start_line.contains("--phase before"),
         "start must bind the selected gap and base: {start_line}"
     );
@@ -494,7 +500,7 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
             "--gap-id",
             gap,
             "--base",
-            "HEAD^",
+            "HEAD~2",
             "--root",
             &root.to_string_lossy(),
             "--phase",
@@ -3973,7 +3979,23 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
         format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n    #[test]\n    fn above() {{ assert_eq!(discounted_total(10_000, 100), 9_990); }}\n}}\n"),
     ).map_err(|error| error.to_string())?;
     run_git(root, &["add", "src", "tests"])?;
-    git_commit(root, "inline test target")?;
+    // Amend the fixture's root commit: with a parent commit, bare repair on
+    // this clean default branch would follow check's last-commit rescope
+    // (#16082) to the test-only edit and offer no start.
+    run_git(
+        root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "--amend",
+            "-q",
+            "-m",
+            "inline test target",
+        ],
+    )?;
     let before = run_ripr(root, &["repair"])?;
     assert_exit(&before, 0, "prepare inline attempt");
     let attempt_id = attempt_id_from_before(&before)?;

@@ -308,7 +308,15 @@ mod tests {
     fn sanitize_path_handles_windows_paths() {
         let path = PathBuf::from("workspace\\src\\lib.rs");
         let sanitized = sanitize_path(&path);
-        assert_eq!(sanitized, "workspace_src_lib.rs");
+        // A backslash is a separator on Windows only. On Unix it is a
+        // file-name byte, spelled `%5C`, so `workspace\src\lib.rs` keeps an
+        // id apart from `workspace/src/lib.rs` (#15908).
+        let expected = if cfg!(unix) {
+            "workspace%5Csrc%5Clib.rs"
+        } else {
+            "workspace_src_lib.rs"
+        };
+        assert_eq!(sanitized, expected);
     }
 
     #[test]

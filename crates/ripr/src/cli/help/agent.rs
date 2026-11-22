@@ -126,7 +126,9 @@ mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
 
 A refusal (for example, an unknown seam or gap) exits `3` with the cause on
-stderr and empty stdout.
+stderr and, with `--json`, a refusal document on stdout (an
+agent-seam-packets-json envelope with no findings and the cause in
+`run_limitations`).
 "#;
 pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact default repair card.
 
@@ -174,8 +176,10 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
-                   `return_value`, `error_path`, `match_arm`). Only seams of
-                   that kind are tried, so a line holding several changes
+                   `return_value`, `error_path`, `match_arm`,
+                   `call_deletion`, `field_construction`, `side_effect`).
+                   Only seams of that kind are tried, so a line
+                   holding several changes
                    stubs the one the finding reported; two separate seams of
                    that kind on one line are refused with their seam IDs.
                    `ripr check` prints it. Without it, --at tries only the

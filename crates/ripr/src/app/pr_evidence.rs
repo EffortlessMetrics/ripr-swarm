@@ -71,7 +71,12 @@ pub(crate) fn execute_pr_evidence(mut options: PrEvidenceOptions) -> Result<(), 
         // failure, never a guessed base recorded in the packet.
         options.base =
             crate::analysis::resolve_effective_base(&repo, None, Some(PR_EVIDENCE_GIT_DEADLINE))
-                .map_err(|err| format!("pr-evidence: {err}"))?;
+                .map_err(|err| {
+                    format!(
+                        "pr-evidence: {}",
+                        crate::git::without_saved_diff_route(&err.to_string())
+                    )
+                })?;
     }
     if options.check {
         check_pr_evidence(&repo, &options)
@@ -292,7 +297,8 @@ fn verify_revision(repo: &Path, flag: &str, rev: &str) -> Result<(), String> {
     )
     .map_err(|err| {
         format!(
-            "pr-evidence could not run git to resolve {flag} `{rev}`: {err}; check that git is installed and on PATH, then rerun"
+            "pr-evidence could not run git to resolve {flag} `{rev}`: {}; check that git is installed and on PATH, then rerun",
+            crate::git::without_saved_diff_route(&err.to_string())
         )
     })?;
     if output.status.success() {
@@ -474,8 +480,14 @@ fn run_git_output_bytes_within(
     args: &[&str],
     deadline: Duration,
 ) -> Result<Vec<u8>, String> {
-    let output = crate::git::run_git_output_with_deadline(repo, args, Some(deadline))
-        .map_err(|err| format!("failed to run git {}: {err}", args.join(" ")))?;
+    let output =
+        crate::git::run_git_output_with_deadline(repo, args, Some(deadline)).map_err(|err| {
+            format!(
+                "failed to run git {}: {}; fix the git failure, then rerun the command",
+                args.join(" "),
+                crate::git::without_saved_diff_route(&err.to_string())
+            )
+        })?;
     if output.status.success() {
         Ok(output.stdout)
     } else {
@@ -1252,7 +1264,14 @@ mod tests {
         let bounded =
             run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::from_mins(1));
         match bounded {
-            Err(err) if !err.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX) => {}
+            // #15257: the spawn failure keeps the argv and the cause, names a
+            // retry step, and never suggests `--diff`, which this command
+            // does not take.
+            Err(err)
+                if !err.contains(crate::git::GIT_INVOCATION_TIMEOUT_PREFIX)
+                    && err.starts_with("failed to run git rev-parse HEAD: ")
+                    && err.ends_with("; fix the git failure, then rerun the command")
+                    && !err.contains("--diff") => {}
             other => return Err(format!("control: expected a spawn failure, got {other:?}")),
         }
         match run_git_output_bytes_within(&missing, &["rev-parse", "HEAD"], Duration::ZERO) {

@@ -12926,6 +12926,8 @@ tests = [
   "crates/ripr/src/lsp/watched_source_drift.rs::tests::rewritten_script_source_without_diagnostics_drifts",
   "crates/ripr/src/lsp/watched_source_drift.rs::tests::script_sources_in_dependency_and_build_directories_do_not_drift",
   "crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_clean_source_refreshes_in_every_language",
+  "crates/ripr/src/lsp/watched_source_drift.rs::tests::declared_handwritten_and_excluded_script_paths_follow_configuration",
+  "crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_declared_handwritten_source_refreshes",
 ]
 fixtures = []
 code = [
@@ -14919,6 +14921,7 @@ spec = "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md"
 tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::a_constant_row_table_feeds_one_input_row_per_table_row",
   "crates/ripr/tests/owner_pin_execution.rs::constant_row_table_pairs_each_row_with_its_boundary_input",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/predicate_boundary_pairing.rs::only_an_exact_boundary_result_closes_the_predicate_gap",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::split_tests_do_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_call_assert_eq_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_test_split_calls_do_not_pair",
@@ -15643,6 +15646,7 @@ spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
   "crates/ripr/tests/build_env_macro_in_test.rs::a_test_that_reads_its_build_environment_pins_like_one_that_does_not",
   "crates/ripr/tests/build_env_macro_in_test.rs::a_rebound_build_environment_macro_keeps_the_assertion_uncredited",
+  "crates/ripr/tests/build_env_macro_in_test.rs::a_test_that_reads_an_included_file_pins_like_one_that_does_not",
   "crates/ripr/tests/try_operand_in_test_assertion.rs::a_try_in_an_assertion_operand_of_a_result_test_pins_like_a_root_try",
   "crates/ripr/tests/try_operand_in_test_assertion.rs::a_try_whose_error_may_be_discarded_keeps_the_assertion_uncredited",
   "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",
@@ -22429,12 +22433,13 @@ tests = [
   "crates/ripr/tests/lib_test_false_credit.rs::an_example_included_into_the_library_test_tree_keeps_credit",
   "crates/ripr/tests/lib_test_false_credit.rs::an_example_included_into_an_integration_test_keeps_credit",
   "crates/ripr/tests/lib_test_false_credit.rs::bench_unit_tests_are_not_a_discriminator_unless_the_bench_is_tested",
+  "crates/ripr/tests/lib_test_false_credit.rs::bare_bench_requires_a_runnable_target",
   "crates/ripr/tests/lib_test_false_credit.rs::a_bench_included_into_an_integration_test_keeps_credit",
   "crates/ripr/src/analysis/facts/role_composition.rs::tests::mount_operand_doubt_needs_a_dynamic_mount_operand",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::crate_root_unit_test_skip_follows_metadata_test_flags",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::reuse_reviving_cargo_test_skipped_tests_matches_fresh",
 ]
-fixtures = []
+fixtures = ["fixtures/rust_bench_rejected_workspace"]
 code = [
   "crates/ripr/src/analysis/facts/stray_files.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs",

@@ -557,6 +557,12 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "file",
     "format",
     "format_args",
+    // `include_bytes!` and `include_str!` expand to a literal read from a
+    // file at build time (#14116), like `env!`: their arguments are a path
+    // expression, never code, so neither can return, skip a later assertion
+    // or define a name its arguments mention.
+    "include_bytes",
+    "include_str",
     "line",
     "matches",
     "module_path",
@@ -1708,6 +1714,19 @@ fn macro_binding_sites_in_tree(
                                     && (!nested.bare_wrapper || names_the_prelude())
                             }
                             PassThroughCall::BareProptest => names_the_prelude(),
+                            PassThroughCall::StandardPin { root } => {
+                                // A bare `pin!` takes its root from the one
+                                // import that names it.
+                                root.or_else(|| bare_pin_import(&call, binding_free))
+                                    .is_some_and(|(root, external)| {
+                                        !drop_in_shadowed(root, external)
+                                            && (external || !plain_import_names().contains(root))
+                                            // No manifest binds `std` or
+                                            // `core` to another package.
+                                            && drop_in_verified(root)
+                                    })
+                                    && (!nested.bare_wrapper || names_the_prelude())
+                            }
                         }
                 })
                 .and_then(|_| scope_of(Some(call.syntax().clone())));
@@ -2145,8 +2164,9 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
         // `use std::env;` names the module and, in the macro namespace, the
-        // standard `env!` itself.
-        "env" | "option_env" => STANDARD_ROOTS,
+        // standard `env!` itself; `use std::include_str;` is the standard
+        // macro as well.
+        "env" | "option_env" | "include_bytes" | "include_str" => STANDARD_ROOTS,
         _ => &[],
     }
 }
@@ -2242,6 +2262,11 @@ enum PassThroughCall {
     Qualified { krate: &'static str, external: bool },
     /// A bare `proptest!`, which must name the audited prelude's macro.
     BareProptest,
+    /// The standard `pin!`: `std::pin::pin!` or `core::pin::pin!` with its
+    /// root (and whether it is `::`-rooted), or a bare `pin!` (`None`) whose
+    /// one import must name it. Its expansion places its argument in an
+    /// expression and needs no lock audit: it ships with the toolchain.
+    StandardPin { root: Option<(&'static str, bool)> },
 }
 
 /// What a confined pass-through call's nested macro calls rely on, beyond
@@ -2310,6 +2335,16 @@ fn audited_pass_through_call(
             external,
         },
         None if !external && proptest_wrapper(unrooted) => PassThroughCall::BareProptest,
+        // #14116: `pin!(async { .. })` places its argument in an expression
+        // (`Pin { __pointer: &mut { $value } }`), so a `format!` in the
+        // future it pins binds nothing outside the call.
+        _ if unrooted == "std::pin::pin" => PassThroughCall::StandardPin {
+            root: Some(("std", external)),
+        },
+        _ if unrooted == "core::pin::pin" => PassThroughCall::StandardPin {
+            root: Some(("core", external)),
+        },
+        None if !external && unrooted == "pin" => PassThroughCall::StandardPin { root: None },
         _ => return None,
     };
     if tokens
@@ -2578,11 +2613,30 @@ fn bare_proptest_names_the_prelude(
     let Some(container) = call_module_items(call) else {
         return false;
     };
+    reach_adds_no_binding(call, &container, binding_free, &|path| {
+        matches!(
+            path,
+            "proptest" | "proptest::proptest" | "::proptest::proptest"
+        )
+    })
+}
+
+/// Whether nothing between `call` and the module whose items name its bare
+/// path (`container`) can bind that name ahead of the module's own items: no
+/// glob in a block or inline module on the way (an inner glob shadows the
+/// module's), and no item-position macro call there, other than one whose
+/// path `exempt` accepts, that might expand to an import or a definition.
+fn reach_adds_no_binding(
+    call: &ast::MacroCall,
+    container: &SyntaxNode,
+    binding_free: &BindingFreeFileIndex,
+    exempt: &dyn Fn(&str) -> bool,
+) -> bool {
     let in_reach = |node: &SyntaxNode| {
         node.parent().is_some_and(|scope| {
             call.syntax()
                 .ancestors()
-                .take_while(|ancestor| *ancestor != container)
+                .take_while(|ancestor| ancestor != container)
                 .chain(std::iter::once(container.clone()))
                 .any(|ancestor| ancestor == scope)
         })
@@ -2595,7 +2649,7 @@ fn bare_proptest_names_the_prelude(
                 .find_map(ast::Use::cast)
                 .is_some_and(|import| {
                     in_reach(import.syntax())
-                        && import.syntax().parent().as_ref() != Some(&container)
+                        && import.syntax().parent().as_ref() != Some(container)
                 })
     });
     let other_item_call = binding_free.calls.iter().any(|other| {
@@ -2617,13 +2671,84 @@ fn bare_proptest_names_the_prelude(
                     .chars()
                     .filter(|ch| !ch.is_whitespace())
                     .collect();
-                matches!(
-                    path.as_str(),
-                    "proptest" | "proptest::proptest" | "::proptest::proptest"
-                )
+                exempt(&path)
             })
     });
     !inner_glob && !other_item_call
+}
+
+/// #14116: the root of the one import that names a bare `pin!` call, a
+/// plain `use std::pin::pin;` or `use core::pin::pin;` among the items of
+/// the call's module, and whether it is `::`-rooted. `None` when anything
+/// else in the file can bind the bare name: another import or rename to
+/// `pin`, a `pin` definition (textual scope outranks an import), or a glob
+/// or item-position macro call between the call and its module. A
+/// definition in an ancestor file reports its own
+/// [`MacroBindingKind::WrapperRedefinition`] site.
+fn bare_pin_import(
+    call: &ast::MacroCall,
+    binding_free: &BindingFreeFileIndex,
+) -> Option<(&'static str, bool)> {
+    let is_pin = |name: &str| name.trim_start_matches("r#") == "pin";
+    let bound = |item: &ast::UseTree| -> Option<String> {
+        if let Some(rename) = item.rename() {
+            return rename.name().map(|name| name.text().to_string());
+        }
+        if item.star_token().is_some() || item.use_tree_list().is_some() {
+            return None;
+        }
+        let segments = use_tree_segments(item);
+        segments
+            .iter()
+            .rev()
+            .find(|segment| segment.as_str() != "self")
+            .cloned()
+    };
+    let mut imports = binding_free
+        .uses
+        .iter()
+        .filter(|item| bound(item).is_some_and(|name| is_pin(&name)));
+    let only = imports.next()?;
+    if imports.next().is_some() || only.rename().is_some() {
+        return None;
+    }
+    if binding_free
+        .rules
+        .iter()
+        .any(|rule| rule.name().is_some_and(|name| is_pin(name.text())))
+        || binding_free.site_nodes.iter().any(|node| {
+            ast::MacroDef::cast(node.clone())
+                .and_then(|item| item.name())
+                .is_some_and(|name| is_pin(name.text()))
+        })
+    {
+        return None;
+    }
+    let root = match use_tree_segments(only)
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["std", "pin", "pin"] => "std",
+        ["core", "pin", "pin"] => "core",
+        _ => return None,
+    };
+    let import = only.syntax().ancestors().find_map(ast::Use::cast)?;
+    let container = call_module_items(call)?;
+    if import.syntax().parent().as_ref() != Some(&container)
+        || !reach_adds_no_binding(call, &container, binding_free, &|_| false)
+    {
+        return None;
+    }
+    let external = import
+        .use_tree()?
+        .syntax()
+        .text()
+        .to_string()
+        .trim_start()
+        .starts_with("::");
+    Some((root, external))
 }
 
 /// The item list (or source file) of the module whose items name `call`'s
@@ -2667,10 +2792,10 @@ fn proptest_prelude_glob_reaches(
 }
 
 /// Whether `node` is a `macro_rules!` or `macro` definition that takes a
-/// [`PASS_THROUGH_WRAPPERS`] name and whose expansion may paste its caller's
-/// tokens: a transcriber holding any `$`, or a body this reading cannot
-/// split into rules. A definition that pastes nothing adds nothing a call's
-/// arguments can bind.
+/// [`PASS_THROUGH_WRAPPERS`] name (or the standard `pin`) and whose
+/// expansion may paste its caller's tokens: a transcriber holding any `$`,
+/// or a body this reading cannot split into rules. A definition that pastes
+/// nothing adds nothing a call's arguments can bind.
 fn redefines_pass_through_wrapper(node: &SyntaxNode) -> bool {
     let (name, body) = if let Some(rules) = ast::MacroRules::cast(node.clone()) {
         (
@@ -2683,40 +2808,42 @@ fn redefines_pass_through_wrapper(node: &SyntaxNode) -> bool {
     } else {
         return false;
     };
-    if !name
-        .is_some_and(|name| PASS_THROUGH_WRAPPERS.contains(&name.text().trim_start_matches("r#")))
-    {
+    if !name.is_some_and(|name| {
+        let name = name.text();
+        let name = name.trim_start_matches("r#");
+        PASS_THROUGH_WRAPPERS.contains(&name) || name == "pin"
+    }) {
         return false;
     }
     let Some(body) = body else {
         return true;
     };
-    let has_dollar = |tree: &SyntaxNode| {
-        tree.descendants_with_tokens()
-            .filter_map(|element| element.into_token())
-            .any(|token| token.text() == "$")
-    };
     if ast::MacroDef::can_cast(node.kind()) {
-        return has_dollar(&body);
+        return code_tokens(&body).iter().any(|token| token.text() == "$");
     }
     // `macro_rules! name { (matcher) => { transcriber }; .. }`: the group
-    // after each `=>` is a transcriber.
+    // after each `=>` is a transcriber, and the group before it its matcher.
     let mut previous = String::new();
+    let mut matcher = None;
     let mut transcribers = 0;
     for element in body.children_with_tokens() {
         match element {
             ra_ap_syntax::NodeOrToken::Token(token) if !token.kind().is_trivia() => {
                 previous.push_str(token.text());
-                if previous.len() > 2 {
-                    previous.drain(..previous.len() - 2);
+                // Keep the last two characters, not bytes: a non-ASCII token
+                // (`=> 値` in an unfinished arm) must not split a character.
+                if let Some((keep, _)) = previous.char_indices().rev().nth(1) {
+                    previous.drain(..keep);
                 }
             }
             ra_ap_syntax::NodeOrToken::Node(group) => {
                 if previous.ends_with("=>") {
                     transcribers += 1;
-                    if has_dollar(&group) {
+                    if pastes_a_binding_fragment(matcher.take().as_ref(), &group) {
                         return true;
                     }
+                } else {
+                    matcher = Some(group);
                 }
                 previous.clear();
             }
@@ -2724,6 +2851,54 @@ fn redefines_pass_through_wrapper(node: &SyntaxNode) -> bool {
         }
     }
     transcribers == 0
+}
+
+/// Fragments that rustc pastes as one opaque expression, type, pattern,
+/// literal, lifetime or block node. A `macro_rules!` or `use` inside such a
+/// node is scoped to it, so pasting one binds no name outside the node.
+const NODE_FRAGMENTS: &[&str] = &[
+    "block",
+    "expr",
+    "expr_2021",
+    "lifetime",
+    "literal",
+    "pat",
+    "pat_param",
+    "ty",
+];
+
+fn code_tokens(tree: &SyntaxNode) -> Vec<ra_ap_syntax::SyntaxToken> {
+    tree.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect()
+}
+
+/// Whether `transcriber` pastes a metavariable that may carry items or
+/// statements: one `matcher` does not declare with a [`NODE_FRAGMENTS`]
+/// kind (`tt`, `item`, `stmt`, `ident`, ..), or any `$` the scan cannot
+/// read. `$crate` and a repetition's `$(` paste nothing themselves.
+fn pastes_a_binding_fragment(matcher: Option<&SyntaxNode>, transcriber: &SyntaxNode) -> bool {
+    let mut node_variables = BTreeSet::new();
+    if let Some(matcher) = matcher {
+        let tokens = code_tokens(matcher);
+        for window in tokens.windows(4) {
+            if window[0].text() == "$"
+                && window[2].text() == ":"
+                && NODE_FRAGMENTS.contains(&window[3].text())
+            {
+                node_variables.insert(window[1].text().to_string());
+            }
+        }
+    }
+    let tokens = code_tokens(transcriber);
+    tokens.iter().enumerate().any(|(index, token)| {
+        token.text() == "$"
+            && tokens.get(index + 1).is_none_or(|next| {
+                let next = next.text();
+                next != "(" && next != "crate" && !node_variables.contains(next)
+            })
+    })
 }
 
 fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
@@ -4003,7 +4178,37 @@ fn empty_macros_defined_in(
 /// function: the text parses cleanly and no `return` sits inside a closure,
 /// an `async` or `const` block, or a nested `fn` item, where it would end
 /// only that inner body.
+///
+/// A pure function of `item`, so it is read once per run scope (#11738): one
+/// long owner with many changed lines asked it, with a fresh parse of the
+/// whole owner, once per changed line.
 pub(crate) fn returns_leave_the_function(item: &str) -> bool {
+    super::run_memo::memoize(
+        super::run_memo::Product::ReturnsLeaveTheFunction,
+        0,
+        item,
+        || returns_leave_the_function_uncached(item),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many owner texts this thread has parsed for
+    /// [`returns_leave_the_function`].
+    static RETURNS_LEAVE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many owner texts this thread has parsed for
+/// [`returns_leave_the_function`] (#11738 read-count proof).
+#[cfg(test)]
+pub(crate) fn returns_leave_reads() -> usize {
+    RETURNS_LEAVE_READS.with(std::cell::Cell::get)
+}
+
+/// [`returns_leave_the_function`] without the run memo.
+pub(crate) fn returns_leave_the_function_uncached(item: &str) -> bool {
+    #[cfg(test)]
+    RETURNS_LEAVE_READS.with(|reads| reads.set(reads.get() + 1));
     parse_clean_source_file(item).is_some_and(|parse| {
         parse
             .tree()
@@ -4287,7 +4492,7 @@ fn owner_pin_assertions_with_matches(
             trusted,
             &empty_macros,
             &json_uses,
-            &[],
+            LITERAL_NESTED_EXPANSIONS,
             matches_context,
             operand_try,
         ) {
@@ -4326,7 +4531,7 @@ fn owner_pin_assertions_with_matches(
                     trusted,
                     &empty_macros,
                     &json_uses,
-                    COMPARISON_NESTED_MACROS,
+                    &[COMPARISON_NESTED_MACROS, LITERAL_NESTED_EXPANSIONS].concat(),
                     false,
                     operand_try,
                 )
@@ -7095,6 +7300,26 @@ fn opaque_macro_operand_with_json(
 /// invoking macros'.
 const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
 
+/// Compile-time built-ins that expand to a literal (#14116), so
+/// `include_str!(concat!(env!("CARGO_MANIFEST_DIR"), ".."))` nests only
+/// literals: rustc rejects any operand they cannot fold at compile time.
+/// Only the assertion admission scan reads them as plain, because only its
+/// caller checks every nested name against the workspace binding sites; the
+/// binding-blind scans ([`node_has_macro_escape`]) keep refusing them.
+const LITERAL_NESTED_EXPANSIONS: &[&str] = &[
+    "cfg",
+    "column",
+    "concat",
+    "env",
+    "file",
+    "include_bytes",
+    "include_str",
+    "line",
+    "module_path",
+    "option_env",
+    "stringify",
+];
+
 /// Pure comparison macros of `float_cmp` and `approx` (#10389). They expand
 /// to a boolean over their operands, but ripr does not expand third-party
 /// macros, so the nested spelling is only read as plain by the return-value
@@ -9491,5 +9716,34 @@ mod extern_crate_scan_tests {
             "premise: the fixtures hold and refuse"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod literal_nested_expansion_tests {
+    use super::*;
+
+    fn escapes(text: &str) -> bool {
+        let parse = ast::SourceFile::parse(text, ra_ap_syntax::Edition::CURRENT);
+        node_has_macro_escape(parse.tree().syntax())
+    }
+
+    #[test]
+    fn a_nested_literal_built_in_stays_an_escape_without_binding_proof() {
+        // Premise: the same scan admits a nested `vec!`.
+        assert!(!escapes("fn helper() { let _ = vec![vec![1]]; }"));
+        // #14116: the callback-helper scan proves no binding, so a nested
+        // `concat!` (which a local `macro_rules!` may turn into a `return`)
+        // stays an escape there; only the admission scan reads it as plain.
+        for text in [
+            "fn helper() { let _ = vec![concat!(\"a\")]; }",
+            "fn helper() { let _ = format!(\"{}\", env!(\"HOME\")); }",
+            "fn helper() { let _ = vec![include_str!(\"x\")]; }",
+        ] {
+            assert!(escapes(text), "{text}");
+        }
+        assert!(LITERAL_NESTED_EXPANSIONS.iter().all(|name| {
+            TRUSTED_MACRO_NAMES.contains(name) && !NESTED_EXPANSIONS.contains(name)
+        }));
     }
 }

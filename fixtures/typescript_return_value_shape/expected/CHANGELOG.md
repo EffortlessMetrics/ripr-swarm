@@ -876,3 +876,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_return_value_shape (41)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless typescript_return_value_shape --reason "..."`
+
+Updated:
+- `expected/human.txt`

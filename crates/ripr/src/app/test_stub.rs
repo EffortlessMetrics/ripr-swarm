@@ -1662,7 +1662,9 @@ std::thread_local! {
 /// "existing tests already discriminate it" from the whole-seam inventory;
 /// when check reads the changed code there as a gap or a limit, that sentence
 /// contradicts it. The seam's file is classified so the finding binds through
-/// the same location join the repair start uses. Any step that cannot be
+/// the same location join the repair start uses, but only once the change
+/// check reads touches that file (#16082): a change elsewhere cannot touch
+/// the seam, so it costs no classification. Any step that cannot be
 /// established leaves the inventory's reading as it is.
 pub(crate) fn check_reading_of_gripped_stub_seam(
     root: &Path,
@@ -1671,6 +1673,10 @@ pub(crate) fn check_reading_of_gripped_stub_seam(
 ) -> super::task_first::CheckReadingOfGrippedSeam {
     use super::task_first::CheckReadingOfGrippedSeam;
     let Ok(Some(location)) = analysis::locate_seam_file_at_with_config(root, config, seam_id)
+    else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    let Some(files) = super::task_first::live_check_diff_files_touching(root, None, &location.file)
     else {
         return CheckReadingOfGrippedSeam::Stands;
     };
@@ -1688,7 +1694,14 @@ pub(crate) fn check_reading_of_gripped_stub_seam(
     if entry.class != SeamGripClass::StronglyGripped {
         return CheckReadingOfGrippedSeam::Stands;
     }
-    super::task_first::check_reading_of_gripped_seam(root, None, config, entry, &scoped.classified)
+    super::task_first::check_reading_of_gripped_seam_on_change(
+        root,
+        None,
+        config,
+        entry,
+        &scoped.classified,
+        &files,
+    )
 }
 
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
@@ -2315,7 +2328,11 @@ mod tests {
             Path::new("src/lib.rs"),
             "./crates/a/src/lib.rs"
         ));
-        assert!(paths_match(Path::new("src\\lib.rs"), "src/lib.rs"));
+        // A backslash is a separator on Windows only (#15908).
+        assert_eq!(
+            paths_match(Path::new("src\\lib.rs"), "src/lib.rs"),
+            !cfg!(unix)
+        );
         assert!(!paths_match(Path::new("src/lib.rs"), "lib.rs.bak"));
         assert!(!paths_match(Path::new("src/mylib.rs"), "lib.rs"));
     }

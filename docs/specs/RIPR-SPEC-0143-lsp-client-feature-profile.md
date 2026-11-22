@@ -91,10 +91,14 @@ profile fields.
   rewritten outside the editor) schedules one diagnostics refresh. For a
   Rust source the snapshot recorded as consumed, an event for unchanged
   bytes schedules none. Python, TypeScript, JavaScript and Perl sources
-  have no recorded bytes to compare, so a Changed event for one outside
-  dependency, environment and build directories always refreshes, whether
-  or not it carries committed diagnostics: a clean file rewritten outside
-  the editor must not keep its clean result. Any other path without
+  have no recorded bytes to compare, so a Changed event for one its
+  language adapter reads always refreshes, whether or not it carries
+  committed diagnostics: a clean file rewritten outside the editor must not
+  keep its clean result. "Reads" is the analysis pipeline's own rule:
+  generated names, `[languages.<lang>] excluded_file_patterns` and the
+  built-in dependency, environment and build directories are left out, and
+  a path declared in `[languages.<lang>] handwritten_files` is admitted
+  past the directory rule. Any other path without
   recorded bytes is covered only while it carries committed diagnostics. A
   test file that a committed
   finding lists as a related test, but whose bytes the snapshot never
@@ -307,6 +311,14 @@ and never the raw capability document or the client name.
   — the real server refreshes on the watched-file event alone for a clean
   Rust, Python and TypeScript source and then serves the findings a fresh
   server serves.
+- `crates/ripr/src/lsp/watched_source_drift.rs::tests::declared_handwritten_and_excluded_script_paths_follow_configuration`
+  — a declared-handwritten script source in an excluded directory drifts
+  and one matched by a configured exclusion glob does not; undeclared
+  neighbors keep the built-in answer.
+- `crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_declared_handwritten_source_refreshes`
+  — the real server refreshes a declared-handwritten TypeScript source
+  under `dist/` on the watched-file event alone and then serves the
+  findings a fresh server serves.
 - `crates/ripr/tests/lsp_lifecycle.rs::deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics`
   — the real server retracts a deleted file's diagnostics from the
   watched-file event alone.

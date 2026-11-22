@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "outer reaches inner_rate only through call_inner!, and outer(4) is pinned to 12. Spec cells: RIPR-SPEC-0117.",
+  "reasoning": "outer reaches inner_rate only through call_inner!, and outer(4) is pinned to 12. The only test that reaches it, outer_triples, shares the owner's file, and the other same-file tests are related only by proximity, so every related test is proximity-only: the macro shape whose abstention RIPR-SPEC-0117 example 5 requires (weakly_exposed plus rust_macro_reach_unresolved). Spec cells: RIPR-SPEC-0117 example 5.",
   "labeling_observation": {
     "ripr_commit": "b0c6ef6",
     "full_checkout_verdict": "gap",
@@ -48,5 +48,8 @@
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0117#5"
+  ]
 }

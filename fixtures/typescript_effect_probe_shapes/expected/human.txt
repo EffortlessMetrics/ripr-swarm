@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_effect_probe_shapes/input
 config: <cwd>/fixtures/typescript_effect_probe_shapes/input/ripr.toml
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed (2 through a test link ripr could not confirm), 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 

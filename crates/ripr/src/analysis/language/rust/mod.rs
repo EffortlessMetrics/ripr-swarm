@@ -9169,7 +9169,9 @@ fn absent_delimiter_boundary_returns_head() {
 
         assert!(scope.selects(Path::new("src/a.rs")));
         assert!(scope.selects(Path::new("./src/a.rs")));
-        assert!(scope.selects(Path::new("src\\a.rs")));
+        // A backslash is a separator on Windows only; on Unix `src\a.rs` is a
+        // different file that this scope does not select (#15908).
+        assert_eq!(scope.selects(Path::new("src\\a.rs")), !cfg!(unix));
         assert!(!scope.selects(Path::new("src/b.rs")));
         Ok(())
     }

@@ -715,9 +715,44 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
                 .infection_unknown
                 .saturating_add(s.propagation_unknown)
                 .saturating_add(s.static_unknown);
+            // #15295: both of these bucket names claim a test gets to the
+            // change. Say how many findings in each rest on a link ripr could
+            // not confirm, so the line agrees with the reason under them.
+            // A finding a policy or an owner opt-out withholds has already
+            // left its bucket, so it must not be counted here either: the
+            // note would land on a finding whose reach is established.
+            let withheld = output.withheld_finding_ids();
+            let unconfirmed = |class: crate::domain::ExposureClass, bucket: usize| {
+                let count = output
+                    .findings
+                    .iter()
+                    .filter(|finding| {
+                        finding.class == class
+                            && !withheld.contains(finding.id.as_str())
+                            && sections::reach_claim_is_unsupported(&finding.class, &finding.ripr)
+                    })
+                    .count()
+                    .min(bucket);
+                if count == 0 {
+                    String::new()
+                } else {
+                    format!(" ({count} through a test link ripr could not confirm)")
+                }
+            };
             let mut classes = format!(
-                "{} appear noticed by tests, {} partly noticed, {} reached but not noticed, {} no test path",
-                s.exposed, s.weakly_exposed, s.reachable_unrevealed, s.no_static_path,
+                "{} appear noticed by tests, {} partly noticed{}, {} reached but not noticed{}, {} no test path",
+                s.exposed,
+                s.weakly_exposed,
+                unconfirmed(
+                    crate::domain::ExposureClass::WeaklyExposed,
+                    s.weakly_exposed
+                ),
+                s.reachable_unrevealed,
+                unconfirmed(
+                    crate::domain::ExposureClass::ReachableUnrevealed,
+                    s.reachable_unrevealed
+                ),
+                s.no_static_path,
             );
             if unknown > 0 {
                 classes.push_str(&format!(", {unknown} unclear"));
@@ -10984,9 +11019,15 @@ mod tests {
 
         let rendered = render_finding(&finding);
 
+        // On Unix a backslash is a file-name byte, spelled `%5C` (#15908).
+        let expected = if cfg!(unix) {
+            "src%5Cpricing.ts:10"
+        } else {
+            "src/pricing.ts:10"
+        };
         assert!(
-            rendered.contains("src/pricing.ts:10"),
-            "expected forward-slash location path in human output; got:\n{rendered}"
+            rendered.contains(expected),
+            "expected {expected} in human output; got:\n{rendered}"
         );
         assert!(
             !rendered.contains(r"src\pricing.ts"),
@@ -11003,9 +11044,15 @@ mod tests {
 
         let rendered = render_finding(&finding);
 
+        // On Unix a backslash is a file-name byte, spelled `%5C` (#15908).
+        let expected = if cfg!(unix) {
+            "tests%5Csample.rs:"
+        } else {
+            "tests/sample.rs:"
+        };
         assert!(
-            rendered.contains("tests/sample.rs:"),
-            "expected forward-slash related-test path in human evidence; got:\n{rendered}"
+            rendered.contains(expected),
+            "expected {expected} in human evidence; got:\n{rendered}"
         );
         assert!(
             !rendered.contains(r"tests\sample.rs"),

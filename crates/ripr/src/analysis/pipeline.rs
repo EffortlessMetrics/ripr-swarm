@@ -3519,7 +3519,7 @@ fn is_excluded_from_typescript_workspace_index(
 /// [`is_excluded_from_preview_analysis`] for TypeScript/JS, where `docs/` is
 /// skipped as changed scope but still indexed. The Python walk applies the
 /// same three authorities as its diff loop, so the two agree there.
-fn is_excluded_from_diff_and_workspace_index(
+pub(crate) fn is_excluded_from_diff_and_workspace_index(
     language: LanguageId,
     path: &std::path::Path,
     language_config: &crate::config::LanguagesConfig,
