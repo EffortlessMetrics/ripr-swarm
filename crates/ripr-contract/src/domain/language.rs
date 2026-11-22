@@ -646,8 +646,8 @@ impl StaticLimitKind {
     pub fn describe(&self) -> &'static str {
         match self {
             StaticLimitKind::DynamicDispatch => {
-                "Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, \
-                 so ripr cannot statically resolve whether a test reaches this change."
+                "Dynamic dispatch (the call target is chosen at runtime) hides which implementation \
+                 runs, so ripr cannot statically resolve whether a test reaches this change."
             }
             StaticLimitKind::Metaprogramming => {
                 "Metaprogramming (macros or code generation) produces calls ripr cannot see in the \
