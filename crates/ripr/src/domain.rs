@@ -158,6 +158,7 @@ pub(crate) use ripr_contract::domain::classify_reference;
 pub(crate) use ripr_contract::domain::command_tokens;
 pub use ripr_contract::domain::compare_fixture_delta;
 pub(crate) use ripr_contract::domain::declared_const_name;
+pub(crate) use ripr_contract::domain::enablement_tip_keeps_rust;
 pub(crate) use ripr_contract::domain::enablement_tip_languages;
 pub(crate) use ripr_contract::domain::exact_assertion_fact;
 #[cfg(test)]

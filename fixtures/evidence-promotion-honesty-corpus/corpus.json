@@ -818,6 +818,20 @@
       ]
     },
     {
+      "id": "python_membership_removed_member",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_membership_removed_member",
+      "vector": "literal_collection_member_removed_without_a_row_on_it_does_not_promote",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "weakly_exposed"},
+        {"type": "expected_finding_owner", "owner": "python:truthy/convert.py::to_bool"}
+      ]
+    },
+    {
       "id": "typescript_jest_only_literal_timeout_push_argument_length",
       "language": "typescript",
       "tier": "pure",
@@ -9439,6 +9453,64 @@
       ]
     },
     {
+      "id": "ts_stubbed_namespace_owner_observes_the_stub",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_adversarial_stubbed_namespace_owner",
+      "vector": "owner_function_stubbed_on_its_module_object_in_a_hook",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_namespace_owner_call_through_spy_keeps_credit",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_namespace_owner_call_through_spy",
+      "vector": "call_through_spy_on_the_owner_control_keeps_credit",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        }
+      ]
+    },
+    {
       "id": "ts_token_substring",
       "language": "typescript",
       "tier": "pure",
@@ -11980,6 +12052,72 @@
           "name": "advances",
           "file": "src/lib.rs",
           "line": 35,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_sibling_type_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_sibling_type_receiver",
+      "vector": "trait_dispatch_identity_sibling_type_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "square_area",
+          "file": "src/lib.rs",
+          "line": 20,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_sibling_type_other_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_sibling_type_other_receiver",
+      "vector": "trait_dispatch_identity_sibling_type_other_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "line_area",
+          "file": "src/lib.rs",
+          "line": 20,
           "kind": "exact_value",
           "strength": "strong",
           "relation_reason": "weak_token_substring"
@@ -21025,6 +21163,54 @@
       ]
     },
     {
+      "id": "rust_computed_return_tail_crate_qualified_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_computed_return_tail_crate_qualified",
+      "vector": "own_crate_qualified_exact_pin_of_a_call_that_statically_reaches_the_changed_computed_tail",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_computed_return_tail_crate_rebound_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_computed_return_tail_crate_rebound",
+      "vector": "a_rebound_crate_name_cannot_make_a_qualified_pin_an_owner_call",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_added_disjunct_sibling_field",
       "language": "rust",
       "tier": "pure",
@@ -21270,6 +21456,30 @@
       "tier": "pure",
       "source_fixture": "fixtures/rust_constant_tail_cfg_twin",
       "vector": "a_cfg_gated_owner_whose_twin_the_test_runs_changes_its_constant_tail",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_masked_comparison_return",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_masked_comparison_return",
+      "vector": "closed_boolean_gate_masks_changed_return",
       "probe_family": "return_value",
       "assertions": [
         {

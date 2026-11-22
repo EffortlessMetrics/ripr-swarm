@@ -39,7 +39,7 @@ pub(crate) fn capture_attempt_external_region(
     relative_file: &str,
     absent_from_baseline: bool,
 ) -> Result<ExternalTestFileBaseline, String> {
-    if !crate::analysis::is_test_surface_path(relative_file) {
+    if !crate::analysis::is_test_surface(root, relative_file) {
         return Err(refusal(relative_file, "it is not a test-surface path"));
     }
     if Path::new(relative_file).extension() != Some(OsStr::new("rs")) {

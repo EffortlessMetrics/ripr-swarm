@@ -413,20 +413,30 @@ fn bound_exception_comparison(
         return None;
     };
     for stmt in after {
-        if let Some((left, right)) = equality_operands(stmt) {
-            // One operand reads the error; the other must not, or the
-            // comparison can hold for any message (`str(e.value) ==
-            // str(e.value.args[0])`), as a tautology does (rule 1).
-            let pinned = |read: &Expr, other: &Expr| {
-                reads_raised_error(read, bound, field) && !mentions_name(source, other, bound)
-            };
-            if !same_tokens(source, left, right) && (pinned(left, right) || pinned(right, left)) {
-                // The failure message observes nothing (rule 4).
-                return Some(format!(
-                    "assert {} == {}",
-                    text_for_range(source, left.range()).trim(),
-                    text_for_range(source, right.range()).trim()
-                ));
+        // In an `and` chain an earlier operand runs before the equality, so a
+        // chain that rebinds or mutates the error credits nothing
+        // (`assert setattr(N.value, "args", ...) is None and str(N.value) ==
+        // "..."`). A lone equality has nothing before it in its statement.
+        let chain_touches = matches!(stmt, Stmt::Assert(assert_stmt)
+            if matches!(assert_stmt.test.as_ref(), Expr::BoolOp(_)))
+            && statement_touches_name(stmt, bound, source);
+        if !chain_touches {
+            for (left, right) in required_equalities(stmt) {
+                // One operand reads the error; the other must not, or the
+                // comparison can hold for any message (`str(e.value) ==
+                // str(e.value.args[0])`), as a tautology does (rule 1).
+                let pinned = |read: &Expr, other: &Expr| {
+                    reads_raised_error(read, bound, field) && !mentions_name(source, other, bound)
+                };
+                if !same_tokens(source, left, right) && (pinned(left, right) || pinned(right, left))
+                {
+                    // The failure message observes nothing (rule 4).
+                    return Some(format!(
+                        "assert {} == {}",
+                        text_for_range(source, left.range()).trim(),
+                        text_for_range(source, right.range()).trim()
+                    ));
+                }
             }
         }
         if statement_touches_name(stmt, bound, source) {
@@ -434,6 +444,38 @@ fn bound_exception_comparison(
         }
     }
     None
+}
+
+/// Every equality a passing `stmt` requires: the one `assert A == B` or
+/// `self.assertEqual(A, B)` states, or each `==` conjunct of a positive `and`
+/// chain (`assert len(e.value.args) == 1 and str(e.value) == "text"`, #15646).
+/// `or`, `not` and a comparison inside either require nothing.
+fn required_equalities(stmt: &Stmt) -> Vec<(&Expr, &Expr)> {
+    fn conjuncts<'a>(test: &'a Expr, out: &mut Vec<(&'a Expr, &'a Expr)>) {
+        match test {
+            Expr::BoolOp(bool_op) if bool_op.op == ast::BoolOp::And => {
+                for value in &bool_op.values {
+                    conjuncts(value, out);
+                }
+            }
+            Expr::Compare(compare)
+                if compare.ops.len() == 1 && matches!(compare.ops[0], ast::CmpOp::Eq) =>
+            {
+                if let Some(right) = compare.comparators.first() {
+                    out.push((compare.left.as_ref(), right));
+                }
+            }
+            _ => {}
+        }
+    }
+    match stmt {
+        Stmt::Assert(assert_stmt) if matches!(assert_stmt.test.as_ref(), Expr::BoolOp(_)) => {
+            let mut out = Vec::new();
+            conjuncts(assert_stmt.test.as_ref(), &mut out);
+            out
+        }
+        _ => equality_operands(stmt).into_iter().collect(),
+    }
 }
 
 /// The two operands of `assert A == B` or `self.assertEqual(A, B)`.

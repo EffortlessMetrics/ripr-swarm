@@ -1,0 +1,1 @@
+crates/ripr/tests/declared_test_target_repair_start.rs|Command::new|2|15910-declared-test-target-repair-start|Fixture setup runs local git (init/commit) in a temp repository and the built ripr binary (check, repair, continue) against it; no shell or network.

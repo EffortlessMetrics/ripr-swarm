@@ -98,6 +98,7 @@ pub(crate) struct DropInManifests {
     root: Option<PathBuf>,
     json_root_eligibility: Arc<crate::analysis::workspace::JsonRootEligibilityMemo>,
     json: Arc<Mutex<LiteralJsonMemo>>,
+    json_verdicts: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
     verdicts: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
     standard_roots: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
 }
@@ -114,6 +115,7 @@ impl DropInManifests {
             root: Some(root.to_path_buf()),
             json_root_eligibility: Arc::default(),
             json: Arc::default(),
+            json_verdicts: Arc::default(),
             verdicts: Arc::default(),
             standard_roots: Arc::default(),
         }
@@ -121,10 +123,33 @@ impl DropInManifests {
 
     /// Closed literal json! admission requires a fresh resolved registry edge
     /// and the same strict ambient/source-replacement snapshot as rule 7a.
+    ///
+    /// The verdict is kept per file for the life of this authority (one
+    /// analysis), as [`Self::verified`] keeps drop-in verdicts. The binding
+    /// scan asks once per macro call site, and recomputing the strict
+    /// snapshot for each question made a check of ripr's own tree ten times
+    /// slower (#16038).
     pub(crate) fn verified_literal_json(&self, file: &Path) -> bool {
         let Some(root) = &self.root else {
             return false;
         };
+        let key = root.join(file);
+        if let Some(verdict) = self
+            .json_verdicts
+            .lock()
+            .ok()
+            .and_then(|verdicts| verdicts.get(&key).copied())
+        {
+            return verdict;
+        }
+        let verdict = self.verify_literal_json(root, file);
+        if let Ok(mut verdicts) = self.json_verdicts.lock() {
+            verdicts.insert(key, verdict);
+        }
+        verdict
+    }
+
+    fn verify_literal_json(&self, root: &Path, file: &Path) -> bool {
         if !self.json_root_eligibility.eligible(root) {
             return false;
         }

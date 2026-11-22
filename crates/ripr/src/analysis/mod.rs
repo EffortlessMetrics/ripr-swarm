@@ -102,6 +102,8 @@ pub(crate) use diff::bare_repository_message;
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+// The `ci-packet` capture through the same assembly (#9365).
+pub(crate) use diff::load_ci_packet_diff_bytes;
 #[cfg(test)]
 pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
@@ -202,7 +204,8 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_seam_at_with_config, inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
-    inventory_repair_seams_report, inventory_seams_at_with_config, locate_seam_file_at_with_config,
+    inventory_repair_seams_report, inventory_seams_at_with_config, inventory_stub_choices,
+    locate_seam_file_at_with_config,
     prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
     scoped_file_seams, seam_kind_for_probe_family,
     workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
@@ -252,6 +255,8 @@ pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::changed_source_files_absent_from_worktree;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
+pub(crate) use workspace::is_declared_cargo_test_surface;
+pub(crate) use workspace::is_test_surface;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::path_enters_ignored_dir;
 pub(crate) use workspace::seeds_diff_probes;
