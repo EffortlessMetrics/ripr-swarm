@@ -89,9 +89,9 @@ mod tests {
     }
 
     /// Every real-state marker is refused on its own: the fixed markers in
-    /// any letter case (`.CODEX`, `MEMORY.md`), drive paths, and the two
-    /// home-directory prefixes as spelled. A generic placeholder path and
-    /// ordinary text are allowed.
+    /// any letter case (the fixtures use upper case for two of them), drive
+    /// paths, and the two home-directory prefixes as spelled. A generic
+    /// placeholder path and ordinary text are allowed.
     #[test]
     fn allowlist_pattern_refuses_each_real_state_marker_and_allows_generic_text() {
         for pattern in [
