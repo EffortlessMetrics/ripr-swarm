@@ -3653,7 +3653,16 @@ fn analyze_related_assertions(
                         assertion,
                         import_defeats_owner,
                         cross_package_defeats_owner,
-                    );
+                    )
+                    // #13037: the reached-tail pin folds the one compared
+                    // owner call, bare or through the established own-crate
+                    // path, on a uniquely named owner. That is this
+                    // assertion's operand, so the pin carries its identity
+                    // under the same defeats that gate its confirmation.
+                    || (!match_context.owner_shadowed
+                        && !import_defeats_owner
+                        && !cross_package_defeats_owner
+                        && (return_admission.reached_tail_pin)(test, assertion));
                 // #14206: relative to this probe, an assertion that drops the
                 // owner call's value is no stronger than a smoke check.
                 if owner_value_masked && relative_strength.rank() > OracleStrength::Weak.rank() {
