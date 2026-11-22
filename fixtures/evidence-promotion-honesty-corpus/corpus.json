@@ -148,6 +148,11 @@
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
       "cache_schema_version": "1.176",
       "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unasserted-predicate-boundary.json",
+      "cache_schema_version": "1.184",
+      "reason": "captured at 1.184 by 29f3917caa before the branch merged the 1.189 generation; the regeneration guard judges none of the fields that bump touched for this subject, so its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
     }
   ],
   "report_digest_exemptions": [],
