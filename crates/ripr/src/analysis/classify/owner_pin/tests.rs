@@ -9846,6 +9846,18 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
         ("mod core;\nuse dep::core;\nuse core::*;\n", false),
         ("#[path = \"x.rs\"]\nmod core;\nuse core::*;\n", false),
         ("mod outer { mod core; use core::*; }\n", false),
+        // A gated declaration can be compiled out, leaving the glob to read
+        // whatever holds the standard name (a renamed dependency included).
+        (
+            "#[cfg(feature = \"local\")]\nmod core;\nuse core::*;\n",
+            false,
+        ),
+        (
+            "#[cfg_attr(docsrs, cfg(feature = \"local\"))]\nmod core;\nuse core::*;\n",
+            false,
+        ),
+        // Other names keep the #14031 reading under a gate.
+        ("#[cfg(test)]\nmod global;\nuse global::*;\n", true),
     ] {
         let sites = sites_in_widest_context(source, &["assert_eq"]);
         let candidates = stored_candidates(source)?;

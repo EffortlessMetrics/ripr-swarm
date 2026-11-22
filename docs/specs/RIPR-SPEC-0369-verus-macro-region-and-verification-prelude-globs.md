@@ -198,7 +198,9 @@ A module declared under a standard crate's name qualifies like any other
 prelude, so the glob reads the local module and never the standard crate.
 The standard-root rule declines such a file because the module takes the
 root's name, so before this the glob was foreign under both rules. Every other
-standard-root spelling keeps the standard-root rule.
+standard-root spelling keeps the standard-root rule, and so does a declaration
+under `cfg` or `cfg_attr`: compiled out, it leaves the glob reading the standard
+name, which a renamed dependency can hold.
 
 An import path that only reads the module name does not shadow it (#14116):
 `pub(crate) use name::{A, B};`, a member renamed to another name, or an import
