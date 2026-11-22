@@ -59,7 +59,7 @@ pub(super) fn removal_only_rows(root: &std::path::Path, omitted: &[&Finding]) ->
         };
         let row = format!(
             "    - {}:{}{} (kind: {}): {}\n",
-            crate::analysis::finding_location_text(root, &finding.probe.location.file),
+            crate::output::path::human_location_text(root, &finding.probe.location.file),
             finding.probe.location.line,
             subject,
             // The same line can carry two findings; the kind tells them apart.
