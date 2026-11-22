@@ -712,8 +712,19 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
 /// it at that site, so the glob is not a foreign one. Only the top level of
 /// a file qualifies, read with 2018 path semantics; the scan has no edition, so
 /// a 2015-edition non-root file, where the same spelling names a crate-root
-/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`), grouped globs and the
-/// standard roots keep their dedicated rules.
+/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`) and grouped globs keep
+/// their dedicated rules.
+///
+/// A module the file declares under a standard crate's name qualifies like
+/// any other (`mod core; use core::*;`, #14116): an item declared in the
+/// module shadows the extern prelude, so the glob reads the local module and
+/// never the standard crate. The standard-root rule already declines such a
+/// file because the module takes the root's name, which left this glob
+/// foreign under both rules. Every other standard-root spelling (a longer
+/// path, a group, a leading `::`, a file that declares no such module) keeps
+/// the standard-root rule, and so does a declaration under `cfg` or
+/// `cfg_attr`: with the module compiled out the glob reads the standard
+/// crate's name, which a renamed dependency can hold.
 fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &str) -> bool {
     let whole_glob = import
         .use_tree()
@@ -727,9 +738,15 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
         return false;
     }
     let root = root.trim_start_matches("r#");
-    if root.is_empty() || matches!(root, "std" | "core" | "alloc") {
+    if root.is_empty() {
         return false;
     }
+    // A standard name always has a fallback: with the declaration compiled
+    // out, `core::*` reads the extern prelude's `core`, which Cargo can bind
+    // to a renamed dependency. Any other name fails to resolve there unless a
+    // dependency carries it. So a standard name needs a declaration no
+    // attribute can remove.
+    let standard = matches!(root, "std" | "core" | "alloc");
     let Some(parent) = import
         .syntax()
         .parent()
@@ -754,9 +771,10 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
             // tests. An out-of-line module's public imports are reported
             // workspace-wide at their own file.
             if module.item_list().is_some()
-                || module
-                    .attrs()
-                    .any(|attr| attr.syntax().text().to_string().contains("path"))
+                || module.attrs().any(|attr| {
+                    let text = attr.syntax().text().to_string();
+                    text.contains("path") || standard && text.contains("cfg")
+                })
             {
                 return false;
             }
