@@ -548,10 +548,10 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
             "Check whether the value that test asserts depends on the changed call. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If it does not, assert the effect the call produces"
         }
         ProbeFamily::MatchArm => {
-            "Check whether a related test's input selects the changed arm. If none does, add one and assert the exact value that arm produces"
+            "Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If no related input selects the arm, add one and assert the exact value the arm produces"
         }
         ProbeFamily::FieldConstruction => {
-            "Check whether the value that test asserts includes the changed field. If it does not, assert that field's exact value"
+            "Check whether the value that test asserts includes the changed field. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If it does not, assert that field's exact value"
         }
         _ => return None,
     };
@@ -1501,7 +1501,7 @@ mod tests {
             (
                 ProbeFamily::MatchArm,
                 "None => 0",
-                "selects the changed arm",
+                "comes from the changed arm",
             ),
             (
                 ProbeFamily::FieldConstruction,

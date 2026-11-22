@@ -59,9 +59,13 @@ alone:
   not established: for `call_deletion`, whether the asserted value depends on
   the changed call (if it does, the assertion may already notice the change,
   which the static read could not confirm; if not, assert the effect the call
-  produces); for `match_arm`, whether a related test's input selects the
-  changed arm; for `field_construction`, whether the asserted value includes
-  the changed field. The step claims no observation and the class stays
+  produces); for `match_arm`, whether the asserted value comes from the
+  changed arm (if it does, the same unconfirmed-observation sentence; if no
+  related input selects the arm, add one and assert the arm's exact value);
+  for `field_construction`, whether the asserted value includes the changed
+  field (if it does, the same sentence; if not, assert that field's exact
+  value). Each family states both branches so the reader is never left at a
+  dead end. The step claims no observation and the class stays
   `weakly_exposed`.
 - Only reach-establishing rows are eligible: the row's relation reason must
   establish reach to the changed owner
