@@ -560,6 +560,45 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "writeln",
 ];
 
+/// Trusted names a glob import cannot rebind at a bare call in a crate that
+/// compiles (#16060). Each is a `core` macro in the `macro_use` prelude, with
+/// or without `#![no_std]`, and rustc rejects a bare call whose name both a
+/// glob import and that prelude supply (E0659, editions 2015 through 2024).
+/// A glob therefore leaves these calls standard. The `std`-only macros
+/// (`vec`, `format`, `dbg`, `print`, `println`, `eprint`, `eprintln`) stay
+/// out: under `#![no_std]` the prelude lacks them and a glob may supply them.
+/// `#![no_implicit_prelude]` removes the prelude, and is a binding site of
+/// its own for every name.
+const GLOB_UNREBINDABLE_MACRO_NAMES: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "column",
+    "concat",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "env",
+    "file",
+    "format_args",
+    "line",
+    "matches",
+    "module_path",
+    "option_env",
+    "panic",
+    "stringify",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "write",
+    "writeln",
+];
+
+fn glob_cannot_rebind(name: &str) -> bool {
+    GLOB_UNREBINDABLE_MACRO_NAMES.contains(&name.trim_start_matches("r#"))
+}
+
 /// The trusted macro names a file's binding sites may report, whatever the
 /// workspace context: any trusted subset, package set, module resolution or
 /// drop-in verdict. [`MacroBindingCandidates::may_bind`] false for a name
@@ -1742,6 +1781,7 @@ fn macro_binding_sites_in_tree(
                         ambiguous.extend(
                             all(line, MacroBindingKind::ForeignGlob(path), private)
                                 .into_iter()
+                                .filter(|(name, _)| !glob_cannot_rebind(name))
                                 .map(|(name, mut site)| {
                                     site.module_local = confined;
                                     (name, site)
@@ -1749,19 +1789,21 @@ fn macro_binding_sites_in_tree(
                         );
                         continue;
                     };
-                    ambiguous.extend(trusted.iter().map(|name| {
-                        (
-                            (*name).to_string(),
-                            MacroBindingSite {
-                                line,
-                                kind: MacroBindingKind::ForeignGlob(path.clone()),
-                                scope: Some(scope),
-                                scope_bytes: Some(scope_bytes),
-                                crate_local: private,
-                                module_local: false,
-                            },
-                        )
-                    }));
+                    ambiguous.extend(trusted.iter().filter(|name| !glob_cannot_rebind(name)).map(
+                        |name| {
+                            (
+                                (*name).to_string(),
+                                MacroBindingSite {
+                                    line,
+                                    kind: MacroBindingKind::ForeignGlob(path.clone()),
+                                    scope: Some(scope),
+                                    scope_bytes: Some(scope_bytes),
+                                    crate_local: private,
+                                    module_local: false,
+                                },
+                            )
+                        },
+                    ));
                     continue;
                 }
                 let name = if let Some(rename) = item.rename() {
