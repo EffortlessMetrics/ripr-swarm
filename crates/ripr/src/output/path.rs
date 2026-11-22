@@ -807,7 +807,8 @@ mod tests {
                 Path::new(&root_text),
                 Path::new(&verbatim_looking)
             ),
-            verbatim_looking.replace('\\', "/")
+            // A backslash is a file-name byte here, spelled `%5C` (#15908).
+            verbatim_looking.replace('\\', "%5C")
         );
     }
 

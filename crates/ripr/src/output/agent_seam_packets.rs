@@ -6703,8 +6703,15 @@ mod tests {
             PathBuf::from(r"tests\pricing.rs");
 
         let json = render_agent_seam_packets_json(&[entry], None);
+        // A backslash is a separator on Windows and a file-name byte, spelled
+        // `%5C`, on Unix (#15908).
+        let expected = if cfg!(unix) {
+            "\"file\": \"tests%5Cpricing.rs\""
+        } else {
+            "\"file\": \"tests/pricing.rs\""
+        };
         assert!(
-            json.contains("\"file\": \"tests/pricing.rs\""),
+            json.contains(expected),
             "expected normalized related test file in packet JSON, got {json}"
         );
         assert!(

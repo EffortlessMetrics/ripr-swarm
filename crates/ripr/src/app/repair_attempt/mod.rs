@@ -3515,7 +3515,11 @@ fn forbidden_packet_path_text(text: &str, stable_path_text: bool) -> Result<Stri
     crate::analysis::decode_stable_path_text(text)
         .to_str()
         .map(str::to_string)
-        .ok_or_else(|| format!("repair packet path `{text}` does not name a UTF-8 path"))
+        .ok_or_else(|| {
+            format!(
+                "repair packet path `{text}` does not name a UTF-8 path; rename the file to a UTF-8 name, then regenerate the packet"
+            )
+        })
 }
 
 /// A packet the gap decision ledger rendered. Its paths come from the

@@ -1938,7 +1938,13 @@ mod tests {
                 Path::new(r"\\?\F:\repo\src\main.rs"),
                 false
             ),
-            r"//?/F:/repo/src/main.rs"
+            // On Unix the backslashes are file-name bytes, spelled `%5C`
+            // (#15908); a Windows host still reads them as separators.
+            if cfg!(unix) {
+                r"%5C%5C?%5CF:%5Crepo%5Csrc%5Cmain.rs"
+            } else {
+                r"//?/F:/repo/src/main.rs"
+            }
         );
     }
 
