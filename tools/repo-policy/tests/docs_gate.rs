@@ -48,6 +48,115 @@ fn ordinary_markdown_change_passes_new_path() -> TestResult {
 }
 
 #[test]
+fn scoped_docs_gate_checks_unchanged_document_roles_in_the_subject_tree() -> TestResult {
+    let good = "# Tree\n## Context\n## Decision\n## Consequences\n## Alternatives Considered\n";
+    let rel = "docs/adr/0001-tree.md";
+    let note = "docs/releases/note.md";
+    let root = fixture(&[(rel, good), (note, "# Note\n")])?;
+    let paths = changed(&[note]);
+    let passing = run_docs_gate(&root, &paths)?;
+    if !passing.violations.is_empty() || !passing.plan.gates.contains(&"check-doc-roles") {
+        return Err(passing.render().into());
+    }
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "valid roles"])?;
+    fs::write(root.join(rel), good.replace("## Decision", "## decision"))?;
+    let failed = run_docs_gate(&root, &paths)?;
+    if failed.violations
+        != [format!(
+            "{rel} is missing required ADR section `## Decision`"
+        )]
+    {
+        return Err(failed.render().into());
+    }
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "lowercase role section"])?;
+    fs::write(root.join(note), "# Note\nUpdated release note.\n")?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "release note only"])?;
+    fs::write(root.join(rel), good)?;
+    let revision = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if revision.violations != failed.violations {
+        return Err(revision.render().into());
+    }
+    fs::write(root.join("docs/adr/README.md"), "# Index\n")?;
+    fs::write(
+        root.join(".gitattributes"),
+        "docs/adr/README.md export-ignore\n",
+    )?;
+    git(&root, &["add", "docs/adr/README.md", ".gitattributes"])?;
+    git(
+        &root,
+        &["commit", "-q", "-m", "omit the excluded directory index"],
+    )?;
+    fs::write(root.join(note), "# Note\nFirst index control.\n")?;
+    git(&root, &["add", note])?;
+    git(
+        &root,
+        &["commit", "-q", "-m", "release note after index exclusion"],
+    )?;
+    let index_filtered = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !index_filtered.plan.is_docs_eligible() || index_filtered.violations != failed.violations {
+        return Err(index_filtered.render().into());
+    }
+    fs::write(root.join(".gitattributes"), "docs/adr export-ignore\n")?;
+    git(&root, &["add", ".gitattributes"])?;
+    git(
+        &root,
+        &["commit", "-q", "-m", "exclude roles from archives"],
+    )?;
+    fs::write(root.join(note), "# Note\nSecond release note.\n")?;
+    git(&root, &["add", note])?;
+    git(&root, &["commit", "-q", "-m", "second release note only"])?;
+    let filtered = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if filtered.plan.is_docs_eligible() {
+        return Err(filtered.render().into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unrelated_non_utf8_doc_name_keeps_the_scoped_role_verdict() -> TestResult {
+    use std::os::unix::ffi::OsStrExt;
+    let note = "docs/releases/note.md";
+    let root = fixture(&[(note, "# Note\n")])?;
+    fs::write(
+        root.join("docs")
+            .join(std::ffi::OsStr::from_bytes(b"other-\xff.txt")),
+        "ordinary bytes",
+    )?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "unrelated document"])?;
+    fs::write(root.join(note), "# Note\nUpdated note.\n")?;
+    git(&root, &["add", note])?;
+    git(&root, &["commit", "-q", "-m", "release notes only"])?;
+    let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !report.plan.is_docs_eligible() || !report.violations.is_empty() {
+        return Err(report.render().into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn scoped_roles_refuse_symlinks_even_for_an_unchanged_role_directory() -> TestResult {
+    use std::os::unix::fs::symlink;
+    let root = fixture(&[("docs/releases/note.md", "# Note\n")])?;
+    symlink(root.join("missing"), root.join("docs/adr"))?;
+    let error = run_docs_gate(&root, &changed(&["docs/releases/note.md"])).err();
+    if !error
+        .as_deref()
+        .is_some_and(|error| error.contains("expected a regular file or directory"))
+    {
+        return Err(format!("unexpected symlink result: {error:?}").into());
+    }
+    Ok(())
+}
+
+#[test]
 fn changed_spec_runs_spec_gates() -> TestResult {
     let root = fixture(&[
         ("docs/specs/RIPR-SPEC-0099-example.md", GOOD_SPEC),
@@ -438,6 +547,90 @@ fn forbidden_static_language_and_broken_link_fail() -> TestResult {
     );
     Ok(())
 }
+#[test]
+fn release_note_command_deltas_require_candidate_cli_proof() -> TestResult {
+    let note = "docs/releases/0.11.0-release-notes.md";
+    let old = "# Release\nUse `ripr check --diff \"old file\" --json`.\n";
+    let root = fixture(&[(note, old)])?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "original commands"])?;
+    fs::write(
+        root.join(note),
+        "# Release\nNew prose.\n\nUse `ripr check --diff \"old file\" --json`.\n",
+    )?;
+    git(&root, &["commit", "-qam", "reword surrounding prose"])?;
+    let safe = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !safe.plan.is_docs_eligible() || !safe.violations.is_empty() {
+        return Err(safe.render().into());
+    }
+    for (label, command) in [
+        ("new flag", "ripr check --diff path --not-a-ripr-flag"),
+        ("different command", "ripr gate check --diff path --json"),
+        ("command removed", "regular prose"),
+    ] {
+        fs::write(root.join(note), format!("# Release\n`{command}`\n"))?;
+        git(&root, &["commit", "-qam", label])?;
+        // A repaired worktree must not mask a change in the selected Git blobs.
+        fs::write(root.join(note), old)?;
+        let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+        if !report
+            .plan
+            .widen_reasons
+            .iter()
+            .any(|r| r.contains("candidate CLI proof required"))
+        {
+            return Err(format!("{label}: {}", report.render()).into());
+        }
+    }
+    for (before, after) in [
+        ("ripr check", "ripr bogus"),
+        ("ripr check [--json]", "ripr check [--bad-flag]"),
+        ("ripr check \\\n  [--json]", "ripr check \\\n  [--bad-flag]"),
+    ] {
+        fs::write(root.join(note), before)?;
+        git(&root, &["commit", "-qam", "original opaque example"])?;
+        fs::write(root.join(note), after)?;
+        git(&root, &["commit", "-qam", "changed opaque example"])?;
+        let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+        if !report
+            .plan
+            .widen_reasons
+            .iter()
+            .any(|r| r.contains("cargo test -p xtask --test ripr_public_guide_contract"))
+        {
+            return Err(format!("opaque example {after:?}: {}", report.render()).into());
+        }
+    }
+    for (name, body, requires_cli) in [
+        ("prose-release-notes.md", "# Release\nJust prose.\n", false),
+        (
+            "cli-release-notes.md",
+            "# Release\n`ripr check --new-flag`\n",
+            true,
+        ),
+    ] {
+        let path = format!("docs/releases/{name}");
+        fs::write(root.join(&path), body)?;
+        git(&root, &["add", "--", &path])?;
+        git(&root, &["commit", "-qm", name])?;
+        let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+        if report.plan.is_docs_eligible() == requires_cli || !report.violations.is_empty() {
+            return Err(format!("added {name}: {}", report.render()).into());
+        }
+    }
+    let unbound = run_docs_gate(&root, &changed(&[note]))?;
+    if !unbound
+        .plan
+        .widen_reasons
+        .iter()
+        .any(|r| r.contains("before/after"))
+    {
+        return Err(unbound.render().into());
+    }
+    Ok(())
+}
+
 #[test]
 fn revision_mode_widens_when_unchanged_markdown_can_lose_its_destination() -> TestResult {
     let note = "docs/releases/0.11.0-release-notes.md";

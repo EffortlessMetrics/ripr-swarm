@@ -280,7 +280,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    so no read of that binding confirms the write. Such a write stays unjudged;
    ripr cannot yet confirm it through the value the call chain returns. `fixtures/rust_copy_builder_field_write`
    pins this in the RIPR-SPEC-0108 honesty corpus. The guidance follows the receiver: for a borrowed
-   receiver the hover, the agent packet's `missing_oracle_shape` and the
+   receiver the hover, the agent packet's `missing_oracle_shape`, a related
+   test's evidence-record `upgrade_suggestion` (#11726) and the
    hand-written step say to assert the field on the value the method was called
    on; for a by-value receiver they say to assert it on the value the call
    returns (the stub refusal is `field_written_by_value`, not

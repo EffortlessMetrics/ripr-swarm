@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0454"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0454-operator-queue-conflict-notice.md"
+status = "proposed"
+owner = "ci-operations"
+standalone_reason = "Issue #14705 requires operator-selected queue conflict evidence and recoverable comment delivery."

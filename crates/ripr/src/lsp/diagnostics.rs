@@ -970,9 +970,18 @@ pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<
 pub(super) fn empty_scope_diagnostic(snapshot: &AnalysisSnapshot) -> Diagnostic {
     // The not-all-clear fact and recovery route come from the shared wording
     // owner (#12416), so the marker cannot drift from hover and status.
+    //
+    // `snapshot.base` is the base the run resolved, which is a branch name
+    // even when no base was requested. The cause sentence needs the requested
+    // base, which the bound input identity records; hover and status read the
+    // same requested value from the session configuration (#15951).
+    let requested_base = match snapshot.input_identity.as_ref() {
+        Some(identity) => identity.requested_base.as_deref(),
+        None => snapshot.base.as_deref(),
+    };
     let disclosure = super::backend::empty_scope_disclosure(
         snapshot.analysis_outcome.as_ref(),
-        snapshot.base.as_deref(),
+        requested_base,
         false,
     )
     .unwrap_or_else(|| super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE.to_string());
@@ -6199,6 +6208,7 @@ mod seam_diagnostic_tests {
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
             typescript_package_root: None,
+            verify_cwd: None,
         }
     }
 
@@ -6961,6 +6971,7 @@ mod diagnostic_policy_tests {
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
             typescript_package_root: None,
+            verify_cwd: None,
         }
     }
 

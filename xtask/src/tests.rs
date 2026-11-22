@@ -12308,6 +12308,27 @@ fn golden_drift_semantics_summarize_json_changes() {
 }
 
 #[test]
+fn golden_drift_human_evidence_classification() {
+    let before = include_str!("../../fixtures/manual_let_else_pairing/expected/human.txt");
+    let classify =
+        |after: &str| super::golden_drift_type(&golden_drift_semantics("human.txt", before, after));
+    let window = before.replace("    - propagation yes: Complete propagation witness reaches returned value: let Some(rhs) = rhs.next() else {", "    - infection unknown: No reachable tests were found, so infection cannot be established");
+    assert_eq!(classify(&window), "detail_window_changed");
+    let semantic = window.replace(" · infection unknown ·", " · infection yes ·");
+    assert_eq!(
+        classify(&semantic),
+        "stage_states_changed [infection: unknown -> yes]"
+    );
+    for malformed in [" · infection nonsense ·", " · reach weak ·", " · "] {
+        assert_eq!(
+            classify(&before.replace(" · infection unknown ·", malformed)),
+            "stage_states_unavailable"
+        );
+    }
+    assert!(classify(&before.replace("Summary:", "Overview:")).starts_with("formatting_only"));
+}
+
+#[test]
 fn golden_drift_type_names_classification_flip() {
     // Gate-feedback contract: a goldens-check failure must say WHAT KIND of
     // drift happened. A classification flip is the highest-stakes case and
@@ -30497,7 +30518,7 @@ fn assert_packet_coverage_report() -> Result<(), String> {
 }
 
 fn packet_coverage_report_fixture() -> String {
-    let host = if cfg!(windows) { "windows" } else { "unix" };
+    let host = crate::policy::file_policy_retained_evidence::host_label();
     let native = if cfg!(windows) {
         "not_applicable; selected=not_enumerated".to_string()
     } else {
@@ -30860,6 +30881,8 @@ fn file_policy_allowlist_toml_comments_preserve_coverage_commands() -> Result<()
             ("covered_by", None),
             ("covered_by_unix", Some(crate::FilePolicyHost::Unix)),
             ("covered_by_windows", Some(crate::FilePolicyHost::Windows)),
+            ("covered_by_linux", Some(crate::FilePolicyHost::Linux)),
+            ("covered_by_macos", Some(crate::FilePolicyHost::Macos)),
         ] {
             let plain = r#"["cargo test -p xtask first", "cargo test -p xtask second"]"#;
             let baseline: toml::Value =
@@ -30924,6 +30947,8 @@ fn file_policy_allowlist_toml_strings_preserve_decoded_selectors() -> Result<(),
             ("covered_by", None),
             ("covered_by_unix", Some(crate::FilePolicyHost::Unix)),
             ("covered_by_windows", Some(crate::FilePolicyHost::Windows)),
+            ("covered_by_linux", Some(crate::FilePolicyHost::Linux)),
+            ("covered_by_macos", Some(crate::FilePolicyHost::Macos)),
         ] {
             for (case, value, expected) in [
                 (
@@ -31209,7 +31234,13 @@ fn file_policy_allowlist_toml_keeps_governed_field_refusals() -> Result<(), Stri
         let path = root.join("allowlist.toml");
         let valid = file_policy_toml_coverage_fixture("covered_by", "[\"cargo test common\"]");
         let mut cases = Vec::new();
-        for field in ["covered_by", "covered_by_unix", "covered_by_windows"] {
+        for field in [
+            "covered_by",
+            "covered_by_unix",
+            "covered_by_windows",
+            "covered_by_linux",
+            "covered_by_macos",
+        ] {
             for invalid in [
                 "42",
                 "[42]",
@@ -31229,9 +31260,13 @@ fn file_policy_allowlist_toml_keeps_governed_field_refusals() -> Result<(), Stri
             ));
         }
         for invalid in [
-            "covered_by_linux = [\"cargo test selected\"]",
+            "covered_by_unknown = [\"cargo test selected\"]",
             "covered_by_Unix = [\"cargo test selected\"]",
             "covered_by_unix = []",
+            "covered_by_linux = []",
+            "covered_by_macos = []",
+            "covered_by_linux = [\"cargo xtask check-file-policy\"]",
+            r#"covered_by_macos = [" "]"#,
             "covered_by_windows = []",
             "covered_by_unix = [\" \" ]",
             "covered_by_windows = [\"cargo xtask check-file-policy\"]",
@@ -31290,11 +31325,15 @@ fn file_policy_allowlist_rejects_malformed_host_coverage() -> Result<(), String>
             "reason = \"Explicit applicability\"\ncovered_by = [\"cargo test common\"]\n",
         );
         for invalid in [
-            "covered_by_linux = [\"cargo test native\"]",
+            "covered_by_unknown = [\"cargo test native\"]",
             "covered_by_Unix = [\"cargo test native\"]",
             "covered_by_unix = \"cargo test native\"",
             "covered_by_unix = [1]",
             "covered_by_unix = []",
+            "covered_by_linux = []",
+            "covered_by_macos = []",
+            "covered_by_linux = [\"cargo xtask check-file-policy\"]",
+            r#"covered_by_macos = [" "]"#,
             "covered_by_windows = [\" \" ]",
             "covered_by_windows = [\"cargo xtask check-file-policy\"]",
             "covered_by_unix = [\"cargo test native\",,]",

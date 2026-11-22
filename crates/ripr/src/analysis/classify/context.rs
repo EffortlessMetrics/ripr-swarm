@@ -88,6 +88,12 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// predicate's infection by folding both versions; `None` keeps the
     /// ordinary reading.
     pub literal_condition: Option<super::LiteralConditionChange>,
+    /// #15272: the base-side text of an owner whose only changed line is the
+    /// probe's, as the diff establishes it, when the related tests assert
+    /// the owner only where both versions return the same value. Lets the
+    /// infection stage withhold their credit; `None` keeps the ordinary
+    /// reading.
+    pub owner_baseline: Option<String>,
     #[cfg(feature = "lang-rust")]
     pub tier_flow: Option<super::TierFlow>,
     /// #14387: the diff's old text of the probe's line when that line is the
@@ -133,6 +139,7 @@ impl<'a> ProbeContext<'a> {
             compile_time_guarded: false,
             unary_tail: None,
             literal_condition: None,
+            owner_baseline: None,
             #[cfg(feature = "lang-rust")]
             tier_flow: None,
             owner_sole_change: None,

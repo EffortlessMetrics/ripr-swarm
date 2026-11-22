@@ -215,3 +215,44 @@ fn two_preview_languages_off_get_named_lines_and_one_combined_snippet() -> Resul
     require(&screen, "enabled = [\"rust\", \"typescript\"]", false)?;
     require(&screen, "enabled = [\"rust\", \"python\"]", false)
 }
+
+/// A mixed repository keeps its crate under `backend/`, so the root has no
+/// Rust marker. Its Rust change is analyzed, and the snippet that turns
+/// Python on must keep `rust`: pasted without it, the next run would report
+/// the Rust file as not analyzed.
+#[test]
+fn the_snippet_keeps_rust_for_a_crate_nested_below_the_root() -> Result<(), String> {
+    let repo = Repo::create()?;
+    repo.git(&["rm", "-q", "-r", "Cargo.toml", "src", "over.py"])?;
+    for dir in ["backend/src", "scripts/tools"] {
+        std::fs::create_dir_all(repo.0.join(dir)).map_err(|e| e.to_string())?;
+    }
+    repo.write("backend/Cargo.toml", CARGO_TOML)?;
+    repo.write("backend/src/lib.rs", OLD_RUST)?;
+    repo.write("scripts/pyproject.toml", "[project]\nname = \"tools\"\n")?;
+    repo.write("scripts/tools/over.py", OLD_PYTHON)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "nested"])?;
+    repo.write("backend/src/lib.rs", NEW_RUST)?;
+    repo.write("scripts/tools/over.py", NEW_PYTHON)?;
+    let screen = repo.check_change()?;
+    // The premise: Rust was analyzed, Python was not.
+    require(&screen, "backend/src/lib.rs:2", true)?;
+    require(&screen, PYTHON_NOTE, true)?;
+    require(
+        &screen,
+        "[languages]\nenabled = [\"rust\", \"python\"]\n",
+        true,
+    )?;
+    // `ripr doctor` prints the same list for the same root.
+    let doctor = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(&repo.0)
+        .arg("doctor")
+        .output()
+        .map_err(|e| e.to_string())?;
+    require(
+        &String::from_utf8_lossy(&doctor.stdout),
+        "Set `enabled = [\"rust\", \"python\"]` under `[languages]`",
+        true,
+    )
+}
