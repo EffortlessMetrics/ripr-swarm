@@ -275,6 +275,31 @@ fn referenced_projects_that_disagree_leave_the_alias_unresolved() -> Result<(), 
     expect_unresolved(&subject.json()?, "disagreeing referenced projects")
 }
 
+/// A referenced project with no key for the alias but a `baseUrl` resolves
+/// the bare specifier under that anchor first. Once a file sits there, the
+/// sibling's alias is no longer the only answer and the test is not credited.
+#[test]
+fn referenced_project_base_url_target_leaves_the_alias_unresolved() -> Result<(), String> {
+    let subject = Subject::create_with(TYPESCRIPT_ON, "tsconfig.json", SOLUTION_ROOT)?;
+    subject.write(
+        "tsconfig.app.json",
+        "{\"compilerOptions\":{\"paths\":{\"@/*\":[\"./src/*\"]}},\"include\":[\"src\"]}",
+    )?;
+    subject.write(
+        "tsconfig.node.json",
+        "{\"compilerOptions\":{\"baseUrl\":\"./tools\"},\"include\":[\"tools\"]}",
+    )?;
+    expect_related(&subject.json()?, "nothing under the sibling baseUrl")?;
+    subject.write(
+        "tools/@/pricing.ts",
+        "export function discountRate(tier: string): number {\n  return tier === \"pro\" ? 0.1 : 0;\n}\n",
+    )?;
+    expect_unresolved(
+        &subject.json()?,
+        "a same-named file under the sibling baseUrl",
+    )
+}
+
 /// A reference this reader cannot open is a project it cannot rule out.
 #[test]
 fn unreadable_reference_leaves_the_alias_unresolved() -> Result<(), String> {

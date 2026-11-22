@@ -9637,6 +9637,15 @@ tests = [
   "crates/ripr/tests/typescript_tsconfig_alias_default.rs::solution_style_root_relates_the_test_through_its_referenced_project",
   "crates/ripr/tests/typescript_tsconfig_alias_default.rs::referenced_projects_that_disagree_leave_the_alias_unresolved",
   "crates/ripr/tests/typescript_tsconfig_alias_default.rs::unreadable_reference_leaves_the_alias_unresolved",
+  "crates/ripr/tests/typescript_tsconfig_alias_default.rs::referenced_project_base_url_target_leaves_the_alias_unresolved",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::solution_style_root_own_paths_are_not_a_project",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::siblings_extending_the_referencing_root_inherit_its_paths",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::references_to_other_directories_leave_the_config_its_own_paths",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::nested_fingerprint_and_digest_follow_a_referenced_sibling",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::an_unclaiming_project_with_a_base_url_can_still_answer",
+  "crates/ripr/src/analysis/language/typescript/workspace_packages.rs::tests::referenced_project_claim_conflicts_with_a_workspace_package",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::an_inherited_base_url_keeps_the_disclosure_for_a_modeled_config",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_self_import_a_paths_key_claims_but_cannot_resolve_may_reach",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/tsconfig.rs",

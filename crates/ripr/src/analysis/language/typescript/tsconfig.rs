@@ -510,6 +510,19 @@ impl TsAliasMap {
             && normalize_lexically(path).is_some_and(|path| self.modeled_configs.contains(&path))
     }
 
+    /// `true` when a `baseUrl` is in effect for this config or a project it
+    /// references. `tsc` then resolves a bare specifier no `paths` key
+    /// matches under that anchor, which this map does not model, so a caller
+    /// must not read "no key matches" as "names nothing in the workspace".
+    pub(crate) fn base_url_in_effect(&self) -> bool {
+        self.tsconfig_loaded
+            && (!self.templates_must_be_relative
+                || self
+                    .referenced_projects
+                    .iter()
+                    .any(|project| !project.templates_must_be_relative))
+    }
+
     /// `true` when this map has no entries (opt-out / parse-failure path).
     pub(crate) fn is_empty(&self) -> bool {
         self.projects()
@@ -611,6 +624,14 @@ impl TsAliasMap {
         let mut unclaimed = false;
         for project in self.projects() {
             if !project.own_key_matches(specifier) {
+                // With a `baseUrl` in effect `tsc` tries the bare specifier
+                // under that anchor before anything else, so this project
+                // may name a different file unless nothing sits there.
+                if !project.templates_must_be_relative
+                    && !project.provably_absent(&strip_ts_ext(specifier))
+                {
+                    return None;
+                }
                 unclaimed = true;
                 continue;
             }
@@ -2540,6 +2561,33 @@ mod tests {
     }
 
     #[test]
+    fn an_unclaiming_project_with_a_base_url_can_still_answer() -> Result<(), String> {
+        // The tools project has no key for `lib/*`, but its `baseUrl` makes
+        // `tsc` look for `tools/lib/owner` first. Membership is not modeled,
+        // so the app's alias is credited only when nothing sits there.
+        let app = r#"{"compilerOptions":{"paths":{"lib/*":["./src/*"]}}}"#;
+        let root = solution_root("references-base-url-competes", app);
+        write(
+            &root,
+            "tsconfig.node.json",
+            r#"{"compilerOptions":{"baseUrl":"./tools"},"include":["tools"]}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the solution-style root must load")?;
+        assert_eq!(resolved(&map, "lib/owner").as_deref(), Some("src/owner.ts"));
+        write(&root, "tools/lib/owner.ts", "export const owner = 2;\n");
+        assert_eq!(resolved(&map, "lib/owner"), None);
+        assert!(map.paths_key_matches("lib/owner"));
+        // A declaration file there is just as much an answer.
+        let _ = fs::remove_file(root.join("tools/lib/owner.ts"));
+        assert_eq!(resolved(&map, "lib/owner").as_deref(), Some("src/owner.ts"));
+        write(&root, "tools/lib/owner.d.ts", "export {};\n");
+        assert_eq!(resolved(&map, "lib/owner"), None);
+        assert!(map.base_url_in_effect());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn unreadable_or_nested_references_fail_closed() {
         let app = r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#;
         for (label, root_config, extra) in [
@@ -2588,9 +2636,24 @@ mod tests {
             ),
         ] {
             let root = solution_root(&format!("references-closed-{label}"), app);
+            // Control: the same root loads before the reference is broken,
+            // so a refusal below is about the reference and not the setup.
+            assert!(load_alias_map(&root).is_some(), "{label}: control");
             write(&root, "tsconfig.json", root_config);
+            assert_eq!(
+                fs::read_to_string(root.join("tsconfig.json"))
+                    .ok()
+                    .as_deref(),
+                Some(root_config),
+                "{label}: fixture"
+            );
             if let Some((name, body)) = extra {
                 write(&root, name, body);
+                assert_eq!(
+                    fs::read_to_string(root.join(name)).ok().as_deref(),
+                    Some(body),
+                    "{label}: fixture"
+                );
             }
             assert!(load_alias_map(&root).is_none(), "{label}");
             let _ = std::fs::remove_dir_all(&root);

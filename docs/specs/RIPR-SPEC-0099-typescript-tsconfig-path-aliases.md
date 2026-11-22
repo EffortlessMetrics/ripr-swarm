@@ -117,8 +117,12 @@ sits in the SAME directory as the selected config into its own project map
 (its own `extends` chain, `baseUrl` and `paths` anchors). Project membership
 (`include`/`files`) is still not modeled. A specifier therefore resolves only
 when every project whose `paths` keys claim it resolve it to the same file,
-and no project without a claim would resolve it as a workspace package;
-otherwise it stays unresolved and disclosed. A solution-style config
+and no project without a claim could resolve it another way: as a workspace
+package, or, when that project has a `baseUrl` in effect, as anything sitting
+at the specifier under that anchor (the fallback-array absence proof is
+reused). Otherwise it stays unresolved and disclosed. Extraction-gap scoping
+keeps its workspace-wide disclosure when a `baseUrl` is in effect for a
+modeled config, because bare specifiers under that anchor are not modeled. A solution-style config
 (`"files": []`, no `include` entries, no `extends`) compiles no file, so its own
 `paths` are not a project; any other referencing config is one. A referenced
 config in a different directory is checked but not consulted: its importers
