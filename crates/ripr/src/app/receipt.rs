@@ -191,7 +191,7 @@ pub(crate) fn check_receipt(
     // `%XX`; it printed a name no file has (#15899).
     let displayed = crate::output::path::human_path_text(&path.to_string_lossy(), cfg!(windows));
 
-    let content = crate::bounded_input::read_to_string(&path).map_err(|err| {
+    let content = crate::bounded_input::read_artifact_text(&path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             let pass_path = if opts.path.is_none() {
                 "or pass the receipt file with `--path` if it is stored under another name"
@@ -260,7 +260,7 @@ fn cross_reference_receipt(
         return Ok(ReceiptCrossRefResult::NotAvailable);
     };
 
-    let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
+    let contents = crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let displayed = crate::output::path::display_path(path);
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(

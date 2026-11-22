@@ -1172,8 +1172,19 @@ pub(crate) fn validate_issued_receipt_evidence(
     receipt: &serde_json::Value,
     verify_bytes: &[u8],
 ) -> Result<(), String> {
-    let verify: serde_json::Value = serde_json::from_slice(verify_bytes)
-        .map_err(|error| format!("repair attempt verify document is not JSON: {error}; regenerate it with `ripr agent verify --json`"))?;
+    let verify: serde_json::Value = serde_json::from_slice(verify_bytes).map_err(|error| {
+        // The attempt store keeps the verify document's exact bytes, so a
+        // re-encoded copy (#15936) is refused here; say why instead of
+        // reporting a JSON syntax error at column 1.
+        if verify_bytes.starts_with(&[0xEF, 0xBB, 0xBF])
+            || verify_bytes.starts_with(&[0xFF, 0xFE])
+            || verify_bytes.starts_with(&[0xFE, 0xFF])
+        {
+            "repair attempt verify document starts with a byte-order mark, but a repair attempt binds the exact UTF-8 bytes `ripr agent verify --json` printed; write it without re-encoding (in Windows PowerShell 5.1, `cmd /c \"ripr agent verify ... --json > verify.json\"`)".to_string()
+        } else {
+            format!("repair attempt verify document is not JSON: {error}; regenerate it with `ripr agent verify --json`")
+        }
+    })?;
     let schema_version = verify
         .get("schema_version")
         .and_then(serde_json::Value::as_str);
