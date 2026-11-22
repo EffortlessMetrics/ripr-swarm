@@ -271,8 +271,11 @@ jobs:
           done
           [ "$missing" -eq 0 ] || exit 1
           tests=$(cat "$d/lib-tests.status")
+          # Tests print nested lines; the suite owns the first `running` and the last result.
+          expected=$(sed -n 's/^running \([0-9]*\) tests\{0,1\}$/\1/p' "$d/lib-tests.log" | head -n 1)
           result=$(grep -E '^test result:' "$d/lib-tests.log" | tail -n 1 || true)
-          passed=$(printf '%s' "$result" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed.*/\1/p')
+          counts=$(printf '%s' "$result" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed; \([0-9]*\) failed; \([0-9]*\) ignored; .*/\1 \2 \3/p')
+          read -r passed failed ignored <<< "${counts:-0 0 0}"
           {
             echo "## macOS advisory"
             echo
@@ -280,8 +283,8 @@ jobs:
             echo "| --- | --- | --- |"
             echo "| ripr library test executable | $tests | ${result:-no test result line} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "$passed" ] || [ "$passed" -eq 0 ]; then
-            echo "::error::macOS library test run executed zero tests or did not finish; evidence is not established"
+          if [ -z "$expected" ] || [ "$passed" -eq 0 ] || [ "$((passed + failed + ignored))" -ne "$expected" ]; then
+            echo "::error::macOS library test run did not finish the ${expected:-unknown} tests it started (last result: ${result:-none}); evidence is not established"
             exit 1
           fi
 

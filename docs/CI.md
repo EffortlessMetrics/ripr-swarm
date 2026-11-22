@@ -834,11 +834,14 @@ normalization behavior surfaced only on a maintainer's local run.
   `macos-advisory-lib-tests`, which runs that executable from the package
   directory. As steps of one job they were cancelled by the limit every night
   from 2026-11-12, and the library tests did not fit a job of their own
-  either: the `ripr` test build takes about 30 minutes and the tests about 14
-  (#8391). The integration suites are not part of this lane.
+  either: the `ripr` test build takes 24 to over 34 minutes (one `rustc` that
+  needs about 14 GB on a 7 GB runner) and the tests about 9 (#8391). The
+  build step may run for 37 minutes; a slower night fails that job as
+  missing evidence. The integration suites are not part of this lane.
 - **Contract.** Clippy and test outcomes are advisory and appear in the job
-  summary. A missing log or exit status, or a library run that executed zero
-  tests, fails the job. It is not a required check.
+  summary. A missing log or exit status, a missing test executable, or a
+  library run whose last result line does not account for every test it
+  started, fails the job. It is not a required check.
 - **Selection.** A daily schedule and explicit `workflow_dispatch` only.
   The retained job predicates do not restore a PR or label subscription.
 
