@@ -746,14 +746,36 @@ mod tests {
         };
         let envelope = TypeScriptFileFactEnvelope::new(&key, facts, None, None);
         let digest = envelope.expected_digest()?;
-        let mut bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
-        let flip = bytes.len() / 2;
-        bytes[flip] = bytes[flip].wrapping_add(1);
-        // A tampered entry must not be served, whether the flip breaks the
-        // JSON outright (a decode refusal) or leaves a digest mismatch.
-        if let Ok(decoded) = serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes) {
-            assert!(!decoded.matches_key(&key) || decoded.validate_integrity().is_err())
+        let bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
+        // Every single-byte flip, not one position: where a fixed offset
+        // lands depends on the build identity's length. A tampered entry is
+        // either refused (decode, key or digest) or carries exactly the
+        // original content: a flip inside the name of a defaulted empty
+        // field decodes to the same facts, and the semantic digest binds
+        // content, not spelling.
+        let mut refused_by_key_or_digest = 0usize;
+        for flip in 0..bytes.len() {
+            let mut tampered = bytes.clone();
+            tampered[flip] = tampered[flip].wrapping_add(1);
+            let Ok(decoded) = serde_json::from_slice::<TypeScriptFileFactEnvelope>(&tampered)
+            else {
+                continue;
+            };
+            if !decoded.matches_key(&key) || decoded.validate_integrity().is_err() {
+                refused_by_key_or_digest += 1;
+                continue;
+            }
+            let digest = decoded.expected_digest()?;
+            assert_eq!(
+                seam_cache::encode_integrity_body(&decoded, digest)?,
+                bytes,
+                "flip at byte {flip} was served with different content"
+            );
         }
+        assert!(
+            refused_by_key_or_digest > 0,
+            "no flip reached the key or digest check"
+        );
         Ok(())
     }
 }
