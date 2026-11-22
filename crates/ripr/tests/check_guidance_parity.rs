@@ -223,13 +223,14 @@ fn verify_predicate_mutant(root: &Path, kills_inversion: bool) -> Result<(), Str
             return Err(diagnose("fixture rustc", &build));
         }
         let run = Command::new(&exe).output().map_err(|e| e.to_string())?;
-        let killed = inverted && kills_inversion;
-        let summary = if killed {
+        let expects_red = inverted && kills_inversion;
+        let summary = if expects_red {
             "1 passed; 1 failed"
         } else {
             "2 passed; 0 failed"
         };
-        if run.status.success() == killed || !String::from_utf8_lossy(&run.stdout).contains(summary)
+        if run.status.success() == expects_red
+            || !String::from_utf8_lossy(&run.stdout).contains(summary)
         {
             return Err(diagnose("fixture tests", &run));
         }
