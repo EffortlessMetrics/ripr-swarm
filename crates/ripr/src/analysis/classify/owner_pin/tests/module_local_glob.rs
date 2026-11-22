@@ -381,3 +381,39 @@ fn a_thread_local_beside_a_sibling_module_glob_keeps_the_test_credited() {
         );
     }
 }
+
+/// #14116: `mod core; use core::*;` (ripr's own `cli/help.rs`) globs the
+/// module the file declares, because a declared item shadows the extern
+/// prelude. The standard-root rule declines the file for that module and the
+/// local-module rule used to decline the name, so the glob was foreign under
+/// both and blocked every plain `assert_eq!` in the file's tests.
+#[test]
+fn a_glob_of_a_declared_module_named_like_a_standard_crate_does_not_block_the_test() {
+    const CORE: &str = "src/suite/core.rs";
+    let lib = "mod suite;\n";
+    let tests = "\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn weighs() {\n        assert_eq!(super::weight(4), 12);\n    }\n}\n";
+    let weight = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    for root in ["core", "std", "alloc"] {
+        let member = format!("src/suite/{root}.rs");
+        let suite = format!("mod {root};\nuse {root}::*;\n{tests}");
+        let local = index(&[(LIB, lib), (SUITE, suite.as_str()), (&member, weight)]);
+        assert_eq!(refusal_of(&local, SUITE), None, "declared `{root}`");
+    }
+    // The module's own macro import is still reported at its file.
+    let suite = format!("mod core;\nuse core::*;\n{tests}");
+    let rebinding = format!("pub use dep::assert_eq;\n{weight}");
+    let rebound = index(&[
+        (LIB, lib),
+        (SUITE, suite.as_str()),
+        (CORE, rebinding.as_str()),
+    ]);
+    assert!(is_binding(&refusal_of(&rebound, SUITE)), "member import");
+    // An inline module scopes its imports, so its glob stays foreign.
+    let inline = format!("mod core {{ {weight} }}\nuse core::*;\n{tests}");
+    let inline = index(&[(LIB, lib), (SUITE, inline.as_str())]);
+    assert!(is_binding(&refusal_of(&inline, SUITE)), "inline module");
+    // A second binding of the name leaves the glob's target unread.
+    let aliased = format!("mod core;\nuse dep::core;\nuse core::*;\n{tests}");
+    let aliased = index(&[(LIB, lib), (SUITE, aliased.as_str()), (CORE, weight)]);
+    assert!(is_binding(&refusal_of(&aliased, SUITE)), "second binding");
+}

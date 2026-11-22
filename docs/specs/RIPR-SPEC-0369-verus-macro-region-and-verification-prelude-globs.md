@@ -189,9 +189,16 @@ file. It stays foreign when the module is inline (its imports are scoped to it),
 mounted with `#[path]`, declared twice (for example under exclusive `cfg`s),
 shadowed by an `extern crate`, `use` or other item of the same name, written
 with a longer path, a group or a leading `::`, nested in a module, reached next
-to an item-position macro, or one of `std`/`core`/`alloc`. Without this a
+to an item-position macro. Without this a
 re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
 in the crate's tests macro-binding unestablished.
+
+A module declared under a standard crate's name qualifies like any other
+(#14116): in `mod core; use core::*;` the declared module shadows the extern
+prelude, so the glob reads the local module and never the standard crate.
+The standard-root rule declines such a file because the module takes the
+root's name, so before this the glob was foreign under both rules. Every other
+standard-root spelling keeps the standard-root rule.
 
 An import path that only reads the module name does not shadow it (#14116):
 `pub(crate) use name::{A, B};`, a member renamed to another name, or an import
