@@ -11592,6 +11592,48 @@
       ]
     },
     {
+      "id": "rust_owner_pin_clone_self_comparison_keeps_credit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/clone_field_pin_self_comparison_keeps_credit",
+      "vector": "owner_return_pin_clone_field_self_comparison",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "a_clone_equals_its_original",
+          "file": "src/lib.rs",
+          "line": 28,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        },
+        {
+          "type": "maximum_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_owner_pin_test_module_shadow",
       "language": "rust",
       "tier": "pure",
@@ -11616,7 +11658,7 @@
         {
           "type": "expected_oracle",
           "kind": "exact_value",
-          "strength": "strong"
+          "strength": "weak"
         },
         {
           "type": "expected_related_test",
@@ -11624,7 +11666,7 @@
           "file": "src/lib.rs",
           "line": 34,
           "kind": "exact_value",
-          "strength": "strong",
+          "strength": "weak",
           "relation_reason": "weak_token_substring"
         },
         {
@@ -11658,7 +11700,7 @@
         {
           "type": "expected_oracle",
           "kind": "exact_value",
-          "strength": "strong"
+          "strength": "weak"
         },
         {
           "type": "expected_related_test",
@@ -11666,7 +11708,7 @@
           "file": "src/helpers/window_tests.rs",
           "line": 4,
           "kind": "exact_value",
-          "strength": "strong",
+          "strength": "weak",
           "relation_reason": "weak_token_substring"
         },
         {
@@ -11700,7 +11742,7 @@
         {
           "type": "expected_oracle",
           "kind": "exact_value",
-          "strength": "strong"
+          "strength": "weak"
         },
         {
           "type": "expected_related_test",
@@ -11708,7 +11750,7 @@
           "file": "src/lib.rs",
           "line": 36,
           "kind": "exact_value",
-          "strength": "strong",
+          "strength": "weak",
           "relation_reason": "weak_token_substring"
         },
         {
