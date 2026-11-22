@@ -1251,14 +1251,12 @@ fn find_related_tests_with_candidates<'a>(
     let probe_literals = ProbeLiterals::new(&probe.expression);
 
     let candidate_indices = match candidates {
-        RelatedTestCandidates::Indexed(candidate_index) => {
-            candidate_index.candidate_indices(
-                probe,
-                owner_fn,
-                helper_chain,
-                seam_callee.as_ref().map(|(name, _)| name.as_str()),
-            )
-        }
+        RelatedTestCandidates::Indexed(candidate_index) => candidate_index.candidate_indices(
+            probe,
+            owner_fn,
+            helper_chain,
+            seam_callee.as_ref().map(|(name, _)| name.as_str()),
+        ),
         #[cfg(test)]
         RelatedTestCandidates::FullScan => (0..index.tests().len()).collect(),
     };
@@ -1554,11 +1552,7 @@ fn find_related_tests_with_candidates<'a>(
                 // run only after a callee-named captured call exists.
                 if !test.calls.iter().any(|call| {
                     call.name == *callee
-                        && !call_qualifier_conflicts(
-                            &call.text,
-                            callee,
-                            qualifier.as_deref(),
-                        )
+                        && !call_qualifier_conflicts(&call.text, callee, qualifier.as_deref())
                 }) {
                     return false;
                 }
@@ -10032,13 +10026,12 @@ mod tests {
         let probe = probe("src/lib.rs", "target_owner(value)");
         let candidate_index = RelatedTestCandidateIndex::new(&index);
         let seam_callee = wrapper_seam_callee(&probe);
-        let candidate_indices =
-            candidate_index.candidate_indices(
-                &probe,
-                Some(&owner),
-                None,
-                seam_callee.as_ref().map(|(name, _)| name.as_str()),
-            );
+        let candidate_indices = candidate_index.candidate_indices(
+            &probe,
+            Some(&owner),
+            None,
+            seam_callee.as_ref().map(|(name, _)| name.as_str()),
+        );
 
         assert_eq!(
             candidate_indices.len(),
