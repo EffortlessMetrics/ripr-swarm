@@ -1400,11 +1400,12 @@ mod tests {
             format_error
         );
         // A switch given a boolean literal stays one token and is refused
-        // as typed, never read as the switch plus a stray value.
+        // as typed, never read as the switch plus a stray value. The refusal
+        // names it as a switch (#15898).
         assert_eq!(
             run(args(&["ripr", "check", "--quiet=false"])),
             Err(CommandError::Failure(
-                "unknown check argument \"--quiet=false\". Run `ripr check --help --all`."
+                "unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: write `--quiet` alone; a switch is on when present and off when absent. Run `ripr check --help --all`."
                     .to_string()
             ))
         );
