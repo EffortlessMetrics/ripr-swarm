@@ -497,9 +497,11 @@ fn manifest_field(text: &str) -> String {
 }
 
 fn read_json(path: &Path, command: &str) -> Result<Value, String> {
-    let bytes = crate::bounded_input::read(path)
+    // A `gh api ... > raw.json` or review-guidance file saved by a Windows
+    // PowerShell 5.1 redirect is UTF-16 with a mark (#15936).
+    let text = crate::bounded_input::read_artifact_text(path)
         .map_err(|err| format!("{command} could not read {}: {err}; check the path exists and you can access it, then rerun", path.display()))?;
-    serde_json::from_slice(&bytes).map_err(|err| {
+    serde_json::from_str(&text).map_err(|err| {
         format!(
             "{command}: {} is not JSON: {err}; pass the JSON the earlier step wrote",
             path.display()

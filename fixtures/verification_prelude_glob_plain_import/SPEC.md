@@ -11,7 +11,8 @@ declares `prusti-contracts` as the plain registry package, locked once at the
 audited 0.3.3, so an exact `use prusti_contracts::*;` would be an admitted
 verification-prelude glob. But the same file first imports
 `shim::prusti_contracts` by name, so in this edition-2015 crate the glob reads
-`shim`'s module, whose `assert_eq!` ripr cannot see.
+`shim`'s module, whose `vec!` ripr cannot see. The test also calls
+`vec!`; the glob cannot rebind `assert_eq!` (rustc E0659, #16060).
 
 ## When
 
@@ -20,7 +21,7 @@ on the diff.
 
 ## Then
 
-The glob stays a foreign glob, so the test's `assert_eq!` earns no credit and
+The glob stays a foreign glob, so the test's `vec!` call leaves its `assert_eq!` uncredited and
 the finding must not read `exposed`.
 
 ## Must Not

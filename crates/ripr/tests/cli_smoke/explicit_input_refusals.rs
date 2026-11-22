@@ -183,9 +183,19 @@ fn annotations_refuse_explicit_missing_comments_but_skip_the_default() -> Result
 #[test]
 fn pr_summary_refuses_unusable_baseline_before_writing() -> Result<(), String> {
     let root = fixture("pr-summary-baseline-refusal")?;
+    // A UTF-16LE file one byte short of a code unit: the decoder refuses it
+    // and the refusal names the encoding instead of reporting a missing file.
+    let mut truncated = vec![0xff, 0xfe];
+    for unit in "{}".encode_utf16() {
+        truncated.extend_from_slice(&unit.to_le_bytes());
+    }
+    truncated.push(b'\n');
+    std::fs::write(root.join("truncated-utf16.json"), &truncated)
+        .map_err(|error| format!("write truncated-utf16.json: {error}"))?;
     for (baseline, reason) in [
         ("nope.json", "missing or unreadable"),
         ("bad.json", "not valid JSON"),
+        ("truncated-utf16.json", "UTF-16"),
     ] {
         assert_refusal(
             &root,

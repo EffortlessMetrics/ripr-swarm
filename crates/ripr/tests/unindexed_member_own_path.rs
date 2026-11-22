@@ -85,7 +85,9 @@ fn finding_with_links(
     )?;
     write(
         "app/src/suite.rs",
-        "#[test]\nfn weighs() {\n    assert_eq!(crate::weight(4), 16);\n}\n",
+        // `vec!` is a name the glob can bind; a glob cannot rebind the
+        // bare `assert_eq!` (#16060).
+        "#[test]\nfn weighs() {\n    let _ = vec![0u8];\n    assert_eq!(crate::weight(4), 16);\n}\n",
     )?;
     write(
         "tool/Cargo.toml",

@@ -306,7 +306,7 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     )?;
     let calibration = match &options.mutation_calibration {
         Some(path) => {
-            let contents = crate::bounded_input::read_to_string(path).map_err(|err| {
+            let contents = crate::bounded_input::read_artifact_text(path).map_err(|err| {
                 format!(
                     "read evidence-health calibration context {} failed: {err}",
                     output::outcome::display_path(path)
@@ -1130,7 +1130,7 @@ fn read_calibration_text(
             snapshot_capture_hint(kind, Path::new("snapshot.json"))
         ));
     }
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let displayed = output::outcome::display_path(path);
         if err.kind() == std::io::ErrorKind::NotFound {
             format!(
@@ -2049,7 +2049,7 @@ fn policy_readiness_generated_at() -> Result<String, String> {
 }
 
 pub(super) fn read_optional_text_for_report(label: &str, path: &Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read {label} {} failed: {err}",
             output::baseline_delta::display_path(path)
@@ -2122,7 +2122,7 @@ impl SuppliedInputReads {
 /// (#9851 vocabulary) instead of the host's errno text. Kept separate because
 /// some policy reports still classify a missing input by that errno text.
 fn read_report_input_plain(label: &str, path: &Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read {label} {} failed: {}",
             output::baseline_delta::display_path(path),
@@ -2137,7 +2137,7 @@ fn read_report_input_plain_typed(
     label: &str,
     path: &Path,
 ) -> Result<String, output::pr_review_front_panel::PanelInputError> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let detail = crate::bounded_input::read_failure_detail(&err);
         let detail = match detail.find(" (os error ") {
             Some(index) => detail[..index].to_string(),
@@ -5768,8 +5768,9 @@ language = "rust"
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         let before = dir.join("before.json");
         let after = dir.join("after.json");
-        std::fs::write(&before, [0xff, 0xfe])
-            .map_err(|err| format!("write invalid before: {err}"))?;
+        // Not UTF-8, and no UTF-16 mark: an empty marked UTF-16 file now decodes
+        // (#15936), so the read-error fixture must be undecodable outright.
+        std::fs::write(&before, [0xff]).map_err(|err| format!("write invalid before: {err}"))?;
         std::fs::write(&after, outcome_after_json())
             .map_err(|err| format!("write after snapshot: {err}"))?;
 

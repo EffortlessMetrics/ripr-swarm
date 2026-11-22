@@ -2593,7 +2593,7 @@ fn render_check_gap_ledger_badge(
             );
         }
     };
-    let text = crate::bounded_input::read_to_string(gap_ledger)
+    let text = crate::bounded_input::read_artifact_text(gap_ledger)
         .map_err(|err| format!("failed to read gap ledger {}: {err}; check the path passed to `--gap-ledger` exists and you can read it", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),

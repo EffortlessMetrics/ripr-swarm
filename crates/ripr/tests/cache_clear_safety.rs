@@ -994,7 +994,7 @@ fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), Str
     // `FILE_FACT_CACHE_SCHEMA_VERSION`; a stale one would not block the store.
     let broken = root.join("broken-cache");
     fs::create_dir_all(broken.join("repo-file-facts")).map_err(|error| error.to_string())?;
-    fs::write(broken.join("repo-file-facts/1.66"), b"blocker")
+    fs::write(broken.join("repo-file-facts/1.67"), b"blocker")
         .map_err(|error| error.to_string())?;
     let (report, _) = rerun(&broken)?;
     let cache = &report["cache"];
@@ -1012,7 +1012,7 @@ fn rerun_receipt_names_store_failure_rows_in_ordinary_output() -> Result<(), Str
     // ordinary stderr, without RIPR_REPO_EXPOSURE_LATENCY_TRACE.
     let check_cache = root.join("broken-check-cache");
     fs::create_dir_all(check_cache.join("repo-file-facts")).map_err(|error| error.to_string())?;
-    fs::write(check_cache.join("repo-file-facts/1.66"), b"blocker")
+    fs::write(check_cache.join("repo-file-facts/1.67"), b"blocker")
         .map_err(|error| error.to_string())?;
     let check = run_ripr_default_cache(
         &root,

@@ -614,17 +614,18 @@ fn review_comments_with_admission(
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
             );
         }
-        let gap_ledger_text = crate::bounded_input::read_to_string(gap_ledger).map_err(|err| {
-            record_review_comments_error(
-                &mut receipt,
-                &receipt_path,
-                "configuration",
-                format!(
-                    "review-comments --gap-ledger {} is invalid: read failed: {err}",
-                    output::pr_inline_comment_publish_plan::display_path(gap_ledger)
-                ),
-            )
-        })?;
+        let gap_ledger_text =
+            crate::bounded_input::read_artifact_text(gap_ledger).map_err(|err| {
+                record_review_comments_error(
+                    &mut receipt,
+                    &receipt_path,
+                    "configuration",
+                    format!(
+                        "review-comments --gap-ledger {} is invalid: read failed: {err}",
+                        output::pr_inline_comment_publish_plan::display_path(gap_ledger)
+                    ),
+                )
+            })?;
         let records = output::gap_decision_ledger::parse_gap_records_json(&gap_ledger_text)
             .map_err(|err| {
                 record_review_comments_error(

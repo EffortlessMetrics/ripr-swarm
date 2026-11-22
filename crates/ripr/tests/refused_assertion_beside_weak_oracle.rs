@@ -5,15 +5,19 @@
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 
+/// Macros from a crate ripr did not index may rebind `assert_eq!`. (A glob
+/// cannot rebind the bare `assert_eq!`, #16060.)
+const MAY_REBIND: &str = "#[macro_use]\n    extern crate mystery;";
+
 #[test]
 fn an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap() -> Result<(), String> {
     let root_dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("refused_beside_weak");
     // (name, extra test-module line, test body, expected class)
     let cases = [
-        // The glob may rebind `assert_eq!`: a limit.
+        // Macros from an unindexed crate may rebind `assert_eq!`: a limit.
         (
             "glob_refused_eq_plus_weak",
-            "use mystery::*;",
+            MAY_REBIND,
             "assert_eq!(tier(100), 2);\n        assert!(tier(100) > 1);",
             "static_unknown",
         ),
@@ -23,7 +27,7 @@ fn an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap() -> Result<(), S
         // have been the oracle.
         (
             "glob_refused_unrelated_eq_plus_weak",
-            "use mystery::*;",
+            MAY_REBIND,
             "assert_eq!(1 + 1, 2);\n        assert!(tier(100) > 1);",
             "weakly_exposed",
         ),
@@ -39,7 +43,7 @@ fn an_analyzer_limit_refusal_beside_a_weak_oracle_is_not_a_gap() -> Result<(), S
         // refused assertion compares.
         (
             "glob_refused_eq_off_boundary_plus_weak",
-            "use mystery::*;",
+            MAY_REBIND,
             "assert_eq!(tier(250), 2);\n        assert!(tier(250) > 1);",
             "weakly_exposed",
         ),

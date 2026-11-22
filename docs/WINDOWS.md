@@ -41,11 +41,17 @@ shell family of the host that printed them. On Windows:
   PowerShell 5.1 re-encodes git's output on the way, so non-ASCII text inside
   changed lines may already be altered in that file;
   `git diff --output=change.diff` writes git's own bytes.
-- A check output or review guidance file saved with `>` in Windows
-  PowerShell 5.1 (UTF-16 with a byte-order mark), or with `-Encoding utf8`
-  (UTF-8 with a byte-order mark), is read by `baseline`,
-  `review-comments --check-output`, the JSON inputs of `first-pr`, and
-  every JSON input of `gate evaluate`.
+- A ripr JSON artifact saved with `>` in Windows PowerShell 5.1 (UTF-16
+  with a byte-order mark), or with `-Encoding utf8` (UTF-8 with a
+  byte-order mark), is read as the plain UTF-8 file wherever ripr reads
+  check output, a gap ledger, a repo-exposure snapshot, review guidance, a
+  receipt, an agent result or a report input from a path you name. A
+  command that hashes its input still hashes the file as written.
+- `agent verify` snapshots and the `agent receipt --verify-json` document
+  carry an integrity check over their exact text, and a PowerShell 5.1
+  redirect also rewrites line ends to CRLF, so such a file is refused by
+  that check. Write these with `cmd /c "ripr ... > before.json"`, which
+  keeps ripr's bytes.
 
 ## Line endings
 

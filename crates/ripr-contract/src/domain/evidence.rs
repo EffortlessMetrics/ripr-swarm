@@ -1,12 +1,25 @@
+/// The shape of a related test's assertion. Whether that assertion observes
+/// the changed behavior is decided separately, and its strength is reported in
+/// [`OracleStrength`].
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OracleKind {
+    /// The test compares the result with an exact expected value.
     ExactValue,
+    /// The test pins a specific error variant.
     ExactErrorVariant,
+    /// The test compares a whole value or object for equality.
     WholeObjectEquality,
+    /// The test compares output with a stored snapshot.
     Snapshot,
+    /// The test checks a relation, such as an ordering or a predicate, rather
+    /// than an exact value.
     RelationalCheck,
+    /// The test accepts any error without pinning which one.
     BroadError,
+    /// The test only shows the code runs, with no assertion that discriminates
+    /// the result.
     SmokeOnly,
+    /// The test checks a mock's call expectations.
     MockExpectation,
     /// A guarded Result match over a direct callee result:
     /// `match <callee>(..) { Ok(..) => .., Err(e) => <guard> }` (#3709).
@@ -17,10 +30,12 @@ pub enum OracleKind {
     /// pin, medium for a concrete downcast type pin. Shapes without a
     /// recognized guard emit no oracle at all.
     GuardedResultMatch,
+    /// No oracle kind was recognized.
     Unknown,
 }
 
 impl OracleKind {
+    /// The stable snake_case label used in output.
     pub fn as_str(&self) -> &'static str {
         match self {
             OracleKind::ExactValue => "exact_value",
@@ -90,17 +105,29 @@ mod article_tests {
     }
 }
 
+/// How strongly an oracle discriminates a wrong result, from `Strong` down to
+/// `None`. Static evidence only; it does not predict a mutation outcome.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OracleStrength {
+    /// The highest rating: the assertion is expected to notice a wrong result.
+    /// Exact checks usually rate strong; configuration can also rate other
+    /// kinds, such as mock expectations, as strong.
     Strong,
+    /// A middle rating: the assertion constrains the result, but some wrong
+    /// values could still pass.
     Medium,
+    /// A low rating, typical for a relational check or a broad error.
     Weak,
+    /// Only shows the code runs.
     Smoke,
+    /// No oracle observes the result.
     None,
+    /// Strength could not be determined.
     Unknown,
 }
 
 impl OracleStrength {
+    /// The stable snake_case label used in output.
     pub fn as_str(&self) -> &'static str {
         match self {
             OracleStrength::Strong => "strong",
@@ -112,6 +139,8 @@ impl OracleStrength {
         }
     }
 
+    /// Ordering rank: higher is stronger, from 5 for `Strong` down to 0 for
+    /// `None`. `Unknown` ranks 1, above `None`.
     pub fn rank(&self) -> u8 {
         match self {
             OracleStrength::Strong => 5,
@@ -124,17 +153,27 @@ impl OracleStrength {
     }
 }
 
+/// Static state of one RIPR stage (reach, infect, propagate, observe or
+/// discriminate).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StageState {
+    /// The stage was found.
     Yes,
+    /// The stage was found but only weakly.
     Weak,
+    /// The stage was not found.
     No,
+    /// Static analysis could not decide the stage.
     Unknown,
+    /// The code is hidden from static analysis, for example behind dynamic
+    /// dispatch or an unresolved helper.
     Opaque,
+    /// The stage does not apply to this change.
     NotApplicable,
 }
 
 impl StageState {
+    /// The stable snake_case label used in output.
     pub fn as_str(&self) -> &'static str {
         match self {
             StageState::Yes => "yes",
@@ -147,15 +186,21 @@ impl StageState {
     }
 }
 
+/// Confidence level of a static reading.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Confidence {
+    /// High confidence.
     High,
+    /// Medium confidence.
     Medium,
+    /// Low confidence.
     Low,
+    /// Confidence could not be determined.
     Unknown,
 }
 
 impl Confidence {
+    /// The stable snake_case label used in output.
     pub fn as_str(&self) -> &'static str {
         match self {
             Confidence::High => "high",
@@ -166,17 +211,22 @@ impl Confidence {
     }
 }
 
+/// Static evidence for one RIPR stage.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StageEvidence {
     /// Producer-owned category. Older persisted stages carry only the summary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub static_limit_kind: Option<super::StaticLimitKind>,
+    /// What the analysis found for this stage.
     pub state: StageState,
+    /// How confident the analysis is in [`Self::state`].
     pub confidence: Confidence,
+    /// A short human-readable explanation of the reading.
     pub summary: String,
 }
 
 impl StageEvidence {
+    /// Stage evidence with no static-limit category.
     pub fn new(state: StageState, confidence: Confidence, summary: impl Into<String>) -> Self {
         Self {
             state,
@@ -192,17 +242,26 @@ impl StageEvidence {
 pub const BOUNDARY_INPUT_OBSERVED_SUMMARY: &str =
     "Detected related test input at the changed boundary";
 
+/// Evidence for the reveal stage, split into its two parts.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RevealEvidence {
+    /// Whether a test observes the changed behavior.
     pub observe: StageEvidence,
+    /// Whether that observation would tell a right result from a wrong one.
     pub discriminate: StageEvidence,
 }
 
+/// Static evidence for each RIPR stage of one finding: reach, infect, propagate
+/// and reveal.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RiprEvidence {
+    /// Whether a test runs the changed code.
     pub reach: StageEvidence,
+    /// Whether a test input can make the changed code behave differently.
     pub infect: StageEvidence,
+    /// Whether that different behavior can reach an observable result.
     pub propagate: StageEvidence,
+    /// Whether a test observes and discriminates that result.
     pub reveal: RevealEvidence,
 }
 
@@ -214,13 +273,22 @@ pub struct RiprEvidence {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationReason {
+    /// The test calls the changed owner directly.
     DirectOwnerCall,
+    /// The test calls the owner through a helper.
     HelperOwnerCall,
+    /// The test asserts on a token the seam's expression also names.
     AssertionTargetAffinity,
+    /// The test is in the owner's file or in a companion test file for it,
+    /// such as `tests/config.rs` or `tests/config_test.rs` for `src/config.rs`.
     SameTestFile,
+    /// The test is in the same module as the owner.
     SameModule,
+    /// The test's name contains the owner's name.
     OwnerNamedTest,
+    /// The test references the owner's import path.
     ImportPathAffinity,
+    /// The test calls a fixture-shaped helper tied to the owner.
     FixtureOwnerAffinity,
     /// Matched via probe-token substring in file path or test name.
     /// This signal is deliberately broad — a short token can match many
@@ -243,6 +311,7 @@ pub enum RelationReason {
 }
 
 impl RelationReason {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::DirectOwnerCall => "direct_owner_call",
@@ -354,13 +423,19 @@ impl RelationReason {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationConfidence {
+    /// The test calls the owner, directly or through a helper.
     High,
+    /// The relation is plausible but indirect.
     Medium,
+    /// The relation is a weak match, such as a fixture helper or a token
+    /// substring.
     Low,
+    /// The relation could not be resolved statically.
     Opaque,
 }
 
 impl RelationConfidence {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::High => "high",

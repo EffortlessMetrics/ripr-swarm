@@ -24,6 +24,9 @@
 //! is built from a real repo-exposure run of the same fixture, and its runs
 //! cover the advisory packet, the canonical-delta fields, and the blocked
 //! document for a `not_evaluated` records ledger and a `stale` dirty checkout.
+//!
+//! `schemas/ripr/agent-brief.schema.json` describes `ripr agent brief --json`;
+//! every working-set selector's real output is checked against it.
 
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -254,7 +257,7 @@ fn packets() -> Result<Vec<(String, Value)>, String> {
 
 #[test]
 fn the_checker_covers_every_keyword_the_packet_schema_uses() -> Result<(), String> {
-    for path in [PACKET_SCHEMA, SEAM_PACKETS_SCHEMA] {
+    for path in [PACKET_SCHEMA, SEAM_PACKETS_SCHEMA, BRIEF_SCHEMA] {
         let schema = published_schema::read(path)?;
         let ignored = published_schema::unsupported_keywords(&schema);
         if !ignored.is_empty() {
@@ -1428,6 +1431,134 @@ fn published_gap_packet_schema_rejects_documents_it_forbids() -> Result<(), Stri
                 println!("rejected as expected ({label}): {error}");
             }
         }
+    }
+    Ok(())
+}
+
+const BRIEF_SCHEMA: &str = "schemas/ripr/agent-brief.schema.json";
+
+/// `ripr agent brief --json` over `root` with one selector, and its exit
+/// code and stdout document.
+fn brief(root: &Path, selector: &[&str]) -> Result<(Option<i32>, Value), String> {
+    let root_arg = root.display().to_string();
+    let mut args = vec!["agent", "brief", "--root", root_arg.as_str()];
+    args.extend_from_slice(selector);
+    args.push("--json");
+    let output = ripr_in(root, &args)?;
+    Ok((output.status.code(), parse(&args, &output)?))
+}
+
+/// The brief documents each working-set selector writes over one fixture
+/// with an uncommitted edit: `--files`, `--base`, `--diff` (the edit as a
+/// diff file), `--seam-id`, `--line-ranges` over that diff and a raised
+/// `--max-seams`.
+fn brief_documents() -> Result<Vec<(&'static str, Value)>, String> {
+    let root = unique("brief");
+    fixture_repo(&root)?;
+    let lib = root.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib).map_err(|error| format!("read lib: {error}"))?;
+    write(&lib, &source.replacen("amount - 10", "amount - 11", 1))?;
+    let diff_text = common::fixture_git::fixture_git_output(&root, &["diff"])?;
+    let diff_path = root.join("target/change.diff");
+    std::fs::create_dir_all(root.join("target"))
+        .map_err(|error| format!("create target: {error}"))?;
+    write(&diff_path, &diff_text)?;
+    let diff_arg = diff_path.display().to_string();
+    let mut documents = Vec::new();
+    for (label, selector) in [
+        ("files", vec!["--files", "src/lib.rs"]),
+        ("base", vec!["--base", "HEAD"]),
+        ("diff", vec!["--diff", diff_arg.as_str()]),
+        // `--diff`, not `--files`: a files working set has no changed
+        // lines, so its grouped profile would carry no range to validate.
+        (
+            "line ranges",
+            vec!["--diff", diff_arg.as_str(), "--line-ranges"],
+        ),
+        (
+            "max seams",
+            vec!["--files", "src/lib.rs", "--max-seams", "10"],
+        ),
+    ] {
+        let (code, document) = brief(&root, &selector)?;
+        if code != Some(0) {
+            return Err(format!("agent brief {label} exited {code:?}"));
+        }
+        documents.push((label, document));
+    }
+    let seam_id = documents[0].1["top_seams"][0]["seam_id"]
+        .as_str()
+        .ok_or("the files brief names no seam")?
+        .to_string();
+    let (code, document) = brief(&root, &["--seam-id", seam_id.as_str()])?;
+    if code != Some(0) {
+        return Err(format!("agent brief seam_id exited {code:?}"));
+    }
+    // As for the gap ledger: a failed run keeps the fixture for inspection.
+    let _ = std::fs::remove_dir_all(&root);
+    documents.push(("seam id", document));
+    Ok(documents)
+}
+
+/// Every working-set selector's brief conforms to the published schema and
+/// is the variant it claims: its `working_set.source` names the selector,
+/// only `--line-ranges` writes the grouped profile, and `limits.returned`
+/// counts the seams it returned.
+#[test]
+fn agent_brief_json_conforms_for_each_working_set_selector() -> Result<(), String> {
+    let schema = published_schema::read(BRIEF_SCHEMA)?;
+    let documents = brief_documents()?;
+    for (label, document) in &documents {
+        conforms(document, &schema, label)?;
+        let expected_source = match *label {
+            "base" => "base",
+            "diff" | "line ranges" => "diff",
+            "seam id" => "seam_id",
+            _ => "files",
+        };
+        let returned = document["top_seams"].as_array().map(Vec::len);
+        let checks = [
+            (
+                "names its selector",
+                document["working_set"]["source"] == expected_source,
+            ),
+            (
+                "writes the grouped profile exactly for --line-ranges",
+                document.get("rendering_profile").is_some() == (*label == "line ranges"),
+            ),
+            (
+                "counts the seams it returned",
+                document["limits"]["returned"].as_u64() == returned.map(|count| count as u64),
+            ),
+            ("returns a seam", returned.is_some_and(|count| count >= 1)),
+        ];
+        for (claim, held) in checks {
+            if !held {
+                return Err(format!("the {label} brief {claim}: not so in this run"));
+            }
+        }
+    }
+    let changed = documents
+        .iter()
+        .find(|(label, _)| *label == "diff")
+        .is_some_and(|(_, document)| {
+            document["working_set"]["changed_lines"] == json!([{"file": "src/lib.rs", "line": 2}])
+        });
+    let ranged = documents
+        .iter()
+        .find(|(label, _)| *label == "line ranges")
+        .is_some_and(|(_, document)| {
+            document["working_set"]["changed_line_ranges"]
+                == json!([{"file": "src/lib.rs", "ranges": [[2, 2]]}])
+        });
+    let raised = documents
+        .iter()
+        .find(|(label, _)| *label == "max seams")
+        .is_some_and(|(_, document)| document["limits"]["requested"] == 10);
+    if !changed || !ranged || !raised {
+        return Err(format!(
+            "the --diff brief carries the edited line ({changed}), the --line-ranges brief groups it as a range ({ranged}) and --max-seams is echoed ({raised}): not so in this run"
+        ));
     }
     Ok(())
 }
