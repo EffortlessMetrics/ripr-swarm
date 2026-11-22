@@ -2038,10 +2038,14 @@ pub(super) fn finding_is_withheld_gap(finding: &Finding) -> bool {
 
 /// Every preview-language finding the actionable profile withholds from
 /// diagnostics (#11296), including gap-class, `*_unknown`, and
-/// static-limited preview evidence.
+/// static-limited preview evidence. An `exposed` finding is not withheld
+/// evidence: there is no gap to show, so it never feeds the "not shown in
+/// the editor" marker or count (#13636); the status's `resolved_findings`
+/// names the gaps that became exposed.
 pub(super) fn finding_is_withheld_preview_profile_finding(finding: &Finding) -> bool {
     finding.language_status == Some(LanguageStatus::Preview)
         && finding.is_candidate_actionable()
+        && !matches!(finding.class, ExposureClass::Exposed)
         && !finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, finding)
 }
 

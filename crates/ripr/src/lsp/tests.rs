@@ -9355,6 +9355,105 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
     Ok(())
 }
 
+/// #13636: an interactive save deferred the full spot inventory, so a
+/// gap-class finding has no seam-bound start. A disabled-capable client
+/// sees "Start repair" inert with the full refresh named; a legacy client
+/// keeps the omission; a full (non-deferred) snapshot and an exposed
+/// finding never get the inert start.
+#[test]
+fn deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh() -> Result<(), String> {
+    let finding = sample_finding();
+    assert!(finding.is_candidate_actionable());
+    let finding_diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        vec![finding_diagnostic.clone()],
+        vec![finding.clone()],
+    );
+    snapshot.seams_deferred = true;
+    let params = code_action_params(vec![finding_diagnostic.clone()])?;
+    let commands = vscode_advertised_client_commands()?;
+    let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
+    let disabled_client = client_features_with_disabled_support(&borrowed)?;
+    let start_title = "Start repair: copy repair command";
+
+    let deferred_actions = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&deferred_actions)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the inert start must be listed: {literals:?}"))?;
+    assert!(start.command.is_none(), "{start:?}");
+    assert_eq!(
+        start
+            .disabled
+            .as_ref()
+            .map(|disabled| disabled.reason.as_str()),
+        Some(
+            "The last save ran a quick analysis that skips repair spots, so there is no repair start here yet; run \"ripr: Refresh Full Analysis\", then check this finding again."
+        )
+    );
+    let data = start.data.as_ref().ok_or("inert start carries data")?;
+    assert_eq!(data["disabled_reason"], "seam_evidence_deferred");
+    assert_eq!(data["action_name"], "copy_agent_repair_command");
+    assert_disabled_action_invariants(start)?;
+    assert!(
+        literals.iter().any(
+            |action| action.title == "Inspect finding: copy context packet"
+                && action.command.is_some()
+        ),
+        "the context packet stays enabled: {literals:?}"
+    );
+
+    // A client without disabled support keeps the legacy omission.
+    let legacy = code_action_commands(&code_action_response(
+        &params,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    ))?;
+    assert!(
+        legacy.iter().all(|(title, _, _)| title != start_title),
+        "{legacy:?}"
+    );
+
+    // Discriminators: a full snapshot, and an exposed finding, list no start.
+    let mut full = snapshot.clone();
+    full.seams_deferred = false;
+    let full_actions = code_action_response(&params, Some(&full), &disabled_client);
+    let full_literals = code_action_literals(&full_actions)?;
+    assert!(
+        full_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{full_literals:?}"
+    );
+    let mut exposed = snapshot.clone();
+    exposed.findings[0].class = ExposureClass::Exposed;
+    let exposed_actions = code_action_response(&params, Some(&exposed), &disabled_client);
+    let exposed_literals = code_action_literals(&exposed_actions)?;
+    assert!(
+        exposed_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{exposed_literals:?}"
+    );
+    // A preview-language finding has no producer-backed start, deferred or
+    // not, so the deferral must not invent one.
+    let mut preview = snapshot.clone();
+    preview.findings[0].language_status = Some(crate::domain::LanguageStatus::Preview);
+    let preview_actions = code_action_response(&params, Some(&preview), &disabled_client);
+    let preview_literals = code_action_literals(&preview_actions)?;
+    assert!(
+        preview_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{preview_literals:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Result<(), String> {
     use crate::analysis::test_grip_evidence::{
@@ -20723,6 +20822,141 @@ fn retained_code_actions_preserve_client_root_and_item_gates() -> Result<(), Str
         }
         Ok(())
     })
+}
+
+/// #13636: a saved test that turns a gap `exposed` stops its diagnostic;
+/// the analysis status names the finding as now exposed for exactly the
+/// commit where it moved, and never for a finding that merely disappeared.
+#[test]
+fn analysis_status_names_a_gap_that_became_exposed_since_the_previous_commit() -> Result<(), String>
+{
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let gap = sample_finding();
+    assert!(gap.is_candidate_actionable());
+    assert_eq!(gap.class, ExposureClass::WeaklyExposed);
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &gap)],
+            vec![gap.clone()],
+        ))
+        .ok_or("gap snapshot commits")?;
+    assert_eq!(
+        backend.analysis_status_payload()["resolved_findings"]["count"],
+        0,
+        "the first commit has nothing to compare against"
+    );
+
+    let mut exposed = gap.clone();
+    exposed.class = ExposureClass::Exposed;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &exposed)],
+            vec![exposed.clone()],
+        ))
+        .ok_or("exposed snapshot commits")?;
+    let status = backend.analysis_status_payload();
+    let resolved = &status["resolved_findings"];
+    assert_eq!(resolved["count"], 1, "{resolved}");
+    assert_eq!(resolved["omitted"], 0);
+    assert_eq!(resolved["evidence"], "static");
+    let row = &resolved["rows"][0];
+    assert_eq!(row["path"], "src/pricing.rs");
+    assert_eq!(row["line"], 88);
+    assert_eq!(row["previous_class"], "weakly_exposed");
+    assert_eq!(row["class"], "exposed");
+    let text = row["text"].as_str().ok_or("row text")?;
+    assert!(
+        text.starts_with(
+            "src/pricing.rs:88: now exposed: a test appears to observe the changed behavior"
+        ),
+        "{text}"
+    );
+    assert!(
+        crate::lsp::lens::lens_title_is_static_language_clean(text),
+        "static vocabulary only: {text}"
+    );
+
+    // The same exposed state again: nothing moved since the previous commit.
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &exposed)],
+            vec![exposed],
+        ))
+        .ok_or("repeat snapshot commits")?;
+    assert_eq!(
+        backend.analysis_status_payload()["resolved_findings"]["count"],
+        0
+    );
+
+    // A gap that disappears (deleted code, changed scope) is not "exposed".
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &gap)],
+            vec![gap.clone()],
+        ))
+        .ok_or("gap snapshot commits again")?;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri,
+            Vec::new(),
+            Vec::new(),
+        ))
+        .ok_or("empty snapshot commits")?;
+    assert_eq!(
+        backend.analysis_status_payload()["resolved_findings"]["count"],
+        0
+    );
+    Ok(())
+}
+
+/// #13636: the transition owner compares like with like: another root, a
+/// non-current finding, or a class that was never a gap yields no row.
+#[test]
+fn resolved_findings_require_the_same_root_and_a_current_gap_before() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let gap = sample_finding();
+    let mut exposed = gap.clone();
+    exposed.class = ExposureClass::Exposed;
+    let before = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        vec![gap.clone()],
+    );
+    let after = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        vec![exposed.clone()],
+    );
+    assert_eq!(
+        super::resolved_findings::resolved_since(&before, &after).len(),
+        1
+    );
+    let other_root = sample_analysis_snapshot(
+        PathBuf::from("/elsewhere"),
+        uri.clone(),
+        Vec::new(),
+        vec![exposed.clone()],
+    );
+    assert!(super::resolved_findings::resolved_since(&before, &other_root).is_empty());
+    let mut unknown = gap.clone();
+    unknown.class = ExposureClass::StaticUnknown;
+    let unknown_before =
+        sample_analysis_snapshot(PathBuf::from("/workspace"), uri, Vec::new(), vec![unknown]);
+    assert!(super::resolved_findings::resolved_since(&unknown_before, &after).is_empty());
+    Ok(())
 }
 
 #[test]

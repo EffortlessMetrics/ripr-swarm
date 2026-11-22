@@ -1797,6 +1797,72 @@ suite('Extension Smoke', () => {
     }
   });
 
+  for (const deferred of [true, false]) {
+    test(`startCurrentRepair ${deferred ? 'names the full refresh for a finding whose seams were deferred (#13636)' : 'keeps the no-gap message for a finding the server names no blocker for'}`, async function (this: Mocha.Context) {
+      skipUnlessTrustedTestHost(this);
+      const reason = 'The last save ran a quick analysis that skips repair spots, so there is no repair start here yet; run "ripr: Refresh Full Analysis", then check this finding again.';
+      const context = createControllerTestContext({
+        lspResult: deferred
+          ? [{
+            title: 'Start repair: copy repair command',
+            kind: 'quickfix.ripr.inspect',
+            disabled: { reason },
+            data: { action_name: 'copy_agent_repair_command', disabled_reason: 'seam_evidence_deferred' },
+          }]
+          : [],
+      });
+      const relativePath = `src/start-deferred-finding-${deferred ? 'named' : 'unnamed'}.rs`;
+      const uri = workspaceFileUri(relativePath);
+      const collection = vscode.languages.createDiagnosticCollection('ripr-start-deferred-finding');
+      try {
+        await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
+        // A finding diagnostic alone: no gap record and no seam diagnostic,
+        // as after a save that skipped repair spots.
+        const diagnostic = new vscode.Diagnostic(
+          new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+          'weakly exposed',
+          vscode.DiagnosticSeverity.Warning
+        );
+        diagnostic.source = 'ripr';
+        diagnostic.code = 'weakly_exposed';
+        (diagnostic as vscode.Diagnostic & { data?: unknown }).data = { finding_id: 'probe:near:1:predicate' };
+        collection.set(uri, [diagnostic]);
+
+        await context.controller.start();
+        await context.controller.startCurrentRepair();
+
+        const request = context.client.requests.find((entry) => entry.method === 'textDocument/codeAction');
+        assert.ok(request, `the controller must ask the server about the finding: ${JSON.stringify(context.client.requests)}`);
+        const sent = request.params as { context: { diagnostics: Array<{ data?: unknown }> } };
+        assert.ok(
+          sent.context.diagnostics.some((wire) => (wire.data as { finding_id?: string } | undefined)?.finding_id === 'probe:near:1:predicate'),
+          JSON.stringify(sent.context.diagnostics)
+        );
+        assert.ok(!context.runRiprCalls.some((call) => call.args[0] === 'agent' && call.args[1] === 'repair'));
+        if (deferred) {
+          assert.ok(
+            context.infoMessages.some((message) => message === `ripr cannot start this repair yet. ${reason}`),
+            context.infoMessages.join(' | ')
+          );
+          assert.ok(!context.infoMessages.some((message) => message.includes('No current ripr repair gap')));
+        } else {
+          assert.ok(
+            context.infoMessages.some((message) => message === 'No current ripr repair gap is available near the active selection.'),
+            context.infoMessages.join(' | ')
+          );
+        }
+      } finally {
+        collection.dispose();
+        await context.dispose();
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await removeWorkspacePath(relativePath);
+      }
+    });
+  }
+
   for (const blocked of [true, false]) {
     test(`startCurrentRepair ${blocked ? 'names the server reason for an inert seam start (#13636)' : 'falls back to the related test when the server names no blocker'}`, async function (this: Mocha.Context) {
       skipUnlessTrustedTestHost(this);

@@ -552,6 +552,23 @@ function nearestDiagnostic(
     )[0]?.diagnostic;
 }
 
+/**
+ * The ripr finding diagnostic (one carrying a `finding_id`, with no gap or
+ * seam record) under or nearest the selection (#13636).
+ */
+function nearestFindingDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic | undefined {
+  return nearestDiagnostic(editor, isRiprFindingDiagnostic);
+}
+
+function isRiprFindingDiagnostic(diagnostic: vscode.Diagnostic): boolean {
+  if (diagnostic.source !== 'ripr' || isRiprGapDiagnostic(diagnostic) || isRiprSeamDiagnostic(diagnostic)) {
+    return false;
+  }
+  const data = (diagnostic as { data?: unknown }).data;
+  return typeof data === 'object' && data !== null
+    && typeof (data as { finding_id?: unknown }).finding_id === 'string';
+}
+
 function isRiprSeamDiagnostic(diagnostic: vscode.Diagnostic): boolean {
   return diagnostic.source === 'ripr' && diagnosticCodeText(diagnostic).startsWith('ripr-seam-');
 }
@@ -892,6 +909,25 @@ export class AgentHandoffController {
     }
     const diagnostic = nearestRepairDiagnostic(editor);
     if (!diagnostic) {
+      // #13636: a finding with no gap or seam record may still have a start
+      // the server withholds (for example after a save that ran the quick
+      // analysis, which skips repair spots). Ask before saying there is nothing here.
+      const finding = nearestFindingDiagnostic(editor);
+      if (finding) {
+        const generation = this.host.getStartGeneration();
+        const blocked = await this.serverBlockedStart(editor.document.uri, finding.range);
+        if (
+          !this.host.actionRootStillCurrent(generation, editor.document.uri, (target) =>
+            this.host.copyActionRootBlocker(target)
+          )
+        ) {
+          return;
+        }
+        if (blocked?.actionName === REPAIR_START_ACTION_NAME) {
+          this.host.runtime.showInformationMessage(`ripr cannot start this repair yet. ${blocked.reason}`);
+          return;
+        }
+      }
       this.host.runtime.showInformationMessage('No current ripr repair gap is available near the active selection.');
       return;
     }

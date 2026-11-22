@@ -414,6 +414,21 @@ the only word about a live finding:
   bounded `window/showMessage` warning per such language (shown again only
   after the language leaves the set); the VS Code status bar renders the
   typed rows, never the limitation's detail text.
+- `ripr/analysisStatus` carries `resolved_findings` (#13636): `count`, at
+  most 20 `rows` (`path`, `line`, `expression`, `previous_class`, `class`
+  = `exposed`, the witness-selected related `test` or `null`, and a static
+  `text` such as `src/pricing.rs:88: now exposed: a test appears to observe
+  the changed behavior`), `omitted`, and `evidence` = `static`. A row names
+  a finding that the previous committed snapshot of the same root listed as
+  a candidate-current gap (`weakly_exposed`, `reachable_unrevealed`,
+  `no_static_path`) and that the new snapshot, matched by finding id, finds
+  candidate-current `exposed`. A finding that merely disappears is never a
+  row. The set is computed once, at snapshot commit, and cleared with the
+  snapshot, so a later commit with nothing moved reports `count` 0. It is
+  static evidence, not a runtime mutation outcome. The VS Code client shows
+  one information message per snapshot and adds the rows to the status
+  detail, so a diagnostic that stops after a saved test reads as progress,
+  not a silent failure.
 - The pull channel (`textDocument/diagnostic`, `workspace/diagnostic`)
   emits the same one-line disclosure naming the count and the escape
   hatch when items are withheld, and the completion log carries
@@ -432,7 +447,9 @@ diagnostic. Under `actionable` the disclosure is additive: `ripr/analysisStatus`
 (`withheld_preview=N`) name them, so `findings=N, diagnostics=0` is never the
 only word about a live preview finding. These findings are disjoint from the
 `*_unknown` set and remain listed under `hidden_gaps` by
-`ripr/listActionableItems`.
+`ripr/listActionableItems`. An `exposed` preview finding is not withheld
+evidence and is never counted or marked as "not shown in the editor"
+(#13636); `resolved_findings` names one that a saved test turned exposed.
 
 The editor surface must not end on an empty list either. Each file with
 withheld preview gap findings carries exactly one passive Hint diagnostic,
