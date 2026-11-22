@@ -257,7 +257,7 @@ fn packets() -> Result<Vec<(String, Value)>, String> {
 
 #[test]
 fn the_checker_covers_every_keyword_the_packet_schema_uses() -> Result<(), String> {
-    for path in [PACKET_SCHEMA, SEAM_PACKETS_SCHEMA] {
+    for path in [PACKET_SCHEMA, SEAM_PACKETS_SCHEMA, BRIEF_SCHEMA] {
         let schema = published_schema::read(path)?;
         let ignored = published_schema::unsupported_keywords(&schema);
         if !ignored.is_empty() {
@@ -1450,7 +1450,8 @@ fn brief(root: &Path, selector: &[&str]) -> Result<(Option<i32>, Value), String>
 
 /// The brief documents each working-set selector writes over one fixture
 /// with an uncommitted edit: `--files`, `--base`, `--diff` (the edit as a
-/// diff file), `--seam-id`, `--line-ranges` and a raised `--max-seams`.
+/// diff file), `--seam-id`, `--line-ranges` over that diff and a raised
+/// `--max-seams`.
 fn brief_documents() -> Result<Vec<(&'static str, Value)>, String> {
     let root = unique("brief");
     fixture_repo(&root)?;
@@ -1468,9 +1469,11 @@ fn brief_documents() -> Result<Vec<(&'static str, Value)>, String> {
         ("files", vec!["--files", "src/lib.rs"]),
         ("base", vec!["--base", "HEAD"]),
         ("diff", vec!["--diff", diff_arg.as_str()]),
+        // `--diff`, not `--files`: a files working set has no changed
+        // lines, so its grouped profile would carry no range to validate.
         (
             "line ranges",
-            vec!["--files", "src/lib.rs", "--line-ranges"],
+            vec!["--diff", diff_arg.as_str(), "--line-ranges"],
         ),
         (
             "max seams",
@@ -1509,7 +1512,7 @@ fn agent_brief_json_conforms_for_each_working_set_selector() -> Result<(), Strin
         conforms(document, &schema, label)?;
         let expected_source = match *label {
             "base" => "base",
-            "diff" => "diff",
+            "diff" | "line ranges" => "diff",
             "seam id" => "seam_id",
             _ => "files",
         };
@@ -1541,13 +1544,20 @@ fn agent_brief_json_conforms_for_each_working_set_selector() -> Result<(), Strin
         .is_some_and(|(_, document)| {
             document["working_set"]["changed_lines"] == json!([{"file": "src/lib.rs", "line": 2}])
         });
+    let ranged = documents
+        .iter()
+        .find(|(label, _)| *label == "line ranges")
+        .is_some_and(|(_, document)| {
+            document["working_set"]["changed_line_ranges"]
+                == json!([{"file": "src/lib.rs", "ranges": [[2, 2]]}])
+        });
     let raised = documents
         .iter()
         .find(|(label, _)| *label == "max seams")
         .is_some_and(|(_, document)| document["limits"]["requested"] == 10);
-    if !changed || !raised {
+    if !changed || !ranged || !raised {
         return Err(format!(
-            "the --diff brief carries the edited line ({changed}) and --max-seams is echoed ({raised}): not so in this run"
+            "the --diff brief carries the edited line ({changed}), the --line-ranges brief groups it as a range ({ranged}) and --max-seams is echoed ({raised}): not so in this run"
         ));
     }
     Ok(())
