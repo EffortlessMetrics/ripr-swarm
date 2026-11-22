@@ -10,4 +10,6 @@ tests = [
   "crates/ripr/tests/subdirectory_root_repair_route.rs::check_at_a_subdirectory_root_offers_no_repair_start_and_names_the_top_level",
   "crates/ripr/tests/subdirectory_root_repair_route.rs::bare_repair_at_a_subdirectory_root_refuses_before_deciding_a_start",
   "crates/ripr/tests/subdirectory_root_repair_route.rs::bare_repair_json_at_a_subdirectory_root_prints_the_typed_refusal",
+  "crates/ripr/src/edit_cage/mod.rs::tests::a_workspace_member_root_is_still_a_subdirectory_but_an_unclaimed_project_is_not",
+  "crates/ripr/src/edit_cage/mod.rs::tests::member_patterns_decide_literals_and_trailing_globs",
 ]

@@ -2171,8 +2171,8 @@ fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
 
 /// The Git top-level a repair attempt would need when `root` is a proper
 /// subdirectory of its work tree, `None` for the exact top-level, for a root
-/// that is its own Cargo project, or when Git cannot say (those cases keep the
-/// attempt's own refusals). The before-phase
+/// that is its own Cargo project outside the enclosing workspace, or when Git
+/// cannot say (those cases keep the attempt's own refusals). The before-phase
 /// entry uses it to refuse a subdirectory `--root` before writing anything;
 /// surfaces that print a repair start should share it too (#15488). It asks Git exactly as
 /// [`canonical_repository_root`] does (same command, environment and deadline),
@@ -2192,10 +2192,101 @@ pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
     // `crate/` subdirectory (no root Cargo.toml) refused, and the monorepo
     // Python `backend/` (no Cargo.toml) refused, while a fixture `input/`
     // keeps its start without the harness faking a Git top-level.
-    if requested.join("Cargo.toml").is_file() && top.join("Cargo.toml").is_file() {
+    //
+    // A workspace member is the exception: the enclosing workspace claims it,
+    // so it is still a subdirectory of the work tree the attempt refuses, and
+    // printing its start would offer a command that refuses at the before
+    // phase. Only a project the enclosing workspace does not claim is its own
+    // root.
+    if requested.join("Cargo.toml").is_file()
+        && top.join("Cargo.toml").is_file()
+        && !enclosing_workspace_claims(&top, &requested)
+    {
         return None;
     }
     Some(top)
+}
+
+/// Whether the Cargo workspace rooted at `top` claims `root` as one of its
+/// packages. A nested Cargo project the enclosing workspace does not claim is
+/// a standalone project; one it claims is a member, and a member root is still
+/// a subdirectory of the work tree the attempt refuses (#15488).
+///
+/// Fails closed (`true`) whenever the answer is not positively established: an
+/// unreadable or unparsable manifest, a root outside `top`, or a member
+/// pattern this matcher cannot decide keeps the root a subdirectory root, so
+/// no start is printed that the attempt would refuse.
+fn enclosing_workspace_claims(top: &Path, root: &Path) -> bool {
+    let Ok(manifest) = fs::read_to_string(top.join("Cargo.toml")) else {
+        return true;
+    };
+    let Ok(parsed) = toml::from_str::<toml::Value>(&manifest) else {
+        return true;
+    };
+    let Some(workspace) = parsed.get("workspace") else {
+        // No `[workspace]` table: the enclosing manifest is a single package,
+        // so a nested Cargo project is not part of it.
+        return false;
+    };
+    // A package that names this workspace explicitly joins it even when no
+    // member pattern matches.
+    if let Ok(package) = fs::read_to_string(root.join("Cargo.toml"))
+        && let Ok(package) = toml::from_str::<toml::Value>(&package)
+        && package
+            .get("package")
+            .and_then(|package| package.get("workspace"))
+            .is_some()
+    {
+        return true;
+    }
+    let Ok(relative) = root.strip_prefix(top) else {
+        return true;
+    };
+    let relative = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    let patterns = |key: &str| -> Vec<String> {
+        workspace
+            .get(key)
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if patterns("exclude")
+        .iter()
+        .any(|pattern| member_pattern_covers(pattern, &relative))
+    {
+        return false;
+    }
+    patterns("members")
+        .iter()
+        .any(|pattern| member_pattern_covers(pattern, &relative))
+}
+
+/// Whether a Cargo `[workspace] members`/`exclude` pattern covers the
+/// workspace-relative `relative` path. Cargo patterns are globs; this matcher
+/// decides the literal and single-trailing-glob shapes the repository uses and
+/// treats any other glob as covering, so an undecidable pattern keeps the root
+/// a subdirectory root rather than printing a start the attempt would refuse.
+fn member_pattern_covers(pattern: &str, relative: &str) -> bool {
+    let pattern = pattern.trim_end_matches('/');
+    if let Some(prefix) = pattern
+        .strip_suffix("/**")
+        .or_else(|| pattern.strip_suffix("/*"))
+    {
+        return relative == prefix || relative.starts_with(&format!("{prefix}/"));
+    }
+    if pattern.contains(['*', '?', '[']) {
+        return true;
+    }
+    relative == pattern
 }
 
 /// The cage's refusal text for a non-top-level attempt root, produced before
@@ -7154,5 +7245,75 @@ mod tests {
             .collect();
         assert_eq!(paths, vec![PathBuf::from("vendor/lib")]);
         Ok(())
+    }
+
+    /// #15488: a Cargo workspace member is still a subdirectory of the work
+    /// tree the attempt refuses, so its printed start must stay withheld. A
+    /// nested Cargo project the enclosing workspace does not claim is a
+    /// standalone project and keeps its start.
+    #[test]
+    fn a_workspace_member_root_is_still_a_subdirectory_but_an_unclaimed_project_is_not()
+    -> Result<(), String> {
+        let fixture = git_fixture("workspace-member")?;
+        let top = fs::canonicalize(&fixture.root)
+            .map_err(|err| format!("canonicalize fixture: {err}"))?;
+        fs::write(
+            top.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/member\"]\n",
+        )
+        .map_err(|err| format!("write workspace manifest: {err}"))?;
+        let member = top.join("crates/member");
+        fs::create_dir_all(member.join("src")).map_err(|err| format!("create member: {err}"))?;
+        fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"member\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|err| format!("write member manifest: {err}"))?;
+        fs::write(member.join("src/lib.rs"), "pub fn price() {}\n")
+            .map_err(|err| format!("write member source: {err}"))?;
+        let standalone = top.join("fixtures/standalone/input");
+        fs::create_dir_all(standalone.join("src"))
+            .map_err(|err| format!("create standalone: {err}"))?;
+        fs::write(
+            standalone.join("Cargo.toml"),
+            "[package]\nname = \"standalone\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|err| format!("write standalone manifest: {err}"))?;
+        fs::write(standalone.join("src/lib.rs"), "pub fn price() {}\n")
+            .map_err(|err| format!("write standalone source: {err}"))?;
+        git_ok(&top, &["add", "."])?;
+        git_ok(&top, &["commit", "-qm", "workspace"])?;
+
+        assert_eq!(
+            enclosing_git_top_level_above(&member),
+            Some(top.clone()),
+            "a workspace member root must stay a subdirectory root"
+        );
+        assert_eq!(
+            enclosing_git_top_level_above(&standalone),
+            None,
+            "an unclaimed nested Cargo project is its own root"
+        );
+        Ok(())
+    }
+
+    /// The member matcher decides the literal and single-trailing-glob shapes
+    /// Cargo manifests use, and treats any other glob as covering so an
+    /// undecidable pattern keeps the root a subdirectory root.
+    #[test]
+    fn member_patterns_decide_literals_and_trailing_globs() {
+        assert!(member_pattern_covers("crates/ripr", "crates/ripr"));
+        assert!(!member_pattern_covers(
+            "crates/ripr",
+            "crates/ripr-contract"
+        ));
+        assert!(!member_pattern_covers("crates/ripr", "fixtures/x/input"));
+        assert!(member_pattern_covers("crates/*", "crates/ripr"));
+        assert!(!member_pattern_covers("crates/*", "fixtures/x/input"));
+        assert!(member_pattern_covers("tools/**", "tools/repo-policy"));
+        assert!(!member_pattern_covers("tools/**", "fixtures/x/input"));
+        // An undecidable glob covers, so the root stays a subdirectory root.
+        assert!(member_pattern_covers("crates/*/nested", "crates/a/nested"));
+        assert!(member_pattern_covers("*", "fixtures/x/input"));
     }
 }
