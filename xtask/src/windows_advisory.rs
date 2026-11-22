@@ -3579,28 +3579,41 @@ mod tests {
             "the catalog entry and the parser must name the same flags"
         );
 
-        // Every flag the catalog names parses, with its documented arity.
-        let mut every_flag = complete_argv();
-        every_flag.extend(argv(&[
-            "--run1-part",
-            "p1.log",
-            "p1.status",
-            "--run2-part",
-            "p2.log",
-            "p2.status",
-            "--expected-targets",
-            "build.log",
-        ]));
+        // The catalog's own usage line, with each `<value>` placeholder filled
+        // and the optional brackets and repeat marks dropped, must parse: a
+        // catalog that changed a flag's arity (say `--run1-part <log>` without
+        // its status) fails here, not in the nightly lane.
+        let mut filled = 0usize;
+        let documented: Vec<String> = summary_entries[0]
+            .command
+            .split_whitespace()
+            .skip(1)
+            .map(|token| {
+                token
+                    .trim_start_matches('[')
+                    .trim_end_matches("...")
+                    .trim_end_matches(']')
+            })
+            .filter(|token| !token.is_empty())
+            .map(|token| {
+                if token.starts_with('<') && token.ends_with('>') {
+                    filled += 1;
+                    format!("value{filled}.txt")
+                } else {
+                    token.to_string()
+                }
+            })
+            .collect();
         assert!(
             catalog_flags
                 .iter()
-                .all(|flag| every_flag.iter().any(|arg| arg == flag)),
-            "the positive control must pass every catalog flag: {catalog_flags:?}"
+                .all(|flag| documented.iter().any(|arg| arg == flag)),
+            "the documented invocation must pass every catalog flag: {documented:?}"
         );
-        assert!(
-            parse_inputs(&every_flag).is_ok(),
-            "every catalog flag must be accepted: {:?}",
-            parse_inputs(&every_flag).err()
+        assert_eq!(
+            parse_inputs(&documented).err(),
+            None,
+            "the catalog's documented invocation must parse: {documented:?}"
         );
 
         // Public's pair is refused, alone or together, never ignored.
