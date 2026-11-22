@@ -53,6 +53,15 @@ pub(crate) fn display_path(path: &Path) -> String {
     display_path_for_host(&crate::analysis::stable_path_text(path), cfg!(windows))
 }
 
+/// [`display_path`] with the separator rule taken from `windows` instead of
+/// the host (see [`crate::analysis::stable_path_text_on`]).
+fn display_path_on(path: &Path, windows: bool) -> String {
+    display_path_for_host(
+        &crate::analysis::stable_path_text_on(path, windows),
+        windows,
+    )
+}
+
 /// Render a related-test or other source-file path without collapsing a literal
 /// Unix backslash into a directory separator (#7838).
 pub(crate) fn display_source_path(path: &Path) -> String {
@@ -312,7 +321,7 @@ pub(crate) fn repository_relative_path_text_with(
             .components()
             .any(|component| matches!(component, Component::ParentDir))
     {
-        return display_path(relative);
+        return display_path_on(relative, windows);
     }
     if windows
         && let Some(relative) =
@@ -320,15 +329,15 @@ pub(crate) fn repository_relative_path_text_with(
     {
         // Re-encode through the shared stable renderer so `%` escaping
         // matches every other path rendering.
-        return display_path(&PathBuf::from(relative));
+        return display_path_on(&PathBuf::from(relative), windows);
     }
     if !windows
         && case_insensitive
         && let Some(relative) = strip_case_insensitive_root(root, file)
     {
-        return display_path(&relative);
+        return display_path_on(&relative, windows);
     }
-    display_path(file)
+    display_path_on(file, windows)
 }
 
 /// Component-wise, ASCII-case-insensitive root strip (ASCII-only by design:
@@ -573,8 +582,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        CheckoutAnchor, display_path, display_path_for_host, display_path_text, human_path_text,
-        repository_display_path, repository_relative_path_text_on, same_output_leaf,
+        CheckoutAnchor, display_path, display_path_for_host, display_path_on, display_path_text,
+        human_path_text, repository_display_path, repository_relative_path_text_on,
+        same_output_leaf,
     };
 
     #[test]
@@ -676,7 +686,11 @@ mod tests {
 
     #[test]
     fn display_path_normalizes_backslashes() {
-        assert_eq!(display_path(Path::new("a\\b\\c")), "a/b/c");
+        // A backslash is a separator on Windows and a file-name byte, spelled
+        // `%5C`, on Unix (#15908); the host-explicit form folds it anywhere.
+        let expected = if cfg!(unix) { "a%5Cb%5Cc" } else { "a/b/c" };
+        assert_eq!(display_path(Path::new("a\\b\\c")), expected);
+        assert_eq!(display_path_on(Path::new("a\\b\\c"), true), "a/b/c");
     }
 
     #[test]
@@ -1113,7 +1127,8 @@ mod tests {
                 Path::new(&root_text),
                 Path::new(&verbatim_looking)
             ),
-            verbatim_looking.replace('\\', "/")
+            // A backslash is a file-name byte here, spelled `%5C` (#15908).
+            verbatim_looking.replace('\\', "%5C")
         );
     }
 

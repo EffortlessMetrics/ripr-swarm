@@ -10984,9 +10984,15 @@ mod tests {
 
         let rendered = render_finding(&finding);
 
+        // On Unix a backslash is a file-name byte, spelled `%5C` (#15908).
+        let expected = if cfg!(unix) {
+            "src%5Cpricing.ts:10"
+        } else {
+            "src/pricing.ts:10"
+        };
         assert!(
-            rendered.contains("src/pricing.ts:10"),
-            "expected forward-slash location path in human output; got:\n{rendered}"
+            rendered.contains(expected),
+            "expected {expected} in human output; got:\n{rendered}"
         );
         assert!(
             !rendered.contains(r"src\pricing.ts"),
@@ -11003,9 +11009,15 @@ mod tests {
 
         let rendered = render_finding(&finding);
 
+        // On Unix a backslash is a file-name byte, spelled `%5C` (#15908).
+        let expected = if cfg!(unix) {
+            "tests%5Csample.rs:"
+        } else {
+            "tests/sample.rs:"
+        };
         assert!(
-            rendered.contains("tests/sample.rs:"),
-            "expected forward-slash related-test path in human evidence; got:\n{rendered}"
+            rendered.contains(expected),
+            "expected {expected} in human evidence; got:\n{rendered}"
         );
         assert!(
             !rendered.contains(r"tests\sample.rs"),

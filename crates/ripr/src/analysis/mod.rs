@@ -683,9 +683,34 @@ pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead>
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
-/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
+/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8, and
+/// that a literal Unix backslash is spelled `%5C` (#15908): it is a file-name
+/// byte there, so folding it to `/` gave `src/a\b.rs` the path and gap id of
+/// `src/a/b.rs`. On Windows a backslash is a separator and renders as `/`.
 pub(crate) fn stable_path_text(path: &Path) -> String {
+    stable_source_path_text(path)
+}
+
+/// Reader-facing slash spelling of a path: [`stable_path_text`] with every
+/// backslash shown as `/` on every host, so prose and reports about a path
+/// that was recorded with Windows separators read the same everywhere. It is
+/// for prose only and never an identity or a path in a machine artifact: on
+/// Unix it shows `src/a\b.rs` and `src/a/b.rs` alike.
+pub(crate) fn stable_display_path_text(path: &Path) -> String {
     stable_native_path_text(path).replace('\\', "/")
+}
+
+/// [`stable_path_text`] with the separator rule taken from `windows` instead
+/// of the host, for renderers whose platform flag makes Windows behavior
+/// testable on every host. With `windows` set a backslash is a separator and
+/// renders as `/`; otherwise this is the host encoder (on Unix a literal
+/// backslash stays `%5C`, #15908).
+pub(crate) fn stable_path_text_on(path: &Path, windows: bool) -> String {
+    if windows {
+        stable_display_path_text(path)
+    } else {
+        stable_path_text(path)
+    }
 }
 
 /// Retain native source identity before display normalization. On Unix a
@@ -846,8 +871,11 @@ fn render_finding_location_text(
                 .any(|component| matches!(component, Component::ParentDir))
         });
     match relative {
-        Some(relative) => format!("{relative_prefix}{}", stable_path_text(relative)),
-        None => stable_path_text(&file),
+        Some(relative) => format!(
+            "{relative_prefix}{}",
+            stable_path_text_on(relative, windows)
+        ),
+        None => stable_path_text_on(&file, windows),
     }
 }
 
@@ -1682,10 +1710,16 @@ mod tests {
             stable_source_path_text(Path::new(r"src/odd\receipt.rs")),
             stable_source_path_text(Path::new("src/odd/receipt.rs"))
         );
+        // #15908: the identity encoder is the same lossless encoder, so a
+        // finding in `src/odd\receipt.rs` never borrows the path and gap id
+        // of `src/odd/receipt.rs`.
         assert_eq!(
             stable_path_text(Path::new(r"src/odd\receipt.rs")),
-            stable_path_text(Path::new("src/odd/receipt.rs")),
-            "display normalization still collapses backslashes for stable_path_text"
+            "src/odd%5Creceipt.rs"
+        );
+        assert_ne!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_path_text(Path::new("src/odd/receipt.rs"))
         );
     }
 
@@ -1910,7 +1944,13 @@ mod tests {
                 Path::new(r"\\?\F:\repo\src\main.rs"),
                 false
             ),
-            r"//?/F:/repo/src/main.rs"
+            // On Unix the backslashes are file-name bytes, spelled `%5C`
+            // (#15908); a Windows host still reads them as separators.
+            if cfg!(unix) {
+                r"%5C%5C?%5CF:%5Crepo%5Csrc%5Cmain.rs"
+            } else {
+                r"//?/F:/repo/src/main.rs"
+            }
         );
     }
 
