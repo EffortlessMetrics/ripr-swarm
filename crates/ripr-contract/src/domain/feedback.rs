@@ -23,8 +23,9 @@ pub enum FeedbackJudgment {
     Unclear,
     /// `expensive`: the result cost too much to use.
     Expensive,
-    /// `intentional_no_action`: the result was right, and no action was taken
-    /// on purpose.
+    /// `intentional_no_action`: no action was taken on purpose, such as for
+    /// intentional defensive code or a preference for manual review. It does
+    /// not say whether the result was right.
     IntentionalNoAction,
 }
 
@@ -305,7 +306,9 @@ impl ReviewStatus {
 pub enum ReferenceState {
     /// `current`: names the live result, or there is no live result to compare.
     Current,
-    /// `historical`: the same result, with a later attempt or receipt.
+    /// `historical`: the same snapshot, item and route, with a different
+    /// attempt or receipt id. The ids are not ordered, so this does not check
+    /// which one came later.
     Historical,
     /// `mismatched`: a different snapshot, item or route.
     Mismatched,
@@ -389,7 +392,9 @@ pub struct FeedbackReceipt {
     /// An optional note of at most [`FEEDBACK_NOTE_MAX_BYTES`] bytes; required
     /// for `other`.
     pub note: Option<String>,
-    /// Whether `identity` still names the live result.
+    /// How `identity` compared with the live result when the feedback was
+    /// recorded. It is stored, not rechecked, and is `current` when no live
+    /// identity was supplied.
     pub reference_state: ReferenceState,
     /// When the feedback was recorded; not part of the payload identity.
     pub recorded_at: String,
@@ -508,7 +513,10 @@ impl FeedbackPayload {
         Ok(())
     }
 
-    /// The canonical text form of the payload, used for idempotency comparison.
+    /// The canonical text form of the payload, which feeds the automatic
+    /// idempotency key and the feedback id.
+    /// Recording compares normalized payloads, not this text, so an absent
+    /// note and an empty note give the same text but are not equal payloads.
     pub fn canonical_bytes(&self) -> String {
         format!(
             "v1\nsnapshot={}\nitem={}\nroute={}\nattempt={}\nreceipt={}\nactor={}\nreview={}\nreview_actor={}\nreason={}\njudgment={}\nnote={}\n",
