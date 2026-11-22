@@ -33,3 +33,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — match_arm_result_method_tail_not_credited (4)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_result_method_tail_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

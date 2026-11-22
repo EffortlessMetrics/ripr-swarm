@@ -389,3 +389,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (31)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

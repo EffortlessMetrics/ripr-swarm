@@ -295,3 +295,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — rust_competing_direct_effect_oracle (24)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless rust_competing_direct_effect_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

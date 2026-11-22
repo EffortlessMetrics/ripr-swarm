@@ -541,6 +541,18 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
         ProbeFamily::ReturnValue => {
             "Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns"
         }
+        // #13037: these families fall to "Strengthen the related assertion",
+        // which nobody can follow once the assertion is already exact. What
+        // is unestablished is the link from that assertion to this change.
+        ProbeFamily::CallDeletion => {
+            "Check whether the value that test asserts depends on the changed call. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If it does not, assert the effect the call produces"
+        }
+        ProbeFamily::MatchArm => {
+            "Check whether a related test's input selects the changed arm. If none does, add one and assert the exact value that arm produces"
+        }
+        ProbeFamily::FieldConstruction => {
+            "Check whether the value that test asserts includes the changed field. If it does not, assert that field's exact value"
+        }
         _ => return None,
     };
     let missing_value = missing
@@ -1472,6 +1484,64 @@ mod tests {
         assert!(step.contains("If it can"), "{step}");
         assert!(step.contains("If it cannot"), "{step}");
         assert!(!step.contains("gap is not the assertion shape"), "{step}");
+    }
+
+    // #13037: "Strengthen the related assertion" cannot be followed when the
+    // strongest related assertion is already exact, so these families name
+    // the unestablished link instead. The control keeps the template when
+    // the related oracle is not an admitted exact one.
+    #[test]
+    fn exact_related_oracle_replaces_the_strengthen_template() {
+        for (family, expression, names) in [
+            (
+                ProbeFamily::CallDeletion,
+                "out.sort()",
+                "depends on the changed call",
+            ),
+            (
+                ProbeFamily::MatchArm,
+                "None => 0",
+                "selects the changed arm",
+            ),
+            (
+                ProbeFamily::FieldConstruction,
+                "total: sum",
+                "includes the changed field",
+            ),
+        ] {
+            let exact = exact_oracle_gap_next_step(
+                &probe(family.clone(), expression),
+                &ExposureClass::WeaklyExposed,
+                &[related_test(
+                    "lists_sorted",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+                &[],
+                true,
+            );
+            let step = exact.as_deref().unwrap_or("");
+            assert!(
+                step.starts_with("The related test `lists_sorted` already asserts an exact value"),
+                "{step}"
+            );
+            assert!(step.contains(names), "{step}");
+            assert!(!step.contains("Strengthen"), "{step}");
+            assert_eq!(
+                exact_oracle_gap_next_step(
+                    &probe(family, expression),
+                    &ExposureClass::WeaklyExposed,
+                    &[related_test(
+                        "smoke",
+                        OracleKind::ExactValue,
+                        OracleStrength::Weak,
+                    )],
+                    &[],
+                    true,
+                ),
+                None
+            );
+        }
     }
 
     // Controls: a broad related oracle, a stronger broad oracle outranking
