@@ -104,8 +104,18 @@ const RC_OPERATIONS: [&str; 3] = [
     "github_asset_upload",
 ];
 
+fn empty_remote_for(request: &GitHubReleaseTransactionRequest) -> RemoteInventory {
+    let mut remote = empty_remote();
+    remote.repository = request.repository.clone();
+    remote.tag_name = request.tag.clone();
+    remote
+}
+
+/// An empty inventory observed for the public RC request's target.
 fn empty_remote() -> RemoteInventory {
     RemoteInventory {
+        repository: "EffortlessMetrics/ripr".to_string(),
+        tag_name: "v0.11.0-rc.1".to_string(),
         tag: TagObservation::Absent,
         releases: ReleasesObservation::Listed {
             releases: Vec::new(),
@@ -156,6 +166,8 @@ fn remote_with(
     attested: bool,
 ) -> RemoteInventory {
     RemoteInventory {
+        repository: request.repository.clone(),
+        tag_name: request.tag.clone(),
         tag: exact_tag(),
         releases: ReleasesObservation::Listed {
             releases: vec![release(request, draft, assets)],
@@ -376,6 +388,16 @@ fn request_json_refuses_unknown_and_missing_fields() -> Result<(), String> {
         .ok_or("request is not an object")?
         .remove("withheld_channels");
     assert!(parse(&value).is_err(), "a missing field has no default");
+    // An optional value is still a required key.
+    let mut value = serde_json::to_value(rc_request()?).map_err(|error| error.to_string())?;
+    value
+        .as_object_mut()
+        .ok_or("request is not an object")?
+        .remove("stable_decision_sha256");
+    assert!(
+        parse(&value).is_err(),
+        "an omitted stable_decision_sha256 is not read as null"
+    );
     Ok(())
 }
 
@@ -434,7 +456,7 @@ fn a_fresh_transaction_takes_each_step_once_in_order_and_then_only_verifies() ->
                 "github_asset_upload",
             ],
         )?;
-        let mut remote = empty_remote();
+        let mut remote = empty_remote_for(&request);
         attest_all(&mut remote, &request);
         let mut taken = Vec::new();
         for _ in 0..16 {
@@ -525,7 +547,13 @@ fn each_step_needs_its_own_authorized_operation() -> Result<(), String> {
         );
     }
     // Prerelease authority does not create a stable release.
-    let planned = decide(&stable, &authorization(&stable, &RC_OPERATIONS)?, &tag_only);
+    let mut stable_tag_only = empty_remote_for(&stable);
+    stable_tag_only.tag = exact_tag();
+    let planned = decide(
+        &stable,
+        &authorization(&stable, &RC_OPERATIONS)?,
+        &stable_tag_only,
+    );
     assert_eq!(stop_of(&planned.decision)?, StopKind::NotAuthorized);
     Ok(())
 }
@@ -963,4 +991,65 @@ mod erased {
             serde_json::to_string(self).map_err(|error| error.to_string())
         }
     }
+}
+
+#[test]
+fn an_inventory_for_another_repository_or_tag_is_refused() -> Result<(), String> {
+    let request = rc_request()?;
+    let authorization = authorization(&request, &RC_OPERATIONS)?;
+    let mut other_tag = empty_remote();
+    other_tag.tag_name = "v0.11.0-rc.2".to_string();
+    let mut other_repository = empty_remote();
+    other_repository.repository = "EffortlessMetrics/ripr-swarm".to_string();
+    for (label, remote) in [("tag", other_tag), ("repository", other_repository)] {
+        let planned = decide(&request, &authorization, &remote);
+        assert_eq!(
+            stop_of(&planned.decision)?,
+            StopKind::InventoryMismatch,
+            "{label}"
+        );
+        assert_eq!(planned.classified, None, "{label}");
+    }
+    // The same empty inventory for the right target proceeds.
+    assert_eq!(
+        step_of(&decide(&request, &authorization, &empty_remote()).decision)?,
+        &Step::CreateTag
+    );
+    Ok(())
+}
+
+#[test]
+fn conflicting_provenance_for_one_subject_stops_in_either_order() -> Result<(), String> {
+    let request = rc_request()?;
+    let authorization = authorization(&request, &RC_OPERATIONS)?;
+    let base = remote_with(&request, true, all_exact(&request), true);
+    assert_eq!(
+        step_of(&decide(&request, &authorization, &base).decision)?,
+        &Step::FinalizeRelease { release_id: 7 }
+    );
+    let duplicate = AttestationObservation {
+        subject: request.subjects[0].name.clone(),
+        state: AttestationState::Missing,
+    };
+    let mut verified_first = base.clone();
+    verified_first.attestations.push(duplicate.clone());
+    let mut missing_first = base.clone();
+    missing_first.attestations.insert(0, duplicate);
+    let mut verified_twice = base.clone();
+    verified_twice
+        .attestations
+        .push(verified_twice.attestations[0].clone());
+    for (label, remote) in [
+        ("verified then missing", verified_first),
+        ("missing then verified", missing_first),
+        ("verified twice", verified_twice),
+    ] {
+        let planned = decide(&request, &authorization, &remote);
+        assert_eq!(
+            stop_of(&planned.decision)?,
+            StopKind::AttestationNotVerified,
+            "{label}"
+        );
+    }
+    Ok(())
 }

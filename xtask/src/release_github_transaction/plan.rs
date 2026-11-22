@@ -131,6 +131,9 @@ pub(crate) enum StopKind {
     /// A public release is missing an expected subject. This is an incident,
     /// not a resumable state: nothing is uploaded to a finalized release.
     PartialPublic,
+    /// The inventory observed another repository or tag than the request
+    /// names, so none of its absences say anything about this transaction.
+    InventoryMismatch,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -146,8 +149,12 @@ pub(crate) enum Decision {
     Stop { stop: Stop },
 }
 
+pub(crate) const DECISION_SCHEMA: &str = "ripr.release.github_transaction.decision.v1";
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct Planned {
+    /// Always [`DECISION_SCHEMA`].
+    pub(crate) schema: &'static str,
     pub(crate) request_id: Option<String>,
     pub(crate) authorization_id: String,
     pub(crate) classified: Option<Classified>,
@@ -285,16 +292,38 @@ fn decide_classified(
         );
     }
     for subject in &request.subjects {
-        let state = inventory
+        // Exactly one observation, and it is verified. Two observations for
+        // one subject are ambiguous whatever their order.
+        let states: Vec<AttestationState> = inventory
             .attestations
             .iter()
-            .find(|observation| observation.subject == subject.name)
-            .map_or(AttestationState::Missing, |observation| observation.state);
-        if state != AttestationState::Verified {
-            return stop(
-                StopKind::AttestationNotVerified,
-                format!("provenance for `{}` is {state:?}", subject.name),
-            );
+            .filter(|observation| observation.subject == subject.name)
+            .map(|observation| observation.state)
+            .collect();
+        match states.as_slice() {
+            [AttestationState::Verified] => {}
+            [state] => {
+                return stop(
+                    StopKind::AttestationNotVerified,
+                    format!("provenance for `{}` is {state:?}", subject.name),
+                );
+            }
+            [] => {
+                return stop(
+                    StopKind::AttestationNotVerified,
+                    format!("provenance for `{}` is Missing", subject.name),
+                );
+            }
+            _ => {
+                return stop(
+                    StopKind::AttestationNotVerified,
+                    format!(
+                        "provenance for `{}` has {} observations; one is required",
+                        subject.name,
+                        states.len()
+                    ),
+                );
+            }
         }
     }
     if classified.release == ReleaseState::ExactPublic {
@@ -317,6 +346,7 @@ pub(crate) fn decide(
     inventory: &RemoteInventory,
 ) -> Planned {
     let planned = |request_id, classified, decision| Planned {
+        schema: DECISION_SCHEMA,
         request_id,
         authorization_id: authorization.authorization_id.clone(),
         classified,
@@ -340,6 +370,19 @@ pub(crate) fn decide(
             Some(request_id),
             None,
             stop(StopKind::AuthorizationMismatch, mismatches.join("; ")),
+        );
+    }
+    if inventory.repository != request.repository || inventory.tag_name != request.tag {
+        return planned(
+            Some(request_id),
+            None,
+            stop(
+                StopKind::InventoryMismatch,
+                format!(
+                    "the inventory observed {}@{}, not {}@{}",
+                    inventory.repository, inventory.tag_name, request.repository, request.tag
+                ),
+            ),
         );
     }
     let classified = classify(request, &authorization.expected_tag_object, inventory);

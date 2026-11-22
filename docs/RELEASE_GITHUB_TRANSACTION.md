@@ -19,7 +19,9 @@ it resumes only when everything already present is exact.
 
 `cargo xtask release-github-transaction-plan --request <request.json>
 --authorization <authorization.json> --inventory <inventory.json>` evaluates
-supplied files and prints the decision. It exits nonzero for a stop.
+supplied files and prints the decision as JSON with
+`schema: ripr.release.github_transaction.decision.v1`. It exits nonzero for a
+stop.
 
 Not built yet: the transport that observes GitHub and performs a step, the
 loop that drives steps to completion with a receipt, and the retirement of
@@ -98,7 +100,11 @@ transport lands, the authorization must be built from a live verifier record
 
 ## Decision
 
-Each call reads one fresh inventory and returns at most one step.
+Each call reads one fresh inventory and returns at most one step. The
+inventory records the repository and tag name it observed, even when nothing
+was found; an inventory for any other target stops with `inventory_mismatch`
+before classification, so an empty snapshot of another tag cannot read as
+"absent" for this one.
 
 ```text
 tag absent, no release          -> create the tag
@@ -121,7 +127,7 @@ Everything else stops:
 | Two releases for the tag, or a release whose tag is absent | `remote_conflict` |
 | An expected asset with other bytes, another size, a case-variant name, or attached twice | `remote_conflict` |
 | An asset the request does not expect | `remote_conflict` |
-| Provenance for any subject missing or unreadable | `attestation_not_verified` |
+| Provenance for any subject missing, unreadable, or observed more than once | `attestation_not_verified` |
 | Public release missing an expected subject | `partial_public` |
 | The step's operation is not allowed | `not_authorized` |
 
@@ -131,7 +137,7 @@ nothing is uploaded to a finalized release.
 
 ## Proof
 
-`cargo test -p xtask release_github_transaction` runs 13 tests. One sweeps all
+`cargo test -p xtask release_github_transaction` runs 15 tests. One sweeps all
 1,000 combinations of tag, release, asset and provenance state the model can
 observe and checks, against the classification alone, that a mutation is
 proposed only when the object it writes is absent and everything present is

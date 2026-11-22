@@ -81,6 +81,9 @@ pub(crate) struct GitHubReleaseTransactionRequest {
     pub(crate) body_sha256: String,
     pub(crate) prerelease: bool,
     pub(crate) ship_packet_sha256: String,
+    /// Required as a key: `null` for a public RC. An omitted key is refused
+    /// rather than read as `null`.
+    #[serde(deserialize_with = "Deserialize::deserialize")]
     pub(crate) stable_decision_sha256: Option<String>,
     pub(crate) subject_inventory_sha256: String,
     pub(crate) subjects: Vec<ExpectedSubject>,

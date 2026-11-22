@@ -86,6 +86,12 @@ pub(crate) struct AttestationObservation {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RemoteInventory {
+    /// The `owner/name` the observations were read from.
+    pub(crate) repository: String,
+    /// The tag name the observations were read for. Both are recorded even
+    /// when nothing was found, so an empty inventory for another target
+    /// cannot stand in for this one.
+    pub(crate) tag_name: String,
     pub(crate) tag: TagObservation,
     pub(crate) releases: ReleasesObservation,
     /// Provenance verification per expected subject. A subject with no entry
