@@ -482,12 +482,20 @@ pub(in crate::app) fn location_column_form_file(selector_file: &str) -> Option<&
     })
 }
 
-/// Normalize a path for locator matching: convert `\` to `/`, drop a leading
-/// `./`, and trim a trailing `/`. Lets the path a user copies from `check`
-/// output (or types naturally) match the stored form regardless of platform
-/// separators or the leading-current-directory prefix.
+/// Normalize a path for locator matching: convert `\` to `/`, reduce a
+/// Windows verbatim root to its plain spelling, drop a leading `./`, and trim
+/// a trailing `/`. Lets the path a user copies from `check` output (or types
+/// naturally) match the stored form regardless of platform separators or the
+/// leading-current-directory prefix.
+///
+/// The verbatim fold is the one `output::path` renders with, so a location
+/// ripr prints selects its finding (#15921): a finding stored under
+/// `\\?\UNC\server\share\...` is printed and typed as `//server/share/...`,
+/// which is neither equal to nor a suffix of the stored text. The drive form
+/// (`//?/C:/...`) already matched as a suffix; folding it too keeps one rule.
 pub(in crate::app) fn normalize_locator_path(path: &str) -> String {
     let forward = path.replace('\\', "/");
+    let forward = crate::output::path::strip_windows_verbatim_prefix(&forward).unwrap_or(forward);
     let trimmed = forward.strip_prefix("./").unwrap_or(forward.as_str());
     trimmed.trim_end_matches('/').to_string()
 }
@@ -1201,5 +1209,69 @@ mod tests {
         assert_eq!(normalize_locator_path("./a/b/c.rs"), "a/b/c.rs");
         assert_eq!(normalize_locator_path("a\\b\\c.rs"), "a/b/c.rs");
         assert_eq!(normalize_locator_path("a/b/c.rs/"), "a/b/c.rs");
+    }
+
+    #[test]
+    fn a_plain_unc_location_selects_a_finding_stored_under_a_verbatim_unc_path() {
+        // #15921: the stored text is the verbatim spelling; the selector is
+        // what `output::path` prints for it and what a user types.
+        const STORED: &str = r"\\?\UNC\server\share\repo\src\lib.rs";
+        // Fixture check: the printed location is the plain share path.
+        assert_eq!(
+            crate::output::path::strip_windows_verbatim_prefix(&STORED.replace('\\', "/"))
+                .as_deref(),
+            Some("//server/share/repo/src/lib.rs")
+        );
+        for selector in [
+            "//server/share/repo/src/lib.rs:7",
+            r"\\server\share\repo\src\lib.rs:7",
+            r"\\?\UNC\server\share\repo\src\lib.rs:7",
+            "src/lib.rs:7",
+        ] {
+            assert!(
+                selector_matches_file_line(STORED, 7, selector),
+                "{selector}"
+            );
+        }
+        // The fold applies to the selector operand as well.
+        assert!(selector_matches_file_line(
+            "//server/share/repo/src/lib.rs",
+            7,
+            r"\\?\UNC\server\share\repo\src\lib.rs:7"
+        ));
+        // Another server, share or line is still a miss.
+        for selector in [
+            "//other/share/repo/src/lib.rs:7",
+            "//server/other/repo/src/lib.rs:7",
+            "//server/share/repo/src/lib.rs:8",
+        ] {
+            assert!(
+                !selector_matches_file_line(STORED, 7, selector),
+                "{selector}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_folds_only_the_drive_and_unc_verbatim_roots() {
+        assert_eq!(
+            normalize_locator_path(r"\\?\C:\repo\src\lib.rs"),
+            "C:/repo/src/lib.rs"
+        );
+        assert_eq!(
+            normalize_locator_path(r"\\?\unc\server\share\a.rs"),
+            "//server/share/a.rs"
+        );
+        // Other verbatim forms keep their spelling and match byte for byte.
+        assert_eq!(
+            normalize_locator_path(r"\\?\Volume{1234}\a.rs"),
+            "//?/Volume{1234}/a.rs"
+        );
+        // Plain Unix and relative paths are untouched.
+        assert_eq!(
+            normalize_locator_path("/home/u/repo/src/lib.rs"),
+            "/home/u/repo/src/lib.rs"
+        );
+        assert_eq!(normalize_locator_path("src/lib.rs"), "src/lib.rs");
     }
 }

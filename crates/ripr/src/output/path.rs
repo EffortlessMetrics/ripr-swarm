@@ -424,7 +424,7 @@ fn windows_absolute_segments(path_text: &str) -> Option<Vec<String>> {
 /// Reduce a verbatim prefix to its plain form: `//?/X:` becomes `X:`,
 /// `//?/UNC/server/share` becomes `//server/share`. Any other `//?/` form
 /// (and non-verbatim text) is returned unchanged.
-fn strip_windows_verbatim_prefix(unified: &str) -> Option<String> {
+pub(crate) fn strip_windows_verbatim_prefix(unified: &str) -> Option<String> {
     let rest = unified.strip_prefix("//?/")?;
     let bytes = rest.as_bytes();
     if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
