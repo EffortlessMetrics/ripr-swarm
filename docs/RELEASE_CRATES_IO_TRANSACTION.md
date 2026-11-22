@@ -1,7 +1,7 @@
 # crates.io release transaction
 
 Owner: [ripr#1649](https://github.com/EffortlessMetrics/ripr/issues/1649).
-Status: decision core only. Nothing in this slice reads crates.io or uploads to it.
+Status: decision core and read-only observer. Nothing here uploads to crates.io.
 
 crates.io publication is not atomic across packages, and a published version
 can never be replaced. The transaction therefore uploads one package at a
@@ -11,14 +11,44 @@ twice under one authorization.
 ## What exists
 
 `xtask/src/release_crates_io_transaction/plan.rs` holds the typed request, the
-classification of observed registry state and `decide`.
+classification of observed registry state and `decide`. `observe.rs` holds
+the read-only registry observer.
 
-`cargo xtask release-crates-io-transaction-plan --request <request.json>
---authorization <authorization.json> --inventory <inventory.json>` evaluates
-supplied files and prints the decision. It exits nonzero for a stop.
+`cargo xtask release-crates-io-transaction-observe --request <request.json>`
+reads the registry and prints the inventory. `cargo xtask
+release-crates-io-transaction-plan --request <request.json> --authorization
+<authorization.json> --inventory <inventory.json>` evaluates supplied files
+and prints the decision. It exits nonzero for a stop.
 
-Not built yet: the transport that observes the registry and downloads the
-published bytes, the upload itself, the attempt record and the receipt.
+Not built yet: the upload itself, the attempt record and the receipt.
+
+## Observation
+
+The observer issues https GET requests to three fixed hosts and holds no
+credential. It refuses a request with violations before any read. For each
+package it asks two independent sources about the exact version: the registry
+API and the sparse index a dependent resolves through.
+
+| API | Index | Reported as |
+| --- | --- | --- |
+| The registry's own not-found answer | No file, or no line for the version | `absent` |
+| Version listed | Version listed, same checksum | `present`, with the archive downloaded |
+| Version listed | Not listed, or the reverse | `unavailable` |
+| Version listed | Listed with another checksum | `unavailable` |
+| Any other status, no answer, unparseable content, another crate or spelling, or a version listed twice, from either source | | `unavailable` |
+
+A version listed in one source and not the other is propagation in progress.
+It is neither absent nor resolvable, so it holds the transaction.
+
+For a present version the observer downloads the archive and reports its
+SHA-256 only when that hash equals the checksum both sources list. A failed
+download, or bytes that differ from the registry's own checksum, leave the
+hash unset, which the plan holds as ambiguous. A version is reported yanked
+when either source says so.
+
+The inventory's attempt record is always empty here. It is not a registry
+fact; the upload side owns it. A plan built from this output alone therefore
+cannot show `attempt_consumed`.
 
 ## Request
 
@@ -90,13 +120,17 @@ or `package_set_published_exact`.
 
 ## Proof
 
-`cargo test -p xtask release_crates_io_transaction` runs 9 tests. One sweeps
+`cargo test -p xtask release_crates_io_transaction` runs 14 tests. One sweeps
 all 144 combinations of six registry states for each of two packages and four
 attempt records, and checks that an upload is proposed only for an absent,
 unattempted package whose dependency is exact, while every other package
 reads as absent or exact.
 
-These tests exercise the decision against stand-in inventories. They do not
-show that a real registry read produces a correct inventory, or that the
-attempt record survives an interrupted upload; both belong to the transport
-slice.
+The decision tests use stand-in inventories. The observer tests use scripted
+HTTP answers and check each row of the observation table.
+
+Observed against crates.io on 2026-11-22, read-only: the command reported a
+published version as present with a downloaded hash equal to the registry's
+checksum, and an unpublished crate as absent. Not observed: a version in
+propagation, a yanked version, and whether the attempt record survives an
+interrupted upload, which belongs to the upload slice.

@@ -179,6 +179,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::ReleaseGithubTransactionObserve(args) => {
             super::release_github_transaction::observe_command(&args)
         }
+        XtaskCommand::ReleaseCratesIoTransactionObserve(args) => {
+            super::release_crates_io_transaction::observe_command(&args)
+        }
         XtaskCommand::ReleaseCratesIoTransactionPlan(args) => {
             super::release_crates_io_transaction::plan_command(&args)
         }

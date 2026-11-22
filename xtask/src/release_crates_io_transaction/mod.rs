@@ -1,11 +1,15 @@
 //! Exact, retry-safe crates.io publication of one package set (ripr#1649).
 //!
-//! This slice is the decision core: a typed request naming the ordered
-//! package set, classification of observed registry state per package, and
-//! the single next step. It performs no registry read and no upload, and it
-//! holds no credential. The read-only `release-crates-io-transaction-plan`
-//! command evaluates supplied files.
+//! A typed request naming the ordered package set, classification of
+//! observed registry state per package, and the single next step.
+//! `release-crates-io-transaction-plan` evaluates supplied files.
+//! `release-crates-io-transaction-observe` reads the registry with GET
+//! requests only and prints the inventory the plan consumes. Nothing here
+//! uploads, and nothing here holds a credential.
 
+mod observe;
+#[cfg(test)]
+mod observe_tests;
 mod plan;
 #[cfg(test)]
 mod tests;
@@ -60,4 +64,26 @@ pub(crate) fn plan_command(args: &[String]) -> Result<(), String> {
             stop.kind, stop.detail
         )),
     }
+}
+
+/// `release-crates-io-transaction-observe`: read every package of the request
+/// from the registry and print the inventory. GET requests only.
+pub(crate) fn observe_command(args: &[String]) -> Result<(), String> {
+    let [flag, path] = args else {
+        return Err("usage: release-crates-io-transaction-observe --request <request.json>".into());
+    };
+    if flag != "--request" {
+        return Err(format!("unexpected argument `{flag}`"));
+    }
+    let request: plan::CratesIoTransactionRequest = read_json(path, "request")?;
+    let violations = request.violations();
+    if !violations.is_empty() {
+        // A rejected request is never turned into registry reads.
+        return Err(format!("request rejected: {}", violations.join("; ")));
+    }
+    let inventory = observe::observe(&mut observe::HttpsGet, &request);
+    let rendered = serde_json::to_string_pretty(&inventory)
+        .map_err(|error| format!("render inventory: {error}"))?;
+    println!("{rendered}");
+    Ok(())
 }

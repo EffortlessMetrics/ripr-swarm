@@ -111,6 +111,7 @@ pub(crate) enum XtaskCommand {
     ReleaseGithubTransactionPlan(Vec<String>),
     ReleaseGithubTransactionObserve(Vec<String>),
     ReleaseCratesIoTransactionPlan(Vec<String>),
+    ReleaseCratesIoTransactionObserve(Vec<String>),
     TargetedTestOutcome(Vec<String>),
     NativeLibtest(Vec<String>),
     MutationCalibration(Vec<String>),
@@ -357,6 +358,9 @@ impl XtaskCommand {
             "release-github-transaction-plan" => Self::ReleaseGithubTransactionPlan(rest),
             "release-github-transaction-observe" => Self::ReleaseGithubTransactionObserve(rest),
             "release-crates-io-transaction-plan" => Self::ReleaseCratesIoTransactionPlan(rest),
+            "release-crates-io-transaction-observe" => {
+                Self::ReleaseCratesIoTransactionObserve(rest)
+            }
             "targeted-test-outcome" => Self::TargetedTestOutcome(rest),
             "native-libtest" => Self::NativeLibtest(rest),
             "mutation-calibration" => Self::MutationCalibration(rest),
@@ -741,6 +745,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "release-github-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>",
         "release-github-transaction-observe --request <request.json>",
         "release-crates-io-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>",
+        "release-crates-io-transaction-observe --request <request.json>",
         "targeted-test-outcome --before <path> --after <path>",
         "native-libtest --root <path> --package <name> [--target-dir <path>] [--locked] [--offline] [--replay-filter <name>] [--out <path>]",
         "mutation-calibration [root] --mutants-json <path>",
@@ -2058,6 +2063,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Decides the next crates.io package-set publication step from supplied request, verified-authorization and registry-inventory files; it reads no registry state, holds no credential and uploads nothing (ripr#1649).",
+        ),
+        command_entry(
+            "release-crates-io-transaction-observe --request <request.json>",
+            "non_mutating_check",
+            "stdout",
+            false,
+            false,
+            "Reads each requested package version from the crates.io API, sparse index and archive host with GET requests only and prints the registry inventory; it uploads nothing and holds no credential (ripr#1649).",
         ),
         command_entry(
             "targeted-test-outcome --before <path> --after <path>",
