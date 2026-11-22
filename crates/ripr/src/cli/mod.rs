@@ -178,11 +178,7 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // `ripr -v -v mcp` routed. Version is a side-effect-free identity
     // query, so it must not emit the verbose diagnostic even when callers
     // append or prepend the flag.
-    let verbose_spelling = args
-        .iter()
-        .skip(1)
-        .find(|arg| matches!(arg.as_str(), "--verbose" | "-v"))
-        .cloned();
+    let argv_before_extraction = args.clone();
     let verbose_flag = !version_requested && parse::extract_global_verbose(&mut args);
     if verbose_flag {
         crate::set_verbose(true);
@@ -195,10 +191,18 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
             && args.get(2).is_some_and(|arg| arg == "--json")
         {
             // The extraction removed the flag, so the stray argument is
-            // named from the spelling captured before it (#16072).
+            // the first token of the original argv that is not one of the
+            // two route tokens (#16072). That is the verbosity flag itself
+            // unless another extra precedes it.
+            let mut route = ["help", "--json"].into_iter().peekable();
+            let stray = argv_before_extraction
+                .iter()
+                .skip(1)
+                .find(|arg| route.next_if(|token| arg.as_str() == *token).is_none())
+                .cloned();
             return Err(CommandError::from(command::strict_route_usage(
                 "help --json",
-                verbose_spelling.as_slice(),
+                stray.as_slice(),
             )));
         }
         eprintln!("ripr: verbose mode enabled");

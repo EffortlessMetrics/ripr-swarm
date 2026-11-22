@@ -314,6 +314,14 @@ fn strict_help_routes_publish_the_stray_argument_document() -> TestResult {
             "help --json",
             "--verbose",
         ),
+        // Devin on #16090: an extra ahead of the verbosity flag is the first
+        // extra, so it is the one named.
+        (
+            &["help", "--json", "--quiet", "--verbose"][..],
+            "help --json",
+            "--quiet",
+        ),
+        (&["help", "-v", "--json", "extra"][..], "help --json", "-v"),
     ] {
         let output = run_ripr(args);
         let usage = format!(
