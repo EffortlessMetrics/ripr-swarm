@@ -5,7 +5,7 @@ use std::path::Path;
 
 pub(super) fn load_json(repo: &Path, relative: &str) -> JsonInput {
     let path = repo.join(relative);
-    let Ok(text) = crate::bounded_input::read_to_string(&path) else {
+    let Ok(text) = crate::bounded_input::read_artifact_text(&path) else {
         return JsonInput {
             state: InputState::Missing,
             value: None,

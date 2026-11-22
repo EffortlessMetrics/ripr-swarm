@@ -13,6 +13,7 @@
 //! - repo snapshots: `rerun --before`, `plus --repo-exposure-summary`,
 //!   `outcome`, `agent verify`, `agent receipt --verify-json`;
 //! - report inputs: `pr-review front-panel`, `pr-comments plan`,
+//!   `pr-comments summary`,
 //!   `assistant-loop health`, `feedback export`;
 //! - review and agent records: `annotations --comments`, `receipt check
 //!   --path`, `swarm ingest --result`.
@@ -221,9 +222,10 @@ struct Case<'a> {
     out: Option<&'a str>,
     /// The control's exit code.
     exit: i32,
-    /// JSON pointers into stdout that hash the input file as written: they
-    /// must differ between spellings, and are left out of the comparison.
-    byte_hashes: &'a [&'a str],
+    /// JSON pointers into stdout that hash the input file, each with the
+    /// digest it must equal over the bytes written for that run. They are
+    /// checked exactly and left out of the cross-spelling comparison.
+    byte_hashes: &'a [ByteHash],
 }
 
 /// The exit, stdout and written file a run produced, scrubbed, plus the
@@ -238,6 +240,30 @@ struct Observed {
 
 /// A named way to write an artifact's text to disk.
 type Spelling = (&'static str, fn(&str) -> Vec<u8>);
+
+/// A JSON pointer to a digest field and the digest it must hold.
+type ByteHash = (&'static str, fn(&[u8]) -> String);
+
+/// `rerun`'s `stable_input_hash`: FNV-1a 64 as 16 lowercase hex digits.
+fn fnv1a64_hex(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// The provenance digest form `sha256:<hex>`.
+fn sha256_prefixed(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(bytes);
+    let hex = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
+}
 
 const INPUT: &str = "target/enc/input.json";
 
@@ -268,7 +294,7 @@ fn run_case(root: &Path, case: &Case<'_>, bytes: &[u8]) -> Result<(Observed, Str
                 &stderr,
             ));
         };
-        for pointer in case.byte_hashes {
+        for (pointer, _) in case.byte_hashes {
             // A refused run prints no such field; the comparison still
             // sees the difference through the rest of the output.
             hashes.push(
@@ -322,6 +348,27 @@ fn observed_refusal(
     )
 }
 
+/// Each byte-hash field must equal the digest of the exact bytes on disk,
+/// not of the decoded text.
+fn hashes_cover_bytes(
+    case: &Case<'_>,
+    spelling: &str,
+    observed: &Observed,
+    bytes: &[u8],
+    said: &str,
+) -> Result<(), String> {
+    for ((pointer, digest), got) in case.byte_hashes.iter().zip(&observed.hashes) {
+        let expected = digest(bytes);
+        if got.as_str() != Some(expected.as_str()) {
+            return Err(format!(
+                "{} [{spelling}]: {pointer} is {got}, expected {expected} over the bytes as written\n{said}",
+                case.name
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Run every case on the UTF-8 control, on each named spelling and on the
 /// truncated UTF-16 negative control; return every failure.
 fn check_cases(root: &Path, cases: &[Case<'_>], spellings: &[Spelling]) -> Vec<String> {
@@ -337,6 +384,7 @@ fn check_cases(root: &Path, cases: &[Case<'_>], spellings: &[Spelling]) -> Vec<S
 fn check_case(root: &Path, case: &Case<'_>, spellings: &[Spelling]) -> Result<(), String> {
     let text = read_text(&root.join(case.source))?;
     let (control, said) = run_case(root, case, text.as_bytes())?;
+    hashes_cover_bytes(case, "UTF-8", &control, text.as_bytes(), &said)?;
     if control.exit != Some(case.exit) {
         return Err(format!(
             "{}: the UTF-8 control exited {:?}, expected {}\n{said}",
@@ -351,8 +399,11 @@ fn check_case(root: &Path, case: &Case<'_>, spellings: &[Spelling]) -> Result<()
     }
     let mut failures = Vec::new();
     for (spelling, encode) in spellings {
-        let (observed, said) = run_case(root, case, &encode(&text))?;
-        let same_hashes = observed.hashes == control.hashes;
+        let bytes = encode(&text);
+        let (observed, said) = run_case(root, case, &bytes)?;
+        if let Err(error) = hashes_cover_bytes(case, spelling, &observed, &bytes, &said) {
+            failures.push(error);
+        }
         let comparable = Observed {
             hashes: control.hashes.clone(),
             ..observed
@@ -361,11 +412,6 @@ fn check_case(root: &Path, case: &Case<'_>, spellings: &[Spelling]) -> Result<()
             failures.push(format!(
                 "{} [{spelling}]: differs from the UTF-8 control\ncontrol: {control:?}\ngot: {comparable:?}\n{said}",
                 case.name
-            ));
-        } else if !case.byte_hashes.is_empty() && same_hashes {
-            failures.push(format!(
-                "{} [{spelling}]: {:?} must hash the file as written, but matched the UTF-8 file's hash",
-                case.name, case.byte_hashes
             ));
         }
     }
@@ -440,7 +486,7 @@ fn gap_ledger_readers_accept_powershell_encodings() -> Result<(), String> {
             ]),
             out: None,
             exit: 0,
-            byte_hashes: &["/cache/input_fingerprint/selector_ledger_hash"],
+            byte_hashes: &[("/cache/input_fingerprint/selector_ledger_hash", fnv1a64_hex)],
         },
         Case {
             name: "swarm queue --gap-ledger",
@@ -533,6 +579,96 @@ fn gap_ledger_readers_accept_powershell_encodings() -> Result<(), String> {
         },
     ];
     finish(check_cases(&root, &cases, POWERSHELL_SPELLINGS))
+}
+
+/// A ledger keeps the path of the snapshot it was built from, and
+/// `agent packet` and `swarm queue` re-read that snapshot to check it is
+/// current before they assign a gap. A ledger built from a re-encoded
+/// snapshot must assign exactly what the UTF-8 snapshot's ledger assigns.
+/// (UTF-16 with CRLF would change the snapshot's committed text, so it is
+/// not a spelling these readers can accept; see the snapshot test.)
+#[test]
+fn a_ledger_from_a_reencoded_snapshot_assigns_like_the_utf8_one() -> Result<(), String> {
+    let root = fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let gap = first_gap(&root)?;
+    let text = read_text(&root.join(ARTIFACTS).join("before.json"))?;
+    let consumers: [Vec<String>; 2] = [
+        args(&[
+            "agent",
+            "packet",
+            "--root",
+            ".",
+            "--gap-ledger",
+            "target/enc/derived.json",
+            "--gap-id",
+            &gap,
+            "--json",
+        ]),
+        args(&[
+            "swarm",
+            "queue",
+            "--root",
+            ".",
+            "--gap-ledger",
+            "target/enc/derived.json",
+            "--format",
+            "json",
+        ]),
+    ];
+    let run_chain = |bytes: &[u8]| -> Result<Vec<(Option<i32>, String)>, String> {
+        write(&root.join(ARTIFACTS).join("source.json"), bytes)?;
+        ripr_ok(
+            &root,
+            &[
+                "reports",
+                "gap-ledger",
+                "--root",
+                ".",
+                "--repo-exposure",
+                "target/enc/source.json",
+                "--out",
+                "target/enc/derived.json",
+                "--out-md",
+                "target/enc/derived.md",
+            ],
+        )?;
+        consumers
+            .iter()
+            .map(|argv| {
+                let argv = argv.iter().map(String::as_str).collect::<Vec<_>>();
+                let output = ripr(&root, &argv)?;
+                Ok((
+                    output.status.code(),
+                    scrub(&format!(
+                        "{}\n{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    )),
+                ))
+            })
+            .collect()
+    };
+    let control = run_chain(text.as_bytes())?;
+    if control.iter().any(|(exit, _)| *exit != Some(0)) {
+        return Err(format!("the UTF-8 chain did not succeed: {control:?}"));
+    }
+    let mut failures = Vec::new();
+    for (spelling, encode) in [
+        (
+            "UTF-8 with a byte-order mark",
+            utf8_with_mark as fn(&str) -> Vec<u8>,
+        ),
+        ("UTF-16LE, LF line ends", utf16le),
+    ] {
+        let observed = run_chain(&encode(&text))?;
+        if observed != control {
+            failures.push(format!(
+                "[{spelling}]: the consumers differ from the UTF-8 chain\ncontrol: {control:?}\ngot: {observed:?}"
+            ));
+        }
+    }
+    finish(failures)
 }
 
 #[test]
@@ -683,7 +819,7 @@ fn snapshot_readers_accept_powershell_encodings() -> Result<(), String> {
                 ]),
                 out: None,
                 exit: 0,
-                byte_hashes: &["/provenance/verify_artifact/sha256"],
+                byte_hashes: &[("/provenance/verify_artifact/sha256", sha256_prefixed)],
             },
             "not canonical output from ripr agent verify",
         ),
@@ -816,6 +952,27 @@ fn report_and_record_readers_accept_powershell_encodings() -> Result<(), String>
                 "target/enc/plan.md",
             ]),
             out: Some("target/enc/plan.json"),
+            exit: 0,
+            byte_hashes: &[],
+        },
+        Case {
+            name: "pr-comments summary --pr-guidance",
+            source: "target/enc/comments.json",
+            args: args(&[
+                "pr-comments",
+                "summary",
+                "--root",
+                ".",
+                "--pull-request",
+                "7",
+                "--head-sha",
+                "0123456789abcdef0123456789abcdef01234567",
+                "--pr-guidance",
+                "{in}",
+                "--output-dir",
+                "target/enc/summary",
+            ]),
+            out: Some("target/enc/summary/summary-request.json"),
             exit: 0,
             byte_hashes: &[],
         },
