@@ -22,7 +22,11 @@ pub(crate) struct FilePolicyRetainedSubject {
 }
 
 pub(crate) fn host_label() -> &'static str {
-    if cfg!(windows) { "windows" } else { "unix" }
+    match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "macos",
+        _ => std::env::consts::FAMILY,
+    }
 }
 
 pub(crate) fn write_retained_subject() -> Result<(), String> {
@@ -157,9 +161,10 @@ pub(crate) fn validate_packet_coverage_report(report: &str, host: &str) -> Resul
                 ));
             }
         }
-        "unix" => {
+        "unix" | "linux" | "macos" => {
             let native_tests = packet_coverage_selected_tests(native)?;
-            if !native.contains("host=unix; declared=unix; applicable;")
+            if !common.contains(&format!("host={host}; declared=all; applicable;"))
+                || !native.contains(&format!("host={host}; declared=unix; applicable;"))
                 || packet_coverage_selected_count(native)? < 2
             {
                 return Err(format!(
@@ -179,7 +184,7 @@ pub(crate) fn validate_packet_coverage_report(report: &str, host: &str) -> Resul
         }
         other => {
             return Err(format!(
-                "retained file-policy host must be windows or unix, got {other:?}"
+                "retained file-policy host must be windows, unix, linux or macos, got {other:?}"
             ));
         }
     }
@@ -204,7 +209,10 @@ pub(crate) fn validate_retained_bundle(
             subject.head, expected_head
         ));
     }
-    if subject.host != host_label() && subject.host != "windows" && subject.host != "unix" {
+    if !matches!(
+        subject.host.as_str(),
+        "windows" | "unix" | "linux" | "macos"
+    ) {
         return Err(format!(
             "file-policy subject host {:?} is not a known host label",
             subject.host
@@ -338,6 +346,28 @@ mod tests {
     #[test]
     fn pass_report_with_windows_rows_is_admitted() -> Result<(), String> {
         validate_packet_coverage_report(&fixture_report("windows"), "windows")
+    }
+
+    #[test]
+    fn os_reports_keep_host_agreement_and_required_native_subjects() -> Result<(), String> {
+        for host in ["linux", "macos"] {
+            let report = fixture_report(host);
+            validate_packet_coverage_report(&report, host)?;
+            for changed in [
+                report.replacen(&format!("host={host};"), "host=windows;", 1),
+                report.replace(
+                    "declared=unix; applicable;",
+                    "declared=unix; not_applicable;",
+                ),
+                report.replace(
+                    "native_packet_pilot_consumes_the_summary_artifact",
+                    "neighbor",
+                ),
+            ] {
+                assert!(validate_packet_coverage_report(&changed, host).is_err());
+            }
+        }
+        Ok(())
     }
 
     #[test]

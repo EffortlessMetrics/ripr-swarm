@@ -2558,7 +2558,7 @@ mod call_line_text_tests {
 }
 
 /// A deliberately narrow unresolved case: an adjacent comparison change in
-/// the first statement of a loop, observed by one direct integer-sequence or integer-tuple value
+/// the first statement of a loop, observed by one direct literal-sequence or literal-tuple value
 /// assertion. The loop element and accumulator are not owner arguments, so a
 /// literal list alone does not place either operand at the changed boundary.
 /// Identity assertions and other test shapes retain their existing treatment.
@@ -2714,6 +2714,34 @@ pub(super) fn unresolved_loop_list_boundary(
                 // then compares the rest exactly as the `xs[0]` forms do.
                 initial.trim() == format!("{right} = None")
                     && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+            } else if initial.trim().starts_with(&format!("{right} = float(")) {
+                // `best = float("-inf")` (`"inf"` for a minimum) takes the first
+                // finite element under either operator, then compares the rest
+                // exactly as the `xs[0]` forms do.
+                let infinity = if new_op.starts_with('>') {
+                    "-inf"
+                } else {
+                    "inf"
+                };
+                [
+                    format!("{right} = float(\"{infinity}\")"),
+                    format!("{right} = float('{infinity}')"),
+                ]
+                .contains(&initial.trim().to_string())
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+            } else if initial.trim().starts_with(&format!("{right} = "))
+                && initial.trim().ends_with("math.inf")
+            {
+                // `best = -math.inf` (`math.inf` for a minimum) is the same
+                // infinity once nothing in the module can rebind `math`.
+                let infinity = if new_op.starts_with('>') {
+                    "-math.inf"
+                } else {
+                    "math.inf"
+                };
+                initial.trim() == format!("{right} = {infinity}")
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+                    && super::math_infinity::stdlib_math_unrebound(source)
             } else {
                 initial.trim() == format!("{right} = {}[0]", parameter.name)
                     // `for x in xs:` also visits `xs[0]` first; comparing it
@@ -2747,7 +2775,7 @@ pub(super) fn unresolved_loop_list_boundary(
         .collect();
     !oracle_candidates.is_empty()
         && oracle_candidates.iter().all(|candidate| {
-            // Every assertion must independently be a strong direct integer
+            // Every assertion must independently be a strong direct literal
             // sequence value pin. In particular, an identity assertion must
             // not disappear behind the selected stronger numeric assertion.
             !candidate.test.assertions.is_empty()
@@ -2763,6 +2791,33 @@ pub(super) fn unresolved_loop_list_boundary(
                         })
                 })
         })
+}
+
+/// A literal a selection loop can compare and a value pin can check: an
+/// integer, float, string or boolean constant, optionally signed when numeric.
+/// Elements that compare equal under the selector's `>=`/`<=` also compare
+/// equal under `==` against any such literal, so a value pin cannot tell which
+/// of two equal elements was selected (#12954). `None`, containers and other
+/// expressions are left out.
+fn selection_literal(expr: &rustpython_parser::ast::Expr) -> bool {
+    use rustpython_parser::ast::{self, Expr};
+    match expr {
+        Expr::Constant(value) => matches!(
+            value.value,
+            ast::Constant::Int(_)
+                | ast::Constant::Float(_)
+                | ast::Constant::Str(_)
+                | ast::Constant::Bool(_)
+        ),
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub | ast::UnaryOp::UAdd) => {
+            matches!(
+                unary.operand.as_ref(),
+                Expr::Constant(value)
+                    if matches!(value.value, ast::Constant::Int(_) | ast::Constant::Float(_))
+            )
+        }
+        _ => false,
+    }
 }
 
 fn is_direct_integer_sequence_assertion(
@@ -2813,9 +2868,9 @@ fn is_direct_integer_sequence_assertion(
         else {
             return false;
         };
-        let observed = if integer(right) {
+        let observed = if selection_literal(right) {
             compare.left.as_ref()
-        } else if integer(&compare.left) {
+        } else if selection_literal(&compare.left) {
             right
         } else {
             return false;
@@ -2885,7 +2940,7 @@ fn is_direct_integer_sequence_assertion(
             Expr::Tuple(tuple) => &tuple.elts,
             _ => return false,
         };
-        !elements.is_empty() && elements.iter().all(integer)
+        !elements.is_empty() && elements.iter().all(selection_literal)
     }
     !module.body.is_empty() && module.body.iter().all(|statement| {
         matches!(statement, Stmt::Assert(assertion) if assertion.msg.is_none() && value_pin(&assertion.test, owner, candidate))
@@ -2893,7 +2948,7 @@ fn is_direct_integer_sequence_assertion(
 }
 
 /// A closed result alias: one direct numeric owner call assigned to a local,
-/// followed immediately by one integer equality assertion on that same local.
+/// followed immediately by one literal equality assertion on that same local.
 /// Other statements and assertions, decorators, fixtures, and aliases through
 /// wrappers are deliberately outside the rule.
 fn is_indirect_integer_sequence_assertion(
@@ -2941,18 +2996,9 @@ fn is_indirect_integer_sequence_assertion(
     else {
         return false;
     };
-    fn integer(value: &Expr) -> bool {
-        match value {
-            Expr::Constant(value) => matches!(value.value, ast::Constant::Int(_)),
-            Expr::UnaryOp(value) if matches!(value.op, ast::UnaryOp::UAdd | ast::UnaryOp::USub) => {
-                matches!(value.operand.as_ref(), Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_)))
-            }
-            _ => false,
-        }
-    }
     let same_local = |value: &Expr| matches!(value, Expr::Name(name) if name.id == target.id);
-    if !((same_local(&compare.left) && integer(right))
-        || (integer(&compare.left) && same_local(right)))
+    if !((same_local(&compare.left) && selection_literal(right))
+        || (selection_literal(&compare.left) && same_local(right)))
     {
         return false;
     }

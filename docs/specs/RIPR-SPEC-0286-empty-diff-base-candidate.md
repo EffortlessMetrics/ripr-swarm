@@ -61,7 +61,7 @@ would be partial or refused:
   (#10821);
 - the diff's changed-file count stays within the parser guard
   (`RIPR_MAX_DIFF_INDEX_FILES`);
-- submodule state is compared with `--ignore-submodules=none`, matching
+- submodule state is compared with `--ignore-submodules=dirty`, matching
   the analysis loader.
 
 Among eligible branches, a Rust-bearing diff ranks before a non-Rust

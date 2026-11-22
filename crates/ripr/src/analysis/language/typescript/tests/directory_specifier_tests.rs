@@ -190,6 +190,13 @@ fn require_of_other_directory_does_not_relate_to_root_index_owner() -> Result<()
 /// "alias resolution is not enabled" advice meant for bare aliases.
 #[test]
 fn unresolved_parent_directory_require_is_disclosed_as_relative_not_alias() -> Result<(), String> {
+    // The second join escapes the workspace and cannot be attributed to a
+    // package or file obtained by clamping it to the workspace root.
+    assert_relative_import_disclosed("..")?;
+    assert_relative_import_disclosed("../..")
+}
+
+fn assert_relative_import_disclosed(specifier: &str) -> Result<(), String> {
     let root = ts_unique_tempdir("dir-unresolved-parent")?;
     ts_write_file(
         &root.join("src/calc.js"),
@@ -197,7 +204,9 @@ fn unresolved_parent_directory_require_is_disclosed_as_relative_not_alias() -> R
     )?;
     ts_write_file(
         &root.join("test/calc.test.js"),
-        "const { isAdult } = require('..');\n\ntest('adult', () => {\n  expect(isAdult(18)).toBe(true);\n});\n",
+        &format!(
+            "const {{ isAdult }} = require('{specifier}');\n\ntest('adult', () => {{\n  expect(isAdult(18)).toBe(true);\n}});\n"
+        ),
     )?;
     let result = TypeScriptAdapter.analyze_diff(
         &ts_analysis_options(root.clone()),
@@ -219,7 +228,7 @@ fn unresolved_parent_directory_require_is_disclosed_as_relative_not_alias() -> R
             .evidence
             .iter()
             .any(|line| line.contains("typescript_relative_import_unresolved")),
-        "`require('..')` must be disclosed as an unresolved relative import: {:?}",
+        "`require('{specifier}')` must be disclosed as an unresolved relative import: {:?}",
         finding.evidence
     );
     assert!(
@@ -264,4 +273,287 @@ fn directory_resolution_is_memoized_per_run_only() -> Result<(), String> {
     assert_eq!(unscoped.as_deref(), Some(""), "no scope, no cache");
     assert_eq!(next_run.as_deref(), Some(""), "a new run re-probes");
     Ok(())
+}
+
+/// Exercise the test relation, independently of how the Chai observer grades.
+#[test]
+fn own_package_build_entry_credits_only_the_unique_tracked_source() -> Result<(), String> {
+    use crate::testing::fixture_git::fixture_git_ok;
+
+    let owner = "export default function emitter() {\n  return 42;\n}\n";
+    let root = with_tree(
+        "own-build-entry",
+        &[
+            ("src/index.ts", owner),
+            ("src/other.ts", owner),
+            ("src/ambiguous.ts", owner),
+            ("src/ambiguous.tsx", owner),
+            ("src/missing.ts.ts", owner),
+            (
+                "test/public.test.ts",
+                "import emitter from '..';\nimport { expect } from 'chai';\nit('returns a value', () => { expect(emitter()).to.equal(42); });\n",
+            ),
+            (".gitignore", "dist/\n"),
+            (
+                "dist/emitter.js",
+                "throw new Error('local build artifact');\n",
+            ),
+        ],
+    )?;
+    fixture_git_ok(&root, &["init", "-q"])?;
+    fixture_git_ok(&root, &["add", ".gitignore", "src", "test"])?;
+    let paths = [
+        "src/index.ts",
+        "src/other.ts",
+        "src/ambiguous.ts",
+        "src/ambiguous.tsx",
+        "src/missing.ts.ts",
+    ];
+    let changes = paths.map(|file| changed_with_lines(file, &[(2, "  return 42;")]));
+    let bundle = "dist/emitter.js";
+    for (label, main, entries, tracked, credits) in [
+        (
+            "declared source",
+            bundle,
+            r#""source":"src/index.ts","module":"dist/emitter.mjs""#,
+            true,
+            true,
+        ),
+        (
+            "two sources",
+            bundle,
+            r#""source":["src/index.ts","src/other.ts"]"#,
+            true,
+            false,
+        ),
+        (
+            "divergent exports",
+            bundle,
+            r#""source":"src/index.ts","exports":{".":{"import":"./dist/emitter.mjs","require":"./dist/different.js"}}"#,
+            true,
+            false,
+        ),
+        (
+            "ambiguous files",
+            bundle,
+            r#""source":"src/ambiguous""#,
+            true,
+            false,
+        ),
+        (
+            "different module",
+            bundle,
+            r#""source":"src/index.ts","module":"src/other.ts""#,
+            true,
+            false,
+        ),
+        (
+            "missing source",
+            bundle,
+            r#""source":"src/missing.ts""#,
+            true,
+            false,
+        ),
+        (
+            "tracked source mirror",
+            "dist/index.js",
+            r#""version":"1.0.0""#,
+            true,
+            true,
+        ),
+        (
+            "no counterpart",
+            bundle,
+            r#""version":"1.0.0""#,
+            true,
+            false,
+        ),
+        (
+            "untracked source",
+            bundle,
+            r#""source":"src/index.ts""#,
+            false,
+            false,
+        ),
+    ] {
+        let manifest = format!(
+            r#"{{"name":"tiny-emitter","main":"{main}","devDependencies":{{"mocha":"*","chai":"*"}},{entries}}}"#
+        );
+        ts_write_file(&root.join("package.json"), &manifest)?;
+        fixture_git_ok(&root, &["add", "package.json"])?;
+        if !tracked {
+            fixture_git_ok(&root, &["rm", "--cached", "src/index.ts"])?;
+        }
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &changes,
+        )?;
+        for file in paths {
+            let finding = result
+                .findings
+                .iter()
+                .find(|finding| {
+                    finding.probe.location.file == Path::new(file)
+                        && finding
+                            .probe
+                            .owner
+                            .as_ref()
+                            .is_some_and(|name| name.0.ends_with("emitter"))
+                })
+                .ok_or_else(|| format!("{label}: missing emitter finding in {file}"))?;
+            assert_eq!(
+                finding
+                    .related_tests
+                    .iter()
+                    .any(|test| test.file == Path::new("test/public.test.ts")),
+                credits && file == "src/index.ts",
+                "{label}, {file}: {:?}",
+                finding.related_tests,
+            );
+            if credits && file == "src/index.ts" {
+                assert!(
+                    !matches!(finding.class, ExposureClass::Exposed),
+                    "{finding:?}"
+                );
+                assert!(
+                    finding
+                        .evidence
+                        .iter()
+                        .any(|line| line.contains("one tracked source candidate")
+                            && line.contains("loaded bundle is unverified")),
+                    "{:?}",
+                    finding.evidence
+                );
+            }
+            if !credits && file == "src/index.ts" {
+                assert!(
+                    finding
+                        .evidence
+                        .iter()
+                        .any(|line| line.contains("dist/emitter.js")
+                            && line.contains("tracked source")),
+                    "{label}: {:?}",
+                    finding.evidence,
+                );
+            }
+        }
+    }
+    crate::testing::fixture_git::remove_fixture_tree(&root)
+}
+
+#[test]
+fn competing_package_index_withholds_build_source() -> Result<(), String> {
+    use crate::testing::fixture_git::fixture_git_ok;
+
+    let root = with_tree(
+        "build-entry-index-fallback",
+        &[
+            (
+                "package.json",
+                r#"{"name":"emitter","main":"dist/emitter.js","source":"src/emitter.ts"}"#,
+            ),
+            (
+                "src/emitter.ts",
+                "export default function emitter() {\n  return 42;\n}\n",
+            ),
+            (
+                "test/public.test.ts",
+                "import emitter from '..';\nit('calls the entry', () => { emitter(); });\n",
+            ),
+        ],
+    )?;
+    fixture_git_ok(&root, &["init", "-q"])?;
+    fixture_git_ok(&root, &["add", "."])?;
+    for extension in ["js", "json", "node"] {
+        let index = root.join(format!("index.{extension}"));
+        ts_write_file(&index, "")?;
+        if extension == "json" {
+            // The committed subject can contain a fallback removed on disk.
+            fixture_git_ok(&root, &["add", "index.json"])?;
+            std::fs::remove_file(&index).map_err(|error| error.to_string())?;
+        }
+        let result = TypeScriptAdapter.analyze_diff(
+            &ts_analysis_options(root.clone()),
+            &OraclePolicy::default(),
+            &[changed_with_lines("src/emitter.ts", &[(2, "  return 42;")])],
+        )?;
+        let finding = result.findings.first().ok_or("missing source finding")?;
+        assert!(
+            finding.related_tests.is_empty(),
+            "index.{extension}: {finding:?}"
+        );
+        if extension == "json" {
+            fixture_git_ok(&root, &["rm", "--cached", "index.json"])?;
+        } else {
+            std::fs::remove_file(index).map_err(|error| error.to_string())?;
+        }
+    }
+    crate::testing::fixture_git::remove_fixture_tree(&root)
+}
+
+#[test]
+fn sibling_module_withholds_package_source_and_uncredited_call_names_the_entry()
+-> Result<(), String> {
+    use crate::testing::fixture_git::fixture_git_ok;
+
+    let root = with_tree(
+        "package-sibling-or-uncredited-call",
+        &[
+            (
+                "packages/p/package.json",
+                r#"{"name":"p","main":"dist/emitter.js","source":"src/index.ts"}"#,
+            ),
+            (
+                "packages/p/src/index.ts",
+                "export function emitter() {\n  return 42;\n}\n",
+            ),
+            ("packages/p/test/public.test.js", ""),
+        ],
+    )?;
+    fixture_git_ok(&root, &["init", "-q"])?;
+    fixture_git_ok(&root, &["add", "."])?;
+    for (binding, sibling, credited, known_source_gap) in [
+        ("{ emitter }", Some("p.json"), false, false),
+        ("{ emitter }", Some("p.node"), false, false),
+        ("{ emitter }", None, true, false),
+        ("emitter", None, false, true),
+    ] {
+        let sibling = sibling.map(|name| root.join("packages").join(name));
+        if let Some(path) = &sibling {
+            ts_write_file(path, "")?;
+        }
+        ts_write_file(
+            &root.join("packages/p/test/public.test.js"),
+            &format!(
+                "const {binding} = require('../../p');\nit('calls the export', () => {{ emitter(); }});\n"
+            ),
+        )?;
+        let findings = TypeScriptAdapter
+            .analyze_diff(
+                &ts_analysis_options(root.clone()),
+                &OraclePolicy::default(),
+                &[changed_with_lines(
+                    "packages/p/src/index.ts",
+                    &[(2, "  return 42;")],
+                )],
+            )?
+            .findings;
+        let finding = findings.first().ok_or("missing source finding")?;
+        assert_eq!(!finding.related_tests.is_empty(), credited, "{finding:?}");
+        assert_eq!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("dist/emitter.js")
+                    && line.contains("packages/p/src/index.ts")
+                    && line.contains("could not attribute this test")),
+            known_source_gap,
+            "{finding:?}",
+        );
+        if let Some(path) = sibling {
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+    }
+    crate::testing::fixture_git::remove_fixture_tree(&root)
 }
