@@ -222,6 +222,17 @@ pub(crate) fn read_artifact_text(path: impl AsRef<Path>) -> std::io::Result<Stri
     decode_artifact_text(&read(path)?)
 }
 
+/// [`read_artifact_text`] that also returns the bytes as written, for a
+/// caller that hashes the file: the hash covers the bytes, the parse reads
+/// the decoded text.
+pub(crate) fn read_artifact_bytes_and_text(
+    path: impl AsRef<Path>,
+) -> std::io::Result<(Vec<u8>, String)> {
+    let bytes = read(path)?;
+    let text = decode_artifact_text(&bytes)?;
+    Ok((bytes, text))
+}
+
 /// Decode the bytes of a user-named JSON artifact the way
 /// [`read_artifact_text`] does. For a caller that must keep the exact bytes
 /// it read (a gate input whose subject hash covers them) and parse the same

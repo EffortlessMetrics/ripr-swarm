@@ -244,7 +244,7 @@ pub(super) fn validate_agent_verify_snapshot_path(
 /// pre-check saw length 0 for a character device such as `/dev/zero` and let
 /// the unbounded read run forever.
 pub(super) fn read_agent_verify_snapshot(path: &Path, label: &str) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read agent verify {label} snapshot {} failed: {err}",
             output::outcome::display_path(path)

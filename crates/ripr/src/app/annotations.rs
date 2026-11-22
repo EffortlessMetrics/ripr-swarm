@@ -74,7 +74,7 @@ fn render_annotations(
     // One direct read determines presence: `NotFound` is the intended
     // optional-comments-file state; every other I/O failure (permission
     // denied, directory input, invalid UTF-8) stays an explicit error.
-    let text = match crate::bounded_input::read_to_string(&comments_path) {
+    let text = match crate::bounded_input::read_artifact_text(&comments_path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound && options.comments_explicit => {
             return Err(format!(
