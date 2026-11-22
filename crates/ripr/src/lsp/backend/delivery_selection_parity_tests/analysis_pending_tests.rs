@@ -633,8 +633,9 @@ fn analysis_pending_workspace_pull_withdraws_committed_snapshot_when_configurati
 /// #15312: a refresh that fails because the requested base does not resolve
 /// withdraws the retained snapshot on both pull paths. Its findings answer an
 /// earlier base, so serving them unmarked would read as the current answer.
-/// Any other failure keeps the retained snapshot in service, and so does a
-/// retry that is already running.
+/// Any other failure keeps the retained snapshot in service. The withdrawal
+/// holds while a retry runs and ends when an attempt publishes or fails for
+/// another reason.
 #[test]
 fn unresolvable_base_failure_withdraws_the_retained_snapshot_and_other_failures_do_not()
 -> Result<(), String> {
@@ -737,17 +738,34 @@ fn unresolvable_base_failure_withdraws_the_retained_snapshot_and_other_failures_
         ));
     }
 
-    // A retry in progress no longer holds a recorded failure, so the
-    // retained payload is served again until that attempt ends.
+    // A retry in progress keeps the withdrawal latched: the retained
+    // findings must not reappear between two failures, and pull must agree
+    // with a push client that still shows the marker.
     harness
         .service
         .inner()
         .set_analysis_attempt_state_for_test(AnalysisAttemptState::Running);
-    let retrying = document_report(&harness, &uri, Some(withdrawn_id))?;
-    assert_eq!(retrying["kind"], "full");
-    if result_id(&retrying)? != served_id {
+    let retrying = document_report(&harness, &uri, Some(withdrawn_id.clone()))?;
+    if retrying["kind"] != "unchanged" || result_id(&retrying)? != withdrawn_id {
         return Err(format!(
-            "a running retry must serve the retained snapshot: {retrying}"
+            "a running retry must keep the withdrawal marker: {retrying}"
+        ));
+    }
+
+    // An attempt that ends with another failure kind releases the latch: the
+    // base resolved, so the retained snapshot is in service again.
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(
+            AnalysisFailureKind::AnalysisError,
+            "workspace analysis failed: could not read the Git index.",
+        );
+    let released = document_report(&harness, &uri, Some(withdrawn_id))?;
+    assert_eq!(released["kind"], "full");
+    if result_id(&released)? != served_id {
+        return Err(format!(
+            "a later non-base failure must release the withdrawal: {released}"
         ));
     }
     Ok(())
