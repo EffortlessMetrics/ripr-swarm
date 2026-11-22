@@ -1,0 +1,4 @@
+case = "py-route-clients-nested-fixture-exact"
+issue = 14141
+accepted_growth = 14141
+reason = "py-route-clients-nested-fixture-exact is a known false actionable: the nested client is identified after #14141, but route-response sink alignment for this exact-assertion shape is a sibling child, so the verdict reads gap instead of credited until that alignment lands."
