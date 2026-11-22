@@ -109,6 +109,12 @@
       "disposition": "included_accepted_release_or_control",
       "owner": "ledger-v1-review",
       "note": "#14664: the root excludes the separately registered Tier 2 evaluation workspace. Its retained evals tree 3674c0e0202d0b572b07cc6f6160e03515823c65 contains the smoke harness. This records repository infrastructure only."
+    },
+    {
+      "commit_sha": "090336241623cd0f5f7c6d5252e7c9553ff29f83",
+      "disposition": "included_test_or_evidence",
+      "owner": "ledger-v1-review",
+      "note": "#15825: raises the Vitest development dependency of the TypeScript starter example and the typescript_infection_shapes fixture and updates the example README (#11475). The examples path is outside the v1 path classes; it is a runnable sample and fixture input, not shipped product bytes. Examples tree at 7cf9cd6d is 8e212dcb85ace7875fabadfbe4382733ddc00f4c. Language support tiers are unchanged."
     }
   ]
 }

@@ -1,5 +1,14 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.205 for the history-sync composition (#12876)
+
+The public-source import composes with protected main through its 1.189
+generation (std-rooted imports beside generated tests keep their invocation
+scopes), which moves the composed analyzer cache schema to 1.205. The portable
+unchanged-attempt snapshots, their content commitment, the dependent verify
+commitments and the receipt byte hashes move with it. Weak grip, unchanged
+movement and fail-closed first-action routing remain unchanged.
+
 ## Pending — corpus cache generation 1.204 for the history-sync composition (#12857)
 
 The public-source import composes with protected main through its 1.187
@@ -23,6 +32,17 @@ Calls erased by test-local empty macros yield no observed input. The editor reje
 a portable gap ledger that predates this distinction.
 The unchanged-attempt fixture retains its weak grip. Its portable reports and
 dependent verification and receipt hashes were regenerated from the 1.201 producer.
+
+## Pending — corpus cache generation 1.189 for std-rooted imports beside generated tests (#12876)
+
+A macro-generated test beside an import of std's own item under an exempt
+macro name (`use std::panic;`) keeps its invocation scopes, which bumps the
+analyzer cache schema to 1.189 (1.188 is left for #13041). Move the portable
+unchanged-attempt snapshots to 1.189, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.187 for attribute-macro generated tests (#12857)
 

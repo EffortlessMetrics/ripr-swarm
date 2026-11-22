@@ -62,6 +62,7 @@ fn external_policy() -> Result<EditCagePolicy, String> {
         untracked_build_lockfile: None,
         inline_test_module_target: false,
         external_test_file_target: true,
+        declared_cargo_test_target: false,
         new_test_proposal: None,
     })
 }

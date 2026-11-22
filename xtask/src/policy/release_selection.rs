@@ -719,6 +719,78 @@ fn check_partition(packet: &Packet, violations: &mut Vec<String>) {
     }
 }
 
+/// One claim row as the freeze-readiness check reads it.
+pub(super) struct SelectionRow {
+    pub(super) claim_id: String,
+    pub(super) owner_issue: u64,
+    pub(super) resolution: String,
+    pub(super) implementation_refs: Vec<String>,
+}
+
+/// What the freeze-readiness check needs from one packet document. This owner
+/// keeps the packet schema, vocabulary and stage law; the freeze check compares
+/// the result with Git and never re-derives a packet rule.
+pub(super) struct SelectionProjection {
+    pub(super) violations: Vec<String>,
+    pub(super) stage: String,
+    pub(super) observed_main: Option<String>,
+    pub(super) rows: Vec<SelectionRow>,
+}
+
+/// Evaluate `text` with every packet rule and project its rows. A document
+/// that does not parse yields its schema violation and no rows.
+pub(super) fn project_release_selection(path: &str, text: &str) -> SelectionProjection {
+    let violations = evaluate_release_selection(path, text).violations;
+    let packet = serde_json::from_str::<Packet>(text).ok();
+    SelectionProjection {
+        violations,
+        stage: packet
+            .as_ref()
+            .map(|packet| packet.stage.clone())
+            .unwrap_or_default(),
+        observed_main: packet
+            .as_ref()
+            .and_then(|packet| packet.observed_main.sha.clone()),
+        rows: packet
+            .map(|packet| packet.claims)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|claim| SelectionRow {
+                claim_id: claim.claim_id,
+                owner_issue: claim.owner_issue,
+                resolution: claim.resolution,
+                implementation_refs: claim.implementation_refs,
+            })
+            .collect(),
+    }
+}
+
+/// How one row's resolution bears on consuming the packet at the cut.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum RowCutState {
+    /// Terminal, with nothing further owed before the candidate exists.
+    Terminal,
+    /// Terminal for the cut; the proof is executed on the exact candidate.
+    ExecutionOwed,
+    Pending,
+    Hold,
+    /// Not a resolution this owner defines.
+    Unknown,
+}
+
+pub(super) fn row_cut_state(resolution: &str) -> RowCutState {
+    match resolution {
+        "pending" => RowCutState::Pending,
+        "failed_release_hold" => RowCutState::Hold,
+        "final_candidate_execution_only" => RowCutState::ExecutionOwed,
+        other if RESOLUTIONS.contains(&other) => RowCutState::Terminal,
+        _ => RowCutState::Unknown,
+    }
+}
+
+/// The stage a packet must name before the hard cut may consume it.
+pub(super) const HARD_CUT_ELIGIBLE_STAGE: &str = "hard_cut_eligible";
+
 fn check_open_prs(packet: &Packet, violations: &mut Vec<String>) {
     let mut seen = BTreeSet::new();
     for row in &packet.open_prs.rows {

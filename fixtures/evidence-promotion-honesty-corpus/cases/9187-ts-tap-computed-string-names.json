@@ -1,0 +1,53 @@
+{
+  "id": "ts_tap_computed_string_names",
+  "language": "javascript",
+  "tier": "pure",
+  "source_fixture": "fixtures/javascript_tap_computed_string_names",
+  "vector": "tap_computed_string_names",
+  "control": "must_stay_exposed",
+  "assertions": [
+    {
+      "type": "must_promote"
+    },
+    {
+      "type": "must_disclose_scope"
+    },
+    {
+      "type": "must_not_emit_repair_packet"
+    },
+    {
+      "type": "must_not_have_receipt_command"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "exact_value",
+      "strength": "strong"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "<computed title, line 4>",
+      "file": "tests/lib.test.js",
+      "line": 4,
+      "kind": "exact_value",
+      "strength": "strong",
+      "relation_reason": "direct_owner_call"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "<computed title, line 8>",
+      "file": "tests/lib.test.js",
+      "line": 8,
+      "kind": "exact_value",
+      "strength": "strong",
+      "relation_reason": "direct_owner_call"
+    }
+  ]
+}

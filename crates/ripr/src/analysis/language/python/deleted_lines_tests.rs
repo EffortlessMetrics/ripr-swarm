@@ -2004,3 +2004,160 @@ fn explicit_join_lookalikes_and_standalone_strings_stay_quiet() -> Result<(), St
     }
     Ok(())
 }
+
+const CAP_TEST_PY: &str = "from src.cart import capped_total\n\n\ndef test_capped_total_stops_at_the_cap():\n    assert capped_total(150, 100) == 100\n    assert capped_total(50, 100) == 50\n";
+
+/// Order-free comparison: the adapter's finding order is not the claim.
+fn sorted(mut texts: Vec<String>) -> Vec<String> {
+    texts.sort();
+    texts
+}
+
+/// The candidate-side findings as (line, trimmed expression).
+fn candidate_side(findings: &[Finding]) -> Vec<(usize, String)> {
+    findings
+        .iter()
+        .filter(|finding| finding.source_currentness == SourceCurrentness::CandidateCurrent)
+        .map(|finding| {
+            (
+                finding.probe.location.line,
+                finding.probe.expression.trim().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Code replaced by a comment was deleted. The diff pairs the comment with
+/// the removed guard; reading the pair as an edit reported the comment text
+/// as a changed predicate and graded it `exposed` (click f67c2bb replay).
+/// The guard and its body are base-side records naming the removed code, as
+/// they are when nothing is added, and the comment is no finding at all.
+#[test]
+fn code_replaced_by_a_comment_is_base_side_evidence_naming_the_code() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # The cap moved to the caller.\n\n    return result\n";
+    let removed = || {
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+        ]
+    };
+    let findings = analyze_with_test("comment-for-code", source, CAP_TEST_PY, &[3], removed())?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        vec!["if total > cap:".to_string(), "result = cap".to_string()],
+        "{findings:?}"
+    );
+    assert_base_side_shape(&findings, "if total > cap:")?;
+    // The same deletion with no comment added reads the same.
+    let bare = "def capped_total(total, cap):\n    result = total\n\n    return result\n";
+    let pure = analyze_with_test("comment-for-code-pure", bare, CAP_TEST_PY, &[], removed())?;
+    let classes = |findings: &[Finding]| {
+        sorted(
+            findings
+                .iter()
+                .map(|finding| {
+                    format!("{} => {:?}", finding.probe.expression.trim(), finding.class)
+                })
+                .collect(),
+        )
+    };
+    assert_eq!(classes(&findings), classes(&pure));
+    Ok(())
+}
+
+/// A blank line and a comment beside an added import hold no code either.
+#[test]
+fn code_replaced_by_a_comment_and_an_import_is_base_side_evidence() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Imported late.\n    import textwrap\n\n    return result\n";
+    let findings = analyze_with_test(
+        "comment-and-import-for-code",
+        source,
+        CAP_TEST_PY,
+        &[3, 4],
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+        ],
+    )?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        vec!["if total > cap:".to_string(), "result = cap".to_string()],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A `#` line inside a multi-line string is content. It replaced the old
+/// content line, so the pair stays an edit on the candidate side.
+#[test]
+fn hash_line_inside_a_multi_line_string_keeps_its_pairing() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    note = \"\"\"\n    # capped\n    \"\"\"\n    return min(total, cap), note\n";
+    let findings = analyze_with_test(
+        "hash-in-string",
+        source,
+        CAP_TEST_PY,
+        &[3],
+        vec![line(3, 3, "    uncapped")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        candidate_side(&findings),
+        vec![(3, "# capped".to_string())],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// The continuation rows of a parenthesized import are part of the import,
+/// so a comment and a wrapped import that replace code hold no code.
+#[test]
+fn code_replaced_by_a_comment_and_a_wrapped_import_is_base_side_evidence() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Loaded late.\n    from textwrap import (\n        dedent,\n    )\n    return result\n";
+    let removed = || {
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+            line(5, 3, "    if result < 0:"),
+            line(6, 3, "        result = 0"),
+        ]
+    };
+    let findings = analyze_with_test(
+        "comment-and-wrapped-import-for-code",
+        source,
+        CAP_TEST_PY,
+        &[3, 4, 5, 6],
+        removed(),
+    )?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    // The same deletion with nothing added records the same removed code.
+    let bare = "def capped_total(total, cap):\n    result = total\n    return result\n";
+    let pure = analyze_with_test("wrapped-import-pure", bare, CAP_TEST_PY, &[], removed())?;
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        sorted(base_side_texts(&pure)),
+        "{findings:?}"
+    );
+    assert!(
+        base_side_texts(&findings).contains(&"if total > cap:".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A continuation row of a wrapped import that replaces one re-points a
+/// name: the pair stays an edit and the old row is no deletion.
+#[test]
+fn wrapped_import_row_replacing_a_row_keeps_its_pairing() -> Result<(), String> {
+    let source = "from textwrap import (\n    indent,\n)\n\n\ndef capped_total(total, cap):\n    return min(total, cap)\n";
+    let findings = analyze_with_test(
+        "wrapped-import-row-edit",
+        source,
+        CAP_TEST_PY,
+        &[2],
+        vec![line(2, 2, "    dedent,")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}

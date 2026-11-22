@@ -2026,3 +2026,11 @@ path = "docs/specs/RIPR-SPEC-0451-managed-download-proxy.md"
 status = "accepted"
 owner = "product-swarm"
 standalone_reason = "Pins that the VS Code managed server download relies on VS Code proxy support (http.proxy, http.noProxy) instead of its own proxy client, and that the failure hint names those settings (#15317)."
+
+[[artifact]]
+id = "RIPR-SPEC-0455"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0455-dx-scoreboard-generated-recall-rows.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Pins the generated recall-of-missed and no-seam DX scoreboard rows so the #12900 mutation spot-check measures are produced by the report generator rather than hand-calculated (#12900)."

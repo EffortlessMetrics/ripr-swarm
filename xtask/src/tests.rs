@@ -536,6 +536,38 @@ fn evidence_promotion_semantic_assertions_reject_bare_empty_false_clean() {
     assert!(report.contains("no non-clean signal"), "{report}");
 }
 
+#[test]
+fn evidence_promotion_outcome_limitation_is_not_a_clean_result() {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
+        super::EvidencePromotionSemanticAssertion::MustReportClean,
+    ];
+    let partial = serde_json::json!({
+        "summary": {"findings": 0},
+        "findings": [],
+        "analysis_outcome": {
+            "analysis_complete": false,
+            "outcome": {
+                "kind": "partial_with_limitations",
+                "limitations": [{"kind": "language_scope_unsupported", "path": "src/inner.rs"}]
+            }
+        }
+    });
+
+    let report = super::evidence_promotion_semantic_violations(
+        "partial_outcome",
+        Some("fixtures/module_reach_cfg_comment_hidden"),
+        &assertions,
+        &partial,
+        None,
+        false,
+    )
+    .join("\n");
+
+    assert!(!report.contains("no non-clean signal"), "{report}");
+    assert!(report.contains("`must_report_clean` requires"), "{report}");
+}
+
 fn semver_external_case_for_test() -> super::EvidencePromotionExternalCase {
     super::EvidencePromotionExternalCase {
             id: "rust_semver_matches_greater_external_limitation".to_string(),

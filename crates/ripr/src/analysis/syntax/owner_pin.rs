@@ -1029,7 +1029,7 @@ fn macro_binding_ambiguity_sets(
         binding_free: &binding_free,
         inline_globs: &inline_globs,
     };
-    let scan = |names: &[&str], known: &[&str], known_bound: &BTreeSet<String>| {
+    let scan = |names: &[&str], known: &[&str], known_bound: &BoundNames| {
         macro_binding_sites_in_tree(
             source,
             packages,
@@ -1044,13 +1044,22 @@ fn macro_binding_ambiguity_sets(
             &indexes,
         )
     };
-    let union = scan(trusted, trusted, &BTreeSet::new());
+    let union = scan(trusted, trusted, &BoundNames::default());
     // #14115: a per-name query reads the other trusted macros as the union
     // scan does. A call to one is opaque only when that macro has a binding
     // site of its own in this file; otherwise `assert!(.. assert_eq!(..) ..)`
     // would be named as a wrapper that may define `assert_eq`, a site the
     // admission scan never reports.
-    let union_bound: BTreeSet<String> = union.iter().map(|(name, _)| name.clone()).collect();
+    // A site with a scope binds the name only inside that scope, and a
+    // mention confined to an audited pass-through call (#14116) rebinds
+    // nothing at all, so neither makes the name's calls elsewhere in this
+    // file opaque (#16053).
+    let mut union_bound = BoundNames::default();
+    for (name, site) in &union {
+        if !confined_pass_through_site(site) {
+            union_bound.insert(name, site.scope_bytes);
+        }
+    }
     let singletons = singleton_names
         .into_iter()
         .flatten()
@@ -1059,11 +1068,17 @@ fn macro_binding_ambiguity_sets(
             if trusted.contains(name) {
                 scan(&[name], trusted, &union_bound)
             } else {
-                scan(&[name], &[name], &BTreeSet::new())
+                scan(&[name], &[name], &BoundNames::default())
             }
         })
         .collect();
     (union, singletons)
+}
+
+/// Whether `site` is a mention inside an audited pass-through call's
+/// arguments: the only `MacroArgument` site the scan reports with a scope.
+fn confined_pass_through_site(site: &MacroBindingSite) -> bool {
+    matches!(site.kind, MacroBindingKind::MacroArgument(_)) && site.scope.is_some()
 }
 
 /// The names one binding-site scan reads. `trusted` are the names whose
@@ -1074,7 +1089,53 @@ fn macro_binding_ambiguity_sets(
 struct ScanNames<'a> {
     trusted: &'a [&'a str],
     known: &'a [&'a str],
-    known_bound: &'a BTreeSet<String>,
+    known_bound: &'a BoundNames,
+}
+
+/// Trusted names with a binding site in one file, and where each binds: a
+/// site without a scope binds the name for the whole file, a scoped site
+/// (a definition or import inside a function body or block) only for calls
+/// inside its byte span (#16053).
+#[derive(Clone, Debug, Default)]
+struct BoundNames {
+    everywhere: BTreeSet<String>,
+    within: BTreeSet<(String, u32, u32)>,
+}
+
+impl BoundNames {
+    fn insert(&mut self, name: &str, scope_bytes: Option<(u32, u32)>) {
+        match scope_bytes {
+            Some((start, end)) => {
+                self.within.insert((name.to_string(), start, end));
+            }
+            None => {
+                self.everywhere.insert(name.to_string());
+            }
+        }
+    }
+
+    /// Whether a call of `name` starting at byte `at` reads a bound name.
+    fn binds_at(&self, name: &str, at: u32) -> bool {
+        self.everywhere.contains(name)
+            || self
+                .within
+                .iter()
+                .any(|(bound, start, end)| bound == name && (*start..*end).contains(&at))
+    }
+
+    /// Every bound name, wherever it binds: the conservative reading for a
+    /// question that has no call position.
+    fn names(&self) -> BTreeSet<String> {
+        self.everywhere
+            .iter()
+            .cloned()
+            .chain(self.within.iter().map(|(name, _, _)| name.clone()))
+            .collect()
+    }
+
+    fn len(&self) -> usize {
+        self.everywhere.len() + self.within.len()
+    }
 }
 
 fn macro_binding_sites_in_tree(
@@ -1558,14 +1619,16 @@ fn macro_binding_sites_in_tree(
                 .filter(|(wrapper, nested)| {
                     // A nested `proptest::prop_*` call needs the `proptest`
                     // root proved for its own spelling, as an outer one does.
-                    let proptest_root = |external: bool| {
-                        !drop_in_shadowed("proptest", external)
-                            && (external || !plain_import_names().contains("proptest"))
-                            && drop_in_verified("proptest")
+                    let verified_root = |krate: &str, external: bool| {
+                        !drop_in_shadowed(krate, external)
+                            && (external || !plain_import_names().contains(krate))
+                            && drop_in_verified(krate)
                     };
                     !pass_through_names_imported(binding_free)
-                        && (!nested.qualified_relative || proptest_root(false))
-                        && (!nested.qualified_external || proptest_root(true))
+                        && (!nested.qualified_relative || verified_root("proptest", false))
+                        && (!nested.qualified_external || verified_root("proptest", true))
+                        && (!nested.json_relative || verified_root("serde_json", false))
+                        && (!nested.json_external || verified_root("serde_json", true))
                         && match wrapper {
                             PassThroughCall::Qualified { krate, external } => {
                                 !drop_in_shadowed(krate, *external)
@@ -1846,11 +1909,10 @@ fn macro_binding_sites_in_tree(
     // module whose tests then use it. The first pass skips trusted calls, so
     // run to a fixpoint: a name bound through one call's arguments makes its
     // own calls opaque in turn.
-    let mut bound: BTreeSet<String> = ambiguous
-        .iter()
-        .map(|(name, _)| name.clone())
-        .chain(known_bound.iter().cloned())
-        .collect();
+    let mut bound = known_bound.clone();
+    for (name, site) in &ambiguous {
+        bound.insert(name, site.scope_bytes);
+    }
     let mut reported = BTreeSet::new();
     // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
@@ -1874,6 +1936,7 @@ fn macro_binding_sites_in_tree(
     }
     loop {
         let before = bound.len();
+        let all_names = bound.names();
         for (path, tree, node, call) in &sites {
             let tokens = || -> Vec<_> {
                 tree.syntax()
@@ -1887,13 +1950,24 @@ fn macro_binding_sites_in_tree(
             // call receives the arguments through fragments (`vec!($n)`), so
             // the scan of that call never sees the name it may define.
             let body_bound = call.as_ref().is_some_and(|call| {
-                wrapper_body_calls_bound(binding_free, call, &bound)
+                wrapper_body_calls_bound(binding_free, call, &all_names)
                     && binding_free_local_wrapper(binding_free, call, &tokens(), known)
             });
-            if !body_bound
-                && (!bound.contains(path.trim_start_matches("r#"))
-                    || !is_trusted_macro(path, known))
-            {
+            // A call inside a `macro_rules!` transcriber runs at each
+            // invocation, wherever that is, so its own position says nothing
+            // about which scoped binding reaches it: any binding of the name
+            // counts there.
+            let name = path.trim_start_matches("r#");
+            let in_transcriber = node.ancestors().any(|ancestor| {
+                ast::MacroRules::can_cast(ancestor.kind())
+                    || ast::MacroDef::can_cast(ancestor.kind())
+            });
+            let name_bound = if in_transcriber {
+                all_names.contains(name)
+            } else {
+                bound.binds_at(name, node.text_range().start().into())
+            };
+            if !body_bound && (!name_bound || !is_trusted_macro(path, known)) {
                 continue;
             }
             let tokens = tokens();
@@ -1926,7 +2000,7 @@ fn macro_binding_sites_in_tree(
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
-                    bound.insert(name.to_string());
+                    bound.insert(name, None);
                     let line = line_of(node);
                     if !reported.insert((name.to_string(), line, path.clone())) {
                         continue;
@@ -2252,6 +2326,11 @@ struct PassThroughNested {
     qualified_relative: bool,
     /// The same through an absolute `::proptest::prop_*` path.
     qualified_external: bool,
+    /// A nested `serde_json::json!` call: the `serde_json` root needs the
+    /// same proof as a qualified outer call (#14116).
+    json_relative: bool,
+    /// The same through an absolute `::serde_json::json!` path.
+    json_external: bool,
 }
 
 /// Whether `call` is spelled as an audited pass-through wrapper whose
@@ -2278,16 +2357,21 @@ fn audited_pass_through_call(
         .filter(|ch| !ch.is_whitespace())
         .collect();
     let external = path.starts_with("::");
-    let wrapper = match path.trim_start_matches("::") {
-        "proptest::proptest" => PassThroughCall::Qualified {
+    // Each `proptest` wrapper is an audited pass-through on its own too:
+    // `prop_oneof!` building a strategy in a helper outside `proptest!`
+    // pastes its arguments into the same kind of expression (#14116).
+    let proptest_wrapper = |name: &str| PASS_THROUGH_WRAPPERS.contains(&name);
+    let unrooted = path.trim_start_matches("::");
+    let wrapper = match unrooted.split_once("::") {
+        Some(("proptest", name)) if proptest_wrapper(name) => PassThroughCall::Qualified {
             krate: "proptest",
             external,
         },
-        "serde_json::json" => PassThroughCall::Qualified {
+        Some(("serde_json", "json")) => PassThroughCall::Qualified {
             krate: "serde_json",
             external,
         },
-        "proptest" if !external => PassThroughCall::BareProptest,
+        None if !external && proptest_wrapper(unrooted) => PassThroughCall::BareProptest,
         _ => return None,
     };
     if tokens
@@ -2327,6 +2411,16 @@ fn audited_pass_through_call(
             // `dep::prop_assert!` names whatever `dep` exports, not the
             // trusted macro its last segment spells. Only the `proptest` root
             // itself (`proptest::prop_oneof!`) is the audited crate's path.
+            // A group whose tokens name no trusted macro is accepted whatever
+            // its call names, so it adds no root that needs proof.
+            let mentions_known = group
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| known.contains(&token.text().trim_start_matches("r#")));
+            if !mentions_known {
+                return true;
+            }
             let qualifier = pass_through_call_qualifier(before);
             let name = name.text().trim_start_matches("r#");
             let audited = PASS_THROUGH_WRAPPERS.contains(&name);
@@ -2343,15 +2437,19 @@ fn audited_pass_through_call(
                     nested.qualified_external = true;
                     true
                 }
+                // `serde_json::json!` nested in an audited call is the same
+                // expression-only wrapper as an outer one.
+                "serde_json" if name == "json" => {
+                    nested.json_relative = true;
+                    true
+                }
+                "::serde_json" if name == "json" => {
+                    nested.json_external = true;
+                    true
+                }
                 _ => false,
             };
-            qualifier.is_empty() && known.contains(&name)
-                || wrapper
-                || !group
-                    .syntax()
-                    .descendants_with_tokens()
-                    .filter_map(|element| element.into_token())
-                    .any(|token| known.contains(&token.text().trim_start_matches("r#")))
+            qualifier.is_empty() && known.contains(&name) || wrapper
         });
     nested_calls_confined.then_some((wrapper, nested))
 }
@@ -2450,6 +2548,9 @@ fn argument_uses_bind_no_trusted_name(
                     && text != "as"
                     && !known.contains(&text)
                     && !PASS_THROUGH_WRAPPERS.contains(&text)
+                    // An argument import of `serde_json` would take over a
+                    // nested `serde_json::json!` that the call trusts.
+                    && text != "serde_json"
                     && !INERT_PASS_THROUGH_ATTRIBUTES.contains(&text)
             })
         })

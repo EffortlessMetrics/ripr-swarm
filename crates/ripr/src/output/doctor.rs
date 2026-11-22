@@ -7242,8 +7242,9 @@ mod tests {
         let usable = outside_work_tree_evidence(root, false);
         let refused = outside_work_tree_evidence(root, true);
         assert!(usable.contains("not inside a Git work tree"), "{usable}");
+        let quoted_root = crate::agent::loop_commands::shell_arg(&human_path(root));
         assert!(
-            usable.contains("ripr pilot --root '/work/my app'"),
+            usable.contains(&format!("ripr pilot --root {quoted_root}")),
             "{usable}"
         );
         assert!(refused.contains("not inside a Git work tree"), "{refused}");
