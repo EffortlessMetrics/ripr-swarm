@@ -249,7 +249,10 @@ pub(crate) fn rust_test_stub_for_classified_seam(
         // The repair packet's edit cage allows only this existing integration
         // file, so the stub goes there rather than into the production file.
         RepairTargetSelection::Existing(existing)
-            if existing.test_kind() == TestKind::Integration =>
+            if matches!(
+                existing.test_kind(),
+                TestKind::Integration | TestKind::DeclaredIntegration
+            ) =>
         {
             let file = existing.file().to_path_buf();
             let crate_name = library_crate_name_for_root_file(root, entry.seam.file(), Some(&file));

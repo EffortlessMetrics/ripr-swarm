@@ -22,7 +22,11 @@ const diagnostic = require(reportSource) as {
   renderDeveloperSetup: (report: SetupReport) => string;
 };
 
-function alive(pid: number): boolean {
+function readProcStat(pid: number): string {
+  return fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+}
+
+function alive(pid: number, readStat: (pid: number) => string = readProcStat): boolean {
   try { process.kill(pid, 0); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
@@ -30,9 +34,12 @@ function alive(pid: number): boolean {
   }
   if (process.platform === 'linux') {
     try {
-      const stat = fs.readFileSync('/proc/' + pid + '/stat', 'utf8');
+      const stat = readStat(pid);
       return !['Z', 'X'].includes(stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3));
     } catch (error) {
+      // The stat file can open and then fail its read with ESRCH when the
+      // process is reaped in between: procfs resolves the task on read.
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
@@ -100,6 +107,15 @@ suite('Developer setup capability boundary', function () {
       else process.env.RIPR_TEST_ARTIFACT_ROOT = previous;
     }
   }
+
+  test('a process reaped between the stat open and read is not alive', function () {
+    if (process.platform !== 'linux') this.skip();
+    const reaped = Object.assign(new Error('ESRCH: no such process, read'), { code: 'ESRCH' });
+    assert.strictEqual(alive(process.pid, () => { throw reaped; }), false);
+    assert.strictEqual(alive(process.pid), true);
+    const denied = Object.assign(new Error('EACCES: permission denied, read'), { code: 'EACCES' });
+    assert.throws(() => alive(process.pid, () => { throw denied; }), /EACCES/);
+  });
 
   test('reads changed source requirements and leaves execution capabilities unclaimed', () => {
     const linkerTemps = ['compiler temp', 'different tmp', 'separate tmpdir'];

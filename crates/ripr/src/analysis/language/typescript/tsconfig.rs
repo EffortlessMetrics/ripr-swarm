@@ -2,7 +2,9 @@
 //!
 //! This module is FAIL-CLOSED with a bounded `extends` chain:
 //!
-//! - Only `compilerOptions.baseUrl` and `compilerOptions.paths` are read.
+//! - Only `compilerOptions.baseUrl` and `compilerOptions.paths` are read,
+//!   plus `module` / `moduleResolution` to decide whether a directory
+//!   target may load its `index` file (#15914).
 //! - The ROOT map reads only `<workspace-root>/tsconfig.json` and
 //!   `<workspace-root>/jsconfig.json`. An importer whose nearest
 //!   `tsconfig.json`/`jsconfig.json` (bounded upward walk) is not the root
@@ -102,6 +104,10 @@ struct RawCompilerOptions {
     base_url: Option<Option<String>>,
     #[serde(default, deserialize_with = "explicit_null")]
     paths: Option<Option<HashMap<String, Vec<String>>>>,
+    /// Read only to decide whether a directory `paths` target may load its
+    /// `index` file. A JSON value, so an unusual one never fails the parse.
+    module: Option<serde_json::Value>,
+    module_resolution: Option<serde_json::Value>,
 }
 
 /// Keeps a present JSON `null` distinct from an absent key.
@@ -149,6 +155,9 @@ pub(crate) struct TsAliasMap {
     /// A map built only to carry `packages` has no tsconfig, so its
     /// unresolved advice stays the flag-off / load-gap advice.
     tsconfig_loaded: bool,
+    /// Whether the config's module resolution performs directory lookup, so
+    /// a `paths` target naming a directory loads its `index` file.
+    directory_index: bool,
     /// In-workspace package names (#4554), consulted after `paths`.
     ///
     /// Shared, not owned: every cache miss hands the map to the parse worker,
@@ -368,6 +377,7 @@ impl TsAliasMap {
             project.cache_digest().hash(&mut first);
         }
         self.templates_must_be_relative.hash(&mut first);
+        self.directory_index.hash(&mut first);
         self.config_dir.hash(&mut first);
         self.nested_configs.hash(&mut first);
         let mut literals: Vec<(&String, &Vec<String>)> = self.literal_entries.iter().collect();
@@ -403,6 +413,7 @@ impl TsAliasMap {
             project.cache_digest().hash(&mut second);
         }
         self.templates_must_be_relative.hash(&mut second);
+        self.directory_index.hash(&mut second);
         self.base_url_absolute.hash(&mut second);
         self.base_url.hash(&mut second);
         self.root.hash(&mut second);
@@ -575,7 +586,8 @@ impl TsAliasMap {
     /// 4. The winning template has at most one `*`.
     /// 5. After substituting the captured `*`, its candidate path resolves to
     ///    EXACTLY ONE existing workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/
-    ///    .mjs/.cjs).
+    ///    .mjs/.cjs). A target naming a directory adds that directory's
+    ///    `index` file under the rules on `unique_file_for`.
     ///
     /// A specifier no `paths` key matches falls back to an in-workspace
     /// package name (`workspace_packages.rs`, #4554), as the compiler falls
@@ -704,7 +716,7 @@ impl TsAliasMap {
                 None => template.clone(),
             };
             let candidate_base = strip_ts_ext(&expanded);
-            if let Some(found) = self.unique_file_for(&candidate_base) {
+            if let Some(found) = self.unique_file_for(&candidate_base, candidate_base == expanded) {
                 return Some(found);
             }
             // The directory listing is only paid for when a fallback exists.
@@ -768,15 +780,20 @@ impl TsAliasMap {
     }
 
     /// Given a base candidate string (extension-stripped, slash-separated),
-    /// try each TS extension and collect the unique matching file.
+    /// try each TS extension on the candidate and collect the unique matching
+    /// file. With `extensionless_target` (the substituted `paths` target named
+    /// no source extension, so it may name a directory) and a module
+    /// resolution that performs directory lookup, the directory's `index` file
+    /// is a candidate too.
     ///
-    /// Returns `None` if zero files or more than one file match.
+    /// Returns `None` if zero files or more than one file match: `x.ts`
+    /// beside `x/index.ts` is a resolver-order question this does not model.
     ///
     /// Candidates containing `..` segments, rooted components, or prefixes
     /// (drive letters / UNC) are rejected BEFORE any filesystem probe: they
     /// would make `is_file()` read outside the workspace root, and a
     /// component-wise `strip_prefix` credit could still escape the root.
-    fn unique_file_for(&self, candidate_base: &str) -> Option<PathBuf> {
+    fn unique_file_for(&self, candidate_base: &str, extensionless_target: bool) -> Option<PathBuf> {
         if self.base_url_absolute || !is_safe_relative(Path::new(candidate_base)) {
             return None;
         }
@@ -790,9 +807,27 @@ impl TsAliasMap {
             .join(&self.config_dir)
             .join(self.base_url.trim_matches('/'));
         let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
+        // A target naming a directory (`"@acme/*": ["packages/*/src"]`) loads
+        // that directory's `index` file. A `package.json` there would send
+        // the compiler to its entry fields instead, which this does not read,
+        // so such a directory keeps the import unresolved. A target written
+        // with a source extension (`src/x.ts`) names a file, never `x/index`.
+        // Directory lookup adds `.ts`/`.tsx`/`.js`/`.jsx` only; the compiler
+        // does not try `index.mts` or `index.cjs` for a directory.
+        let directory = base_dir.join(candidate_base);
+        let index_base = (extensionless_target
+            && self.directory_index
+            && directory.is_dir()
+            && !directory.join("package.json").exists())
+        .then(|| format!("{candidate_base}/index"));
+        let index_extensions = &extensions[..4];
         let mut found: Vec<PathBuf> = Vec::new();
-        for ext in &extensions {
-            let candidate = base_dir.join(format!("{candidate_base}{ext}"));
+        for (base, ext) in extensions.iter().map(|ext| (candidate_base, ext)).chain(
+            index_base
+                .iter()
+                .flat_map(|base| index_extensions.iter().map(move |ext| (base.as_str(), ext))),
+        ) {
+            let candidate = base_dir.join(format!("{base}{ext}"));
             if candidate.is_file() {
                 // Normalize to forward-slash workspace-relative path.
                 if let Ok(rel) = candidate.strip_prefix(&self.root) {
@@ -923,12 +958,42 @@ struct MergedCompilerOptions {
     paths: Option<DeclaredPaths>,
     /// See [`TsAliasMap::modeled_configs`].
     modeled_configs: Vec<PathBuf>,
+    /// Whether the effective module resolution loads a directory's `index`
+    /// file. See [`directory_index_lookup`].
+    directory_index: bool,
 }
 
 /// A `paths` object and the config file that declares it.
 struct DeclaredPaths {
     config: PathBuf,
     entries: HashMap<String, Vec<String>>,
+}
+
+/// Whether the effective module resolution performs directory lookup, so a
+/// `paths` target naming a directory loads its `index` file.
+///
+/// True for `moduleResolution` `node`, `node10` or `bundler`, and, with no
+/// `moduleResolution`, for a `module` that is absent, `commonjs` or
+/// `preserve`. False otherwise: `node16`/`nodenext` skip directory lookup for
+/// an ES-module importer, `classic` never performs it, and another `module`
+/// value selects one of those two when `moduleResolution` is absent. False
+/// too when an unfollowed `extends` base could have set `moduleResolution`.
+fn directory_index_lookup(chain: &ChainOptions) -> bool {
+    if chain.module_resolution_unknown {
+        return false;
+    }
+    match (chain.module_resolution.as_deref(), chain.module.as_deref()) {
+        (Some(resolution), _) => matches!(resolution, "node" | "node10" | "bundler"),
+        (None, None) => true,
+        (None, Some(module)) => matches!(module, "commonjs" | "preserve"),
+    }
+}
+
+/// A `module` / `moduleResolution` value as the compiler compares it:
+/// case-insensitively. A non-string value becomes an empty name, which no
+/// directory-lookup rule accepts.
+fn option_name(value: serde_json::Value) -> String {
+    value.as_str().unwrap_or_default().to_ascii_lowercase()
 }
 
 /// One chain level's merge state: `None` = not set by this chain,
@@ -939,6 +1004,12 @@ struct ChainOptions {
     /// Every config merged so far, with the config that declares the
     /// `paths` in effect for it (`None` when it has none).
     followed: Vec<(PathBuf, Option<PathBuf>)>,
+    /// Lowercased `module` / `moduleResolution`, nearest declaration.
+    module: Option<String>,
+    module_resolution: Option<String>,
+    /// An `extends` base this chain did not follow could have set
+    /// `moduleResolution`, and no config above it declares one.
+    module_resolution_unknown: bool,
 }
 
 /// Maximum `extends` hops followed from the workspace-root config.
@@ -979,6 +1050,7 @@ fn merge_compiler_options(
     depth: usize,
 ) -> Result<MergedCompilerOptions, TsAliasMapBlocker> {
     let chain = merge_chain(root, config_path, text, visited, depth)?;
+    let directory_index = directory_index_lookup(&chain);
     let paths = chain.paths.flatten();
     // A followed config is modeled only when the `paths` in effect for it
     // are the ones this map states. A base whose own `paths` a later config
@@ -997,6 +1069,7 @@ fn merge_compiler_options(
         .filter_map(|(config, _)| normalize_lexically(&config))
         .collect();
     Ok(MergedCompilerOptions {
+        directory_index,
         base_url: chain.base_url.flatten(),
         paths,
         modeled_configs,
@@ -1041,6 +1114,9 @@ fn merge_chain_level(
         base_url: None,
         paths: None,
         followed: Vec::new(),
+        module: None,
+        module_resolution: None,
+        module_resolution_unknown: false,
     };
     // Only a non-null own `baseUrl` AND own `paths` make inheritance
     // irrelevant; a `null` clears instead of setting.
@@ -1068,7 +1144,10 @@ fn merge_chain_level(
                 Err(TsAliasMapBlocker::ExtendsCycle) => {
                     return Err(TsAliasMapBlocker::ExtendsCycle);
                 }
-                Err(_blocker) if self_sufficient => continue,
+                Err(_blocker) if self_sufficient => {
+                    merged.module_resolution_unknown = true;
+                    continue;
+                }
                 Err(blocker) => return Err(blocker),
             };
             // Later array entries override earlier ones (a `null` included);
@@ -1080,6 +1159,13 @@ fn merge_chain_level(
                 merged.paths = base.paths;
             }
             merged.followed.extend(base.followed);
+            if base.module.is_some() {
+                merged.module = base.module;
+            }
+            if base.module_resolution.is_some() || base.module_resolution_unknown {
+                merged.module_resolution = base.module_resolution;
+                merged.module_resolution_unknown = base.module_resolution_unknown;
+            }
         }
     }
     if let Some(options) = raw.compiler_options {
@@ -1104,6 +1190,13 @@ fn merge_chain_level(
                         .collect(),
                 }
             }));
+        }
+        if let Some(module) = options.module {
+            merged.module = Some(option_name(module));
+        }
+        if let Some(resolution) = options.module_resolution {
+            merged.module_resolution = Some(option_name(resolution));
+            merged.module_resolution_unknown = false;
         }
     }
     let effective_paths_config = merged
@@ -1314,6 +1407,7 @@ fn compile_project(
         .paths
         .map(|declared| declared.entries)
         .unwrap_or_default();
+    let directory_index = merged.directory_index;
 
     // `baseUrl` resolves against its DECLARING config (#11204). An absolute
     // baseUrl (POSIX `/…`, drive-letter, or UNC), or one whose anchor
@@ -1379,6 +1473,7 @@ fn compile_project(
         glob_entries,
         templates_must_be_relative,
         tsconfig_loaded: true,
+        directory_index,
         packages: Default::default(),
         digest: Default::default(),
         config_dir,
@@ -1714,6 +1809,7 @@ fn hash_merged_chain(
     match merge_compiler_options(root, path, text, &mut Vec::new(), 0) {
         Ok(merged) => {
             merged.base_url.hash(hasher);
+            merged.directory_index.hash(hasher);
             // The declaring config anchors the templates when no `baseUrl`
             // is in effect (#12760).
             let (declared_in, entries) = match merged.paths {
@@ -3060,6 +3156,117 @@ mod tests {
             &format!(r#"{{"compilerOptions":{{"baseUrl":".","paths":{{"@/*":{value}}}}}}}"#),
         );
         load_alias_map(root).ok_or_else(|| "the fallback config must load".to_string())
+    }
+
+    /// The monorepo idiom `"@acme/*": ["packages/*/src"]` names a directory;
+    /// the compiler loads its `index` file. Pinned for a pattern key and an
+    /// exact key, with a sibling package as the wrong answer.
+    #[test]
+    fn directory_target_resolves_to_its_index_file() -> Result<(), String> {
+        let root = temp_dir("directory-index");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{
+                "@acme/*":["packages/*/src"],
+                "core":["packages/core/src"]
+            }}}"#,
+        );
+        write(&root, "packages/core/src/index.ts", "export {}");
+        write(&root, "packages/ui/src/index.tsx", "export {}");
+        write(&root, "packages/empty/src/other.ts", "export {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        let resolved = |specifier: &str| {
+            map.resolve(specifier)
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+        };
+        assert_eq!(
+            resolved("@acme/core").as_deref(),
+            Some("packages/core/src/index.ts")
+        );
+        assert_eq!(
+            resolved("@acme/ui").as_deref(),
+            Some("packages/ui/src/index.tsx")
+        );
+        assert_eq!(
+            resolved("core").as_deref(),
+            Some("packages/core/src/index.ts")
+        );
+        // A directory with no index file resolves nothing.
+        assert_eq!(resolved("@acme/empty"), None);
+        Ok(())
+    }
+
+    /// Fail-closed neighbors of the directory `index` probe: a file beside
+    /// the directory, two index files, and a directory whose `package.json`
+    /// would pick the entry instead.
+    #[test]
+    fn directory_target_with_a_competing_answer_fails_closed() -> Result<(), String> {
+        let root = temp_dir("directory-index-closed");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@acme/*":["packages/*"]}}}"#,
+        );
+        write(&root, "packages/both.ts", "export {}");
+        write(&root, "packages/both/index.ts", "export {}");
+        write(&root, "packages/twice/index.ts", "export {}");
+        write(&root, "packages/twice/index.js", "export {}");
+        write(
+            &root,
+            "packages/manifest/package.json",
+            r#"{"main":"lib.ts"}"#,
+        );
+        write(&root, "packages/manifest/index.ts", "export {}");
+        write(&root, "packages/plain/index.ts", "export {}");
+
+        let map = load_alias_map(&root).ok_or("should parse")?;
+        assert_eq!(map.resolve("@acme/both"), None);
+        assert_eq!(map.resolve("@acme/twice"), None);
+        assert_eq!(map.resolve("@acme/manifest"), None);
+        // The control: the same key resolves a plain directory.
+        assert_eq!(
+            map.resolve("@acme/plain"),
+            Some(PathBuf::from("packages/plain/index.ts"))
+        );
+        Ok(())
+    }
+
+    /// The directory `index` probe follows the effective module resolution,
+    /// and an unfollowed `extends` base that could set it fails closed.
+    #[test]
+    fn directory_target_follows_the_module_resolution() -> Result<(), String> {
+        let resolves = |name: &str, config: &str| -> Result<bool, String> {
+            let root = temp_dir(name);
+            write(&root, "tsconfig.json", config);
+            write(
+                &root,
+                "tsconfig.base.json",
+                r#"{"compilerOptions":{"moduleResolution":"nodenext"}}"#,
+            );
+            write(&root, "packages/core/index.ts", "export {}");
+            let map = load_alias_map(&root).ok_or("should parse")?;
+            Ok(map.resolve("@acme/core").is_some())
+        };
+        let config = |head: &str| {
+            format!(
+                r#"{{{head}"compilerOptions":{{"baseUrl":".","paths":{{"@acme/*":["packages/*"]}}}}}}"#
+            )
+        };
+        assert!(resolves("resolution-default", &config(""))?);
+        assert!(!resolves(
+            "resolution-inherited",
+            &config(r#""extends":"./tsconfig.base.json","#)
+        )?);
+        // A package-name base is not followed; it could set the resolution.
+        assert!(!resolves(
+            "resolution-unfollowed",
+            &config(r#""extends":"@acme/tsconfig","#)
+        )?);
+        let own = r#"{"extends":"@acme/tsconfig","compilerOptions":{"moduleResolution":"node10","baseUrl":".","paths":{"@acme/*":["packages/*"]}}}"#;
+        assert!(resolves("resolution-own", own)?);
+        Ok(())
     }
 
     #[test]

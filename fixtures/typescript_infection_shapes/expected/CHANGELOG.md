@@ -272,3 +272,15 @@ Updated:
 - `expected/check.json`
 - `expected/sarif.json`
 - `expected/github.txt`
+
+## Pending — typescript_infection_shapes (23)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`

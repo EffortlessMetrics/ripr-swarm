@@ -232,17 +232,37 @@ const RIPR_RELATED_TEST_LANGUAGE_BY_EXTENSION = new Map<string, 'rust' | 'typesc
 ]);
 const RIPR_CONFIG_RELATIVE_PATH = 'ripr.toml';
 
-function lspConfigurationForResource(scopeUri: string | undefined): Record<string, unknown> {
+/** The `ripr` section answer to a server `workspace/configuration` pull.
+ * Exported so the wire values are testable without a live server. */
+export function lspConfigurationForResource(scopeUri: string | undefined): Record<string, unknown> {
   const resource = scopeUri ? vscode.Uri.parse(scopeUri) : undefined;
   const config = vscode.workspace.getConfiguration('ripr', resource);
   return {
     baseRef: config.get<string>('baseRef'),
-    checkMode: config.get<string>('check.mode'),
-    includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
+    // Sent only when a settings layer sets them, so `ripr.toml` `[analysis]`
+    // applies otherwise (#15897).
+    checkMode: explicitSetting<string>(config, 'check.mode'),
+    includeUnchangedTests: explicitSetting<boolean>(config, 'includeUnchangedTests'),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
     gitTimeoutMs: integerSetting(config.get<number>('gitTimeoutMs')),
     refreshDeadlineMs: integerSetting(config.get<number>('refreshDeadlineMs'))
+  };
+}
+
+// Settings forwarded only when a VS Code settings layer sets them; unset, the
+// repository's ripr.toml decides (#4717, #15897).
+type OptionalSessionSettings = Pick<
+  RiprConfig,
+  'checkMode' | 'includeUnchangedTests' | 'seamDiagnostics' | 'diagnosticProfile'
+>;
+
+function optionalSessionSettings(config: RiprConfig): OptionalSessionSettings {
+  return {
+    checkMode: config.checkMode,
+    includeUnchangedTests: config.includeUnchangedTests,
+    seamDiagnostics: config.seamDiagnostics,
+    diagnosticProfile: config.diagnosticProfile
   };
 }
 
@@ -628,6 +648,13 @@ export class RiprClientController {
    * server-leak race described in #2123.
    */
   private startGeneration = 0;
+  // What the current session's initialize handshake carried (#15897).
+  private initializedSessionSettings: OptionalSessionSettings = {
+    checkMode: undefined,
+    includeUnchangedTests: undefined,
+    seamDiagnostics: undefined,
+    diagnosticProfile: undefined
+  };
   private readonly agentHandoff: AgentHandoffController;
 
   constructor(
@@ -855,6 +882,8 @@ export class RiprClientController {
     };
 
     const workspaceRoot = this.workspaceRoot;
+    const sessionSettings = optionalSessionSettings(config);
+    this.initializedSessionSettings = sessionSettings;
     const clientOptions: LanguageClientOptions = {
       documentSelector: riprDocumentSelectorsForWorkspace(workspaceRoot),
       // Bind the session to the one folder this controller selected. Without
@@ -866,10 +895,7 @@ export class RiprClientController {
       ),
       initializationOptions: {
         baseRef: config.baseRef,
-        checkMode: config.checkMode,
-        includeUnchangedTests: config.includeUnchangedTests,
-        seamDiagnostics: config.seamDiagnostics,
-        diagnosticProfile: config.diagnosticProfile
+        ...sessionSettings
       },
       outputChannel: this.output,
       traceOutputChannel: this.output,
@@ -1023,6 +1049,25 @@ export class RiprClientController {
     this.resetCrashRecoveryForExplicitRestart();
     await this.stop();
     await this.start();
+  }
+
+  /**
+   * Whether a setting the running session sent at initialize has since been
+   * unset. The server keeps an initialization option as the fallback for a
+   * key the configuration pull stops returning (RIPR-SPEC-0136), so the
+   * removed value stays in effect until a restart hands the key back to
+   * ripr.toml (#15897).
+   */
+  initializedSettingWasUnset(): boolean {
+    if (!this.client) {
+      return false;
+    }
+    const current = optionalSessionSettings(
+      this.runtime.getConfig(this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined)
+    );
+    return (Object.keys(current) as Array<keyof OptionalSessionSettings>).some(
+      (key) => this.initializedSessionSettings[key] !== undefined && current[key] === undefined
+    );
   }
 
   /** User-initiated restart clears an open crash-recovery circuit (#1744). */

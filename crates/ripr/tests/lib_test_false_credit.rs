@@ -98,6 +98,20 @@ impl TempCrate {
         self.finding_in(Mode::Ready)
     }
 
+    /// Every finding the run reports, in any file (#15877).
+    fn finding_count_in(&self, mode: Mode) -> Result<usize, String> {
+        let output = check_workspace(CheckInput {
+            root: self.root.clone(),
+            base: None,
+            diff_file: Some(self.root.join("diff.patch")),
+            mode,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        Ok(output.findings.len())
+    }
+
     fn finding_in(&self, mode: Mode) -> Result<Finding, String> {
         let output = check_workspace(CheckInput {
             root: self.root.clone(),
@@ -463,6 +477,17 @@ fn assert_withheld_in_every_mode(fixture: &TempCrate) -> Result<(), String> {
 
 /// The exact withheld class (#14972): a skipped target's tests leave the
 /// changed behavior with no static path to a running discriminator.
+/// A root Cargo never builds is no production root either (#15877): its
+/// change is not behavior any build runs, so no mode reports it, and no
+/// finding can carry a discriminator its tests would supply.
+fn assert_never_built_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    for mode in MODES {
+        let count = fixture.finding_count_in(mode.clone())?;
+        assert_eq!(count, 0, "{label} in {mode:?}");
+    }
+    Ok(())
+}
+
 fn assert_no_static_path_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
     for mode in MODES {
         let finding = fixture.finding_in(mode.clone())?;
@@ -868,7 +893,8 @@ fn main_source() -> String {
 #[test]
 fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Result<(), String> {
     // #14972 c04: `autobins = false` and no `[[bin]]`: cargo builds no bin
-    // from `src/main.rs`, so `cargo test` runs 0 tests from it.
+    // from `src/main.rs`, so `cargo test` runs 0 tests from it, and since
+    // #15877 its change is not production behavior either.
     let lib = ("src/lib.rs", "pub fn g() {}\n");
     let main = main_source();
     let skipped = TempCrate::create_in(
@@ -877,7 +903,7 @@ fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Res
         "src/main.rs",
         1,
     )?;
-    assert_no_static_path_in_every_mode(&skipped, "an undiscovered bin")?;
+    assert_never_built_in_every_mode(&skipped, "an undiscovered bin")?;
     // Controls: auto-discovery on, and `autobins = false` with the bin
     // declared explicitly, both run `t` under `cargo test`.
     let discovered = TempCrate::create_in(
@@ -902,7 +928,8 @@ fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Res
 #[test]
 fn autolib_false_lib_unit_tests_are_not_a_discriminator_in_every_mode() -> Result<(), String> {
     // #14972 c18: `autolib = false` and no `[lib]`: `src/lib.rs` is no
-    // target, so `cargo test` runs 0 tests from it.
+    // target, so `cargo test` runs 0 tests from it, and since #15877 its
+    // change is not production behavior either.
     let lib = lib_source(UNIT_TESTS);
     let main = ("src/main.rs", "fn main() {}\n");
     let skipped = TempCrate::create_in(
@@ -911,7 +938,7 @@ fn autolib_false_lib_unit_tests_are_not_a_discriminator_in_every_mode() -> Resul
         "src/lib.rs",
         1,
     )?;
-    assert_no_static_path_in_every_mode(&skipped, "an undiscovered lib")?;
+    assert_never_built_in_every_mode(&skipped, "an undiscovered lib")?;
     let discovered = TempCrate::create_in(
         &package_manifest("", ""),
         &[("src/lib.rs", &lib), main],
@@ -1149,4 +1176,94 @@ fn an_example_included_into_an_integration_test_keeps_credit() -> Result<(), Str
         1,
     )?;
     assert_credited_beyond_instant(&fixture, "an example included by an integration test")
+}
+
+/// An edition 2015 manifest (no `edition` key) that declares one `[[test]]`
+/// leaves `autotests` off unless it says otherwise (#15877): Cargo builds
+/// only the declared test, so `tests/integration.rs` never runs and credits
+/// no discriminator. Edition 2021 and an explicit `autotests = true` build
+/// it and keep the credit.
+#[test]
+fn edition_2015_declared_test_turns_off_test_discovery() -> Result<(), String> {
+    let manifest = |package_keys: &str| {
+        format!(
+            "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\n{package_keys}\n[[test]]\nname = \"declared\"\npath = \"tests/declared.rs\"\n\n[workspace]\n"
+        )
+    };
+    // Edition 2015 integration tests name the library through `extern
+    // crate`, so the opt-in control is a test Cargo can build and run.
+    let integration = format!("extern crate lib_test_false;\n\n{INTEGRATION_TEST}");
+    let files = [
+        ("src/lib.rs", OWNER),
+        ("tests/declared.rs", "#[test]\nfn unrelated() {}\n"),
+        ("tests/integration.rs", integration.as_str()),
+    ];
+    let legacy = TempCrate::create_in(&manifest(""), &files, "src/lib.rs", 1)?;
+    let finding = legacy.finding()?;
+    assert!(
+        !credits_a_discriminator(&finding.class),
+        "edition 2015 never builds tests/integration.rs: {finding:?}"
+    );
+    for (keys, label) in [
+        ("edition = \"2021\"\n", "edition 2021"),
+        ("autotests = true\n", "edition 2015 with autotests = true"),
+    ] {
+        let built = TempCrate::create_in(&manifest(keys), &files, "src/lib.rs", 1)?;
+        let finding = built.finding()?;
+        assert!(
+            credits_a_discriminator(&finding.class),
+            "{label} builds tests/integration.rs: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A unit test inside a binary root Cargo never builds is no discriminator
+/// (#16051 review): `autobins = false` with no `[[bin]]`, or edition 2015
+/// declaring a different `[[bin]]`, leaves `src/bin/extra.rs` undiscovered,
+/// so its test cannot run. The discovered binary keeps the credit.
+#[test]
+fn a_test_in_an_undiscovered_bin_is_not_a_discriminator() -> Result<(), String> {
+    let manifest = |package_keys: &str, targets: &str| {
+        format!(
+            "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\n{package_keys}\n{targets}\n[workspace]\n"
+        )
+    };
+    let bin = "extern crate lib_test_false;\n\nfn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(lib_test_false::f(5), 7);\n    }\n}\n";
+    let files = [
+        ("src/lib.rs", OWNER),
+        ("src/bin/extra.rs", bin),
+        ("src/declared.rs", "fn main() {}\n"),
+    ];
+    let discovered = TempCrate::create_in(
+        &manifest("edition = \"2021\"\n", ""),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    let finding = discovered.finding()?;
+    assert!(
+        credits_a_discriminator(&finding.class),
+        "control: the discovered bin's test runs: {finding:?}"
+    );
+    for (keys, targets, label) in [
+        (
+            "edition = \"2021\"\nautobins = false\n",
+            "",
+            "autobins = false",
+        ),
+        (
+            "",
+            "[[bin]]\nname = \"declared\"\npath = \"src/declared.rs\"\n",
+            "edition 2015 with a declared bin",
+        ),
+    ] {
+        let undiscovered = TempCrate::create_in(&manifest(keys, targets), &files, "src/lib.rs", 1)?;
+        let finding = undiscovered.finding()?;
+        assert!(
+            !credits_a_discriminator(&finding.class),
+            "{label} never builds src/bin/extra.rs: {finding:?}"
+        );
+    }
+    Ok(())
 }
