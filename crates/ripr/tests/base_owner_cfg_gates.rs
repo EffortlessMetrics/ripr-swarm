@@ -181,8 +181,20 @@ fn tail_class_with(
     import: &str,
     extra: &[(&str, &str)],
 ) -> Result<(ExposureClass, Finding), String> {
+    tail_class_patched(path, owner_file, lib_with(items, import, path), extra, "")
+}
+
+/// [`tail_class_with`] with the whole `lib` text given, and `lib_patch` (a
+/// diff of other files, possibly empty) after the owner's diff.
+fn tail_class_patched(
+    path: TailPath,
+    owner_file: &str,
+    lib: String,
+    extra: &[(&str, &str)],
+    lib_patch: &str,
+) -> Result<(ExposureClass, Finding), String> {
     let mut files = vec![
-        ("src/lib.rs", lib_with(items, import, path)),
+        ("src/lib.rs", lib),
         (owner_file, path.owner()),
         ("src/fake.rs", path.stub()),
         (
@@ -195,7 +207,8 @@ fn tail_class_with(
             .iter()
             .map(|(file, text)| (*file, (*text).to_string())),
     );
-    let findings = TempRepo::create(&files, &path.patch(owner_file))?.findings()?;
+    let patch = format!("{}{lib_patch}", path.patch(owner_file));
+    let findings = TempRepo::create(&files, &patch)?.findings()?;
     let tail = path.new_tail();
     let mut matching = findings.iter().filter(|finding| {
         finding.probe.family == ProbeFamily::ReturnValue
@@ -1366,8 +1379,9 @@ index 1111111..2222222 100644
 /// #15035 round-6 review F3: a gated alias of the owner's inline module
 /// (`#[cfg(not(test))] pub use real_impl as imp;` beside a test-only `pub
 /// use fake_impl as imp;`) swaps which `ready` the test runs, so the
-/// enclosing inline module's name gates like a file module's. Control: the
-/// ungated alias keeps main's credit.
+/// enclosing inline module's name gates like a file module's, as does a
+/// gated glob of it (`#[cfg(not(test))] pub use crate::real_impl::*;`,
+/// round-7 review). Controls: the ungated alias and glob keep main's credit.
 #[test]
 fn a_gated_alias_of_the_owners_inline_module_is_a_gate() -> Result<(), String> {
     let twin = |path: TailPath| {
@@ -1390,6 +1404,20 @@ fn a_gated_alias_of_the_owners_inline_module_is_a_gate() -> Result<(), String> {
                 "pub use real_impl as imp;\n".to_string(),
                 ExposureClass::WeaklyExposed,
             ),
+            (
+                "gated glob of the inline module",
+                format!(
+                    "pub mod fake_impl {{\n    {}\n        {}\n    }}\n}}\npub mod imp {{\n    #[cfg(not(test))]\n    pub use crate::real_impl::*;\n    #[cfg(test)]\n    pub use crate::fake_impl::*;\n}}\n",
+                    path.signature(),
+                    path.new_tail()
+                ),
+                ExposureClass::PropagationUnknown,
+            ),
+            (
+                "ungated glob of the inline module",
+                "pub mod imp {\n    pub use crate::real_impl::*;\n}\n".to_string(),
+                ExposureClass::WeaklyExposed,
+            ),
         ] {
             let (class, finding) = inline_module_tail_class(path, &items)?;
             let credited = finding.ripr.propagate.state == StageState::Yes;
@@ -1403,4 +1431,285 @@ fn a_gated_alias_of_the_owners_inline_module_is_a_gate() -> Result<(), String> {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
     Ok(())
+}
+
+/// One round-7 case: the gap (`gap`) must read `propagation_unknown`
+/// without the propagation witness on both tail paths; the control must
+/// read what `baseline` (the same fixture without the part the fix reads)
+/// reads, with the constant tail's propagation credited.
+fn check_against_baseline(
+    name: &str,
+    gap: impl Fn(TailPath) -> Result<(ExposureClass, Finding), String>,
+    control: impl Fn(TailPath) -> Result<(ExposureClass, Finding), String>,
+    baseline: impl Fn(TailPath) -> Result<(ExposureClass, Finding), String>,
+) -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for path in [TailPath::Constant, TailPath::Unary] {
+        let (class, finding) = gap(path)?;
+        if class != ExposureClass::PropagationUnknown
+            || finding.ripr.propagate.state == StageState::Yes
+        {
+            wrong.push(format!(
+                "{path:?} {name}: {class:?} {:?}",
+                finding.ripr.propagate
+            ));
+        }
+        let (class, finding) = control(path)?;
+        let (expected, expected_finding) = baseline(path)?;
+        let credited = finding.ripr.propagate.state == StageState::Yes;
+        if class != expected
+            || credited != (expected_finding.ripr.propagate.state == StageState::Yes)
+            || matches!(path, TailPath::Constant)
+                && (class == ExposureClass::PropagationUnknown || !credited)
+        {
+            wrong.push(format!(
+                "{path:?} {name} control: {class:?} {:?}, baseline {expected:?}",
+                finding.ripr.propagate
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// The diff of `src/lib.rs` for one hunk header and body.
+fn lib_diff(hunk: &str) -> String {
+    format!(
+        "diff --git a/src/lib.rs b/src/lib.rs
+index 3333333..4444444 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+{hunk}"
+    )
+}
+
+/// `lib.rs` items for [`a_removed_enclosing_gate_of_an_unchanged_reexport_refuses`].
+const API_ITEMS: &str = "mod real;\npub mod api {\n    pub use crate::real::ready;\n}\n";
+
+/// #15035 round-7 review (Devin 4658588280): removing `#[cfg(not(test))]`
+/// from `mod api` (and its test-only twin defining `ready` itself) leaves
+/// the re-export line unchanged, but its old-side gate let the tests run
+/// the twin, so the diff changed which `ready` they reach. Control: the diff
+/// removes a non-`cfg` attribute (`#[doc(hidden)]`) from the same module,
+/// which keeps the credit an unchanged `lib.rs` has.
+#[test]
+fn a_removed_enclosing_gate_of_an_unchanged_reexport_refuses() -> Result<(), String> {
+    const IMPORT: &str = "use super::api::ready;";
+    let lib = |path: TailPath| lib_with(API_ITEMS, IMPORT, path);
+    check_against_baseline(
+        "removed enclosing cfg of an unchanged re-export",
+        |path| {
+            let hunk = format!(
+                "@@ -1,13 +1,6 @@\n mod real;\n-#[cfg(not(test))]\n pub mod api {{\n     pub use crate::real::ready;\n }}\n-#[cfg(test)]\n-pub mod api {{\n-    {}\n-        {}\n-    }}\n-}}\n #[cfg(test)]\n mod tests {{\n",
+                path.signature(),
+                path.new_tail()
+            );
+            tail_class_patched(path, "src/real.rs", lib(path), &[], &lib_diff(&hunk))
+        },
+        |path| {
+            let hunk = "@@ -1,7 +1,6 @@\n mod real;\n-#[doc(hidden)]\n pub mod api {\n     pub use crate::real::ready;\n }\n #[cfg(test)]\n mod tests {\n";
+            tail_class_patched(path, "src/real.rs", lib(path), &[], &lib_diff(hunk))
+        },
+        |path| tail_class_patched(path, "src/real.rs", lib(path), &[], ""),
+    )
+}
+
+/// #15035 round-7 review (Devin 4658588495): a library's `mod bin;` file
+/// `src/bin.rs` is module `bin`, not the `src/bin` target directory, so its
+/// owner reads as the same owner in `src/real.rs` does.
+#[test]
+fn a_library_bin_module_is_a_module() -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for path in [TailPath::Constant, TailPath::Unary] {
+        let (class, finding) =
+            tail_class(path, "src/bin.rs", "mod bin;\npub use bin::ready;\n", GLOB)?;
+        let (expected, expected_finding) = tail_class(
+            path,
+            "src/real.rs",
+            "mod real;\npub use real::ready;\n",
+            GLOB,
+        )?;
+        let credited = finding.ripr.propagate.state == StageState::Yes;
+        if class != expected
+            || credited != (expected_finding.ripr.propagate.state == StageState::Yes)
+            || matches!(path, TailPath::Constant)
+                && (class == ExposureClass::PropagationUnknown || !credited)
+        {
+            wrong.push(format!(
+                "{path:?}: {class:?} {:?}, src/real.rs {expected:?}",
+                finding.ripr.propagate
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// `lib.rs` items for [`an_added_sysroot_rename_refuses_only_matching_gates`]
+/// (the alias line is added by the diff).
+const RENAMED_STD_ITEMS: &str =
+    "#![no_std]\nextern crate self as std;\nmod real;\nmod fake;\nmod api;\npub use api::*;\n";
+
+/// #15035 round-7 review (Devin 4658588707): a diff adding `extern crate
+/// self as std;` refuses an owner only when a gated `std::` import names
+/// its chain or names; without one, the owner keeps the credit an
+/// unchanged `lib.rs` has.
+#[test]
+fn an_added_sysroot_rename_refuses_only_matching_gates() -> Result<(), String> {
+    let hunk = "@@ -1,2 +1,3 @@\n #![no_std]\n+extern crate self as std;\n mod real;\n";
+    let run = |path: TailPath, gated: bool, patch: &str| {
+        let api = std_api(gated);
+        tail_class_patched(
+            path,
+            "src/real.rs",
+            lib_with(RENAMED_STD_ITEMS, GLOB, path),
+            &[("src/api.rs", api.as_str())],
+            patch,
+        )
+    };
+    check_against_baseline(
+        "added sysroot rename with a gated std import",
+        |path| run(path, true, &lib_diff(hunk)),
+        |path| run(path, false, &lib_diff(hunk)),
+        |path| run(path, false, ""),
+    )
+}
+
+/// The class of the changed tail of `ready` on lines 1-3 of the crate root
+/// `src/lib.rs`, after `items` and a test module pinning it, with
+/// `lib_hunk` (a hunk of the same file after the owner's) in the diff.
+fn root_tail_class(
+    path: TailPath,
+    items: &str,
+    lib_hunk: &str,
+) -> Result<(ExposureClass, Finding), String> {
+    let lib = format!(
+        "{}{items}#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn pins() {{\n        {}\n    }}\n}}\n",
+        path.owner(),
+        path.pin()
+    );
+    let patch = format!("{}{lib_hunk}", path.patch("src/lib.rs"));
+    let findings = TempRepo::create(&[("src/lib.rs", lib)], &patch)?.findings()?;
+    let tail = path.new_tail();
+    let mut matching = findings.iter().filter(|finding| {
+        finding.probe.family == ProbeFamily::ReturnValue
+            && finding.probe.location.file.ends_with("src/lib.rs")
+            && finding.probe.location.line == 2
+            && finding.probe.expression.trim() == tail
+    });
+    match (matching.next(), matching.next()) {
+        (Some(finding), None) => Ok((finding.class.clone(), finding.clone())),
+        other => Err(format!(
+            "premise: exactly one return_value finding for `{tail}` in src/lib.rs, got {other:?} in {findings:?}"
+        )),
+    }
+}
+
+/// A module-emitting macro after a three-line owner, naming `module`.
+fn declaring_macro(module: &str) -> String {
+    format!("macro_rules! declare {{\n    ($m:ident) => {{\n        mod {module};\n    }};\n}}\n")
+}
+
+/// #15035 round-7 review (Devin 4658588614): editing an unused
+/// module-emitting macro does not refuse a crate-root owner, which no
+/// macro-emitted declaration can reach (as for an unchanged macro). The
+/// same edit still refuses an owner in a module file.
+#[test]
+fn a_changed_macro_leaves_crate_root_owners_credited() -> Result<(), String> {
+    let mut wrong = Vec::new();
+    // Lines 4-8 of `lib.rs` hold the macro; line 6 its `mod`.
+    let hunk = "@@ -6,1 +6,1 @@\n-        mod extra;\n+        mod new_extra;\n";
+    for path in [TailPath::Constant, TailPath::Unary] {
+        let (class, finding) = root_tail_class(path, &declaring_macro("new_extra"), hunk)?;
+        let (expected, expected_finding) =
+            root_tail_class(path, &declaring_macro("new_extra"), "")?;
+        let credited = finding.ripr.propagate.state == StageState::Yes;
+        if class != expected
+            || credited != (expected_finding.ripr.propagate.state == StageState::Yes)
+            || matches!(path, TailPath::Constant)
+                && (class == ExposureClass::PropagationUnknown || !credited)
+        {
+            wrong.push(format!(
+                "{path:?} crate root: {class:?} {:?}, unchanged macro {expected:?}",
+                finding.ripr.propagate
+            ));
+        }
+        // `mod real;` on line 1, the macro's `mod` on line 5.
+        let items = format!(
+            "mod real;\npub use real::ready;\n{}",
+            declaring_macro("new_extra")
+        );
+        let module_hunk = "@@ -5,1 +5,1 @@\n-        mod extra;\n+        mod new_extra;\n";
+        let (class, finding) = tail_class_patched(
+            path,
+            "src/real.rs",
+            lib_with(&items, GLOB, path),
+            &[],
+            &lib_diff(module_hunk),
+        )?;
+        if class != ExposureClass::PropagationUnknown
+            || finding.ripr.propagate.state == StageState::Yes
+        {
+            wrong.push(format!(
+                "{path:?} module file: {class:?} {:?}",
+                finding.ripr.propagate
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// `src/imp.rs` including `src/unused.rs` through `concat` (spelled
+/// `concat`), with that file.
+fn concat_include(concat: &'static str) -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "src/imp.rs",
+            format!("#[cfg(not(test))]\ninclude!({concat}!(\"unused.rs\"));\n"),
+        ),
+        ("src/unused.rs", "pub fn unused() {}\n".to_string()),
+    ]
+}
+
+/// A user `concat` macro expanding to the owner file whatever its
+/// argument.
+const SHADOWING_CONCAT: &str = "macro_rules! concat {\n    ($n:literal) => {\n        ::core::concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\")\n    };\n}\nmod real;\npub use real::ready;\npub mod imp;\n";
+
+/// #15035 round-7 review: a bare `concat!` in an `include!` is the built-in
+/// only when no workspace macro named `concat` shadows it, and a
+/// `core::concat!` only when no crate is renamed to `core`. Each gap's
+/// `include!` may expand to the owner file, so it gates every owner.
+/// Controls: the same `include!` without the shadowing macro or rename
+/// keeps main's credit.
+#[test]
+fn a_shadowed_concat_include_path_is_opaque() -> Result<(), String> {
+    const CREDITED: [ExposureClass; 2] = [
+        ExposureClass::WeaklyExposed,
+        ExposureClass::PropagationUnknown,
+    ];
+    check_gap_cases(vec![
+        GapCase {
+            name: "bare concat shadowed by a user macro",
+            owner: "src/real.rs",
+            items: SHADOWING_CONCAT,
+            import: GLOB,
+            extra: |_| concat_include("concat"),
+            control_items: OWNER_AND_IMP,
+            control_import: GLOB,
+            control_extra: |_| concat_include("concat"),
+            control: CREDITED,
+        },
+        GapCase {
+            name: "core concat under a crate renamed to core",
+            owner: "src/real.rs",
+            items: "extern crate self as core;\nmod real;\npub use real::ready;\npub mod imp;\n",
+            import: GLOB,
+            extra: |_| concat_include("core::concat"),
+            control_items: OWNER_AND_IMP,
+            control_import: GLOB,
+            control_extra: |_| concat_include("core::concat"),
+            control: CREDITED,
+        },
+    ])
 }

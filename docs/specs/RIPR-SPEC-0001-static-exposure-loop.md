@@ -278,7 +278,8 @@ changed body. The identity reports a gate when any of these holds:
   last segment, since the leaf may itself be a module (`use a::imp;`), by a
   rename or the segment it renames (`use real as imp;`, `use
   crate::{real as imp};`), or by any segment of a glob or `self` import
-  (#14952, #15035). An intermediate segment of any other leaf only names the
+  (#14952, #15035). An inline module enclosing the owner counts as a
+  component of its path (`#[cfg(not(test))] pub use crate::real_impl::*;`). An intermediate segment of any other leaf only names the
   module that leaf lives in, so `#[cfg(test)] use crate::real::Helper;` does
   not gate `src/real.rs`. A test module's private import gated only by its
   module's `#[cfg(test)]` is not a gate. Two gated imports are not gates
@@ -304,7 +305,8 @@ changed body. The identity reports a gate when any of these holds:
   spelled (#14952). A crate root is `src/lib.rs`, `src/main.rs`, a file
   directly under `src/bin`, `tests`, `examples` or `benches`, or such a
   directory's `x/main.rs`; its `x/mod.rs` (`tests/common/mod.rs`) is module
-  `x` of a sibling root, not a root (#15035);
+  `x` of a sibling root, not a root, and a library's `src/bin.rs` is module
+  `bin` (#15035);
 - an `include!` whose literal path, resolved against the including file's
   directory, is the owner file; a literal that cannot be resolved (absolute,
   or climbing above the including path) gates the owner file's stem by name.
@@ -316,6 +318,10 @@ changed body. The identity reports a gate when any of these holds:
   macro call (`include!(src_file!("unused.rs"))`, which may expand to any
   path), when `concat!`'s arguments do not end in a literal, a literal has
   escapes, or the run follows another argument and spells no `/` (#15035).
+  A bare `concat!` is trusted only while no workspace file defines a macro
+  named `concat` (`macro_rules! concat`, `macro concat`, or macro tokens
+  spelling one), and a `core::`/`std::` qualified one only while no crate
+  is renamed to a sysroot name; otherwise the `include!` gates every owner.
   The `include!` is found however it is spelled, a comment between
   `include` and `!` included;
 - a `macro_rules!` or `macro` body that may emit an out-of-line module (`mod`
@@ -326,7 +332,14 @@ changed body. The identity reports a gate when any of these holds:
   (`#[macro_export]`, or a `macro` with a visibility). A macro emitting only
   inline `mod name { .. }` modules is not a gate.
 
-A diff that adds or removes any of these refuses the identity. Names
+A diff that adds or removes any of these refuses the identity. A diff
+touching an attribute of an item enclosing a gated `use` or `include!`
+(removing `#[cfg(not(test))]` from a `mod api` whose `pub use` line is
+unchanged) counts as touching that `use` or `include!`. Two changes are
+narrowed to what the unchanged reading would gate: a touched `extern crate
+.. as` sysroot rename refuses only owners a gated sysroot-rooted `use`
+(either side) names, and a touched module-emitting macro does not refuse a
+crate-root owner (#15035). Names
 approximate the module chain, so among these checks a name can only gate more
 owners than the exact chain would, with these exceptions, which are
 name-coincidence limits: a module of the same name in another directory

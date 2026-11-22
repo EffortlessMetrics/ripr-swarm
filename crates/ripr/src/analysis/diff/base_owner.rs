@@ -93,7 +93,6 @@ pub(crate) fn verified_base_owner(
     end_line: usize,
 ) -> Option<BaseOwner> {
     let name = unraw(name);
-    let chain = module_chain_names(owner_file);
     let new_parse = crate::analysis::syntax::parse_clean_source_file(new_source)?;
     let new_root = new_parse.tree().syntax().clone();
     let mut enclosing = named_functions(&new_root, name).filter(|function| {
@@ -102,6 +101,7 @@ pub(crate) fn verified_base_owner(
     });
     // Innermost last: a nested function of the same name is the owner.
     let new_fn = enclosing.next_back()?;
+    let chain = owner_chain(owner_file, &new_fn);
     let names = owner_names(&new_fn, name);
     if modules.chain_changed(owner_file, &chain, &names) {
         return None;
@@ -190,7 +190,6 @@ pub(crate) fn owner_may_be_swapped(
     start_line: usize,
     end_line: usize,
 ) -> bool {
-    let chain = module_chain_names(owner_file);
     let name = unraw(name);
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(new_source) else {
         return true;
@@ -206,6 +205,7 @@ pub(crate) fn owner_may_be_swapped(
     // The gates outside `mod` declarations (#14952) apply here as in
     // `verified_base_owner`; its declaration check
     // (`ModuleDeclarations::declares`) is not applied here (#15037).
+    let chain = owner_chain(owner_file, &function);
     let names = owner_names(&function, name);
     if modules.chain_changed(owner_file, &chain, &names)
         || modules.chain_gated(owner_file, &chain, &names)
@@ -374,6 +374,24 @@ fn unraw(name: &str) -> &str {
 
 /// Every component of `file`'s path, extension removed: a superset of the
 /// module names on its default declaration chain.
+/// The module names `function` (in `owner_file`) is reached through: its
+/// file's [`module_chain_names`] and each enclosing inline module's name,
+/// so a gated glob or `self` import of an inline module (`#[cfg(not(test))]
+/// pub use real_impl::*;`) gates its functions as one of a file module does
+/// (#15035 round-7 review).
+fn owner_chain(owner_file: &Path, function: &ast::Fn) -> BTreeSet<String> {
+    let mut chain = module_chain_names(owner_file);
+    chain.extend(
+        function
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Module::cast)
+            .filter_map(|module| module.name())
+            .map(|found| unraw(found.text()).to_string()),
+    );
+    chain
+}
+
 fn module_chain_names(file: &Path) -> BTreeSet<String> {
     file.iter()
         .filter_map(|component| component.to_str())
@@ -437,7 +455,10 @@ fn module_path(file: &Path) -> Option<Vec<String>> {
     // A target directory of its own: `src/bin`, or the anchor itself
     // outside `src`. `<dir>/x.rs` and `<dir>/x/main.rs` are roots;
     // `<dir>/x/a.rs` is module `a` of target `x`.
-    let target_dir = !in_src || rest.first().is_some_and(|component| component == "bin");
+    // A library's `src/bin.rs` (`mod bin;`) is a module, not the `src/bin`
+    // directory (#15035 round-7 review).
+    let target_dir =
+        !in_src || (rest.len() > 1 && rest.first().is_some_and(|component| component == "bin"));
     if in_src && target_dir {
         rest.drain(..1);
     }
@@ -639,6 +660,21 @@ pub(crate) struct ModuleDeclarations {
     changed_sysroot: BTreeSet<String>,
     /// The diff touched an `extern crate .. as` naming a sysroot crate.
     changed_sysroot_shadow: bool,
+    /// Some read file defines a macro named `concat`, which shadows the
+    /// built-in wherever it is in scope (#15035 round-7 review).
+    concat_shadowed: bool,
+    /// The diff touched such a definition.
+    changed_concat_shadow: bool,
+    /// Some read `include!` trusted the literals of a bare `concat!`.
+    bare_concat_include: bool,
+    /// The diff touched such an `include!`.
+    changed_bare_concat_include: bool,
+    /// Some read `include!` trusted the literals of a `core::`/`std::`
+    /// qualified `concat!`, which a crate renamed to a sysroot name may
+    /// supply instead.
+    qualified_concat_include: bool,
+    /// The diff touched such an `include!`.
+    changed_qualified_concat_include: bool,
     /// A declaring source or a changed Rust file could not be read.
     unreadable: bool,
 }
@@ -661,7 +697,8 @@ impl ModuleDeclarations {
     /// `use`; an `include!` (read on the blanked code too); an `extern` (a
     /// crate rename); or a
     /// `macro_rules!`/`macro` definition beside a `mod`, `include` or `path`
-    /// token. A file holding an out-of-line `mod` declaration is kept by the
+    /// token, or beside a `concat` word (a macro that may shadow
+    /// `concat!`). A file holding an out-of-line `mod` declaration is kept by the
     /// caller on its own.
     pub(crate) fn may_hold_outside_gate(source: &str) -> bool {
         let code = (source.contains("cfg") || source.contains("include"))
@@ -689,7 +726,11 @@ impl ModuleDeclarations {
         let macro_definition = (source.contains("macro_rules")
             || word_offsets(source, "macro").next().is_some())
             && (source.contains("mod") || source.contains("include") || source.contains("path"));
-        gated_use || include || macro_definition || has_word(source, "extern")
+        // A macro named `concat` shadows the built-in an `include!` path
+        // may be spelled with (#15035 round-7 review).
+        let concat_definition = has_word(source, "concat")
+            && (source.contains("macro_rules") || word_offsets(source, "macro").next().is_some());
+        gated_use || include || macro_definition || concat_definition || has_word(source, "extern")
     }
 
     /// Read `declaring_files` (each workspace file that may declare a module
@@ -743,6 +784,9 @@ impl ModuleDeclarations {
             reading.retargeted |= gates.opaque_include;
             reading.retarget_opaque |= gates.opaque_include;
             reading.sysroot_shadowed |= gates.shadows_sysroot;
+            reading.concat_shadowed |= gates.defines_concat;
+            reading.bare_concat_include |= gates.bare_concat;
+            reading.qualified_concat_include |= gates.qualified_concat;
         }
         for (changed, new_source) in changed_files {
             if changed
@@ -771,6 +815,33 @@ impl ModuleDeclarations {
             let removed: BTreeSet<usize> =
                 changed.removed_lines.iter().map(|line| line.line).collect();
             reading.note_touched(&changed.path, &old_source, &removed);
+        }
+        // With a user macro named `concat` anywhere, a bare `concat!` in an
+        // `include!` may expand to any path, so such an `include!` reaches
+        // every owner, as an opaque one does.
+        let shadowed = reading.concat_shadowed || reading.changed_concat_shadow;
+        if shadowed && reading.bare_concat_include {
+            reading.retargeted = true;
+            reading.retarget_opaque = true;
+        }
+        if (shadowed && reading.changed_bare_concat_include)
+            || (reading.changed_concat_shadow && reading.bare_concat_include)
+        {
+            reading.changed_retarget = true;
+            reading.retarget_opaque = true;
+        }
+        // A crate renamed to `core` or `std` may supply the qualified
+        // `concat!` such an `include!` names.
+        let renamed = reading.sysroot_shadowed || reading.changed_sysroot_shadow;
+        if renamed && reading.qualified_concat_include {
+            reading.retargeted = true;
+            reading.retarget_opaque = true;
+        }
+        if (renamed && reading.changed_qualified_concat_include)
+            || (reading.changed_sysroot_shadow && reading.qualified_concat_include)
+        {
+            reading.changed_retarget = true;
+            reading.retarget_opaque = true;
         }
         reading
     }
@@ -837,10 +908,23 @@ impl ModuleDeclarations {
             }
         }
         // A gated `use`, an `include!` or a module-emitting macro the diff
-        // touched (or, under a touched file attribute, every one).
+        // touched, or one under an enclosing item whose attribute (outer, or
+        // inner on its body) the diff touched: removing `#[cfg(..)]` from a
+        // `mod api { pub use .. }` changes its unchanged re-export's gate
+        // (#15035 round-7 review). Under a touched file attribute, every one.
         let gates = OutsideGates::read(&root, file, |node| {
             let range = node.text_range();
-            file_attrs_touched || touches(usize::from(range.start()), usize::from(range.end()))
+            file_attrs_touched
+                || touches(usize::from(range.start()), usize::from(range.end()))
+                || node.ancestors().skip(1).any(|ancestor| {
+                    ancestor
+                        .children()
+                        .filter(|child| child.kind() == SyntaxKind::ATTR)
+                        .any(|attr| {
+                            let range = attr.text_range();
+                            touches(usize::from(range.start()), usize::from(range.end()))
+                        })
+                })
         });
         self.changed.extend(gates.modules);
         self.changed_names.extend(gates.names);
@@ -850,6 +934,9 @@ impl ModuleDeclarations {
         self.changed_retarget |= gates.opaque_include;
         self.retarget_opaque |= gates.opaque_include;
         self.changed_sysroot_shadow |= gates.shadows_sysroot;
+        self.changed_concat_shadow |= gates.defines_concat;
+        self.changed_bare_concat_include |= gates.bare_concat;
+        self.changed_qualified_concat_include |= gates.qualified_concat;
     }
 
     /// Record the file each `#[path]` literal on `module` (declared in
@@ -935,11 +1022,14 @@ impl ModuleDeclarations {
     ) -> bool {
         self.unreadable
             || (self.changed_retarget && self.retarget_reaches(owner_file, chain))
-            || self.changed_sysroot_shadow
+            || (self.changed_sysroot_shadow
+                && (touches_chain(&self.sysroot_gated, chain, names)
+                    || touches_chain(&self.changed_sysroot, chain, names)))
             || !self.changed.is_disjoint(chain)
             || !self.changed_names.is_disjoint(names)
             || self.sysroot_shadowed && touches_chain(&self.changed_sysroot, chain, names)
-            || macro_scope_reaches(&self.changed_macro_scopes, owner_file)
+            || (macro_scope_reaches(&self.changed_macro_scopes, owner_file)
+                && module_path(owner_file).is_none_or(|path| !path.is_empty()))
             || included(&self.changed_files, owner_file)
     }
 
@@ -1225,6 +1315,13 @@ struct OutsideGates {
     /// Some `extern crate .. as` (or macro tokens spelling one) renames a
     /// crate to a sysroot crate's name (#15035 review F3).
     shadows_sysroot: bool,
+    /// Some `include!` path was read from a bare `concat!` call.
+    bare_concat: bool,
+    /// Some `include!` path was read from a sysroot-qualified `concat!`.
+    qualified_concat: bool,
+    /// Some `macro_rules! concat` or `macro concat` (an item, or macro
+    /// tokens spelling one) defines a macro that shadows `concat!`.
+    defines_concat: bool,
 }
 
 impl OutsideGates {
@@ -1232,11 +1329,11 @@ impl OutsideGates {
         let mut gates = Self::default();
         for node in root.descendants() {
             if let Some(item) = ast::Use::cast(node.clone()) {
-                if select(&node) && use_gated(&item) {
+                if use_gated(&item) && select(&node) {
                     gates.read_use(&item);
                 }
             } else if let Some(call) = ast::MacroCall::cast(node.clone()) {
-                if select(&node) && macro_named(&call, "include") {
+                if macro_named(&call, "include") && select(&node) {
                     gates.read_include(file, &call);
                 }
             } else if let Some(rules) = ast::MacroRules::cast(node.clone()) {
@@ -1255,6 +1352,7 @@ impl OutsideGates {
             }
         }
         gates.shadows_sysroot = renames_to_sysroot(root, &select);
+        gates.defines_concat = defines_concat_macro(root, &select);
         gates
     }
 
@@ -1348,7 +1446,10 @@ impl OutsideGates {
             _ => None,
         };
         let Some(text) = literal else {
-            let stem = trailing_literal_path(&arguments).and_then(|text| {
+            let path = trailing_literal_path(&arguments);
+            self.bare_concat |= path.as_ref().is_some_and(|(_, bare)| *bare);
+            self.qualified_concat |= path.as_ref().is_some_and(|(_, bare)| !*bare);
+            let stem = path.and_then(|(text, _)| {
                 let text = text.as_str();
                 text.strip_suffix(".rs")?;
                 Path::new(text)
@@ -1392,25 +1493,34 @@ impl OutsideGates {
 /// `src_file!("unused.rs")`, may expand to another path, #15035 round-6
 /// review), when its arguments do not end in a literal, a literal has
 /// escapes, or the run follows another argument and spells no `/` (a file
-/// name the preceding argument may prefix).
-fn trailing_literal_path(arguments: &[ra_ap_syntax::SyntaxElement]) -> Option<String> {
+/// name the preceding argument may prefix). Only a bare `concat!` or one
+/// spelled `core::`/`std::` (with or without a leading `::`) is read; the
+/// flag says it was bare, which a user macro named `concat` may shadow
+/// (#15035 round-7 review; see [`ModuleDeclarations::read`]).
+fn trailing_literal_path(arguments: &[ra_ap_syntax::SyntaxElement]) -> Option<(String, bool)> {
     let (body, call) = arguments.split_last()?;
     let (bang, path) = call.split_last()?;
     let (name, qualifier) = path.split_last()?;
+    let qualifier: String = qualifier
+        .iter()
+        .map(|element| match element {
+            ra_ap_syntax::NodeOrToken::Token(token) => token.text().to_string(),
+            ra_ap_syntax::NodeOrToken::Node(node) => node.text().to_string(),
+        })
+        .collect();
     let concat_call = body.kind() == SyntaxKind::TOKEN_TREE
         && bang.kind() == SyntaxKind::BANG
         && name
             .as_token()
             .is_some_and(|token| token.text() == "concat")
-        && qualifier.iter().all(|element| {
-            matches!(
-                element.kind(),
-                SyntaxKind::IDENT | SyntaxKind::COLON | SyntaxKind::COLON2
-            )
-        });
+        && matches!(
+            qualifier.as_str(),
+            "" | "::core::" | "core::" | "::std::" | "std::"
+        );
     if !concat_call {
         return None;
     }
+    let bare = qualifier.is_empty();
     let elements: Vec<_> = body
         .as_node()?
         .children_with_tokens()
@@ -1444,7 +1554,33 @@ fn trailing_literal_path(arguments: &[ra_ap_syntax::SyntaxElement]) -> Option<St
     }
     parts.reverse();
     let joined = parts.concat();
-    (rest.is_empty() || joined.contains('/')).then_some(joined)
+    (rest.is_empty() || joined.contains('/')).then_some((joined, bare))
+}
+
+/// Whether some `macro_rules! concat` or `macro concat` (an item, or macro
+/// tokens spelling one) that `select` keeps defines a macro named `concat`,
+/// which shadows the built-in `concat!` where it is in scope (#15035
+/// round-7 review).
+fn defines_concat_macro(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool) -> bool {
+    let tokens: Vec<_> = root
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    tokens.iter().enumerate().any(|(index, token)| {
+        if unraw(token.text()) != "concat" {
+            return false;
+        }
+        let before = |back: usize| {
+            index
+                .checked_sub(back)
+                .and_then(|at| tokens.get(at))
+                .map(|token| token.text())
+        };
+        let defined = before(1) == Some("macro")
+            || (before(1) == Some("!") && before(2) == Some("macro_rules"));
+        defined && token.parent().is_none_or(|parent| select(&parent))
+    })
 }
 
 /// The value of a plain or raw string literal token with no escapes.
@@ -3025,6 +3161,7 @@ mod tests {
             "mod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\"));\n}\n",
             "mod imp {\n    include!(env!(\"GENERATED\"));\n}\n",
             "#[cfg(unix)]\ninclude /* c */ !(\"real.rs\");\n",
+            "macro_rules! concat {\n    ($n:literal) => {\n        \"\"\n    };\n}\n",
             "const C: &core::ffi::CStr = cr\"\\\";\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
             "const C: &core::ffi::CStr = cr#\"say \"hi\"\"#;\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
         ] {
@@ -3038,7 +3175,8 @@ mod tests {
                     || !gates.files.is_empty()
                     || !gates.macro_scopes.is_empty()
                     || gates.opaque_include
-                    || gates.shadows_sysroot,
+                    || gates.shadows_sysroot
+                    || gates.defines_concat,
                 "fixture premise: no gate in {source}"
             );
             assert!(
