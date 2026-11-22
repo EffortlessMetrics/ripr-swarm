@@ -4,8 +4,8 @@ use super::inventory::{
     classify,
 };
 use super::model::{
-    ExpectedSubject, GitHubReleaseTransactionRequest, Mode, REQUEST_SCHEMA, WithheldChannels,
-    subject_inventory_sha256,
+    ExpectedSubject, GitHubReleaseTransactionRequest, Mode, Provenance, REQUEST_SCHEMA,
+    WithheldChannels, subject_inventory_sha256,
 };
 use super::plan::{AuthorizedSubject, Decision, Step, StopKind, VerifiedAuthorization, decide};
 use std::collections::BTreeSet;
@@ -55,6 +55,10 @@ fn rc_request() -> Result<GitHubReleaseTransactionRequest, String> {
         stable_decision_sha256: None,
         subject_inventory_sha256: subject_inventory_sha256(&subjects)?,
         subjects,
+        provenance: Provenance {
+            signer_workflow: "EffortlessMetrics/ripr/.github/workflows/release.yml".to_string(),
+            source_ref: "refs/heads/main".to_string(),
+        },
         withheld_channels: WithheldChannels::default(),
     })
 }
@@ -108,6 +112,7 @@ fn empty_remote_for(request: &GitHubReleaseTransactionRequest) -> RemoteInventor
     let mut remote = empty_remote();
     remote.repository = request.repository.clone();
     remote.tag_name = request.tag.clone();
+    remote.provenance = request.provenance.clone();
     remote
 }
 
@@ -116,6 +121,10 @@ fn empty_remote() -> RemoteInventory {
     RemoteInventory {
         repository: "EffortlessMetrics/ripr".to_string(),
         tag_name: "v0.11.0-rc.1".to_string(),
+        provenance: Provenance {
+            signer_workflow: "EffortlessMetrics/ripr/.github/workflows/release.yml".to_string(),
+            source_ref: "refs/heads/main".to_string(),
+        },
         tag: TagObservation::Absent,
         releases: ReleasesObservation::Listed {
             releases: Vec::new(),
@@ -168,6 +177,7 @@ fn remote_with(
     RemoteInventory {
         repository: request.repository.clone(),
         tag_name: request.tag.clone(),
+        provenance: request.provenance.clone(),
         tag: exact_tag(),
         releases: ReleasesObservation::Listed {
             releases: vec![release(request, draft, assets)],
@@ -778,6 +788,28 @@ fn finalization_waits_for_verified_provenance_of_every_subject() -> Result<(), S
         stop_of(&decide(&request, &authorization, &public).decision)?,
         StopKind::AttestationNotVerified
     );
+    Ok(())
+}
+
+#[test]
+fn verdicts_under_another_provenance_policy_do_not_finalize() -> Result<(), String> {
+    let request = rc_request()?;
+    let mut verified = remote_with(&request, true, all_exact(&request), false);
+    attest_all(&mut verified, &request);
+    // The same release and bytes, verified under signer A, offered to a
+    // request that requires another signer or another source ref.
+    let mut other_signer = request.clone();
+    other_signer.provenance.signer_workflow =
+        "EffortlessMetrics/ripr/.github/workflows/other.yml".to_string();
+    let mut other_ref = request.clone();
+    other_ref.provenance.source_ref = "refs/heads/release".to_string();
+    for changed in [other_signer, other_ref] {
+        let authorization = authorization(&changed, &RC_OPERATIONS)?;
+        assert_eq!(
+            stop_of(&decide(&changed, &authorization, &verified).decision)?,
+            StopKind::InventoryMismatch
+        );
+    }
     Ok(())
 }
 
