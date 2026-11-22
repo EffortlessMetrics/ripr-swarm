@@ -172,15 +172,16 @@ fn a_rebound_build_environment_macro_keeps_the_assertion_uncredited() -> Result<
             "use demo::include_bytes;\n",
             "include_bytes!(\"../Cargo.toml\");",
         ),
-        // A nested macro in the path is a literal only when it is a
-        // standard built-in that nothing rebinds.
+        // A nested macro in a trusted macro's operand is a literal only when
+        // it is a standard built-in that nothing rebinds. `format!` takes
+        // any expression, so both controls compile and return early.
         (
-            "macro_rules! concat { ($($t:tt)*) => { return }; }\n",
-            "let _spec = include_str!(concat!(\"../\", \"Cargo.toml\"));",
+            "macro_rules! concat { ($($t:tt)*) => {{ return; \"\" }}; }\n",
+            "let _ = format!(\"{}\", concat!(\"Cargo\", \".toml\"));",
         ),
         (
-            "macro_rules! leave { () => { return }; }\n",
-            "let _spec = include_str!(concat!(leave!(), \"Cargo.toml\"));",
+            "macro_rules! leave { () => {{ return; \"\" }}; }\n",
+            "let _ = format!(\"{}\", leave!());",
         ),
         // An untrusted macro whose arguments mention `include_str` may
         // define it.

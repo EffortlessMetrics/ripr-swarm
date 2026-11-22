@@ -4402,7 +4402,7 @@ fn owner_pin_assertions_with_matches(
             trusted,
             &empty_macros,
             &json_uses,
-            &[],
+            LITERAL_NESTED_EXPANSIONS,
             matches_context,
             operand_try,
         ) {
@@ -4441,7 +4441,7 @@ fn owner_pin_assertions_with_matches(
                     trusted,
                     &empty_macros,
                     &json_uses,
-                    COMPARISON_NESTED_MACROS,
+                    &[COMPARISON_NESTED_MACROS, LITERAL_NESTED_EXPANSIONS].concat(),
                     false,
                     operand_try,
                 )
@@ -7207,14 +7207,16 @@ fn opaque_macro_operand_with_json(
 /// `match`, call or vector over its own operands (RIPR-SPEC-0197 literal
 /// `matches!`, rendered scalar pins and single-element indexes), which the
 /// token scan above already reads for exits; its binding is checked with the
-/// invoking macros'. The compile-time built-ins after them expand to a
-/// literal (#14116), so `include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-/// ".."))` nests only literals: rustc rejects any operand they cannot fold
-/// at compile time, an exit among them included.
-const NESTED_EXPANSIONS: &[&str] = &[
-    "matches",
-    "format",
-    "vec",
+/// invoking macros'.
+const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
+
+/// Compile-time built-ins that expand to a literal (#14116), so
+/// `include_str!(concat!(env!("CARGO_MANIFEST_DIR"), ".."))` nests only
+/// literals: rustc rejects any operand they cannot fold at compile time.
+/// Only the assertion admission scan reads them as plain, because only its
+/// caller checks every nested name against the workspace binding sites; the
+/// binding-blind scans ([`node_has_macro_escape`]) keep refusing them.
+const LITERAL_NESTED_EXPANSIONS: &[&str] = &[
     "cfg",
     "column",
     "concat",
@@ -9624,5 +9626,34 @@ mod extern_crate_scan_tests {
             "premise: the fixtures hold and refuse"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod literal_nested_expansion_tests {
+    use super::*;
+
+    fn escapes(text: &str) -> bool {
+        let parse = ast::SourceFile::parse(text, ra_ap_syntax::Edition::CURRENT);
+        node_has_macro_escape(parse.tree().syntax())
+    }
+
+    #[test]
+    fn a_nested_literal_built_in_stays_an_escape_without_binding_proof() {
+        // Premise: the same scan admits a nested `vec!`.
+        assert!(!escapes("fn helper() { let _ = vec![vec![1]]; }"));
+        // #14116: the callback-helper scan proves no binding, so a nested
+        // `concat!` (which a local `macro_rules!` may turn into a `return`)
+        // stays an escape there; only the admission scan reads it as plain.
+        for text in [
+            "fn helper() { let _ = vec![concat!(\"a\")]; }",
+            "fn helper() { let _ = format!(\"{}\", env!(\"HOME\")); }",
+            "fn helper() { let _ = vec![include_str!(\"x\")]; }",
+        ] {
+            assert!(escapes(text), "{text}");
+        }
+        assert!(LITERAL_NESTED_EXPANSIONS.iter().all(|name| {
+            TRUSTED_MACRO_NAMES.contains(name) && !NESTED_EXPANSIONS.contains(name)
+        }));
     }
 }
