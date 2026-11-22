@@ -1393,14 +1393,20 @@ fn crosses_member_packages(caller: &FunctionSummary, callee_name: &str, index: &
 /// (`expected.to_string()`) is not a caller: a method call can never resolve
 /// to a free function, so it neither binds nor makes the callee multi-caller.
 /// A callee whose container is not established keeps every caller.
+///
+/// #15932: a function in an integration-test crate is not a caller of a
+/// callee its crate does not export either. Its call of the name runs
+/// another function (`std::thread::sleep` beside a crate-private `sleep`),
+/// so it neither binds nor makes the callee multi-caller.
 fn chain_callers<'a>(callee_name: &str, index: &'a RustIndex) -> Vec<&'a FunctionSummary> {
-    let callee_is_free = index
+    let callee = index
         .functions()
         .iter()
-        .find(|function| function.name == callee_name)
-        .is_some_and(|function| {
-            function.item.container == crate::analysis::facts::FunctionContainer::Free
-        });
+        .find(|function| function.name == callee_name);
+    let callee_is_free = callee.is_some_and(|function| {
+        function.item.container == crate::analysis::facts::FunctionContainer::Free
+    });
+    let callee_is_crate_private = std::cell::OnceCell::new();
     direct_callers(callee_name, index)
         .into_iter()
         .filter(|caller| {
@@ -1410,6 +1416,14 @@ fn chain_callers<'a>(callee_name: &str, index: &'a RustIndex) -> Vec<&'a Functio
                     .iter()
                     .filter(|call| call.name == callee_name)
                     .any(|call| !mentions_only_as_receiver_call(&call.text, callee_name))
+        })
+        .filter(|caller| {
+            !(super::call_identity::is_plain_integration_test_file(index, &caller.file)
+                && *callee_is_crate_private.get_or_init(|| {
+                    callee.is_some_and(|callee| {
+                        super::call_identity::owner_is_private_to_its_crate(index, callee)
+                    })
+                }))
         })
         .collect()
 }

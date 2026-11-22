@@ -1370,8 +1370,23 @@ fn find_related_tests_with_candidates<'a>(
             &full_scan_pin_syntax
         }
     };
+    // #15932: read once per owner; each test only adds its own crate.
+    let owner_is_crate_private = std::cell::OnceCell::new();
     for test_index in candidate_indices {
         let test = index.test_at(test_index);
+        // #15932: an integration test cannot name a function its crate does
+        // not export, so neither a call of that name (it runs another
+        // function) nor a test named after it is a relation to this owner.
+        // The namesake call counts as no call at all: every other route (a
+        // public entry on the helper chain, a method entry, an equality or
+        // formatting dispatch) relates the test exactly as it would without
+        // that call.
+        let owner_is_out_of_reach = owner_fn.is_some_and(|owner| {
+            super::call_identity::is_plain_integration_test(index, test)
+                && *owner_is_crate_private.get_or_init(|| {
+                    super::call_identity::owner_is_private_to_its_crate(index, owner)
+                })
+        });
         // Registration proves the callback, not its owner. Match the repo
         // path before any relation can lend evidence, and keep a later
         // policy-modified fact from falling through as an ordinary test.
@@ -1434,7 +1449,7 @@ fn find_related_tests_with_candidates<'a>(
         {
             continue;
         }
-        let calls_owner = calls_owner_by_name || dispatches_to_fmt;
+        let calls_owner = (calls_owner_by_name && !owner_is_out_of_reach) || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
         // signal from `calls_owner`: it bypasses none of the cross-package
@@ -1689,7 +1704,9 @@ fn find_related_tests_with_candidates<'a>(
         // `config` can occur in unrelated test paths (for example
         // `reconfigure.rs`).
         let file_path_token_matches = test_path_names_probe_stem(&test.file, &file_name);
-        let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
+        let owner_name_in_test = !owner_name_lc.is_empty()
+            && test_name.contains(&owner_name_lc)
+            && !owner_is_out_of_reach;
         let token_in_test_name = test_name_words
             .iter()
             .any(|word| test_name_has_word(&test_name, word));
