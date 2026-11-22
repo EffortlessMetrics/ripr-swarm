@@ -1,5 +1,6 @@
-/// How a related test's assertion observes the changed behavior. Strength is
-/// reported separately in [`OracleStrength`].
+/// The shape of a related test's assertion. Whether that assertion observes
+/// the changed behavior is decided separately, and its strength is reported in
+/// [`OracleStrength`].
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OracleKind {
     /// The test compares the result with an exact expected value.
@@ -108,11 +109,14 @@ mod article_tests {
 /// `None`. Static evidence only; it does not predict a mutation outcome.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OracleStrength {
-    /// Pins the exact result, so a wrong value is likely noticed.
+    /// The highest rating: the assertion is expected to notice a wrong result.
+    /// Exact checks usually rate strong; configuration can also rate other
+    /// kinds, such as mock expectations, as strong.
     Strong,
-    /// Constrains the result, but some wrong values could still pass.
+    /// A middle rating: the assertion constrains the result, but some wrong
+    /// values could still pass.
     Medium,
-    /// Checks only part of the result, such as a relation or a broad error.
+    /// A low rating, typical for a relational check or a broad error.
     Weak,
     /// Only shows the code runs.
     Smoke,
@@ -275,7 +279,8 @@ pub enum RelationReason {
     HelperOwnerCall,
     /// The test asserts on a token the seam's expression also names.
     AssertionTargetAffinity,
-    /// The test is in the same file as the owner.
+    /// The test is in the owner's file or in a companion test file for it,
+    /// such as `tests/config.rs` or `tests/config_test.rs` for `src/config.rs`.
     SameTestFile,
     /// The test is in the same module as the owner.
     SameModule,
