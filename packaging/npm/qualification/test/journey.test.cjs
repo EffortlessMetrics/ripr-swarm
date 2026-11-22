@@ -454,3 +454,31 @@ test("journey fails closed when the emitted continuation is unusable", async (t)
   const failures = failedChecks(log);
   assert.deepEqual(failures, ["continuation_new_process_foreign_cwd_offline"], JSON.stringify(failures));
 });
+
+test("the entrypoint reports its code through ordinary teardown, not process.exit", () => {
+  // process.exit() from the entrypoint deadlocked on aarch64-apple-darwin
+  // after a passed journey (main thread joining a V8 worker that awaited a
+  // main-thread collection). A preload records any process.exit call; the
+  // usage failure must still surface as exit 2 with no such call.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ripr-journey-exit-"));
+  try {
+    const marker = path.join(dir, "exit-called");
+    const preload = path.join(dir, "preload.cjs");
+    fs.writeFileSync(preload, [
+      "const fs = require('node:fs');",
+      "const exit = process.exit;",
+      `process.exit = (code) => { fs.writeFileSync(${JSON.stringify(marker)}, String(code)); exit(code); };`,
+      "",
+    ].join("\n"));
+    const result = spawnSync(process.execPath, ["--require", preload, path.resolve(__dirname, "..", "bin", "journey.cjs")], {
+      encoding: "utf8",
+      timeout: 8000,
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /--packages is required/);
+    assert.equal(fs.existsSync(marker), false, "the entrypoint called process.exit");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
