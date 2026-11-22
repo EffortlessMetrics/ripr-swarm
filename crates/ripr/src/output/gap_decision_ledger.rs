@@ -5668,7 +5668,11 @@ mod tests {
         // literal through a leading `float` coercion; its weak card names the
         // `value == 0` discriminator, one more direct-aligned card. The
         // star-args and named-row controls are weak without a card.
-        if (direct, no_strong, orthogonal, family_selection) != (24, 36, 49, 2) {
+        // #15287: `python_slice_comparison_no_witness` passes only inputs the
+        // old and the new `!=` comparison treat alike; its weak card names the
+        // pair of comparisons, one more direct-aligned card. The `"musx"`
+        // control is `exposed` and carries none.
+        if (direct, no_strong, orthogonal, family_selection) != (25, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
