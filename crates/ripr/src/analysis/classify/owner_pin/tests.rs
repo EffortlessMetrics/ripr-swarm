@@ -66,9 +66,13 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
     Ok(())
 }
 
+mod nested_json_pass_through;
 mod shared_macro_scan;
 mod shared_target_context;
+mod standalone_proptest_wrapper;
+mod standard_pin_pass_through;
 mod standard_wrapper_disclosure;
+mod tokio_select_pass_through;
 mod tuple_projection;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
@@ -459,6 +463,7 @@ fn module_edge(
 
 fn return_probe(owner: &FunctionSummary, expression: &str) -> Probe {
     Probe {
+        before_condition: None,
         id: ProbeId("probe".to_string()),
         location: SourceLocation::new(owner.file.clone(), owner.start_line + 1, 1),
         owner: Some(SymbolId(owner.id.0.clone())),
@@ -8413,8 +8418,21 @@ fn a_clone_field_pin_refuses_competitors_and_unreadable_shapes() {
     if let Some(pin) = pin {
         assert_eq!(admitted_texts(&index, &pin).len(), 2);
     }
-    let competitor = WINDOW_LIB.to_string()
+    // #15276: a `fn clone` on another named type cannot take a `Window`
+    // receiver, so it no longer competes; an inherent `clone` on `Window`
+    // itself still does.
+    let other_type = WINDOW_LIB.to_string()
         + "pub struct Other;\nimpl Other {\n    pub fn clone(&self) -> u8 {\n        0\n    }\n}\n";
+    let (index, pin) = clone_field_pin(&other_type, WINDOW_TESTS);
+    assert!(
+        pin.is_some(),
+        "a `clone` on another named type does not compete"
+    );
+    if let Some(pin) = pin {
+        assert!(!admitted_texts(&index, &pin).is_empty());
+    }
+    let competitor = WINDOW_LIB.to_string()
+        + "impl Window {\n    pub fn clone(&self) -> u8 {\n        0\n    }\n}\n";
     let tried = WINDOW_LIB.replace(
         "            end: self.end,\n        }\n    }\n}\n",
         "            end: check(self.end)?,\n        }\n    }\n}\n",
@@ -9817,8 +9835,34 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
         // glob keeps its dedicated rule.
         ("mod global;\npub use global::prelude::*;\n", false),
         ("mod global;\npub use global::{self, *};\n", false),
-        // The standard roots keep their dedicated rules.
-        ("mod std;\nuse std::*;\n", false),
+        // #14116: a module declared under a standard crate's name shadows the
+        // extern prelude, so the glob reads the local module like any other.
+        ("mod std;\nuse std::*;\n", true),
+        ("mod core;\nuse core::*;\n", true),
+        ("mod alloc;\npub use alloc::*;\n", true),
+        // Every other standard-root spelling keeps the standard-root rule,
+        // which this widest context (no verified standard crate) refuses.
+        ("use core::*;\n", false),
+        ("mod core {}\nuse core::*;\n", false),
+        ("mod core;\nuse ::core::*;\n", false),
+        ("mod core;\nuse core::prelude::*;\n", false),
+        ("mod core;\nuse core::{self, *};\n", false),
+        ("mod core;\nextern crate core;\nuse core::*;\n", false),
+        ("mod core;\nuse dep::core;\nuse core::*;\n", false),
+        ("#[path = \"x.rs\"]\nmod core;\nuse core::*;\n", false),
+        ("mod outer { mod core; use core::*; }\n", false),
+        // A gated declaration can be compiled out, leaving the glob to read
+        // whatever holds the standard name (a renamed dependency included).
+        (
+            "#[cfg(feature = \"local\")]\nmod core;\nuse core::*;\n",
+            false,
+        ),
+        (
+            "#[cfg_attr(docsrs, cfg(feature = \"local\"))]\nmod core;\nuse core::*;\n",
+            false,
+        ),
+        // Other names keep the #14031 reading under a gate.
+        ("#[cfg(test)]\nmod global;\nuse global::*;\n", true),
     ] {
         let sites = sites_in_widest_context(source, &["assert_eq"]);
         let candidates = stored_candidates(source)?;
@@ -14487,10 +14531,46 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
         ),
         ("container-glob", format!("{glob}use super::*;\n{bare}")),
         ("qualified-with-prelude", format!("{glob}{qualified}")),
+        // A plain trait import inside the property binds only for its body.
+        (
+            "plain-use-in-body",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use std::ops::Add; assert_eq!(x.add(0), x); }} }}\n"
+            ),
+        ),
+        // Nested audited wrappers spelled under the verified `proptest` root.
+        (
+            "qualified-nested-wrapper",
+            "proptest::proptest! { #[test] fn p(v in proptest::collection::vec(proptest::prop_oneof![proptest::strategy::Just(vec![1u8])], 0..3)) { proptest::prop_assert!(v.len() < 3); assert_eq!(v.len(), v.len()); } }\n".to_string(),
+        ),
+        // A field colon is no `::` separator: a bare call after it stays bare.
+        (
+            "field-initializer-bare-calls",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ let c = Check {{ items: vec![vec![x]], strategy: prop_oneof![Just(vec![x])] }}; assert_eq!(c.items.len(), 1); }} }}\n"
+            ),
+        ),
+        // A field colon before the path is no `::` separator.
+        (
+            "field-initializer-nested-wrapper",
+            "proptest::proptest! { #[test] fn p(x in 0u8..3) { struct Check { result: bool } let c = Check { result: proptest::prop_assert!({ assert_eq!(x, x); true }) }; let d = Check { result: ::proptest::prop_assert!({ assert_eq!(x, x); true }) }; } }\n".to_string(),
+        ),
+        (
+            "external-nested-wrapper",
+            "::proptest::proptest! { #[test] fn p(v in ::proptest::prop_oneof![::proptest::strategy::Just(vec![1u8])]) { ::proptest::prop_assert_eq!(v, vec![1u8]); } }\n".to_string(),
+        ),
         (
             "inert-attributes",
             format!(
                 "{glob}proptest! {{\n    #![proptest_config(ProptestConfig::with_cases(8))]\n    #[doc(hidden)]\n    {body}\n}}\n"
+            ),
+        ),
+        // A confined mention of `vec` leaves the file's other `vec!` calls
+        // standard, so one outside the property stays transparent.
+        (
+            "confined-mention-leaves-other-calls-standard",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(v in 0u8..3) {{ let _ = vec![v]; }} }}\nfn helper() {{ let _ = vec![assert_eq!(1, 1)]; }}\n"
             ),
         ),
         // Trusted calls nested in the confined arguments rebind nothing, so
@@ -14595,6 +14675,46 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
             ),
         ),
         ("imported-attribute", format!("use other::test;\n{glob}{bare}")),
+        // A `use` in the body that globs, or names a wrapper, can redirect a
+        // nested call the confinement trusts by name.
+        (
+            "glob-use-in-body",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use other::*; prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "wrapper-use-in-body",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ use other::prop_assert; prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "unterminated-use-in-body",
+            format!("{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ assert_eq!(x, x) }} use other::m }}\n"),
+        ),
+        // Only the `proptest` root is the audited crate's path.
+        (
+            "crate-qualified-nested-wrapper",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ crate::prop_assert!(assert_eq); }} }}\n"
+            ),
+        ),
+        (
+            "nested-qualified-root-imported",
+            "use other::proptest;\n::proptest::proptest! { #[test] fn p(x in 0u8..3) { proptest::prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        // A field's `:` ends the path; it does not launder what follows it.
+        (
+            "field-initializer-foreign-nested-wrapper",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ let c = Check {{ result: dep::prop_assert!(assert_eq) }}; }} }}\n"
+            ),
+        ),
+        (
+            "field-initializer-nested-root-imported",
+            "use other::proptest;\n::proptest::proptest! { #[test] fn p(x in 0u8..3) { let c = Check { result: proptest::prop_assert!(assert_eq) }; } }\n".to_string(),
+        ),
     ] {
         assert!(
             prelude_rebound(at(label, &audited, &sibling)?),
@@ -15457,6 +15577,86 @@ fn std_rooted_root_proofs_run_on_demand_and_match_the_eager_reading() {
     assert_eq!(matches.proved, BTreeSet::from(["std::assert"]));
 }
 
+const SHAPE_LIB: &str = "pub trait Shape {\n    fn area(&self) -> u32;\n}\npub struct Square(pub u32);\npub struct Line(pub u32);\n\
+impl Shape for Square {\n    fn area(&self) -> u32 {\n        self.0 + self.0\n    }\n}\n\
+impl Shape for Line {\n    fn area(&self) -> u32 {\n        self.0 - self.0\n    }\n}\n";
+
+const SHAPE_TESTS: &str = "use demo::{Line, Shape, Square};\n\n#[test]\nfn pins() {\n    assert_eq!(Square(3).area(), 9);\n}\n";
+
+/// The pin for `impl Shape for <self_ty>::area` in `lib`, tested by `tests`.
+fn shape_pin(lib: &str, tests: &str) -> (RustIndex, Option<OwnerReturnPin>) {
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = index
+        .functions()
+        .iter()
+        .find(|function| {
+            function.name == "area"
+                && matches!(
+                    &function.item.container,
+                    FunctionContainer::TraitImpl { self_ty, .. } if self_ty == "Square"
+                )
+        })
+        .and_then(|owner| {
+            OwnerReturnPin::establish(&return_probe(owner, "self.0 + self.0"), owner, &index)
+        });
+    (index, pin)
+}
+
+/// #15276: `impl Shape for Line` is a method of another named type, so it
+/// cannot take a call on a receiver typed `Square`; the pin holds and admits
+/// the constructed `Square(3)` receiver.
+#[test]
+fn a_sibling_impl_on_another_named_type_does_not_defeat_the_pin() -> Result<(), String> {
+    let (index, pin) = shape_pin(SHAPE_LIB, SHAPE_TESTS);
+    let pin = pin.ok_or("a sibling impl on `Line` must not defeat the `Square` pin")?;
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(Square(3).area(), 9);".to_string()]
+    );
+    // A receiver of the sibling type, an untyped binding and a `dyn`
+    // receiver are not admitted.
+    for call in [
+        "assert_eq!(Line(3).area(), 9);",
+        "let s = make(); assert_eq!(s.area(), 9);",
+        "let s: Box<dyn Shape> = Box::new(Square(3)); assert_eq!(s.area(), 9);",
+    ] {
+        let tests = SHAPE_TESTS.replace("assert_eq!(Square(3).area(), 9);", call);
+        let (index, pin) = shape_pin(SHAPE_LIB, &tests);
+        let pin = pin.ok_or_else(|| format!("{call}: the pin is established"))?;
+        assert!(admitted_texts(&index, &pin).is_empty(), "{call}");
+    }
+    Ok(())
+}
+
+/// Rivals that can take a call on a `Square` receiver still refuse: an
+/// inherent `area` on `Square`, another trait's `area` on `Square`, a
+/// blanket impl, a trait default body, and a name that may be rebound to
+/// `Square` (alias, rename, generic parameter).
+#[test]
+fn a_rival_that_may_take_the_owner_receiver_still_defeats_the_pin() {
+    for rival in [
+        "impl Square {\n    pub fn area(&self) -> u32 { 9 }\n}\n",
+        "pub trait Other { fn area(&self) -> u32; }\nimpl Other for Square {\n    fn area(&self) -> u32 { 9 }\n}\n",
+        "pub trait Any2 { fn area(&self) -> u32; }\nimpl<T> Any2 for T {\n    fn area(&self) -> u32 { 9 }\n}\n",
+        "pub trait Dflt {\n    fn area(&self) -> u32 { 9 }\n}\n",
+        "pub struct Wrap<T>(pub T);\nimpl<T> Shape for Wrap<T> {\n    fn area(&self) -> u32 { 9 }\n}\n",
+        // A second `Square` in another module shares the base name, so a
+        // receiver typed `Square` may be either type.
+        "pub mod other {\n    pub struct Square(pub u32);\n    impl super::Shape for Square {\n        fn area(&self) -> u32 { 9 }\n    }\n}\n",
+        // #15426 review: names that may denote `Square` although another
+        // declared type has that name: a `type` alias, an `as` rename, and a
+        // blanket impl's parameter beside a declared `struct T`.
+        "pub mod aliases {\n    pub type Line = super::Square;\n    impl Line {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
+        "pub mod raw_alias {\n    pub type r#Line = super::Square;\n    impl Line {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
+        "pub mod renamed {\n    use super::Square as Line;\n    impl Line {\n        pub fn area(&self) -> u32 { 9 }\n    }\n}\n",
+        "pub mod unrelated {\n    pub struct T;\n}\npub trait Any3 { fn area(self) -> u32; }\nimpl<T> Any3 for T {\n    fn area(self) -> u32 { 9 }\n}\n",
+    ] {
+        let lib = format!("{SHAPE_LIB}{rival}");
+        let (_, pin) = shape_pin(&lib, SHAPE_TESTS);
+        assert!(pin.is_none(), "{rival}");
+    }
+}
+
 /// #15277: a turbofish names the same function, so `doubled::<u8>(5)` and
 /// `s.apply::<u8>(4)` are the owner calls their plain spellings are. An
 /// unclosed turbofish, a path value without a call, anything chained after
@@ -15586,4 +15786,16 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
     )?));
     assert_eq!(refusal_under(&alloc_dependency, "use std::vec;")?, None);
     Ok(())
+}
+
+#[test]
+fn the_include_pair_stays_unbounded_in_owner_code() {
+    // The owner-side return scan reads spellings without a binding check
+    // (#14116), so a rebound `include_str!` there could hide a `return`.
+    assert!(!has_unbounded_macro("let n = env!(\"N\"); n.len()"));
+    assert!(has_unbounded_macro("let n = include_str!(\"n\"); n.len()"));
+    assert!(has_unbounded_macro(
+        "let n = include_bytes!(\"n\"); n.len()"
+    ));
+    assert!(assertion_context_macros().contains(&"include_str"));
 }

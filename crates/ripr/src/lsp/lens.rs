@@ -450,7 +450,7 @@ fn finding_matches_uri(finding: &Finding, uri: &Uri, root: &Path) -> bool {
 ///
 /// - Preview tier (`language_status == Some(Preview)`): prefix `preview:`,
 ///   use softened phrasing — the count may be incomplete for preview adapters.
-/// - `NoStaticPath`: `ripr: no test reaches this change (PLAIN) · static, cached`
+/// - `NoStaticPath`: `ripr: no static test path found (PLAIN) · static, cached`
 ///   regardless of file/name-token overlap in `related_tests` (count is not shown
 ///   as a positive related-test grip).
 /// - N > 0 + discriminating class (`Exposed`):
@@ -484,7 +484,7 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
     let body = if is_preview {
         // Preview tier: count may be incomplete; soften claim.
         if matches!(finding.class, ExposureClass::NoStaticPath) {
-            format!("preview: no test reaches this change ({class_label}) · static, cached")
+            format!("preview: no static test path found ({class_label}) · static, cached")
         } else if count == 0 {
             format!("preview: no related tests found ({class_label}) · static, cached")
         } else {
@@ -495,7 +495,7 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
             )
         }
     } else if matches!(finding.class, ExposureClass::NoStaticPath) {
-        format!("ripr: no test reaches this change ({class_label}) · static, cached")
+        format!("ripr: no static test path found ({class_label}) · static, cached")
     } else {
         match count {
             0 => format!("ripr: no related tests found ({class_label}) · static, cached"),
@@ -580,6 +580,7 @@ mod tests {
             id: format!("probe:{file}:{line}:test_family:aabbccdd"),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(format!("probe:{file}:{line}:test_family:aabbccdd")),
                 location: SourceLocation::new(file, line, 1),
                 owner: Some(SymbolId("owner::fn".to_string())),
@@ -714,6 +715,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -1071,9 +1073,9 @@ mod tests {
             .ok_or("expected command in lens")?
             .title
             .clone();
-        if !title.contains("no test reaches this change") {
+        if !title.contains("no static test path found") {
             return Err(format!(
-                "title must say no test reaches this change, got: {title}"
+                "title must say no static test path found, got: {title}"
             ));
         }
         if !title.contains("no path") {
@@ -1098,7 +1100,7 @@ mod tests {
         for count in [0_usize, 1, 3] {
             let finding = make_finding("src/lib.rs", 5, ExposureClass::NoStaticPath, count, None);
             let title = related_test_lens_title(&finding, None);
-            if !title.contains("no test reaches this change") {
+            if !title.contains("no static test path found") {
                 return Err(format!(
                     "NoStaticPath count={count} must not imply reach, got: {title}"
                 ));
@@ -1115,6 +1117,31 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// A `NoStaticPath` lens names what static analysis did not find, not a
+    /// claim that no test reaches the change: a transitive helper path is a
+    /// static-analysis limitation that does not establish a missing test.
+    #[test]
+    fn related_test_lens_title_no_static_path_names_the_static_limit() {
+        for count in [0_usize, 2] {
+            let stable = make_finding("src/lib.rs", 5, ExposureClass::NoStaticPath, count, None);
+            assert_eq!(
+                related_test_lens_title(&stable, None),
+                "ripr: no static test path found (no path) · static, cached"
+            );
+            let preview = make_finding(
+                "src/lib.rs",
+                5,
+                ExposureClass::NoStaticPath,
+                count,
+                Some(LanguageStatus::Preview),
+            );
+            assert_eq!(
+                related_test_lens_title(&preview, None),
+                "preview: no static test path found (no path) · static, cached"
+            );
+        }
     }
 
     #[test]

@@ -240,8 +240,11 @@ read-only and without execution authority (ADR 0022):
   attempt the tools report `analysis_in_flight`. An unknown item fails with
   `item_not_found`. The supported stdio transport admits one request through
   its reply flush, so a refresh queued behind a durable read cannot begin
-  during that read. The session guard is evaluated at read admission; this
-  slice adds no concurrent public transport or response-time lease. An
+  during that read, and a read written during a refresh is held until the
+  refresh reply is flushed, unless that refresh was cancelled, after which
+  the read reports `analysis_in_flight` (#15983). The session guard is evaluated at read
+  admission; this slice adds no concurrent public transport or response-time
+  lease. An
   unknown attempt or receipt identity fails with
   `attempt_not_found`; a durable manifest that fails canonical validation
   fails with `attempt_invalid`; a session transaction bound to a snapshot

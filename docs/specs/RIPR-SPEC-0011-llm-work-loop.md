@@ -1169,6 +1169,16 @@ a stray positional argument) under `--json` keeps exit 2 and its stderr prose
 and writes the standalone `cli_refusal` document to stdout (#6834 decision);
 other argv usage errors keep empty stdout.
 
+## Amendment (#15282): continue on a complete attempt prints a short summary
+
+Without `--json`, `ripr continue` on a confirmed-complete attempt prints a
+short summary on stdout instead of the full attempt status page: the attempt
+and its status class, the gap, the receipt, the test-run line, `ripr repair`
+for the next gap, and the `ripr status --attempt` command that prints the full
+page. A command whose PowerShell spelling differs gets a `(PowerShell)` line.
+Exit 0, the stderr already-complete line and the `--json` status document are
+unchanged.
+
 ## Amendment (#13833): line-ending-only files are named, not silently dropped
 
 A path whose before and after states differ only in line endings, on a path
@@ -1250,6 +1260,7 @@ is not decided here.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_made_stale_before_the_baseline_is_captured_binds_nothing` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
 - `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
@@ -1369,7 +1380,7 @@ is not decided here.
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_failed_restart_retains_literal_unix_root`
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_open_gap_restart_retains_literal_unix_root`
 - `crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once`
-- `crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory`
+- `crates/ripr/tests/generated_review_workflow/main.rs::generated_status_command_runs_from_a_foreign_working_directory`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots`
 - `editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)`
 - `editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions`

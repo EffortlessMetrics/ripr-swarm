@@ -41,6 +41,12 @@ Consumes:
   `textDocument/didSave` (saved content is the analysis input; the options
   form's `save` member requests save notifications and `includeText: false`
   avoids resending the whole document on each save)
+- incremental change positions resolved as LSP 3.17 defines them: a
+  character past the line end is the line end (#7316) and a line past the
+  last line is the end of the document (#15430), so a client appending below
+  the last line keeps its document; reversed ranges and positions inside a
+  multi-unit character are refused and quarantine the document until a full
+  resync
 - `MethodNotFound` (`-32601`, method named in `data`) for any unhandled
   request whose method starts with `$/`; unhandled `$/` notifications stay
   silent (LSP 3.17 "$ Notifications and Requests", #4456)
@@ -95,8 +101,9 @@ fix-instruction summaries, and no retrieval references — those belong to
 `lsp/action_contract.rs`; only reasons with a real producer are emitted —
 today `analysis_not_current`, `stale_snapshot`, `client_capability_missing`,
 `verification_route_unavailable`, `receipt_route_unavailable`,
-`preview_or_static_limitation`, `repair_route_not_ready`, and
-`uncommitted_production_change` — while the reserved members
+`preview_or_static_limitation`, `repair_route_not_ready`,
+`uncommitted_production_change`, and `seam_evidence_deferred` — while the
+reserved members
 (`stale_document`, `workspace_root_blocked`, `fix_site_unavailable`,
 `exact_replacement_unavailable`, `ambiguous_fix_site`,
 `outside_allowed_edit_surface`, `configuration_invalid`) stay unemittable
@@ -291,6 +298,10 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
 - `tests/lsp_lifecycle.rs::initialize_advertises_incremental_sync_with_save_notifications`
   verifies over the real wire that the document-sync advertisement requests
   incremental changes and `didSave` without resending the document (#1746).
+- `lsp/state.rs::tests::incremental_line_past_end_clamps_to_document_end`
+  verifies that a line past the last line resolves to the document end in
+  every negotiated encoding, while reversed and mid-surrogate ranges stay
+  refused (#15430).
 - `tests/lsp_lifecycle.rs::dollar_request_is_answered_method_not_found`
   verifies over the real wire that a `$/` request gets `-32601` naming the
   method, while the same `$/` notification gets no response.
@@ -319,7 +330,10 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   `analysis_not_current`,
   `verification_route_unavailable`, `receipt_route_unavailable`,
   `preview_or_static_limitation`, `repair_route_not_ready`,
-  `uncommitted_production_change`).
+  `uncommitted_production_change`, `seam_evidence_deferred`).
+  `tests.rs::deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh`
+  pins the deferred-seam start, its legacy omission, and its absence on a
+  full snapshot and on an `exposed` finding.
   `tests.rs::seam_not_yet_repairable_names_route_not_ready_not_a_language_boundary`
   pins the truthful reason, and the repair-start tests build their seam
   diagnostics with the production producer (no injected fix-instruction).
@@ -511,7 +525,23 @@ client supports:
   exists, the VS Code "Start Current Repair" command asks the server for code
   actions directly (because `vscode.executeCodeActionProvider` drops
   `CodeAction.disabled`) and shows the inert start's reason before falling
-  back to any other action, or instead of the refresh hint. `ripr agent repair`
+  back to any other action, or instead of the refresh hint. When the
+  committed snapshot came from an interactive refresh that deferred the full
+  spot inventory (`seams_deferred`), a candidate-current gap-class finding
+  diagnostic has no seam-bound start: a disabled-capable client sees "Start
+  repair" inert as `seam_evidence_deferred`, whose reason names "ripr: Refresh
+  Full Analysis" (wire `ripr.refresh`) without promising a start after it.
+  It is listed only when a full refresh under the snapshot's configuration
+  builds the spot inventory (`seam_inventory_on_full_refresh`: full
+  diagnostic profile, spot diagnostics on, Rust enabled); under the default
+  actionable profile the refresh builds no spots and the status's
+  `seam_diagnostics_not_enabled` outcome names the setting instead. An
+  `exposed`, base-side, preview, non-Rust or static-limited finding, a full
+  snapshot and a legacy client get no inert start. While analysis is queued
+  or running, the retained start reads `analysis_not_current`. With no gap or seam diagnostic near the selection, "Start
+  Current Repair" asks the server about the nearest finding diagnostic and
+  shows that reason before saying no repair gap is available (#13636).
+  `ripr agent repair`
   still re-checks start-time facts (dirty premise, proposal identity, held
   inline target, ignored build directory) and refuses with nothing started. The
   backend health gate also returns retained diagnostic-addressed actions

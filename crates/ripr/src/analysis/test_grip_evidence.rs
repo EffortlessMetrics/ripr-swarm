@@ -16,7 +16,7 @@ mod both_diff_versions;
 mod call_budget;
 mod claims_payload_pin;
 mod framework_snapshot;
-mod local_operand_alias;
+pub(in crate::analysis) mod local_operand_alias;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -40,6 +40,7 @@ pub(in crate::analysis) use value_contradiction::{
     InvisibilityReason, PointerReturnChange, RangeChangeVisibility,
     change_is_invisible_to_every_assertion, every_owner_call_separates, fold_owner_body_at,
     owner_change_visibility, range_change_visibility, return_seam_tail_reached_by_call,
+    tuple_branch_reached,
 };
 
 pub(crate) use related_tests::CompactGripContext;
@@ -172,6 +173,10 @@ const HELPER_OWNER_CALL_GRAPH_MAX_HOPS: usize = 3;
 /// Per-related-test grip facts attached to a `TestGripEvidence`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RelatedTestGrip {
+    /// The full evidence pass confirmed this assertion-target relation belongs
+    /// to an indexed, non-function owner. Older records lack that authority.
+    #[serde(skip)]
+    pub(crate) assertion_targets_non_function: Option<bool>,
     pub(crate) test_name: String,
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
@@ -224,6 +229,12 @@ pub(crate) enum TestTargetCurrentness {
 pub(crate) enum TestKind {
     InlineUnit,
     Integration,
+    /// An integration test in the entry file of a `[[test]]` target the
+    /// package manifest declares outside the test layouts (`[[test]] path =
+    /// "spec/pricing.rs"`, #15910). The manifest, not the path, makes the
+    /// file a test file, so the repair route may name it as the test to
+    /// edit ([`crate::analysis::is_test_surface`]).
+    DeclaredIntegration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,9 +343,15 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
 /// persists or replays the result must not store it when the list is
 /// non-empty: the stand-in is a transient fault of one run, not a property of
 /// the inputs the cache key names (#13340). An undescribable failure is `Err`.
-pub(crate) fn evidence_for_seams_reporting_failure(
+/// Reuses a grip context the seam inventory's field admission already built
+/// for the same index when given one, instead of paying a second whole-index
+/// context build (Wave F2a). The context's memos are keyed and deterministic,
+/// so a seam's evidence does not depend on which pass built the context.
+/// `None` falls back to building a fresh context.
+pub(crate) fn evidence_for_seams_reporting_failure_with_shared_context<'index>(
     seams: &[RepoSeam],
-    index: &RustIndex,
+    index: &'index RustIndex,
+    shared_context: Option<CompactGripContext<'index>>,
 ) -> Result<
     (
         Vec<TestGripEvidence>,
@@ -342,7 +359,7 @@ pub(crate) fn evidence_for_seams_reporting_failure(
     ),
     String,
 > {
-    let pass = EvidencePass::new(index);
+    let pass = EvidencePass::with_shared_context(index, shared_context);
     let evidence = pass.evidence_for(seams);
     cancellation::checkpoint()?;
     let limitations = pass.limitations()?;
@@ -574,10 +591,24 @@ pub(crate) struct EvidencePass<'index> {
 }
 
 impl<'index> EvidencePass<'index> {
+    #[cfg(test)]
     pub(crate) fn new(index: &'index RustIndex) -> Self {
+        Self::with_shared_context(index, None)
+    }
+
+    /// An evidence pass over `shared_context` when the caller already built
+    /// one for this index (seam inventory's field admission, Wave F2a), else
+    /// a fresh context. A shared context is already built, so it is used even
+    /// where a fresh `try_new` would have been discarded on cancellation: the
+    /// per-seam checkpoints in `evidence_for` then yield the same empty
+    /// result a missing context would.
+    pub(crate) fn with_shared_context(
+        index: &'index RustIndex,
+        shared_context: Option<CompactGripContext<'index>>,
+    ) -> Self {
         let context_started = Instant::now();
         trace_latency_phase("evidence_context", "start", Duration::ZERO);
-        let context = CompactGripContext::try_new(index).ok();
+        let context = shared_context.or_else(|| CompactGripContext::try_new(index).ok());
         trace_latency_phase(
             "evidence_context",
             &format!(
@@ -1194,11 +1225,21 @@ fn evidence_for_seam_with_context<'a>(
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
-    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let discriminate = discriminate_evidence(
+        seam,
+        &credited,
+        owner_fn,
+        context.index,
+        pin_syntax,
+        activate.state == StageState::Yes && missing_discriminators.is_empty(),
+    );
 
     // One admission per test file for this seam: the verdict depends only on
     // the (test file, seam file) pair, and a file's tests share it (#5361).
     let mut validated_targets: HashMap<&Path, bool> = HashMap::new();
+    let indexed_non_function_owner = owner_fn.is_none()
+        && super::rust_index::find_file_facts(context.index, seam.file())
+            .is_some_and(|facts| !facts.used_lexical_fallback);
     let related_tests: Vec<Arc<RelatedTestGrip>> = related_with_reason
         .iter()
         .zip(best_oracles)
@@ -1207,6 +1248,7 @@ fn evidence_for_seam_with_context<'a>(
                 seam,
                 indexed.test,
                 *reason,
+                indexed_non_function_owner,
                 context,
                 oracle,
                 &mut validated_targets,
@@ -3070,7 +3112,14 @@ pub(crate) fn compact_evidence_for_seam(
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
-    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let discriminate = discriminate_evidence(
+        seam,
+        &credited,
+        owner_fn,
+        context.index,
+        pin_syntax,
+        activate.state == StageState::Yes && missing_discriminators.is_empty(),
+    );
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
@@ -3999,13 +4048,15 @@ fn boundary_operand_is_iterator_derived(owner_fn: &FunctionSummary, operand: &st
 
 fn boundary_operand_is_closure_derived(owner_fn: &FunctionSummary, operand: &str) -> bool {
     let operand_root = boundary_operand_root_identifier(operand);
-    if operand_root.is_empty() {
+    // A numeric literal is never a closure parameter; reading the body for
+    // one cost a full scan per arm of a long `else if` chain (#15189).
+    if operand_root.is_empty() || local_operand_alias::is_numeric_literal(&operand_root) {
         return false;
     }
-    owner_fn
-        .body
-        .lines()
-        .any(|line| closure_binds_operand_root(line, &operand_root))
+    local_operand_alias::body_closure_binds_operand_root(&owner_fn.body, &operand_root, |body| {
+        body.lines()
+            .any(|line| closure_binds_operand_root(line, &operand_root))
+    })
 }
 
 fn boundary_operand_root_identifier(operand: &str) -> String {
@@ -5395,6 +5446,7 @@ fn discriminate_evidence(
     owner_fn: Option<&FunctionSummary>,
     index: &RustIndex,
     pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+    boundary_activated: bool,
 ) -> StageEvidence {
     if related.is_empty() {
         return StageEvidence::new(
@@ -5442,7 +5494,7 @@ fn discriminate_evidence(
             // strength here let a Strong oracle that misses the branch set
             // `best`, so the stage answered `Yes` while the record published
             // `Weak` — the disagreement this PR exists to remove.
-            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn);
+            let branch_withheld = branch_gate_withholds(seam, oracle, test, owner_fn, index);
             let graded = if branch_withheld
                 && matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
             {
@@ -5483,6 +5535,29 @@ fn discriminate_evidence(
             (false, OracleStrength::Strong | OracleStrength::Medium) => StageState::Weak,
         }
     };
+    if state == StageState::Yes
+        && boundary_activated
+        && seam.kind() == SeamKind::PredicateBoundary
+        && comparison_operands(seam.expression()).is_some()
+        && let Some(owner) = owner_fn
+        && related
+            .iter()
+            .any(|test| test.body_calls().any(|call| call.name == owner.name))
+        && !boundary_oracle_paired(
+            seam,
+            owner,
+            related,
+            index,
+            pin_syntax,
+            boolean_pin.as_ref(),
+        )
+    {
+        return StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            super::classify::same_test_pairing_missing_summary(),
+        );
+    }
     // #14496: name the gate that actually refused. The parenthetical used to
     // print `best_matching != None` as "kind-match", so any refusal that was
     // not a kind mismatch (a branch-reach refusal, a #8121/#12189/#11398
@@ -5508,6 +5583,135 @@ fn discriminate_evidence(
         summary.push_str(&contradictions.join("; "));
     }
     StageEvidence::new(state, Confidence::Medium, summary)
+}
+
+/// Judge each test's oracle against its own activation rows. An exact check
+/// at a different input cannot lend its strength to a bare boundary call.
+fn boundary_oracle_paired(
+    seam: &RepoSeam,
+    owner: &FunctionSummary,
+    related: &[&TestSummary],
+    index: &RustIndex,
+    syntax: &super::classify::OwnerPinSyntax,
+    boolean_pin: Option<&BooleanBoundaryPin<'_>>,
+) -> bool {
+    let probe = boolean_boundary_pin::predicate_probe(seam, owner);
+    related.iter().any(|test| {
+        if test.assertions.is_empty() || test_has_contradicted_assertion(test, Some(owner), index) {
+            return false;
+        }
+        let activation = super::classify::activation_and_boundary_input(
+            &probe,
+            Some(owner),
+            &[test],
+            &[],
+            None,
+            index,
+            false,
+            None,
+        );
+        let admitted = |test: &TestSummary, oracle: &OracleFact| {
+            oracle_discriminates_seam_in_test(seam, oracle, test, Some(owner), index, syntax)
+        };
+        let pinned = |test: &TestSummary, oracle: &OracleFact| {
+            boolean_pin.is_some_and(|pin| pin.admits(test, oracle, index, syntax))
+        };
+        super::classify::has_same_test_boundary_oracle_pairing(
+            &probe,
+            Some(owner),
+            &[test],
+            &activation.activation,
+            &admitted,
+            &pinned,
+            &|test, oracle| syntax.helper_loan(test, oracle, index),
+            None,
+            index,
+        ) || (activation.unresolved_boundary.is_none()
+            && activation.activation.missing_discriminators.is_empty()
+            && test.assertions.iter().any(|oracle| {
+                // Test-local assertion transfer has already checked callback
+                // execution. Keep its credit when the call result is passed
+                // to the helper that supplied this test's exact assertion.
+                !(test.start_line..=test.end_line).contains(&oracle.line)
+                    && super::classify::assertion_is_discriminating(oracle)
+                    && admitted(test, oracle)
+                    && rust_index::find_owner_function(index, &test.file, oracle.line).is_some_and(
+                        |helper| {
+                            super::classify::test_helper_call_arguments(test, &helper.name, index)
+                                .into_iter()
+                                .any(|(call, arguments)| {
+                                    compared_helper_arguments(helper, oracle, &arguments).any(
+                                        |arg| {
+                                            super::classify::helper_argument_is_boundary_call(
+                                                &probe,
+                                                owner,
+                                                test,
+                                                arg,
+                                                &call,
+                                                &activation.activation,
+                                                index,
+                                            )
+                                        },
+                                    )
+                                })
+                        },
+                    )
+            }))
+    })
+}
+
+/// Project this exact helper assertion back to the argument it reads. The
+/// helper body is the equality alone, optionally preceded by a single
+/// binding of a callback's result. Neither a discarded argument nor an
+/// oracle comparing two copies of the same value establishes a pairing.
+fn compared_helper_arguments<'a>(
+    helper: &FunctionSummary,
+    oracle: &OracleFact,
+    arguments: &'a [String],
+) -> impl Iterator<Item = &'a str> {
+    let parameters = whole_signature_parameters(helper);
+    let operands = super::classify::assertion_comparison_operands(&oracle.text);
+    let body = helper
+        .body
+        .split_once('{')
+        .and_then(|(_, body)| body.trim_end().strip_suffix('}'));
+    let equality = oracle.text.trim().trim_end_matches(';').trim();
+    let prefix = body.and_then(|body| {
+        body.trim()
+            .trim_end_matches(';')
+            .trim_end()
+            .strip_suffix(equality)
+    });
+    let pair = operands.zip(prefix).filter(|(operands, _)| {
+        equality.starts_with("assert_eq!") && operands[0].trim() != operands[1].trim()
+    });
+    [0, 1].into_iter().filter_map(move |side| {
+        let (operands, prefix) = pair?;
+        let position = |name: &str| parameters.iter().position(|param| param == name.trim());
+        let expected = operands[1 - side].trim();
+        let expected = position(expected)
+            .and_then(|at| arguments.get(at))
+            .map_or(expected, String::as_str);
+        if !matches!(expected.trim(), "true" | "false") && !is_plain_literal_pattern(expected) {
+            return None;
+        }
+        let subject = operands[side].trim();
+        let prefix = prefix.trim();
+        if prefix.is_empty() {
+            let actual = arguments.get(position(subject)?)?.trim();
+            return (!actual.starts_with("||")).then_some(actual);
+        }
+        let (binding, value) = prefix
+            .strip_prefix("let ")?
+            .strip_suffix(';')?
+            .split_once('=')?;
+        if binding.trim() != subject {
+            return None;
+        }
+        let callback = value.trim().strip_suffix("()")?.trim();
+        let actual = arguments.get(position(callback)?)?.trim();
+        actual.starts_with("||").then_some(actual)
+    })
 }
 
 /// Owner-relative oracle strength and any static-contradiction disclosure.
@@ -5694,7 +5898,7 @@ fn oracle_discriminates_seam_in_test(
     // of the owner's result from a call that takes the other branch observes a
     // different value, so it is not strong grip for this seam. `None` (a shape
     // the fold cannot read) keeps today's credit.
-    if branch_gate_withholds(seam, oracle, test, owner) {
+    if branch_gate_withholds(seam, oracle, test, owner, index) {
         return false;
     }
     oracle_discriminates_seam(seam, oracle)
@@ -5724,6 +5928,7 @@ fn branch_gate_withholds(
     oracle: &OracleFact,
     test: &TestSummary,
     owner: Option<&FunctionSummary>,
+    index: &RustIndex,
 ) -> bool {
     seam.kind() == SeamKind::ReturnValue
         && owner.is_some_and(|owner| {
@@ -5733,7 +5938,17 @@ fn branch_gate_withholds(
                 seam.display_line(),
                 &oracle.text,
                 test,
-            ) == Some(false)
+            )
+            .or_else(|| {
+                tuple_branch_reached(
+                    owner,
+                    seam.expression(),
+                    seam.display_line(),
+                    test,
+                    index,
+                    false,
+                )
+            }) == Some(false)
         })
 }
 
@@ -6461,6 +6676,42 @@ pub(crate) fn oracle_semantics_for(
     semantics
 }
 
+/// The returned-struct wording of a field seam's upgrade suggestion.
+const FIELD_CONSTRUCTION_UPGRADE: &str =
+    "assert the specific output field that carries the changed behavior";
+
+/// [`oracle_semantics_for`] for one seam (#11726). A field write in a method
+/// (`self.count += 1`) has no returned struct, so its upgrade suggestion names
+/// where the written field is read instead, through the same
+/// `field_write_read` the hover and the agent packet use.
+pub(crate) fn oracle_semantics_for_seam(
+    kind: &OracleKind,
+    strength: &OracleStrength,
+    seam: &RepoSeam,
+) -> OracleSemantics {
+    let mut semantics = oracle_semantics_for(kind, strength, seam.kind());
+    if semantics.upgrade_suggestion.as_deref() == Some(FIELD_CONSTRUCTION_UPGRADE)
+        && let Some(read) = crate::analysis::field_write_read(seam)
+    {
+        semantics.upgrade_suggestion = Some(field_write_upgrade(read).to_string());
+    }
+    semantics
+}
+
+fn field_write_upgrade(read: crate::analysis::FieldWriteRead) -> &'static str {
+    match read {
+        crate::analysis::FieldWriteRead::Receiver => {
+            "assert the changed field on the value the method was called on"
+        }
+        crate::analysis::FieldWriteRead::CallResult => {
+            "assert the changed field on the value the method call returns"
+        }
+        crate::analysis::FieldWriteRead::Unspecified => {
+            "assert the changed field after the call that writes it"
+        }
+    }
+}
+
 fn oracle_semantics_by_kind(
     kind: &OracleKind,
     strength: &OracleStrength,
@@ -6562,9 +6813,7 @@ fn upgrade_suggestion_for_seam(seam_kind: SeamKind) -> &'static str {
         }
         SeamKind::ErrorVariant => "assert the exact error variant with matches! or assert_matches!",
         SeamKind::ReturnValue => "add an exact returned-value assertion for the changed output",
-        SeamKind::FieldConstruction => {
-            "assert the specific output field that carries the changed behavior"
-        }
+        SeamKind::FieldConstruction => FIELD_CONSTRUCTION_UPGRADE,
         SeamKind::SideEffect => {
             "assert the event, state write, persistence effect, or mock expectation payload"
         }
@@ -6577,6 +6826,7 @@ fn related_test_grip<'a>(
     seam: &RepoSeam,
     test: &'a TestSummary,
     reason: RelationReason,
+    indexed_non_function_owner: bool,
     context: &CompactGripContext<'_>,
     (kind, strength, contradiction): related_tests::BestOracle,
     validated_targets: &mut HashMap<&'a Path, bool>,
@@ -6604,6 +6854,8 @@ fn related_test_grip<'a>(
     };
     let confidence = reason.confidence();
     RelatedTestGrip {
+        assertion_targets_non_function: (reason == RelationReason::AssertionTargetAffinity)
+            .then_some(indexed_non_function_owner),
         test_name: test.name.clone(),
         file: test.file.clone(),
         line: test.start_line,
@@ -6660,6 +6912,11 @@ fn test_target_evidence_memo<'a>(
         function.start_line,
         if function.file == seam.file() || context.is_default_unit_test_file(&function.file) {
             TestKind::InlineUnit
+        } else if crate::analysis::workspace::is_declared_cargo_test_surface_in(
+            &index.member_crates,
+            &function.file,
+        ) {
+            TestKind::DeclaredIntegration
         } else {
             TestKind::Integration
         },
@@ -6725,7 +6982,7 @@ fn best_oracle(
         // return-value seam the branch gate refuses, or the record and the
         // discriminate stage disagree about the same assertion.
         let strength = if matches!(strength, OracleStrength::Strong | OracleStrength::Medium)
-            && branch_gate_withholds(seam, oracle, test, owner_fn)
+            && branch_gate_withholds(seam, oracle, test, owner_fn, index)
         {
             OracleStrength::Weak
         } else {

@@ -47,6 +47,16 @@ pub(crate) use crate::core_error::GIT_TIMEOUT_REPAIR_GUIDANCE;
 pub(crate) const GIT_NOT_FOUND_ON_PATH_MESSAGE: &str =
     "git was not found on PATH; install git, or pass a saved diff with `--diff PATH` / `--diff -`";
 
+/// The saved-diff route inside [`GIT_NOT_FOUND_ON_PATH_MESSAGE`].
+const SAVED_DIFF_ROUTE: &str = ", or pass a saved diff with `--diff PATH` / `--diff -`";
+
+/// `error` with the saved-diff route removed, for commands that take no
+/// `--diff` (`pr-evidence`, `review-comments`, `gate check`): naming a flag
+/// the command rejects sends the reader to a second failure (#15257).
+pub(crate) fn without_saved_diff_route(error: &str) -> String {
+    error.replace(SAVED_DIFF_ROUTE, "")
+}
+
 /// True when `error` is the named missing-git spawn failure (#4735).
 pub(crate) fn is_git_not_found_on_path(error: &str) -> bool {
     error == GIT_NOT_FOUND_ON_PATH_MESSAGE
@@ -316,6 +326,18 @@ fn windows_overlong_working_directory(is_windows: bool, dir: &Path) -> Option<us
 /// worktree `diff`); a clone cannot ship `.git/config`, but an extracted
 /// archive or a planted nested repository can.
 pub(crate) const UNTRUSTED_REPOSITORY_CONFIG: [&str; 2] = ["-c", "core.fsmonitor=false"];
+
+/// Submodule inclusion for every diff and status call (#8209, #15101).
+///
+/// An explicit option overrides ambient `diff.ignoreSubmodules` and
+/// `submodule.<name>.ignore`, so a changed or moved gitlink stays visible to
+/// the skipped-pointer disclosure. `dirty` (not `none`) keeps Git from
+/// examining a populated submodule's working tree: that check runs a
+/// `git status` child inside the submodule, which reads the submodule's own
+/// configuration (filter drivers and other helpers) that the pins below are
+/// never computed from. Uncommitted edits inside a submodule are therefore
+/// not reported; a moved submodule commit still is.
+pub(crate) const SUBMODULE_POINTERS_ONLY: &str = "--ignore-submodules=dirty";
 
 /// Git's null device spelling for `-c` overrides (`NUL` on Windows, `/dev/null` elsewhere).
 fn git_null_device_path() -> &'static str {
@@ -631,8 +653,46 @@ fn git_command_with_filter_pins(
             command.arg(REFUSED_FILTER_CONFIG_FLAG);
         }
     }
-    command.args(args);
+    command.args(with_submodule_pointers_only(args));
     command
+}
+
+/// Git subcommands that examine a populated submodule's working tree unless
+/// told otherwise (#15101).
+const SUBMODULE_EXAMINING_SUBCOMMANDS: [&str; 4] = ["status", "diff", "diff-index", "diff-files"];
+
+/// `args` with [`SUBMODULE_POINTERS_ONLY`] after the subcommand when it is one
+/// that would examine a submodule's working tree and the caller chose no
+/// `--ignore-submodules` value before `--` (#15101). A call that forgets the
+/// option must not start a `git status` child inside a submodule.
+fn with_submodule_pointers_only<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if *arg == "-c" || *arg == "-C" {
+            index += 2;
+        } else if arg.starts_with('-') {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    let examines = args
+        .get(index)
+        .is_some_and(|subcommand| SUBMODULE_EXAMINING_SUBCOMMANDS.contains(subcommand));
+    let options = args.get(index..).unwrap_or_default();
+    let chosen = options
+        .iter()
+        .take_while(|arg| **arg != "--")
+        .any(|arg| arg.starts_with("--ignore-submodules"));
+    match args.split_at_checked(index + 1) {
+        Some((head, tail)) if examines && !chosen => head
+            .iter()
+            .copied()
+            .chain(std::iter::once(SUBMODULE_POINTERS_ONLY))
+            .chain(tail.iter().copied())
+            .collect(),
+        _ => args.to_vec(),
+    }
 }
 
 /// The work-tree top level Git discovers from `dir` itself, canonicalized.
@@ -658,6 +718,32 @@ pub(crate) fn discovered_work_tree_toplevel(dir: &Path, timeout: Duration) -> Op
         .filter(|output| output.status.success())?;
     let top = String::from_utf8(output.stdout).ok()?;
     std::fs::canonicalize(top.trim_end_matches(['\r', '\n'])).ok()
+}
+
+/// Whether Git ignores `path` (relative to the work tree `top`), as
+/// `git check-ignore` answers for an untracked directory such as a build
+/// output tree. `Some(true)` only on Git's positive answer (exit 0) and
+/// `Some(false)` only on its negative one (exit 1); every other outcome
+/// (no Git, a refusal, a deadline) is `None`. Inherited repository selectors
+/// are removed, as in [`discovered_work_tree_toplevel`].
+pub(crate) fn work_tree_path_ignored(top: &Path, path: &Path, timeout: Duration) -> Option<bool> {
+    let path = path.to_str()?;
+    let args = ["check-ignore", "-q", "--", path];
+    let (mut command, timeout) = git_command_within(top, &args, Some(timeout));
+    let timeout = timeout.unwrap_or(Duration::ZERO);
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE");
+    let describe = format!("git ignore probe in {}", top.display());
+    let output =
+        collect_output_with_deadline_and_limit(command, timeout, 4 * 1024, &describe).ok()?;
+    match output.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
 }
 
 /// What Git established about a directory that contains a `.git` entry.
@@ -748,7 +834,8 @@ pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
             if git_marker_above(dir).is_some() {
                 return Err(format!(
                     "git is unavailable and {} lies inside a Git work tree, \
-                     so tracked files under it cannot be ruled out",
+                     so tracked files under it cannot be ruled out; install git or add it to \
+                     PATH so the check can run",
                     dir.display()
                 ));
             }
@@ -976,6 +1063,16 @@ pub(crate) fn run_git_output_with_deadline_and_limit(
     )
 }
 
+/// Configuration every isolated fixture invocation carries so a returned
+/// `git` leaves nothing running in the fixture. Since Git 2.47 a `commit`
+/// detaches `git maintenance run --auto`, which holds
+/// `.git/objects/maintenance.lock` after the commit has returned; a test that
+/// walks the tree right after setup can list the lock and lose it before the
+/// read (#9142). The `tests/common` mirror carries the same list.
+#[cfg(test)]
+const FIXTURE_GIT_NO_BACKGROUND_CONFIG: &[(&str, &str)] =
+    &[("maintenance.auto", "false"), ("gc.auto", "0")];
+
 #[cfg(test)]
 pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
     root: &Path,
@@ -996,7 +1093,20 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
         .env("GIT_CONFIG_SYSTEM", null_config)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE");
+        .env_remove("GIT_INDEX_FILE")
+        // An inherited `-c` pair outranks the counted pairs below, so it
+        // could turn background maintenance back on. Arguments of this
+        // command still carry their own `-c` pairs.
+        .env_remove("GIT_CONFIG_PARAMETERS");
+    for (index, (key, value)) in FIXTURE_GIT_NO_BACKGROUND_CONFIG.iter().enumerate() {
+        command
+            .env(format!("GIT_CONFIG_KEY_{index}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+    }
+    command.env(
+        "GIT_CONFIG_COUNT",
+        FIXTURE_GIT_NO_BACKGROUND_CONFIG.len().to_string(),
+    );
     collect_output_with_deadline_and_limit(command, timeout, max_output_bytes, &describe)
 }
 

@@ -45,6 +45,12 @@ fn ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
 
+/// Bare repair read without a diff scope. The fixtures that are not on a
+/// feature branch commit the change on `main`; a bare repair there follows
+/// check's last-commit rescope (#16082), so the unscoped read names the empty
+/// range `HEAD..HEAD` explicitly.
+const UNSCOPED_REPAIR: &[&str] = &["repair", "--base", "HEAD"];
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -150,7 +156,7 @@ fn assert_several_eligible_without_scope(
     test: &str,
 ) -> Result<(), String> {
     let repo = repo(&format!("{label}-pre"), base, changed, test, false)?;
-    let repair = ripr(&repo.root, &["repair"])?;
+    let repair = ripr(&repo.root, UNSCOPED_REPAIR)?;
     let err = text(&repair.stderr);
     let listed = err
         .lines()
@@ -174,7 +180,7 @@ fn assert_starts_without_scope(
     test: &str,
 ) -> Result<(), String> {
     let repo = repo(&format!("{label}-pre"), base, changed, test, false)?;
-    let repair = ripr(&repo.root, &["repair"])?;
+    let repair = ripr(&repo.root, UNSCOPED_REPAIR)?;
     let (out, err) = (text(&repair.stdout), text(&repair.stderr));
     if repair.status.code() != Some(0)
         || !out.contains("Ready to repair")
@@ -282,8 +288,8 @@ fn a_change_check_reads_as_noticed_and_unknown_lists_no_start() -> Result<(), St
     Ok(())
 }
 
-/// Guard (passes with or without the narrowing): with the change committed on the default branch there is no
-/// diff to scope to, so check's recommendation does not apply to bare repair
+/// Guard (passes with or without the narrowing): with an empty range
+/// ([`UNSCOPED_REPAIR`]) there is no diff to scope to, so check's recommendation does not apply to bare repair
 /// and the prompt stays.
 #[test]
 fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
@@ -295,7 +301,7 @@ fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
         false,
     )?;
     let root = &repo.root;
-    let repair = ripr(root, &["repair"])?;
+    let repair = ripr(root, UNSCOPED_REPAIR)?;
     let err = text(&repair.stderr);
     if repair.status.code() != Some(3) || !err.contains("code=several_eligible_seams") {
         return Err(format!("unscoped bare repair must keep the prompt:\n{err}"));
@@ -331,7 +337,7 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
         return Err(format!("scoped refusal must close on the reasons:\n{err}"));
     }
     let unscoped = repo("nx-unscoped", FLIP_BASE, FLIP_NEW, FLIP_TEST, false)?;
-    let repair = ripr(&unscoped.root, &["repair"])?;
+    let repair = ripr(&unscoped.root, UNSCOPED_REPAIR)?;
     let (out, err) = (text(&repair.stdout), text(&repair.stderr));
     if repair.status.code() != Some(0)
         || out.contains("each changed spot below says")
@@ -344,7 +350,7 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
     // The unscoped FLIP fixture starts a repair instead of refusing, so the
     // old-route contrast uses a refusing fixture read without a diff scope.
     let field = repo("nx-field", FIELD_BASE, FIELD_NEW, FIELD_TEST, false)?;
-    let repair = ripr(&field.root, &["repair"])?;
+    let repair = ripr(&field.root, UNSCOPED_REPAIR)?;
     let err = text(&repair.stderr);
     if repair.status.code() != Some(3)
         || !err.contains("code=no_eligible_seam")

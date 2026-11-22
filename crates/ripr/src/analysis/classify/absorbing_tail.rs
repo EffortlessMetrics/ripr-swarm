@@ -368,6 +368,7 @@ mod tests {
 
     fn predicate(expression: &str, line: usize, owner: &FunctionSummary) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib.rs:predicate:test".to_string()),
             location: SourceLocation::new("src/lib.rs", line, 1),
             owner: Some(owner.id.clone()),

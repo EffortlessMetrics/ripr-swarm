@@ -4614,6 +4614,7 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
         .trim()
         .to_string();
     let probe = Probe {
+        before_condition: None,
         id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
         location: SourceLocation::new(file, line, 1),
         owner: Some(owner.id.clone()),
@@ -5218,7 +5219,7 @@ fn in_use_item(before: &str) -> bool {
 
 /// The standard assertion and formatting macros whose expansion cannot
 /// call the owner.
-const READ_MACROS: &[&str] = &[
+pub(super) const READ_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
     "assert_ne",
@@ -8754,7 +8755,14 @@ fn boundary_local_operand_parameter(
     parameters: &[String],
     operand: &str,
 ) -> Option<String> {
-    if operand.is_empty() {
+    // A numeric literal (`17`) is never a local, so it aliases no parameter;
+    // a `Some(17)` literal pattern binds nothing. This is the seam path's
+    // rule (`local_operand_alias::is_numeric_literal`, #15189). Each arm of
+    // an `a > N` chain compares its own literal, so without it every changed
+    // comparison scanned the whole owner body for that literal (#11738).
+    if operand.is_empty()
+        || crate::analysis::test_grip_evidence::local_operand_alias::is_numeric_literal(operand)
+    {
         return None;
     }
     for parameter in parameters {
@@ -11738,6 +11746,7 @@ mod tests {
             generated: None,
         };
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib.rs:predicate:eval".to_string()),
             location: SourceLocation::new("src/lib.rs", 4, 1),
             owner: Some(SymbolId("src/lib.rs::split_after".to_string())),
@@ -11839,6 +11848,35 @@ mod tests {
             boundary_local_operand_parameter(&owner, None, &parameters, ""),
             None
         );
+        // #11738: a numeric literal aliases no parameter, even through a
+        // literal pattern the alias scans would otherwise read as a binding.
+        let literal_patterns = function(
+            "pub fn score(raw_amount: Option<i32>, threshold: i32) -> bool {\n    if let Some(17) = raw_amount { return true; }\n    if let Some(-1) = raw_amount { return false; }\n    if let Some(2u8) = raw_amount { return true; }\n    match raw_amount {\n        Some(17) => true,\n        _ => false,\n    }\n}",
+        );
+        let literal_parameters = function_parameters(&literal_patterns);
+        for literal in ["17", "-1", "2u8"] {
+            // Premise: the raw scan reads each literal pattern as an alias,
+            // so the answer below is the literal rule, not a missed scan.
+            assert!(
+                body_contains_wrapped_local_alias(
+                    &literal_patterns.body,
+                    "Some",
+                    literal,
+                    "raw_amount"
+                ),
+                "{literal}"
+            );
+            assert_eq!(
+                boundary_local_operand_parameter(
+                    &literal_patterns,
+                    None,
+                    &literal_parameters,
+                    literal
+                ),
+                None,
+                "{literal}"
+            );
+        }
         assert!(body_contains_wrapped_local_alias(
             &owner.body,
             "Some",
@@ -12561,6 +12599,7 @@ mod tests {
         );
         activation_and_boundary_input(
             &Probe {
+                before_condition: None,
                 id: ProbeId("probe:src/lib.rs:field-boundary".to_string()),
                 location: SourceLocation::new("src/lib.rs", probe_line, 5),
                 owner: None,
@@ -14089,6 +14128,7 @@ assert_eq!(input.amount, 100);"#
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src/lib.rs:2:score".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: None,

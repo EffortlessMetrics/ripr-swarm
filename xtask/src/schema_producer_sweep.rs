@@ -120,6 +120,9 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             // --root fixtures/helper_chain_controls/input --diff
             // fixtures/helper_chain_controls/diff.patch --format json` (#11584).
             "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
+            // A `--format check-findings-json` capture (#15376): the check
+            // document with its leading `artifact` envelope.
+            "tests/fixtures/verification/ripr/check-findings.valid.json",
             // Retained captures of past `ripr check` runs inside real-repo eval
             // fixtures. They validate against the schema, but they are not
             // bytes the candidate's build produced, so they stay edge fixtures.
@@ -158,6 +161,24 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "editors/vscode/test-fixtures/attempt-status/inventory.json",
             "hand-written VS Code extension stimulus for parseAttemptInventory, trimmed to the fields the extension reads; not ripr output",
         )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/help.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: help_json_conforms_and_reaches_every_branch in crates/ripr/tests/help_json_schema.rs validates the real CLI bytes and asserts they reach every exit-contract kind, flag scope and workflow next-route kind, and published_help_schema_rejects_documents_it_forbids is the negative experiment; the document changes with every catalog edit, so the committed fixture is a capture trimmed to ten command rows and one workflow, kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/help.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/rerun.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: rerun_json_conforms_for_every_selector_and_option in crates/ripr/tests/rerun_json_schema.rs validates the real CLI bytes for eighteen runs (one over the TypeScript preview fixture) across both selectors, --before movement and --check-parity, and published_rerun_schema_rejects_documents_it_forbids is the negative experiment; the report carries host paths and input hashes, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/rerun.valid.json"],
+        excluded: &[],
     },
     Binding {
         schema_path: "schemas/ripr/cache-export.schema.json",
@@ -246,6 +267,53 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/check-limited.valid.json",
             "a `ripr check` 0.2 refusal envelope (scope `diff`, carries `mode`), owned by check.schema.json",
         )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-packet.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_packet_json_conforms_for_every_fixture_seam in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for every seam of a fixture crate and asserts they reach both tasks, concrete, unresolved and absent assertion guidance, a proof obligation and the next-step block, and published_packet_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        // The boundary_gap editor-agent-loop golden is generated producer
+        // output for one seam, so it is held to the schema as well.
+        edge_fixtures: &[
+            "tests/fixtures/verification/ripr/agent-packet.valid.json",
+            "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json",
+        ],
+        excluded: &[(
+            "tests/fixtures/verification/ripr/agent-seam-packets.valid.json",
+            "a `ripr check --format agent-seam-packets-json` document, owned by agent-seam-packets.schema.json",
+        )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-seam-packets.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_seam_packets_json_conforms_for_each_document_variant in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for a many-packet run, a one-packet run, a run with a diff selector, a refused run and a run with a canonical delta artifact, the_two_packet_schemas_share_their_definitions holds the packet definitions equal to agent-packet.schema.json apart from the canonical-delta fields, and published_seam_packets_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root in its redirects, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-seam-packets.valid.json"],
+        // Same version and envelope, other command: these are `--seam-id`
+        // documents, whose `next` block binds a selected root and adds
+        // `analysis_outcome_command`; agent-packet.schema.json owns them.
+        excluded: &[
+            (
+                "tests/fixtures/verification/ripr/agent-packet.valid.json",
+                "a `ripr agent packet --seam-id` document, owned by agent-packet.schema.json",
+            ),
+            (
+                "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json",
+                "a `ripr agent packet --seam-id` document, owned by agent-packet.schema.json",
+            ),
+        ],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-gap-packet.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_gap_packet_json_conforms_for_each_document_variant in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for an advisory packet from a live-current repo-exposure ledger, the same with a canonical delta artifact, a records ledger blocked as not evaluated and a dirty checkout blocked as stale, the_gap_packet_schema_shares_the_seam_packet_definitions holds the copied definitions equal to agent-seam-packets.schema.json, and published_gap_packet_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root in its refresh commands, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-gap-packet.valid.json"],
+        excluded: &[],
     },
     Binding {
         schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
@@ -1077,9 +1145,20 @@ fn collect_command_specs<'a>(
                     for (role, spec) in specs {
                         // A null role is a role not offered: the evidence
                         // record writes `null` for a non-actionable item
-                        // (#14385). Any other non-object still fails.
-                        if (role == "verify") == verify && !spec.is_null() {
-                            subjects.push((format!("{child_location}/{role}"), spec));
+                        // (#14385). A GapRecord carries each role as a
+                        // non-empty list of specs (it omits an empty one), so
+                        // every listed spec is a subject. An empty list, like
+                        // any other non-object, is one subject and fails.
+                        if (role == "verify") != verify || spec.is_null() {
+                            continue;
+                        }
+                        match spec.as_array().filter(|listed| !listed.is_empty()) {
+                            Some(listed) => {
+                                subjects.extend(listed.iter().enumerate().map(|(index, item)| {
+                                    (format!("{child_location}/{role}/{index}"), item)
+                                }))
+                            }
+                            None => subjects.push((format!("{child_location}/{role}"), spec)),
                         }
                     }
                     continue;
@@ -1127,8 +1206,16 @@ fn collect_command_specs_exact<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if (role == "verify") == verify && !matches!(spec, ExactValue::Null) {
-                            subjects.push((format!("{child_location}/{role}"), spec));
+                        if (role == "verify") != verify || matches!(spec, ExactValue::Null) {
+                            continue;
+                        }
+                        match spec {
+                            ExactValue::Array(listed) if !listed.is_empty() => {
+                                subjects.extend(listed.iter().enumerate().map(|(index, item)| {
+                                    (format!("{child_location}/{role}/{index}"), item)
+                                }))
+                            }
+                            _ => subjects.push((format!("{child_location}/{role}"), spec)),
                         }
                     }
                     continue;
@@ -1742,6 +1829,51 @@ mod tests {
             {
                 return Err(format!(
                     "null {role} role was validated as a spec: {row}; {:?}",
+                    report.violations
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A GapRecord lists each role's specs (`{"verify": [spec, ...]}`): each
+    /// listed spec is a subject of its own, so a bad entry fails at its index.
+    /// An empty list is never written by a GapRecord and still fails.
+    #[test]
+    fn listed_command_spec_roles_are_validated_per_entry() -> Result<(), String> {
+        for (role, verify) in [("verify", true), ("receipt", false)] {
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":["x","y"]}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            let at_entry = |index: usize| {
+                report.violations.iter().any(|violation| {
+                    violation.contains(&format!("packet.json/command_specs/{role}/{index}"))
+                })
+            };
+            if row["producer_subjects_discovered"] != 2 || !at_entry(0) || !at_entry(1) {
+                return Err(format!(
+                    "listed {role} specs were not validated per entry: {row}; {:?}",
+                    report.violations
+                ));
+            }
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":[]}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            if row["producer_subjects_discovered"] != 1
+                || !report.violations.iter().any(|violation| {
+                    violation.contains(&format!("packet.json/command_specs/{role}"))
+                })
+            {
+                return Err(format!(
+                    "an empty {role} list escaped the sweep: {row}; {:?}",
                     report.violations
                 ));
             }

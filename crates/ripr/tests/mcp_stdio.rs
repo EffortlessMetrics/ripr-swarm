@@ -985,10 +985,12 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        // Every null refusal says null is the problem and that the fix is to
+        // leave the field out.
         let message_matches = if *kind == "integer" {
             message.starts_with(expected_message.as_str()) && message.ends_with(", not null")
         } else {
-            message == expected_message
+            message == format!("{expected_message}, not null; omit {field} to use its default")
         };
         require_invalid_argument(rejected, &format!("{tool}.{field} null"))?;
         if !message_matches || rejected.get("id") != Some(&json!(format!("{index}-null"))) {
@@ -3520,6 +3522,186 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
     Ok(())
 }
 
+/// #15983 over real stdio: while one `ripr_refresh` runs, workspace status
+/// (tool and resource) and the catalog answer at once, a repeated refresh is
+/// refused `analysis_in_flight` without starting a second analysis, and a
+/// snapshot read written during the refresh is answered after it, bound to the
+/// snapshot it committed, ahead of the status call written behind it.
+///
+/// The refresh is held inside its own `git diff` by a PATH shim until every
+/// during-refresh reply has been read, so each reply below was produced while
+/// the attempt was running. Before the fix none arrives until the release.
+#[cfg(unix)]
+#[test]
+fn running_refresh_answers_status_and_orders_snapshot_reads() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let timeout = Duration::from_secs(30);
+    let root = install_gap_filter_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let control = root.with_extension("refresh-hold");
+    let _control_guard = FixtureGuard {
+        root: control.clone(),
+    };
+    std::fs::create_dir_all(&control).map_err(|error| error.to_string())?;
+    let path = std::env::var_os("PATH").ok_or("PATH unavailable")?;
+    let git = std::env::split_paths(&path)
+        .map(|directory| directory.join("git"))
+        .find(|candidate| candidate.is_file())
+        .ok_or("git executable unavailable")?;
+    let git = git
+        .to_str()
+        .filter(|text| !text.contains('\''))
+        .ok_or("git executable cannot be quoted in the shim")?;
+    // Only the first `git diff` after `armed` exists is held, so discovery,
+    // startup status and the default-source probe are never the held call.
+    // The loop also ends when the control directory is removed, so a failed
+    // run leaves no polling shim behind.
+    let shim = format!(
+        "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ] && [ -e \"$RIPR_REFRESH_HOLD/armed\" ] && mkdir \"$RIPR_REFRESH_HOLD/held\" 2>/dev/null; then\n    while [ -d \"$RIPR_REFRESH_HOLD\" ] && [ ! -e \"$RIPR_REFRESH_HOLD/release\" ]; do sleep 0.05; done\n  fi\ndone\nexec '{git}' \"$@\"\n"
+    );
+    std::fs::write(control.join("git"), shim).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(control.join("git"), std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    let shimmed_path =
+        std::env::join_paths(std::iter::once(control.clone()).chain(std::env::split_paths(&path)))
+            .map_err(|error| error.to_string())?;
+    let shimmed_path = shimmed_path.to_str().ok_or("PATH is not UTF-8")?;
+    let control_text = control.to_str().ok_or("control path is not UTF-8")?;
+    let mut session = SequentialStdio::spawn_with_env(
+        &root,
+        &[
+            ("PATH", shimmed_path),
+            ("RIPR_REFRESH_HOLD", control_text),
+            // A known git deadline longer than the hold, whatever is ambient.
+            ("RIPR_GIT_TIMEOUT", "300"),
+        ],
+    )?;
+    let discovery = session.call("discover-hold", "server/discover", json!({}), timeout)?;
+    if discovery.get("result").is_none() {
+        return Err(format!("discovery failed: {discovery}"));
+    }
+    std::fs::write(control.join("armed"), b"").map_err(|error| error.to_string())?;
+    let tool_line = |id: &str, name: &str, arguments: Value| {
+        line(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments, "_meta": current_meta() }
+        }))
+    };
+    session.send_raw(&tool_line(
+        "held-refresh",
+        "ripr_refresh",
+        json!({ "source": "committed" }),
+    )?)?;
+    let deadline = Instant::now() + timeout;
+    while !control.join("held").is_dir() {
+        if Instant::now() > deadline {
+            return Err("the refresh never reached its held git diff".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let status = session.call_tool("status-during", "ripr_workspace_status", json!({}), timeout)?;
+    let status = structured_tool_success(&status, "status during refresh")?;
+    if status.pointer("/session/attempt_state") != Some(&json!("in_flight")) {
+        return Err(format!(
+            "status during a refresh is not in_flight: {status}"
+        ));
+    }
+    let resource = session.call(
+        "resource-during",
+        "resources/read",
+        json!({ "uri": "ripr://workspace/status" }),
+        timeout,
+    )?;
+    if resource.pointer("/result/contents/0/uri") != Some(&json!("ripr://workspace/status")) {
+        return Err(format!(
+            "status resource was not answered during a refresh: {resource}"
+        ));
+    }
+    // The one-trailing-slash spelling the server also serves is an observer.
+    let slashed = session.call(
+        "resource-slash-during",
+        "resources/read",
+        json!({ "uri": "ripr://workspace/status/" }),
+        timeout,
+    )?;
+    if slashed.pointer("/result/contents/0/uri").is_none() {
+        return Err(format!(
+            "the trailing-slash status resource was not answered during a refresh: {slashed}"
+        ));
+    }
+    let catalog = session.call("catalog-during", "tools/list", json!({}), timeout)?;
+    if catalog.pointer("/result/tools/0/name").is_none() {
+        return Err(format!(
+            "tools/list was not answered during a refresh: {catalog}"
+        ));
+    }
+    let repeated = session.call_tool(
+        "refresh-repeated",
+        "ripr_refresh",
+        json!({ "source": "committed" }),
+        timeout,
+    )?;
+    if repeated.pointer("/result/isError") != Some(&json!(true))
+        || repeated.pointer("/result/structuredContent/failure/code")
+            != Some(&json!("analysis_in_flight"))
+    {
+        return Err(format!(
+            "a repeated refresh was not refused in flight: {repeated}"
+        ));
+    }
+
+    // A snapshot read waits for the refresh, and nothing behind it is read.
+    session.send_raw(&tool_line("list-behind", "ripr_list_gaps", json!({}))?)?;
+    session.send_raw(&tool_line(
+        "status-behind",
+        "ripr_workspace_status",
+        json!({}),
+    )?)?;
+    if let Ok(early) = session.next_reply(Duration::from_millis(500)) {
+        return Err(format!(
+            "a reply arrived while the refresh was still held: {early}"
+        ));
+    }
+    std::fs::write(control.join("release"), b"").map_err(|error| error.to_string())?;
+
+    let refresh = session.next_reply(Duration::from_mins(3))?;
+    if refresh.get("id") != Some(&json!("held-refresh")) {
+        return Err(format!(
+            "the refresh reply was not the first after release: {refresh}"
+        ));
+    }
+    let refresh = structured_tool_success(&refresh, "held refresh")?;
+    let snapshot = refresh
+        .pointer("/snapshot/snapshot_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("the held refresh committed no snapshot: {refresh}"))?
+        .to_owned();
+    let list = session.next_reply(timeout)?;
+    if list.get("id") != Some(&json!("list-behind")) {
+        return Err(format!("the held read was not answered next: {list}"));
+    }
+    let list = structured_tool_success(&list, "list behind refresh")?;
+    if list.pointer("/snapshot_id") != Some(&json!(snapshot)) {
+        return Err(format!("the held read did not bind {snapshot}: {list}"));
+    }
+    let after = session.next_reply(timeout)?;
+    if after.get("id") != Some(&json!("status-behind")) {
+        return Err(format!(
+            "the status behind the held read was not last: {after}"
+        ));
+    }
+    let after = structured_tool_success(&after, "status behind refresh")?;
+    if after.pointer("/session/attempt_state") != Some(&json!("completed"))
+        || after.pointer("/session/last_completed_snapshot/snapshot_id") != Some(&json!(snapshot))
+    {
+        return Err(format!(
+            "status after the refresh is not completed on {snapshot}: {after}"
+        ));
+    }
+    Ok(())
+}
+
 /// A successful raw-stdio discriminator, including actual continuation replay.
 /// Dropping only the forwarded filter after validation must return excluded
 /// subjects and fail these literal ID/count oracles. No synthetic snapshot is
@@ -3689,6 +3871,50 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
                 "complete filtered page must close its window: {document}"
             ));
         }
+    }
+    // An agent usually holds the absolute path its editor gave it. Under the
+    // root it narrows exactly as the relative spelling does and the echo
+    // names the relative form the server applied; outside the root it is
+    // refused instead of answering with an empty page that reads like "no
+    // gaps in that file".
+    let canonical_root = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
+    let absolute = canonical_root.join("src").join("pricing.rs");
+    let absolute = absolute.to_str().ok_or("fixture root is not UTF-8")?;
+    let reply = session.call_tool(
+        "filtered-absolute",
+        "ripr_list_gaps",
+        json!({"file": absolute}),
+        timeout,
+    )?;
+    let document = structured_tool_success(&reply, "absolute file filter")?;
+    check_filtered_gap_page(&document, &[DISCOUNT, FEE], selected, 2, snapshot_id)?;
+    if document["filters"]["file"] != json!("src/pricing.rs") {
+        return Err(format!(
+            "absolute filter must echo the applied relative path: {document}"
+        ));
+    }
+    let outside = canonical_root
+        .parent()
+        .ok_or("fixture root has no parent")?
+        .join("ripr-mcp-outside-root")
+        .join("src")
+        .join("pricing.rs");
+    let outside = outside.to_str().ok_or("fixture root is not UTF-8")?;
+    let reply = session.call_tool(
+        "filtered-outside",
+        "ripr_list_gaps",
+        json!({"file": outside}),
+        timeout,
+    )?;
+    require_invalid_argument(&reply, "absolute file filter outside the root")?;
+    let detail = reply
+        .pointer("/result/structuredContent/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !detail.contains("relative to the repository root") || detail.contains(outside) {
+        return Err(format!(
+            "outside-root refusal must name the relative form and echo no host path: {reply}"
+        ));
     }
     let first_args = json!({"file":"src/pricing.rs", "class":"exposed", "language":"rust", "repair_ready":true, "limit":1, "snapshot_id":snapshot_id});
     let first = session.call_tool("filtered-first", "ripr_list_gaps", first_args, timeout)?;
@@ -4206,10 +4432,12 @@ fn get_repair_card_after_refresh_matches_cli_agent_card() -> Result<(), String> 
         .find(|item| {
             item.pointer("/file")
                 .and_then(Value::as_str)
-                .is_some_and(|file| file.ends_with("src/lib.rs"))
+                // Exact: the served file is the plain workspace-relative path,
+                // never `./src/lib.rs` (#15645).
+                .is_some_and(|file| file == "src/lib.rs")
         })
         .and_then(|item| item.pointer("/canonical_id").and_then(Value::as_str))
-        .ok_or_else(|| format!("B4 list_gaps has no src/lib.rs item: {list}"))?
+        .ok_or_else(|| format!("B4 list_gaps has no exact src/lib.rs item: {list}"))?
         .to_string();
 
     let card_reply = session.call_tool(
@@ -7195,6 +7423,46 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
     )?;
     if snapshot_id(&explicit)? != committed_id {
         return Err(format!("explicit committed must equal omitted: {explicit}"));
+    }
+
+    // #13096 worktree leg over the real producer and wire: before any saved
+    // edit, a worktree refresh captures an empty saved diff. Its primary
+    // snapshot, list outcome, and status summary must say `not_analyzed`,
+    // while the committed-specific `empty_scope_hint` stays absent.
+    let clean_worktree = refresh(&mut session, "wt-clean", json!({ "source": "worktree" }))?;
+    if clean_worktree.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || clean_worktree.pointer("/snapshot/source") != Some(&json!("worktree"))
+        || clean_worktree.pointer("/snapshot/analysis_status") != Some(&json!("not_analyzed"))
+        || clean_worktree.pointer("/snapshot/clean") != Some(&json!(false))
+        || clean_worktree.get("empty_scope_hint").is_some()
+    {
+        return Err(format!(
+            "clean worktree refresh must disclose its empty scope without the committed hint: {clean_worktree}"
+        ));
+    }
+    let clean_listed = session.call_tool("list-wt-clean", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let clean_listed = structured_tool_success(&clean_listed, "ripr_list_gaps")?;
+    if clean_listed.pointer("/outcome/analysis_status") != Some(&json!("not_analyzed"))
+        || clean_listed.pointer("/outcome/clean") != Some(&json!(false))
+    {
+        return Err(format!(
+            "clean worktree list must say not_analyzed on the same snapshot: {clean_listed}"
+        ));
+    }
+    let clean_status = session.call_tool(
+        "status-wt-clean",
+        "ripr_workspace_status",
+        json!({}),
+        TIMEOUT,
+    )?;
+    let clean_status = structured_tool_success(&clean_status, "ripr_workspace_status")?;
+    if clean_status.pointer("/session/last_completed_snapshot/analysis_status")
+        != Some(&json!("not_analyzed"))
+        || clean_status.pointer("/session/last_completed_snapshot/clean") != Some(&json!(false))
+    {
+        return Err(format!(
+            "clean worktree status must say not_analyzed on the same snapshot: {clean_status}"
+        ));
     }
 
     // Unstaged-only saved edit.

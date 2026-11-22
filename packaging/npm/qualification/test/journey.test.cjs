@@ -454,3 +454,43 @@ test("journey fails closed when the emitted continuation is unusable", async (t)
   const failures = failedChecks(log);
   assert.deepEqual(failures, ["continuation_new_process_foreign_cwd_offline"], JSON.stringify(failures));
 });
+
+test("the entrypoint reports its code through ordinary teardown, not process.exit", () => {
+  // process.exit() from the entrypoint deadlocked on aarch64-apple-darwin
+  // after a passed journey (main thread joining a V8 worker that awaited a
+  // main-thread collection). A preload records any process.exit call and,
+  // for the settled-journey rows, replaces lib main with a fixed outcome so
+  // the passed, failed and rejected exits are each exercised.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ripr-journey-exit-"));
+  try {
+    const marker = path.join(dir, "exit-called");
+    const lib = path.resolve(__dirname, "..", "lib", "journey.cjs");
+    const rows = [
+      { name: "passed journey", main: "async () => 0", status: 0, stderr: /^$/ },
+      { name: "failed journey", main: "async () => 1", status: 1, stderr: /^$/ },
+      { name: "rejected journey", main: "async () => { throw new Error('boom'); }", status: 2, stderr: /ripr npm journey: boom/ },
+      { name: "real usage failure", main: null, status: 2, stderr: /--packages is required/ },
+    ];
+    for (const row of rows) {
+      const preload = path.join(dir, "preload.cjs");
+      fs.writeFileSync(preload, [
+        "const fs = require('node:fs');",
+        "const exit = process.exit;",
+        `process.exit = (code) => { fs.writeFileSync(${JSON.stringify(marker)}, String(code)); exit(code); };`,
+        row.main ? `require.cache[${JSON.stringify(lib)}] = { id: ${JSON.stringify(lib)}, filename: ${JSON.stringify(lib)}, loaded: true, exports: { main: ${row.main} } };` : "",
+        "",
+      ].join("\n"));
+      fs.rmSync(marker, { force: true });
+      const result = spawnSync(process.execPath, ["--require", preload, path.resolve(__dirname, "..", "bin", "journey.cjs")], {
+        encoding: "utf8",
+        timeout: 8000,
+      });
+      assert.equal(result.error, undefined, row.name);
+      assert.equal(result.status, row.status, row.name);
+      assert.match(result.stderr, row.stderr, row.name);
+      assert.equal(fs.existsSync(marker), false, `${row.name}: the entrypoint called process.exit`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

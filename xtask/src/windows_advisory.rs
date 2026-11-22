@@ -1,7 +1,11 @@
 //! Verdict for the advisory Windows lane (#2393).
 //!
-//! The lane runs `cargo test --workspace --no-fail-fast` twice and hands both
-//! logs plus both captured exit statuses here.
+//! The lane runs the workspace suite twice and hands both samples' logs plus
+//! their captured exit statuses here. A sample is one `cargo test` log, or
+//! several over disjoint test targets (`--run1-part`, `--run2-part`): the
+//! nightly splits the suite across jobs so that each part fits its deadline,
+//! and `--expected-targets` holds the split to the unsplit build's own list of
+//! test executables.
 //!
 //! # Absence is not a pass
 //!
@@ -395,6 +399,13 @@ struct Inputs {
     run1_status: String,
     run2_log: String,
     run2_status: String,
+    /// Further `(log, status)` pairs of the same sample, produced by other
+    /// jobs over a disjoint set of test targets (`--run1-part`).
+    run1_parts: Vec<(String, String)>,
+    run2_parts: Vec<(String, String)>,
+    /// A `cargo test --workspace --no-run` log naming every test executable
+    /// the unsplit workspace run would start (`--expected-targets`).
+    expected_targets: Option<String>,
 }
 
 /// Parse the argument list exhaustively.
@@ -408,27 +419,11 @@ fn parse_inputs(args: &[String]) -> Result<Inputs, String> {
     let mut run1_status: Option<String> = None;
     let mut run2_log: Option<String> = None;
     let mut run2_status: Option<String> = None;
+    let mut run1_parts: Vec<(String, String)> = Vec::new();
+    let mut run2_parts: Vec<(String, String)> = Vec::new();
+    let mut expected_targets: Option<String> = None;
 
-    let mut index = 0usize;
-    while index < args.len() {
-        let flag = args[index].as_str();
-        let slot = match flag {
-            "--run1" => &mut run1_log,
-            "--run1-status" => &mut run1_status,
-            "--run2" => &mut run2_log,
-            "--run2-status" => &mut run2_status,
-            other => {
-                return Err(format!(
-                    "windows-advisory-summary got unexpected argument {other:?}; expected only --run1, --run1-status, --run2, --run2-status"
-                ));
-            }
-        };
-        if slot.is_some() {
-            return Err(format!(
-                "windows-advisory-summary got {flag} more than once; pass it once"
-            ));
-        }
-        index += 1;
+    fn path_value(args: &[String], index: usize, flag: &str) -> Result<String, String> {
         let value = args
             .get(index)
             .ok_or_else(|| format!("windows-advisory-summary requires a value for {flag}"))?;
@@ -437,8 +432,45 @@ fn parse_inputs(args: &[String]) -> Result<Inputs, String> {
                 "windows-advisory-summary got {flag} followed by {value}, which looks like a flag rather than a path"
             ));
         }
-        *slot = Some(value.clone());
-        index += 1;
+        Ok(value.clone())
+    }
+
+    let mut index = 0usize;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        // A part is one `(log, status)` pair, so the flag takes both paths:
+        // pairing two independent repeatable flags by position is how a log
+        // ends up judged against another part's exit status.
+        if flag == "--run1-part" || flag == "--run2-part" {
+            let log = path_value(args, index + 1, flag)?;
+            let status = path_value(args, index + 2, flag)?;
+            if flag == "--run1-part" {
+                run1_parts.push((log, status));
+            } else {
+                run2_parts.push((log, status));
+            }
+            index += 3;
+            continue;
+        }
+        let slot = match flag {
+            "--run1" => &mut run1_log,
+            "--run1-status" => &mut run1_status,
+            "--run2" => &mut run2_log,
+            "--run2-status" => &mut run2_status,
+            "--expected-targets" => &mut expected_targets,
+            other => {
+                return Err(format!(
+                    "windows-advisory-summary got unexpected argument {other:?}; expected only --run1, --run1-status, --run2, --run2-status, --run1-part, --run2-part, --expected-targets"
+                ));
+            }
+        };
+        if slot.is_some() {
+            return Err(format!(
+                "windows-advisory-summary got {flag} more than once; pass it once"
+            ));
+        }
+        *slot = Some(path_value(args, index + 1, flag)?);
+        index += 2;
     }
 
     let missing = [
@@ -460,29 +492,56 @@ fn parse_inputs(args: &[String]) -> Result<Inputs, String> {
                 .join(", ")
         ));
     }
+    // The two samples must cover the same split: a part present in one run
+    // only would compare a whole sample against a fragment.
+    if run1_parts.len() != run2_parts.len() {
+        return Err(format!(
+            "windows-advisory-summary got {} --run1-part and {} --run2-part; each part of the split must be supplied for both runs",
+            run1_parts.len(),
+            run2_parts.len()
+        ));
+    }
     let inputs = Inputs {
         run1_log: run1_log.unwrap_or_default(),
         run1_status: run1_status.unwrap_or_default(),
         run2_log: run2_log.unwrap_or_default(),
         run2_status: run2_status.unwrap_or_default(),
+        run1_parts,
+        run2_parts,
+        expected_targets,
     };
 
-    // All four roles must be distinct artifacts. Two runs sharing a log would
+    // Every role must be a distinct artifact. Two runs sharing a log would
     // report every failure as reproduced; two runs sharing a *status* would give
     // one run the other's exit code, so a clean run could be labelled a harness
     // failure — both are wrong verdicts rather than errors. A log reused as a
-    // status file is equally incoherent.
-    let paths = [
+    // status file is equally incoherent, and so is one part supplied twice.
+    let mut paths = vec![
         &inputs.run1_log,
         &inputs.run1_status,
         &inputs.run2_log,
         &inputs.run2_status,
     ];
+    for (log, status) in inputs.run1_parts.iter().chain(&inputs.run2_parts) {
+        paths.push(log);
+        paths.push(status);
+    }
+    paths.extend(inputs.expected_targets.iter());
     let distinct: BTreeSet<&&String> = paths.iter().collect();
     if distinct.len() != paths.len() {
+        if paths.len() == 4 {
+            return Err(format!(
+                "windows-advisory-summary requires four distinct paths; got --run1 {}, --run1-status {}, --run2 {}, --run2-status {}",
+                inputs.run1_log, inputs.run1_status, inputs.run2_log, inputs.run2_status
+            ));
+        }
         return Err(format!(
-            "windows-advisory-summary requires four distinct paths; got --run1 {}, --run1-status {}, --run2 {}, --run2-status {}",
-            inputs.run1_log, inputs.run1_status, inputs.run2_log, inputs.run2_status
+            "windows-advisory-summary requires every log, status and expected-targets path to be distinct; got {}",
+            paths
+                .iter()
+                .map(|path| path.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     Ok(inputs)
@@ -494,10 +553,19 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         run1_status,
         run2_log,
         run2_status,
+        run1_parts,
+        run2_parts,
+        expected_targets,
     } = parse_inputs(args)?;
 
-    let first = load_run(Path::new(&run1_log), Path::new(&run1_status));
-    let second = load_run(Path::new(&run2_log), Path::new(&run2_status));
+    let mut first = load_sample((run1_log, run1_status), run1_parts);
+    let mut second = load_sample((run2_log, run2_status), run2_parts);
+    if let Some(build_log) = expected_targets {
+        let expected = load_expected_targets(Path::new(&build_log));
+        for outcome in [&mut first, &mut second] {
+            require_expected_targets(outcome, &expected);
+        }
+    }
     print!("{}", render(&first, &second));
 
     // Advisory applies to test outcomes, not to evidence. A run whose log or
@@ -516,6 +584,188 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
             "windows-advisory-summary could not produce trustworthy evidence: {}",
             unusable.join("; ")
         ))
+    }
+}
+
+/// One sample of the workspace suite, whether one `cargo test` wrote it or
+/// several did over disjoint test targets.
+fn load_sample(primary: (String, String), parts: Vec<(String, String)>) -> RunOutcome {
+    let loaded = std::iter::once(primary)
+        .chain(parts)
+        .map(|(log, status)| {
+            let outcome = load_run(Path::new(&log), Path::new(&status));
+            (log, outcome)
+        })
+        .collect::<Vec<_>>();
+    merge_parts(loaded)
+}
+
+/// How far a part's state is from a clean run. The merged sample takes the
+/// worst part's state: one part that is missing, truncated or dead in compile
+/// leaves the whole sample exactly as unusable as it would leave a single run.
+fn state_severity(state: RunState) -> u8 {
+    match state {
+        RunState::CompletedClean => 0,
+        RunState::NonZeroWithObservedTestFailures => 1,
+        RunState::CompileOrHarnessFailure => 2,
+        RunState::IncompleteEvidence => 3,
+        RunState::StatusMissing => 4,
+        RunState::LogMissing => 5,
+    }
+}
+
+/// Join the parts of one sample (#12668, #3922).
+///
+/// The nightly splits `cargo test --workspace` across jobs by test target so
+/// each part fits its deadline. The parts are disjoint by construction, so a
+/// target that two parts both report is a broken split, not extra evidence:
+/// it is a provenance error and the sample is unusable, and so is a part
+/// that started no target at all. A single part is returned unchanged.
+fn merge_parts(parts: Vec<(String, RunOutcome)>) -> RunOutcome {
+    if parts.len() == 1 {
+        return parts
+            .into_iter()
+            .next()
+            .map(|(_, outcome)| outcome)
+            .unwrap_or_else(|| RunOutcome::missing(RunState::LogMissing));
+    }
+    let mut merged = RunOutcome::missing(RunState::CompletedClean);
+    let mut exit_status = Some(0);
+    for (log, part) in parts {
+        if state_severity(part.state) > state_severity(merged.state) {
+            merged.state = part.state;
+        }
+        if !part.state.is_usable() {
+            merged
+                .provenance_errors
+                .push(format!("part {log} is {}", part.state.label()));
+        }
+        // A part that started no target handed over no test evidence: cargo
+        // did not start (status 127), or the part died in compile. Its state
+        // alone is a usable `compile_or_harness_failure`, and for doctests
+        // the build's executable list cannot show the gap, so the other
+        // parts must not carry the sample past it.
+        if part.state.is_usable() && part.targets.is_empty() {
+            merged
+                .provenance_errors
+                .push(format!("part {log} started no test target"));
+        }
+        // The largest status names the worst termination among the parts
+        // (0 clean, 101 test or compile failure, 124 deadline, 127 not
+        // started). An unknown status in any part leaves the sample's unknown.
+        exit_status = match (exit_status, part.exit_status) {
+            (Some(worst), Some(code)) => Some(worst.max(code)),
+            _ => None,
+        };
+        for target in part.targets {
+            if merged.targets.contains(&target) {
+                merged.provenance_errors.push(format!(
+                    "part {log} repeats a target another part already ran: {target}"
+                ));
+            }
+            merged.targets.push(target);
+        }
+        merged.failed.extend(part.failed);
+        merged.passed.extend(part.passed);
+        merged.results.extend(part.results);
+        merged.reasons.extend(part.reasons);
+        merged.raw_headers.extend(part.raw_headers);
+        merged.provenance_errors.extend(
+            part.provenance_errors
+                .into_iter()
+                .map(|error| format!("part {log}: {error}")),
+        );
+    }
+    merged.exit_status = exit_status;
+    if !merged.provenance_errors.is_empty() && merged.state.is_usable() {
+        merged.state = RunState::IncompleteEvidence;
+    }
+    merged
+}
+
+/// The test executables `cargo test --workspace --no-run` built, read from its
+/// `Executable ...` lines, or why that list cannot be trusted.
+///
+/// Compared without the Cargo hash: the list comes from one job's build and
+/// the parts from other jobs', and this check is about which targets ran, not
+/// which build ran them. Identity within a part still carries the hash.
+fn load_expected_targets(build_log: &Path) -> Result<Vec<(TargetKind, String, String)>, String> {
+    let text = std::fs::read_to_string(build_log).map_err(|error| {
+        format!(
+            "expected-targets log {} could not be read: {error}",
+            build_log.display()
+        )
+    })?;
+    let expected = expected_targets(&text);
+    if expected.is_empty() {
+        return Err(format!(
+            "expected-targets log {} names no test executable",
+            build_log.display()
+        ));
+    }
+    Ok(expected)
+}
+
+fn expected_targets(text: &str) -> Vec<(TargetKind, String, String)> {
+    text.lines()
+        .filter_map(|raw_line| {
+            let line = strip_ansi(raw_line);
+            let rest = line.trim().strip_prefix("Executable ")?;
+            running_target(&format!("Running {rest}"))
+        })
+        .map(|target| hashless(&target))
+        .collect()
+}
+
+fn hashless(target: &TargetIdentity) -> (TargetKind, String, String) {
+    let stem = target
+        .artifact
+        .rsplit_once('-')
+        .map_or(target.artifact.as_str(), |(stem, _)| stem);
+    (target.kind, target.source.clone(), stem.to_string())
+}
+
+/// Every executable the unsplit workspace build produced must have been
+/// started by this sample, as many times as the build produced it.
+///
+/// A split is only as complete as its selectors. A test target that no part
+/// selects is absent from every part's log, so nothing in the logs themselves
+/// can show it is missing; the unsplit build's own list is the denominator.
+/// An unusable sample is already refused and is not reported again per target.
+fn require_expected_targets(
+    outcome: &mut RunOutcome,
+    expected: &Result<Vec<(TargetKind, String, String)>, String>,
+) {
+    if !outcome.state.is_usable() {
+        return;
+    }
+    let expected = match expected {
+        Ok(expected) => expected,
+        Err(error) => {
+            outcome.provenance_errors.push(error.clone());
+            outcome.state = RunState::IncompleteEvidence;
+            return;
+        }
+    };
+    let mut started: BTreeMap<(TargetKind, String, String), usize> = BTreeMap::new();
+    for target in &outcome.targets {
+        *started.entry(hashless(target)).or_default() += 1;
+    }
+    let mut wanted: BTreeMap<&(TargetKind, String, String), usize> = BTreeMap::new();
+    for target in expected {
+        *wanted.entry(target).or_default() += 1;
+    }
+    for (target, count) in wanted {
+        let ran = started.get(target).copied().unwrap_or(0);
+        if ran < count {
+            let (kind, source, stem) = target;
+            outcome.provenance_errors.push(format!(
+                "the workspace build produced {count} {kind:?} target(s) {source} ({stem}) but this sample started {ran}"
+            ));
+        }
+    }
+    if !outcome.provenance_errors.is_empty() {
+        outcome.state = RunState::IncompleteEvidence;
     }
 }
 
@@ -614,6 +864,144 @@ fn classify_isolated(log: Option<&str>, raw_status: Option<&str>) -> IsolatedObs
             row_failed
         ))
     }
+}
+
+/// One feature-combination step's verdict, read from its captured status file
+/// (#2400, #16036).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeatureRowState {
+    Pass,
+    Fail,
+    /// The step left no verdict: cut at its deadline (124), not started (127),
+    /// an unreadable status, or no status file at all.
+    Incomplete,
+}
+
+/// Classify one status file's content. `None` is a missing file.
+fn feature_row(status: Option<&str>) -> (FeatureRowState, String) {
+    let Some(status) = status else {
+        return (
+            FeatureRowState::Incomplete,
+            "not_run (no status file)".to_string(),
+        );
+    };
+    let code = status.trim();
+    match code.parse::<i32>() {
+        Ok(0) => (FeatureRowState::Pass, "PASS".to_string()),
+        Ok(124) => (
+            FeatureRowState::Incomplete,
+            "INCOMPLETE (cut at its deadline, exit 124; no test verdict)".to_string(),
+        ),
+        Ok(127) => (
+            FeatureRowState::Incomplete,
+            "INCOMPLETE (command did not start, exit 127)".to_string(),
+        ),
+        Ok(code) => (FeatureRowState::Fail, format!("FAIL (exit {code})")),
+        Err(_) => (
+            FeatureRowState::Incomplete,
+            format!("INCOMPLETE (unreadable status `{code}`)"),
+        ),
+    }
+}
+
+/// Join the parts of one split step: a part that failed fails the step, the
+/// step passes only when every part passed, and otherwise it has no verdict.
+/// FAIL outranks INCOMPLETE because a failure observed in one part stays a
+/// failure whatever the other parts did not report.
+fn join_feature_parts(parts: &[FeatureRowState]) -> (FeatureRowState, &'static str) {
+    if parts.contains(&FeatureRowState::Fail) {
+        (FeatureRowState::Fail, "FAIL (a part failed; see its row)")
+    } else if !parts.is_empty() && parts.iter().all(|part| *part == FeatureRowState::Pass) {
+        (FeatureRowState::Pass, "PASS (every part passed)")
+    } else {
+        (
+            FeatureRowState::Incomplete,
+            "INCOMPLETE (no part failed, but a part has no verdict; see its row)",
+        )
+    }
+}
+
+enum FeatureArg {
+    Row(String, String),
+    Part(String, String),
+}
+
+/// Parse `--join <label> (--row <label> <status> | --part <label> <status>)...`.
+fn parse_feature_rows(args: &[String]) -> Result<(String, Vec<FeatureArg>), String> {
+    const USAGE: &str = "usage: windows-advisory-feature-rows --join <label> \
+                         [--row <label> <status>]... --part <label> <status> [--part <label> <status>]...";
+    let mut join = None;
+    let mut rows = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let value = |offset: usize| {
+            args.get(index + offset)
+                .filter(|value| !value.is_empty() && !value.starts_with("--"))
+                .cloned()
+                .ok_or_else(|| format!("{} needs a value; {USAGE}", args[index]))
+        };
+        match args[index].as_str() {
+            "--join" if join.is_none() => {
+                join = Some(value(1)?);
+                index += 2;
+            }
+            "--row" => {
+                rows.push(FeatureArg::Row(value(1)?, value(2)?));
+                index += 3;
+            }
+            "--part" => {
+                rows.push(FeatureArg::Part(value(1)?, value(2)?));
+                index += 3;
+            }
+            other => return Err(format!("unexpected argument {other:?}; {USAGE}")),
+        }
+    }
+    let join = join.ok_or_else(|| format!("--join is required; {USAGE}"))?;
+    if !rows.iter().any(|row| matches!(row, FeatureArg::Part(..))) {
+        return Err(format!("at least one --part is required; {USAGE}"));
+    }
+    Ok((join, rows))
+}
+
+/// Render the rows in argument order, with the joined row right after the
+/// last part, so it reads beside the parts it summarises.
+fn render_feature_rows(join: &str, rows: &[(FeatureArg, Option<String>)]) -> String {
+    let last_part = rows
+        .iter()
+        .rposition(|(row, _)| matches!(row, FeatureArg::Part(..)));
+    let mut parts = Vec::new();
+    let mut out = String::new();
+    for (index, (row, status)) in rows.iter().enumerate() {
+        let (FeatureArg::Row(label, _) | FeatureArg::Part(label, _)) = row;
+        let (state, text) = feature_row(status.as_deref());
+        out.push_str(&format!("- {label}: {text}\n"));
+        if matches!(row, FeatureArg::Part(..)) {
+            parts.push(state);
+        }
+        if Some(index) == last_part {
+            out.push_str(&format!("- {join}: {}\n", join_feature_parts(&parts).1));
+        }
+    }
+    out
+}
+
+/// Print the feature-combination rows (#2400, #16036). Outcomes are advisory:
+/// this exits non-zero only for a malformed invocation or a status file that
+/// exists but cannot be read.
+pub(crate) fn run_feature_rows(args: &[String]) -> Result<(), String> {
+    let (join, parsed) = parse_feature_rows(args)?;
+    let mut rows = Vec::new();
+    for row in parsed {
+        let (FeatureArg::Row(_, path) | FeatureArg::Part(_, path)) = &row;
+        let status = match std::fs::read_to_string(path) {
+            Ok(status) => Some(status),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(format!("read {path}: {error}")),
+        };
+        rows.push((row, status));
+    }
+    print!("{}", render_feature_rows(&join, &rows));
+    Ok(())
 }
 
 /// Summarize three explicitly requested native Windows named-test repetitions.
@@ -759,12 +1147,17 @@ fn load_run(log: &Path, status: &Path) -> RunOutcome {
             None
         }
     };
+    judge(&text, exit_status)
+}
+
+/// Classify one captured log against its captured exit status.
+fn judge(text: &str, exit_status: Option<i32>) -> RunOutcome {
     let Some(exit_status) = exit_status else {
-        let mut outcome = parse_log(&text);
+        let mut outcome = parse_log(text);
         outcome.state = RunState::StatusMissing;
         return outcome;
     };
-    let mut outcome = parse_log(&text);
+    let mut outcome = parse_log(text);
     outcome.exit_status = Some(exit_status);
     if exit_status == 0 && !outcome.failed.is_empty() {
         outcome
@@ -1566,6 +1959,89 @@ mod tests {
         .all(|required| lines.iter().any(|line| line.contains(required)))
     }
 
+    /// Lines the packaged lane needs so that the crate it installs is the
+    /// publish-stage archive of the candidate (#14198), bound to this run's
+    /// rehearsal receipt. Each one is load-bearing: see
+    /// `packaged_qualification_stage_contract_rejects_each_missing_binding`.
+    const PACKAGED_STAGE_BINDINGS: [&str; 15] = [
+        "New-Item -ItemType Directory -Force -Path 'target' | Out-Null",
+        "cargo --config $env:CARGO_TEMP_CONFIG xtask publish-dry-run",
+        "if ($LASTEXITCODE -ne 0) { throw \"publish-stage packaging failed with exit $LASTEXITCODE\" }",
+        "if ($publishReceipt.verification -ne 'packaged-check-passed') { throw",
+        "if ($publishReceipt.stage_commit -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw",
+        "if ($publishReceipt.ripr_sha256 -ne $crateHash) { throw",
+        "if ($publishReceipt.contract_sha256 -ne $contractHash) { throw",
+        "Copy-Item -LiteralPath $publishReceiptPath -Destination (Join-Path $root 'publish-receipt.json')",
+        // The install step takes exactly the archives the receipt named and
+        // installs what it extracted from them, never a checkout path.
+        "\"RIPR_STAGE_CRATE=$($crate.FullName)\" >> $env:GITHUB_ENV",
+        "$crate = Get-Item $env:RIPR_STAGE_CRATE; $contractCrate = Get-Item $env:RIPR_STAGE_CONTRACT_CRATE",
+        "if ($publishReceipt.ripr_sha256 -ne $crateHash -or $publishReceipt.contract_sha256 -ne $contractHash) { throw",
+        "$packageRoot = Join-Path $env:QUAL_TEMP_ROOT 'crate-source'",
+        "tar -xf $crate.FullName -C $packageRoot",
+        "$packageDir = Get-Item (Join-Path $packageRoot \"ripr-$env:RIPR_PACKAGED_VERSION\")",
+        "$contractPatch = \"patch.crates-io.ripr-contract.path='$($contractDir.FullName)'\"",
+    ];
+
+    const PACKAGED_STAGE_VERSION_BINDING: &str = "if ($LASTEXITCODE -ne 0 -or \"$reportedVersion\" -notmatch [regex]::Escape($env:CANDIDATE_SHA.ToLowerInvariant())) { throw";
+
+    /// The packaged lane installs the publish-stage archive: every binding is
+    /// present, in workflow order, before the install, and nothing packages the
+    /// checkout's own crate.
+    fn packaged_stage_contract(workflow: &str) -> Result<(), String> {
+        let lines = workflow
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect::<Vec<_>>();
+        let install = lines
+            .iter()
+            .position(|line| line.contains(" install --target-dir"))
+            .ok_or_else(|| "workflow must install the extracted crate".to_string())?;
+        let mut previous = None;
+        for binding in PACKAGED_STAGE_BINDINGS {
+            let at = lines
+                .iter()
+                .position(|line| line.contains(binding))
+                .ok_or_else(|| format!("workflow must contain {binding:?}"))?;
+            if at >= install {
+                return Err(format!("{binding:?} must precede the install"));
+            }
+            if previous.is_some_and(|before| at <= before) {
+                return Err(format!("{binding:?} is out of order"));
+            }
+            previous = Some(at);
+        }
+        let install_tokens = lines[install].split_whitespace().collect::<Vec<_>>();
+        if !install_tokens
+            .windows(2)
+            .any(|pair| pair == ["--config", "$contractPatch"])
+        {
+            return Err("install must resolve ripr-contract from the packaged crate".to_string());
+        }
+        if !install_tokens.contains(&"--locked") {
+            return Err("install must keep the packaged lockfile".to_string());
+        }
+        // The stage marker makes the build report the plain commit; a binary
+        // that does not name the candidate was not built from its stage.
+        let reported = lines
+            .iter()
+            .position(|line| line.contains(PACKAGED_STAGE_VERSION_BINDING))
+            .ok_or_else(|| format!("workflow must contain {PACKAGED_STAGE_VERSION_BINDING:?}"))?;
+        if reported <= install {
+            return Err("the installed binary must be asked for its commit".to_string());
+        }
+        // `cargo package` from the checkout produces the unstripped crate the
+        // release never uploads; only the stage producer may package.
+        if let Some(bare) = lines.iter().find(|line| {
+            let tokens = line.split_whitespace().collect::<Vec<_>>();
+            tokens.first() == Some(&"cargo") && tokens.contains(&"package")
+        }) {
+            return Err(format!("workflow must not package the checkout: {bare:?}"));
+        }
+        Ok(())
+    }
+
     use super::*;
 
     fn isolated_log(row: &str, result: &str) -> String {
@@ -2311,6 +2787,169 @@ mod tests {
         );
     }
 
+    /// #16036: the Rust-only (`--no-default-features`) tests are split into
+    /// parts across jobs, and the feature-combination summary joins them. A
+    /// part that runs but is not read, or is read but never produced, would
+    /// let the joined `nofeatures-test` row claim a pass over tests it never
+    /// saw. Bind the summary's part list to the integration matrix and to the
+    /// status files the steps actually write.
+    #[test]
+    fn the_rust_only_test_parts_are_each_produced_and_joined() {
+        let workflow = include_str!("../../.github/workflows/windows-advisory.yml");
+        let matrix_parts: Vec<&str> = workflow
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| line.strip_prefix("- part: "))
+            .collect();
+        assert_eq!(
+            matrix_parts,
+            ["a-c", "d-o", "rest"],
+            "the integration matrix is the split this test binds"
+        );
+
+        let command = workflow
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("cargo xtask windows-advisory-feature-rows "))
+            .unwrap_or_default();
+        let tokens: Vec<&str> = command.split_whitespace().collect();
+        let parts: Vec<(&str, &str)> = tokens
+            .windows(3)
+            .filter(|window| window[0] == "--part")
+            .map(|window| (window[1], window[2]))
+            .collect();
+        let mut expected = vec![
+            (
+                "nofeatures-test-unit".to_string(),
+                "target/nofeatures-test-unit.status".to_string(),
+            ),
+            (
+                "nofeatures-test-doc".to_string(),
+                "target/nofeatures-test-doc.status".to_string(),
+            ),
+        ];
+        expected.extend(matrix_parts.iter().map(|part| {
+            (
+                format!("nofeatures-test-{part}"),
+                format!("target/integration/nofeatures-test-{part}.status"),
+            )
+        }));
+        let parts: Vec<(String, String)> = parts
+            .into_iter()
+            .map(|(label, path)| (label.to_string(), path.to_string()))
+            .collect();
+        assert_eq!(
+            parts, expected,
+            "the summary must join the unit, doctest and every integration part: {command}"
+        );
+        assert!(
+            command.contains("--join nofeatures-test ")
+                && command.contains("| tee -a target/windows-verdict.md"),
+            "the joined row must reach the verdict file: {command}"
+        );
+
+        for producer in [
+            "--status target/nofeatures-test-unit.status",
+            "--status target/nofeatures-test-doc.status",
+            r#"--status "target/nofeatures-test-$PART.status""#,
+            "target/nofeatures-test-${{ matrix.part }}.status",
+        ] {
+            assert!(
+                workflow.contains(producer),
+                "missing producer or upload `{producer}`"
+            );
+        }
+        assert!(
+            !workflow.contains("target/nofeatures-test.status"),
+            "the unsplit step's status would be read as a row no step writes"
+        );
+    }
+
+    fn feature_args(rows: &[(&str, &str, &str)]) -> Vec<String> {
+        let mut args = argv(&["--join", "joined"]);
+        for (flag, label, path) in rows {
+            args.extend(argv(&[flag, label, path]));
+        }
+        args
+    }
+
+    /// #16036: a cut, unstarted or unreported step has no verdict; only a
+    /// real non-zero exit is a failure.
+    #[test]
+    fn a_feature_row_separates_failure_from_missing_evidence() {
+        assert_eq!(feature_row(Some("0\n")).0, FeatureRowState::Pass);
+        assert_eq!(feature_row(Some("101\n")).0, FeatureRowState::Fail);
+        assert_eq!(feature_row(Some("1")).0, FeatureRowState::Fail);
+        for incomplete in [Some("124\n"), Some("127"), Some(""), Some("ok"), None] {
+            assert_eq!(
+                feature_row(incomplete).0,
+                FeatureRowState::Incomplete,
+                "{incomplete:?} is missing evidence, not a verdict"
+            );
+        }
+        assert!(feature_row(Some("124")).1.contains("cut at its deadline"));
+        assert!(feature_row(None).1.starts_with("not_run"));
+    }
+
+    /// A failure in one part outranks a part with no verdict, and a pass needs
+    /// every part to have passed.
+    #[test]
+    fn the_joined_row_ranks_failure_over_missing_evidence_over_pass() {
+        use FeatureRowState::{Fail, Incomplete, Pass};
+        assert_eq!(join_feature_parts(&[Pass, Pass, Pass]).0, Pass);
+        assert_eq!(join_feature_parts(&[Pass, Incomplete, Pass]).0, Incomplete);
+        assert_eq!(join_feature_parts(&[Incomplete, Fail]).0, Fail);
+        assert_eq!(join_feature_parts(&[Fail, Incomplete]).0, Fail);
+        assert_eq!(join_feature_parts(&[Pass, Fail, Pass]).0, Fail);
+        assert_eq!(
+            join_feature_parts(&[]).0,
+            Incomplete,
+            "no parts is no evidence"
+        );
+    }
+
+    #[test]
+    fn feature_rows_render_in_order_with_the_join_after_the_last_part() -> Result<(), String> {
+        let (join, parsed) = parse_feature_rows(&feature_args(&[
+            ("--row", "check", "c.status"),
+            ("--part", "unit", "u.status"),
+            ("--part", "rest", "r.status"),
+            ("--row", "all", "a.status"),
+        ]))?;
+        let statuses = [Some("0"), Some("0"), Some("124"), None];
+        let rows: Vec<_> = parsed
+            .into_iter()
+            .zip(statuses)
+            .map(|(row, status)| (row, status.map(str::to_string)))
+            .collect();
+        assert_eq!(
+            render_feature_rows(&join, &rows),
+            "- check: PASS\n\
+             - unit: PASS\n\
+             - rest: INCOMPLETE (cut at its deadline, exit 124; no test verdict)\n\
+             - joined: INCOMPLETE (no part failed, but a part has no verdict; see its row)\n\
+             - all: not_run (no status file)\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn feature_rows_refuse_a_malformed_invocation() {
+        for args in [
+            argv(&["--part", "unit", "u.status"]),
+            argv(&["--join", "joined", "--row", "check", "c.status"]),
+            argv(&["--join", "joined", "--part", "unit"]),
+            argv(&["--join", "joined", "--part", "unit", "--row"]),
+            argv(&["--join", "a", "--join", "b", "--part", "unit", "u.status"]),
+            argv(&["--join", "joined", "--part", "unit", "u.status", "--extra"]),
+        ] {
+            assert!(
+                parse_feature_rows(&args).is_err(),
+                "{args:?} must be refused"
+            );
+        }
+    }
+
     fn control(test: &'static str) -> SeamControl {
         SeamControl {
             seam: "process",
@@ -2857,8 +3496,280 @@ mod tests {
                 run1_status: "1.status".to_string(),
                 run2_log: "2.log".to_string(),
                 run2_status: "2.status".to_string(),
+                run1_parts: Vec::new(),
+                run2_parts: Vec::new(),
+                expected_targets: None,
             })
         );
+    }
+
+    fn split_argv() -> Vec<String> {
+        let mut args = complete_argv();
+        args.extend(argv(&[
+            "--run1-part",
+            "a1.log",
+            "a1.status",
+            "--run2-part",
+            "a2.log",
+            "a2.status",
+            "--expected-targets",
+            "build.log",
+        ]));
+        args
+    }
+
+    #[test]
+    fn parse_inputs_accepts_paired_parts_and_an_expected_target_list() {
+        assert_eq!(
+            parse_inputs(&split_argv()),
+            Ok(Inputs {
+                run1_log: "1.log".to_string(),
+                run1_status: "1.status".to_string(),
+                run2_log: "2.log".to_string(),
+                run2_status: "2.status".to_string(),
+                run1_parts: vec![("a1.log".to_string(), "a1.status".to_string())],
+                run2_parts: vec![("a2.log".to_string(), "a2.status".to_string())],
+                expected_targets: Some("build.log".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_inputs_refuses_a_split_that_is_not_the_same_for_both_runs() {
+        // A part for one run only.
+        let mut one_sided = complete_argv();
+        one_sided.extend(argv(&["--run1-part", "a1.log", "a1.status"]));
+        assert_eq!(
+            parse_inputs(&one_sided),
+            Err("windows-advisory-summary got 1 --run1-part and 0 --run2-part; each part of the split must be supplied for both runs".to_string())
+        );
+        // A part with its status left off must not swallow the next flag.
+        let mut short = complete_argv();
+        short.extend(argv(&[
+            "--run1-part",
+            "a1.log",
+            "--run2-part",
+            "a2.log",
+            "a2.status",
+        ]));
+        assert_eq!(
+            parse_inputs(&short),
+            Err("windows-advisory-summary got --run1-part followed by --run2-part, which looks like a flag rather than a path".to_string())
+        );
+        let mut cut = complete_argv();
+        cut.extend(argv(&["--run1-part", "a1.log"]));
+        assert_eq!(
+            parse_inputs(&cut),
+            Err("windows-advisory-summary requires a value for --run1-part".to_string())
+        );
+        // One artifact supplied in two roles.
+        let mut reused = split_argv();
+        reused.extend(argv(&[
+            "--run1-part",
+            "b1.log",
+            "b1.status",
+            "--run2-part",
+            "a1.log",
+            "b2.status",
+        ]));
+        assert!(
+            parse_inputs(&reused)
+                .err()
+                .unwrap_or_default()
+                .starts_with("windows-advisory-summary requires every log, status and expected-targets path to be distinct; got "),
+            "a log reused across parts must be refused"
+        );
+        let mut twice = split_argv();
+        twice.extend(argv(&["--expected-targets", "other.log"]));
+        assert_eq!(
+            parse_inputs(&twice),
+            Err(
+                "windows-advisory-summary got --expected-targets more than once; pass it once"
+                    .to_string()
+            )
+        );
+    }
+
+    const SMOKE_HEADER: &str =
+        "Running tests/cli_smoke.rs (target/debug/deps/cli_smoke-2222222222222222.exe)\n";
+    const ONE_FAIL: &str = "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n";
+
+    fn unit_part() -> String {
+        format!("{XTASK_HEADER}running 1 test\ntest unit_case ... ok\n{ONE_PASS}")
+    }
+
+    fn smoke_part(row: &str, summary: &str) -> String {
+        format!("{SMOKE_HEADER}running 1 test\ntest smoke_case ... {row}\n{summary}")
+    }
+
+    fn merged(parts: &[(&str, &str, Option<i32>)]) -> RunOutcome {
+        merge_parts(
+            parts
+                .iter()
+                .map(|(log, text, status)| ((*log).to_string(), judge(text, *status)))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_single_part_is_the_run_itself() {
+        let text = unit_part();
+        assert_eq!(merged(&[("1.log", &text, Some(0))]), judge(&text, Some(0)));
+    }
+
+    #[test]
+    fn disjoint_parts_join_into_one_sample_with_the_worst_state_and_status() {
+        let unit = unit_part();
+        let clean = merged(&[
+            ("1.log", &unit, Some(0)),
+            ("a.log", &smoke_part("ok", ONE_PASS), Some(0)),
+        ]);
+        assert_eq!(clean.state, RunState::CompletedClean);
+        assert_eq!(clean.exit_status, Some(0));
+        assert_eq!(clean.targets.len(), 2);
+        assert_eq!(clean.passed.len(), 2);
+        assert_eq!(clean.results.len(), 2);
+
+        // A failure in the second part is observed on the joined sample.
+        let failing = merged(&[
+            ("1.log", &unit, Some(0)),
+            ("a.log", &smoke_part("FAILED", ONE_FAIL), Some(101)),
+        ]);
+        assert_eq!(failing.state, RunState::NonZeroWithObservedTestFailures);
+        assert_eq!(failing.exit_status, Some(101));
+        assert_eq!(failing.passed.len(), 1);
+        assert_eq!(
+            failing
+                .failed
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            vec!["tests/cli_smoke.rs (cli_smoke-2222222222222222) :: smoke_case".to_string()]
+        );
+    }
+
+    #[test]
+    fn one_unusable_part_makes_the_whole_sample_unusable() {
+        let unit = unit_part();
+        // Deadline-truncated part: announced harness, no completion summary.
+        let truncated = format!("{SMOKE_HEADER}running 1 test\n");
+        let cut = merged(&[("1.log", &unit, Some(0)), ("a.log", &truncated, Some(124))]);
+        assert_eq!(cut.state, RunState::IncompleteEvidence);
+        assert_eq!(cut.exit_status, Some(124));
+        assert_eq!(
+            cut.provenance_errors,
+            vec![
+                "part a.log is incomplete_evidence".to_string(),
+                "part a.log: owning harness has no completion summary".to_string(),
+            ]
+        );
+        // A part with no status.
+        let unknown = merged(&[
+            ("1.log", &unit, Some(0)),
+            ("a.log", &smoke_part("ok", ONE_PASS), None),
+        ]);
+        assert_eq!(unknown.state, RunState::StatusMissing);
+        assert_eq!(unknown.exit_status, None);
+        // A part that died in compile, or whose cargo never started (the
+        // runner's status 127), started no target. The other parts cannot
+        // stand in for it: doctests are not in the build's executable list.
+        for (text, status) in [
+            ("error: could not compile `xtask`\n", 101),
+            ("windows-advisory-run: could not start cargo\n", 127),
+        ] {
+            let dead = merged(&[
+                ("1.log", &smoke_part("FAILED", ONE_FAIL), Some(101)),
+                ("doc.log", text, Some(status)),
+            ]);
+            assert_eq!(dead.state, RunState::IncompleteEvidence, "{text}");
+            assert_eq!(
+                dead.provenance_errors,
+                vec!["part doc.log started no test target".to_string()],
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_target_two_parts_both_ran_is_a_broken_split() {
+        let unit = unit_part();
+        let overlap = merged(&[("1.log", &unit, Some(0)), ("a.log", &unit, Some(0))]);
+        assert_eq!(overlap.state, RunState::IncompleteEvidence);
+        assert_eq!(
+            overlap.provenance_errors,
+            vec![
+                "part a.log repeats a target another part already ran: unittests src/main.rs (xtask-1111111111111111)"
+                    .to_string()
+            ]
+        );
+    }
+
+    const BUILD_LOG: &str = concat!(
+        "   Compiling xtask v0.0.0\n",
+        "\u{1b}[1m\u{1b}[92m  Executable\u{1b}[0m unittests src\\main.rs (target\\debug\\deps\\xtask-9999999999999999.exe)\n",
+        "  Executable tests\\cli_smoke.rs (target\\debug\\deps\\cli_smoke-8888888888888888.exe)\n",
+        "    Finished `test` profile\n",
+    );
+
+    #[test]
+    fn the_unsplit_build_list_is_the_denominator_for_a_split_sample() {
+        let expected = Ok(expected_targets(BUILD_LOG));
+        assert_eq!(
+            expected,
+            Ok(vec![
+                (
+                    TargetKind::Unit,
+                    "src/main.rs".to_string(),
+                    "xtask".to_string()
+                ),
+                (
+                    TargetKind::Integration,
+                    "tests/cli_smoke.rs".to_string(),
+                    "cli_smoke".to_string()
+                ),
+            ])
+        );
+        let unit = unit_part();
+        // Both executables started, under other hashes than the build's: usable.
+        let mut whole = merged(&[
+            ("1.log", &unit, Some(0)),
+            ("a.log", &smoke_part("ok", ONE_PASS), Some(0)),
+        ]);
+        require_expected_targets(&mut whole, &expected);
+        assert_eq!(whole.state, RunState::CompletedClean);
+        assert_eq!(whole.provenance_errors, Vec::<String>::new());
+
+        // The split dropped the integration target: nothing in the sample's
+        // own log shows that, the build list does.
+        let mut dropped = judge(&unit, Some(0));
+        require_expected_targets(&mut dropped, &expected);
+        assert_eq!(dropped.state, RunState::IncompleteEvidence);
+        assert_eq!(
+            dropped.provenance_errors,
+            vec![
+                "the workspace build produced 1 Integration target(s) tests/cli_smoke.rs (cli_smoke) but this sample started 0"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unusable_build_list_cannot_admit_a_sample() {
+        assert_eq!(expected_targets("   Compiling xtask v0.0.0\n"), Vec::new());
+        let missing = load_expected_targets(Path::new("target/ripr-winadv-no-such-build.log"));
+        assert!(
+            missing
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.starts_with(
+                    "expected-targets log target/ripr-winadv-no-such-build.log could not be read: "
+                )),
+            "{missing:?}"
+        );
+        let mut sample = judge(&unit_part(), Some(0));
+        require_expected_targets(&mut sample, &missing);
+        assert_eq!(sample.state, RunState::IncompleteEvidence);
+        assert_eq!(sample.provenance_errors.len(), 1);
     }
 
     #[test]
@@ -2911,6 +3822,125 @@ mod tests {
                 .unwrap_or_default()
                 .contains("unexpected argument \"extra.log\""),
             "a stray positional must be refused"
+        );
+    }
+
+    /// The flags named in a usage string, each once, in order.
+    fn flags_named_in(text: &str) -> Vec<String> {
+        let mut flags = Vec::new();
+        for token in text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '[' | ']')) {
+            let flag = token.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-'));
+            if flag.starts_with("--") && !flags.iter().any(|seen: &String| seen == flag) {
+                flags.push(flag.to_string());
+            }
+        }
+        flags
+    }
+
+    /// Public ripr #1745 added `--nofeatures-log` / `--nofeatures-status`, a
+    /// single-sample fallback for a `--no-default-features` step that ate the
+    /// whole job before either workspace run started. Swarm does not carry it
+    /// (#16122): `windows-advisory-run` ends that step at its own deadline and
+    /// names every still-running test, so the workspace runs still start and
+    /// the stuck test is still named. The catalog entry and the parser must
+    /// agree on that, in both directions: a catalog that advertised the pair
+    /// (the import's stale duplicate) or a parser that quietly accepted it
+    /// without a catalog line would each mislead a caller.
+    #[test]
+    fn catalog_and_parser_agree_and_the_public_nofeatures_fallback_is_refused() {
+        let summary_entries: Vec<_> = crate::command::command_catalog()
+            .into_iter()
+            .filter(|entry| entry.command.starts_with("windows-advisory-summary "))
+            .collect();
+        assert_eq!(
+            summary_entries.len(),
+            1,
+            "exactly one catalog entry documents windows-advisory-summary"
+        );
+        let catalog_flags = flags_named_in(summary_entries[0].command);
+
+        // The parser names what it accepts when it refuses an unknown flag.
+        let mut probe = complete_argv();
+        probe.push("--catalog-probe".to_string());
+        let refusal = parse_inputs(&probe).err().unwrap_or_default();
+        let accepted = refusal
+            .split_once("expected only ")
+            .map(|(_, list)| flags_named_in(list))
+            .unwrap_or_default();
+        assert!(
+            !accepted.is_empty(),
+            "the refusal must name the accepted flags: {refusal}"
+        );
+        let mut catalog_sorted = catalog_flags.clone();
+        catalog_sorted.sort();
+        let mut accepted_sorted = accepted;
+        accepted_sorted.sort();
+        assert_eq!(
+            catalog_sorted, accepted_sorted,
+            "the catalog entry and the parser must name the same flags"
+        );
+
+        // The catalog's own usage line, with each `<value>` placeholder filled
+        // and the optional brackets and repeat marks dropped, must parse: a
+        // catalog that changed a flag's arity (say `--run1-part <log>` without
+        // its status) fails here, not in the nightly lane.
+        let mut filled = 0usize;
+        let documented: Vec<String> = summary_entries[0]
+            .command
+            .split_whitespace()
+            .skip(1)
+            .map(|token| {
+                token
+                    .trim_start_matches('[')
+                    .trim_end_matches("...")
+                    .trim_end_matches(']')
+            })
+            .filter(|token| !token.is_empty())
+            .map(|token| {
+                if token.starts_with('<') && token.ends_with('>') {
+                    filled += 1;
+                    format!("value{filled}.txt")
+                } else {
+                    token.to_string()
+                }
+            })
+            .collect();
+        assert!(
+            catalog_flags
+                .iter()
+                .all(|flag| documented.iter().any(|arg| arg == flag)),
+            "the documented invocation must pass every catalog flag: {documented:?}"
+        );
+        assert_eq!(
+            parse_inputs(&documented).err(),
+            None,
+            "the catalog's documented invocation must parse: {documented:?}"
+        );
+
+        // Public's pair is refused, alone or together, never ignored.
+        for extra in [
+            &["--nofeatures-log", "nf.log"][..],
+            &["--nofeatures-status", "nf.status"][..],
+            &[
+                "--nofeatures-log",
+                "nf.log",
+                "--nofeatures-status",
+                "nf.status",
+            ][..],
+        ] {
+            let mut args = complete_argv();
+            args.extend(argv(extra));
+            let error = parse_inputs(&args).err().unwrap_or_default();
+            assert!(
+                error.contains(&format!("unexpected argument {:?}", extra[0])),
+                "{extra:?} must be refused as unexpected: {error:?}"
+            );
+        }
+        assert!(
+            !catalog_flags
+                .iter()
+                .any(|flag| flag.starts_with("--nofeatures")),
+            "the catalog must not advertise the public fallback: {catalog_flags:?}"
         );
     }
 
@@ -3292,8 +4322,8 @@ mod tests {
             .ok_or_else(|| "workflow must isolate package installation".to_string())?;
         let package_line = lines
             .iter()
-            .position(|line| line.contains(" package --target-dir"))
-            .ok_or_else(|| "workflow must package the exact crate".to_string())?;
+            .position(|line| !line.starts_with('#') && line.contains(" xtask publish-dry-run"))
+            .ok_or_else(|| "workflow must package the publish stage".to_string())?;
         let install_line = lines
             .iter()
             .position(|line| line.contains(" install --target-dir"))
@@ -3309,19 +4339,21 @@ mod tests {
                 .position(|candidate| *candidate == token)
                 .ok_or_else(|| format!("command must contain {token:?}"))
         };
-        let package_command = position(&package, "package")?;
-        let package_target = position(&package, "--target-dir")?;
-        let package_name = position(&package, "-p")?;
-        let package_locked = position(&package, "--locked")?;
-        if !(package_command < package_target
-            && package_target < package_name
-            && package_name < package_locked
-            && package.get(package_name + 1) == Some(&"ripr"))
+        // The stage producer is an xtask alias, so the external temp config
+        // must be on its own Cargo invocation, before the subcommand.
+        let package_config = position(&package, "--config")?;
+        let package_command = position(&package, "xtask")?;
+        if !(package.first() == Some(&"cargo")
+            && package_config < package_command
+            && package.get(package_config + 1) == Some(&"$env:CARGO_TEMP_CONFIG")
+            && package.get(package_command + 1) == Some(&"publish-dry-run"))
         {
             return Err(
-                "package command must order package, target-dir, -p ripr, and locked".to_string(),
+                "package command must be cargo --config <temp config> xtask publish-dry-run"
+                    .to_string(),
             );
         }
+        packaged_stage_contract(workflow)?;
         let install_command = position(&install, "install")?;
         let install_target = position(&install, "--target-dir")?;
         let install_path = position(&install, "--path")?;
@@ -3443,5 +4475,54 @@ mod tests {
                 "contract must reject missing {missing:?}"
             );
         }
+    }
+
+    #[test]
+    fn packaged_qualification_stage_contract_rejects_each_missing_binding() -> Result<(), String> {
+        let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");
+        packaged_stage_contract(workflow)?;
+        for missing in PACKAGED_STAGE_BINDINGS {
+            let mutated = workflow.replacen(missing, "", 1);
+            if mutated.contains(missing) {
+                return Err(format!("negative fixture retained {missing:?}"));
+            }
+            if packaged_stage_contract(&mutated).is_ok() {
+                return Err(format!("contract must reject missing {missing:?}"));
+            }
+        }
+        let mutated = workflow.replacen(PACKAGED_STAGE_VERSION_BINDING, "", 1);
+        if mutated == workflow || packaged_stage_contract(&mutated).is_ok() {
+            return Err("contract must reject a binary whose commit is not checked".to_string());
+        }
+        // The lane this replaced: packaging the checkout's own crate.
+        let stage = "cargo --config $env:CARGO_TEMP_CONFIG xtask publish-dry-run";
+        let bare = "cargo --config $env:CARGO_TEMP_CONFIG package --target-dir $env:CARGO_TARGET_DIR -p ripr --locked";
+        for mutated in [
+            workflow.replacen(stage, bare, 1),
+            workflow.replacen(stage, &format!("{bare}\n          {stage}"), 1),
+        ] {
+            if !mutated.contains(bare) {
+                return Err("negative fixture did not package the checkout".to_string());
+            }
+            if packaged_stage_contract(&mutated).is_ok() {
+                return Err("contract must reject packaging the checkout crate".to_string());
+            }
+        }
+        // An install that drops the packaged contract or the lockfile.
+        for (present, absent) in [
+            (" --config $contractPatch install", " install"),
+            (" --locked --root", " --root"),
+        ] {
+            let mutated = workflow.replacen(present, absent, 1);
+            if mutated == workflow {
+                return Err(format!("negative fixture did not find {present:?}"));
+            }
+            if packaged_stage_contract(&mutated).is_ok() {
+                return Err(format!(
+                    "contract must reject an install without {present:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 }

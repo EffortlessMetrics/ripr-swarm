@@ -1,1 +1,1 @@
-crates/ripr/tests/new_test_proposal_attempt.rs|Command::new|1|13203-attempt-binds-proposal|Runs the built ripr binary (check, agent repair before/after) against a temp fixture repository and local git for fixture setup; no shell or network.
+crates/ripr/tests/new_test_proposal_attempt.rs|Command::new|2|13203-attempt-binds-proposal|Runs the built ripr binary (check, agent repair before/after) against a temp fixture repository and local git for fixture setup, plus one run with a git shim on PATH that creates the proposed file before the baseline capture; no network.

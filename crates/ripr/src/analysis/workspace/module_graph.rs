@@ -14,7 +14,9 @@
 //! - **orphans**: the owning package's walk is complete and does not reach
 //!   the file, so no target compiles it. It seeds no probes.
 //! - **external module sources**: a package whose `[lib]`/`[[bin]]` root sits
-//!   outside its own directory reaches the file from that root. It seeds.
+//!   outside its own directory reaches the file from that root, or the
+//!   owning package's production root reaches it through `#[path]` from
+//!   outside `src/` (#15264). It seeds.
 //! - **unresolved routes**: no resolved edge reaches the file, but a `mod`
 //!   the owning package's walk meets has an unresolved `#[path]` that spells
 //!   it (`#[cfg_attr(unix, path = "unix.rs")] mod sys;`), directly or through
@@ -34,8 +36,9 @@
 //! path points into it; and case-insensitive path matching. Each would need
 //! a file-level edge no Rust source in the workspace spells.
 //! Roots are over-collected on purpose (every declared target, and every
-//! autodiscovered one except the tests, benches and examples a manifest's
-//! `autotests`/`autobenches`/`autoexamples = false` turns off, #6965): an
+//! autodiscovered one except the targets a manifest's `autotests`,
+//! `autobenches`, `autoexamples` (#6965), `autobins` or `autolib` (#15877)
+//! `= false` turns off): an
 //! extra root can only reach more files, which keeps a verdict of
 //! "unreached" conservative.
 //!
@@ -81,13 +84,13 @@ const MAX_PENDING_READ_AHEAD: usize = 512;
 /// How a reached file anchors its own default `mod name;` children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum ChildAnchor {
-    /// Crate roots and `mod.rs` files: children live beside the file.
+    /// Crate roots, `mod.rs` files and files loaded through `#[path]`:
+    /// children live beside the file. rustc makes a `#[path]` file a
+    /// directory owner, so its `mod child;` resolves to `<dir>/child.rs`,
+    /// never `<dir>/<stem>/child.rs` (#15877).
     Directory,
     /// Ordinary module files: children live under `<dir>/<stem>/`.
     Stem,
-    /// Files loaded through `#[path]`: try both anchors, so the walk
-    /// over-reaches rather than miss a child.
-    Both,
     /// Files pasted in by `include!`: their `mod name;` declarations resolve
     /// against the including module, which this walk does not model, so any
     /// such declaration makes the walk incomplete. Their `#[path]` and
@@ -275,6 +278,13 @@ where
             }
         }
         if owner_reaches_production {
+            // #15264: the owning package's own root reaches a file outside
+            // its layout directories (`#[path = "../impl/price.rs"]` from
+            // `src/lib.rs`). The layout rule reads such a file as evidence,
+            // so record the reach or a real production change seeds nothing
+            // and the run reads "no changed behavior". A file under `src/`
+            // already seeds; recording it changes nothing.
+            context.declared_production_sources.insert(relative);
             continue;
         }
         // Only a package walk can prove a file unreached.
@@ -651,7 +661,7 @@ impl EscapingReach {
             for edge in scan.edges {
                 match edge {
                     RustModuleTreeEdge::Path(target) => {
-                        roots.push((lexical(&directory.join(target)), ChildAnchor::Both));
+                        roots.push((lexical(&directory.join(target)), ChildAnchor::Directory));
                     }
                     RustModuleTreeEdge::Include(target) => {
                         roots.push((lexical(&directory.join(target)), ChildAnchor::Included));
@@ -713,9 +723,14 @@ fn external_root_declarers(
         let Some((manifest_text, manifest)) = read_manifest(workspace_root, &package_dir) else {
             continue;
         };
-        if production_roots(&manifest, &package_dir)
+        if production_roots(workspace_root, &manifest, &package_dir)
             .iter()
-            .chain(&evidence_roots(&manifest, &manifest_text, &package_dir))
+            .chain(&evidence_roots(
+                workspace_root,
+                &manifest,
+                &manifest_text,
+                &package_dir,
+            ))
             .any(|root| !root.starts_with(&package_dir))
         {
             declarers.insert(package_dir);
@@ -738,9 +753,27 @@ fn read_manifest(workspace_root: &Path, package_dir: &Path) -> Option<(String, t
     Some((text, value))
 }
 
+/// [`production_roots`] for one package manifest's text: empty for an
+/// invalid or virtual manifest, which compiles nothing.
+pub(super) fn manifest_production_roots(
+    workspace_root: &Path,
+    manifest_text: &str,
+    package_dir: &Path,
+) -> BTreeSet<PathBuf> {
+    toml::from_str::<toml::Value>(manifest_text)
+        .ok()
+        .filter(|manifest| manifest.get("package").is_some())
+        .map(|manifest| production_roots(workspace_root, &manifest, package_dir))
+        .unwrap_or_default()
+}
+
 /// Explicit `[lib]`/`[[bin]]` paths plus the autodiscovered `src/lib.rs`
 /// (unless `[lib] path` replaces it), `src/main.rs` and `src/bin/` roots.
-fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<PathBuf> {
+fn production_roots(
+    workspace_root: &Path,
+    manifest: &toml::Value,
+    package_dir: &Path,
+) -> BTreeSet<PathBuf> {
     let mut roots = BTreeSet::new();
     collect_explicit_paths(manifest.get("bin"), package_dir, &mut roots);
     if let Some(lib) = manifest.get("lib") {
@@ -759,19 +792,171 @@ fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<Path
         .and_then(|lib| lib.get("path"))
         .and_then(toml::Value::as_str)
         .is_some_and(|path| !path.trim().is_empty());
-    if !custom_lib_path {
+    // `autolib = false` drops the inferred library unless a `[lib]` table
+    // still declares one, whose path then defaults to `src/lib.rs` (#15877).
+    let package = manifest.get("package");
+    let discovers = |key: &str| {
+        package
+            .and_then(|package| package.get(key))
+            .and_then(toml::Value::as_bool)
+            != Some(false)
+    };
+    if !custom_lib_path && (discovers("autolib") || manifest.get("lib").is_some()) {
         roots.insert(src.join("lib.rs"));
     }
-    roots.insert(src.join("main.rs"));
-    roots.extend(autodiscovered(&src.join("bin")));
+    if discovers_targets(manifest, "autobins", "bin") {
+        roots.insert(src.join("main.rs"));
+        roots.extend(autodiscovered(&src.join("bin")));
+    } else {
+        // `autobins = false`, or an edition 2015 manifest that declares a
+        // `[[bin]]` without setting `autobins`, builds only declared
+        // binaries (#15877). A
+        // declaration without `path` still resolves to `src/bin/<name>.rs`,
+        // `src/bin/<name>/main.rs`, or `src/main.rs` when it carries the
+        // package's name, so those stay rooted; an undeclared `src/main.rs`
+        // or `src/bin/*` is never compiled and reaches nothing.
+        //
+        // Both layouts stay rooted even when both exist on disk: existence
+        // here is the checkout's, while `--committed` walks HEAD, where a
+        // staged alternate layout is absent (#15892 review). An absent root
+        // reaches nothing, so the extra candidate can only keep a file
+        // reached, never drop a built one.
+        roots.extend(named_default_candidates(
+            manifest.get("bin"),
+            &src.join("bin"),
+        ));
+        let package_name = package
+            .and_then(|package| package.get("name"))
+            .and_then(toml::Value::as_str);
+        let names_package_bin = manifest
+            .get("bin")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|bins| {
+                bins.iter().any(|bin| {
+                    bin.get("path").is_none()
+                        && bin.get("name").and_then(toml::Value::as_str) == package_name
+                        && package_name.is_some()
+                })
+            });
+        if names_package_bin {
+            roots.insert(src.join("main.rs"));
+        }
+        // Edition 2015 resolves a path-less `[[bin]]` that matches no
+        // inferred layout (`src/bin/<name>.rs`, `src/bin/<name>/main.rs`,
+        // `src/main.rs` for the package's name) through Cargo's legacy
+        // fallback: the first of `src/<name>.rs`, `src/main.rs` and
+        // `src/bin/main.rs` that exists. An inherited or absent edition may
+        // be 2015, so the fallback stays modeled there too (#15892 review).
+        // Presence is read through the committed-source view the walk
+        // reads; an unreadable candidate counts as present, so it can only
+        // keep a root, never drop a built one (#16051 review).
+        let edition = package.and_then(|package| package.get("edition"));
+        let modern_edition = edition
+            .and_then(toml::Value::as_str)
+            .is_some_and(|edition| edition != "2015");
+        if !modern_edition {
+            let legacy_names = manifest
+                .get("bin")
+                .and_then(toml::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|bin| bin.get("path").is_none())
+                .filter_map(|bin| bin.get("name").and_then(toml::Value::as_str))
+                .map(str::trim)
+                .filter(|name| !name.is_empty());
+            for name in legacy_names {
+                let mut inferred = vec![
+                    src.join("bin").join(format!("{name}.rs")),
+                    src.join("bin").join(name).join("main.rs"),
+                ];
+                if Some(name) == package_name {
+                    inferred.push(src.join("main.rs"));
+                }
+                if inferred
+                    .iter()
+                    .any(|candidate| root_present(workspace_root, candidate) != Some(false))
+                {
+                    continue;
+                }
+                for candidate in [
+                    src.join(format!("{name}.rs")),
+                    src.join("main.rs"),
+                    src.join("bin").join("main.rs"),
+                ] {
+                    let present = root_present(workspace_root, &candidate) == Some(true);
+                    roots.insert(candidate);
+                    if present {
+                        break;
+                    }
+                }
+            }
+        }
+    }
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
         .collect()
 }
 
+/// Whether the manifest itself leaves the package without a library or
+/// binary target (#15892 review): `autobins = false` with no `[[bin]]`, no
+/// `[lib]` table, and no discoverable `src/lib.rs`. Cargo then builds only
+/// test, bench and example targets, so a completed walk of those judges
+/// every file even though no production root was read. A package whose
+/// manifest names a production target it cannot read stays unjudged.
+fn manifest_rules_out_production(
+    workspace_root: &Path,
+    manifest: &toml::Value,
+    package_dir: &Path,
+) -> bool {
+    let package = manifest.get("package");
+    let disabled = |key: &str| {
+        package
+            .and_then(|package| package.get(key))
+            .and_then(toml::Value::as_bool)
+            == Some(false)
+    };
+    disabled("autobins")
+        && manifest.get("bin").is_none()
+        && manifest.get("lib").is_none()
+        && (disabled("autolib")
+            // Read through the same committed-source view as the walk; an
+            // unreadable `src/lib.rs` is not an absent one.
+            || matches!(
+                read_source(workspace_root, &package_dir.join("src").join("lib.rs")),
+                SourceRead::Absent
+            ))
+}
+
+/// Whether Cargo autodiscovers targets of one kind (`autobins`/`bin`,
+/// `autotests`/`test`, `autobenches`/`bench`, `autoexamples`/`example`).
+/// An explicit `auto* = true|false` decides. Unset, edition 2015 turns
+/// discovery off as soon as the manifest declares any target of that kind
+/// (#15877); a manifest without `edition` is edition 2015. An inherited or
+/// unreadable edition keeps discovery on, so an unknown edition never drops
+/// a root.
+pub(crate) fn discovers_targets(manifest: &toml::Value, auto_key: &str, section: &str) -> bool {
+    let package = manifest.get("package");
+    if let Some(explicit) = package
+        .and_then(|package| package.get(auto_key))
+        .and_then(toml::Value::as_bool)
+    {
+        return explicit;
+    }
+    let edition_2015 = match package.and_then(|package| package.get("edition")) {
+        None => true,
+        Some(edition) => edition.as_str() == Some("2015"),
+    };
+    let declares_kind = manifest
+        .get(section)
+        .and_then(toml::Value::as_array)
+        .is_some_and(|targets| !targets.is_empty());
+    !(edition_2015 && declares_kind)
+}
+
 /// Test, bench, example and build-script roots, declared and autodiscovered.
 fn evidence_roots(
+    workspace_root: &Path,
     manifest: &toml::Value,
     manifest_text: &str,
     package_dir: &Path,
@@ -782,25 +967,24 @@ fn evidence_roots(
     roots.extend(declared.benches);
     roots.extend(declared.build_script);
     collect_explicit_paths(manifest.get("example"), package_dir, &mut roots);
-    // `autotests = false` (and its bench and example twins) turns Cargo's
-    // discovery off: only declared targets build, and a declaration without
-    // `path` still defaults to `<dir>/<name>.rs` or `<dir>/<name>/main.rs`
-    // (#6965).
-    let package = manifest.get("package");
+    // `autotests = false` (and its bench and example twins), or edition 2015
+    // with a declared target of that kind, turns Cargo's discovery off:
+    // only declared targets build, and a declaration without `path` still
+    // defaults to `<dir>/<name>.rs` or `<dir>/<name>/main.rs` (#6965, #15877).
     for (dir, auto_key, section) in [
         ("tests", "autotests", "test"),
         ("benches", "autobenches", "bench"),
         ("examples", "autoexamples", "example"),
     ] {
         let dir = package_dir.join(dir);
-        let discovers = package
-            .and_then(|package| package.get(auto_key))
-            .and_then(toml::Value::as_bool)
-            != Some(false);
-        if discovers {
+        if discovers_targets(manifest, auto_key, section) {
             roots.extend(autodiscovered(&dir));
         } else {
-            roots.extend(named_default_roots(manifest.get(section), &dir));
+            roots.extend(named_default_roots(
+                workspace_root,
+                manifest.get(section),
+                &dir,
+            ));
         }
     }
     roots
@@ -811,9 +995,34 @@ fn evidence_roots(
 
 /// The default paths of declared targets that name no `path`:
 /// `<dir>/<name>.rs` and `<dir>/<name>/main.rs`. When both layouts exist
-/// on disk Cargo drops the target entirely (#6979 item 4), so neither path
-/// is rooted.
-fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<PathBuf> {
+/// on disk Cargo refuses the manifest ("multiple target files found",
+/// #6979 item 4); for test, bench and example roots this collector models
+/// that as neither path being rooted, which only withholds evidence.
+/// Both default layouts, `<dir>/<name>.rs` and `<dir>/<name>/main.rs`, of
+/// every declared target that names no `path`, whatever exists on disk.
+fn named_default_candidates(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<PathBuf> {
+    target_entries
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("path").is_none())
+        .filter_map(|entry| entry.get("name").and_then(toml::Value::as_str))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .flat_map(|name| {
+            [
+                dir.join(format!("{name}.rs")),
+                dir.join(name).join("main.rs"),
+            ]
+        })
+        .collect()
+}
+
+fn named_default_roots(
+    workspace_root: &Path,
+    target_entries: Option<&toml::Value>,
+    dir: &Path,
+) -> Vec<PathBuf> {
     let Some(entries) = target_entries.and_then(toml::Value::as_array) else {
         return Vec::new();
     };
@@ -826,21 +1035,34 @@ fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<
         .flat_map(|name| {
             let file = dir.join(format!("{name}.rs"));
             let directory = dir.join(name).join("main.rs");
-            let file_present = file.is_file();
-            let directory_present = directory.is_file();
-            if file_present && directory_present {
+            // Presence through the committed-source view, so a staged
+            // alternate layout cannot drop a committed target (#16051
+            // review). An unreadable layout is not proof of absence.
+            let file_present = root_present(workspace_root, &file);
+            let directory_present = root_present(workspace_root, &directory);
+            if file_present == Some(true) && directory_present == Some(true) {
                 return Vec::new();
             }
             let mut roots = Vec::new();
-            if file_present || !directory_present {
+            if !(file_present == Some(false) && directory_present == Some(true)) {
                 roots.push(file);
             }
-            if directory_present || !file_present {
+            if !(directory_present == Some(false) && file_present == Some(true)) {
                 roots.push(directory);
             }
             roots
         })
         .collect()
+}
+
+/// Whether a candidate target root exists in the committed-source view the
+/// walk reads: `None` when it cannot be read.
+fn root_present(workspace_root: &Path, file: &Path) -> Option<bool> {
+    match read_source(workspace_root, file) {
+        SourceRead::Text(_) => Some(true),
+        SourceRead::Absent => Some(false),
+        SourceRead::Unreadable => None,
+    }
 }
 
 /// Cargo's autodiscovery shapes under one directory: `<dir>/<name>.rs` and
@@ -866,8 +1088,10 @@ impl PackageWalk {
     /// directory holds no package manifest.
     fn new(workspace_root: &Path, package_dir: &Path) -> Option<Self> {
         let (manifest_text, manifest) = read_manifest(workspace_root, package_dir)?;
-        let production_roots = production_roots(&manifest, package_dir);
-        let evidence_roots = evidence_roots(&manifest, &manifest_text, package_dir);
+        let production_roots = production_roots(workspace_root, &manifest, package_dir);
+        let evidence_roots = evidence_roots(workspace_root, &manifest, &manifest_text, package_dir);
+        let production_root_read =
+            manifest_rules_out_production(workspace_root, &manifest, package_dir);
         let package_dir = lexical(&normalize(package_dir));
         Some(Self {
             queue: production_roots
@@ -887,7 +1111,7 @@ impl PackageWalk {
             visited: BTreeSet::new(),
             reached: BTreeMap::new(),
             production_roots,
-            production_root_read: false,
+            production_root_read,
             scans: BTreeMap::new(),
             read_ahead: BTreeMap::new(),
             pending_read_ahead_limit: MAX_PENDING_READ_AHEAD,
@@ -1126,7 +1350,8 @@ impl PackageWalk {
 
     /// Whether a completed walk proves every unreached file unreachable. A
     /// package with no readable library or binary root is not a tree this
-    /// walk can judge (a partial checkout, a manifest ahead of its sources).
+    /// walk can judge (a partial checkout, a manifest ahead of its sources),
+    /// unless its manifest rules out every library and binary target.
     fn proves_unreached(&self) -> bool {
         self.complete && self.production_root_read
     }
@@ -1242,7 +1467,7 @@ impl PackageWalk {
                 }
                 RustModuleTreeEdge::Path(target) => {
                     self.seen_load_edge = true;
-                    pending.push((lexical(&directory.join(target)), ChildAnchor::Both));
+                    pending.push((lexical(&directory.join(target)), ChildAnchor::Directory));
                 }
                 RustModuleTreeEdge::Include(target) => {
                     self.seen_load_edge = true;
@@ -1260,7 +1485,9 @@ impl PackageWalk {
                     // resolution, so the default targets are routes too.
                     let mut targets = candidates
                         .iter()
-                        .map(|candidate| (lexical(&directory.join(candidate)), ChildAnchor::Both))
+                        .map(|candidate| {
+                            (lexical(&directory.join(candidate)), ChildAnchor::Directory)
+                        })
                         .collect::<Vec<_>>();
                     let bases = if default_applies {
                         child_bases(&file, &directory, anchor)
@@ -1365,7 +1592,7 @@ fn child_bases(file: &Path, directory: &Path, anchor: ChildAnchor) -> Vec<PathBu
         ChildAnchor::Directory => vec![directory.to_path_buf()],
         ChildAnchor::Stem if is_mod_rs => vec![directory.to_path_buf()],
         ChildAnchor::Stem => vec![stem_dir],
-        ChildAnchor::Both | ChildAnchor::Included => vec![directory.to_path_buf(), stem_dir],
+        ChildAnchor::Included => vec![directory.to_path_buf(), stem_dir],
     }
 }
 
@@ -2054,6 +2281,46 @@ mod tests {
     }
 
     #[test]
+    fn name_only_target_layouts_are_judged_in_the_committed_view() -> Result<(), String> {
+        // #16051 review: a name-only `[[test]]` with both default layouts in
+        // the working tree is ambiguous there, but `HEAD` holds only
+        // `tests/smoke.rs`, so a committed-history walk keeps that root.
+        let root = fixture(
+            "committed-layouts",
+            &[
+                ("Cargo.toml", MANIFEST),
+                ("src/lib.rs", ""),
+                ("tests/smoke.rs", ""),
+                ("tests/smoke/main.rs", ""),
+            ],
+        )?;
+        let entries: toml::Value =
+            toml::from_str("test = [{ name = \"smoke\" }]").map_err(|error| error.to_string())?;
+        let tests = root.join("tests");
+        assert!(
+            named_default_roots(&root, entries.get("test"), &tests).is_empty(),
+            "both layouts in one snapshot are ambiguous"
+        );
+        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+            &root,
+            [
+                ("tests/smoke.rs", Some(b"".as_slice())),
+                ("tests/smoke/main.rs", None),
+            ],
+        );
+        let committed = crate::analysis::committed_source::with_overlay(
+            Some(std::sync::Arc::new(overlay)),
+            || named_default_roots(&root, entries.get("test"), &tests),
+        );
+        assert_eq!(
+            committed,
+            vec![tests.join("smoke.rs")],
+            "a worktree-only alternate layout keeps the committed root"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
     fn escaping_scan_reads_committed_files_missing_from_disk() -> Result<(), String> {
         // Re-review on #4556: at `HEAD`, `a/src/gen.rs` reaches `b`'s
         // undeclared file through `#[path]`; the working tree deleted it.
@@ -2289,6 +2556,9 @@ mod tests {
                 ("src/reached.rs", ""),
                 ("src/platform/unix_impl.rs", "mod inner;\n"),
                 ("src/platform/inner.rs", ""),
+                // A `#[path]` file is a directory owner: `mod inner;` never
+                // loads its stem-directory twin (#15877).
+                ("src/platform/unix_impl/inner.rs", ""),
                 // Default resolution when the `cfg_attr` does not apply.
                 ("src/sys.rs", ""),
                 // A plain `#[path]` always applies, so `mod dynamic;` never
@@ -2305,6 +2575,7 @@ mod tests {
             &[
                 "src/platform/unix_impl.rs",
                 "src/platform/inner.rs",
+                "src/platform/unix_impl/inner.rs",
                 "src/sys.rs",
                 "src/reached.rs",
                 "src/dynamic.rs",
@@ -2556,10 +2827,10 @@ mod tests {
         let files = wide_package_files(&[
             (
                 "tests/it.rs",
-                "#[path = \"../src/m00.rs\"]\nmod m00;\n#[path = \"helper.rs\"]\nmod helper;\n",
+                "#[path = \"../src/m00.rs\"]\nmod m00;\n#[path = \"support/helper.rs\"]\nmod helper;\n",
             ),
-            ("tests/helper.rs", "mod child;\n"),
-            ("tests/helper/child.rs", ""),
+            ("tests/support/helper.rs", "mod child;\n"),
+            ("tests/support/child.rs", ""),
         ]);
         let root = fixture("evidence-first-escape", &wide_package_refs(&files))?;
         let package = lexical(&normalize(&root));
@@ -2595,18 +2866,18 @@ mod tests {
             Some(Origin::Evidence)
         );
         assert_eq!(
-            leftover.find(&root, &[path("tests/helper/child.rs")]),
+            leftover.find(&root, &[path("tests/support/child.rs")]),
             Some(Origin::Evidence),
-            "fallback must keep the #[path] child's stem anchor"
+            "fallback must keep the #[path] child's directory anchor"
         );
         assert_eq!(
             leftover
                 .reached
-                .get(&path("tests/helper/child.rs"))
+                .get(&path("tests/support/child.rs"))
                 .copied(),
             baseline
                 .reached
-                .get(&path("tests/helper/child.rs"))
+                .get(&path("tests/support/child.rs"))
                 .copied()
         );
 
@@ -2614,7 +2885,7 @@ mod tests {
             &root,
             &[
                 "tests/it.rs",
-                "tests/helper/child.rs",
+                "tests/support/child.rs",
                 "src/orphan.rs",
                 "src/m00.rs",
             ],
@@ -2624,7 +2895,7 @@ mod tests {
             &[
                 "src/m00.rs",
                 "tests/it.rs",
-                "tests/helper/child.rs",
+                "tests/support/child.rs",
                 "src/orphan.rs",
             ],
         );

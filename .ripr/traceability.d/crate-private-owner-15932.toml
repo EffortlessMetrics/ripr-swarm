@@ -1,0 +1,14 @@
+# A function its crate does not export relates no integration test (#15932).
+[[extend]]
+id = "RIPR-SPEC-0172"
+tests = [
+  "crates/ripr/tests/crate_private_owner.rs::a_function_the_crate_does_not_export_relates_no_integration_test",
+  "crates/ripr/tests/crate_private_owner.rs::a_function_the_test_may_still_run_keeps_its_relation",
+  "crates/ripr/tests/crate_private_owner.rs::the_crate_s_own_test_still_relates",
+  "crates/ripr/tests/crate_private_owner.rs::a_test_named_after_an_unexported_function_is_not_related",
+  "crates/ripr/tests/crate_private_owner.rs::an_unexported_inherent_method_relates_no_integration_test",
+]
+code = [
+  "crates/ripr/src/analysis/classify/call_identity.rs::owner_is_private_to_its_crate",
+  "crates/ripr/src/analysis/classify/call_identity.rs::is_plain_integration_test",
+]

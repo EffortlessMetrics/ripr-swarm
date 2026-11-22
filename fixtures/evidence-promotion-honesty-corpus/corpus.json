@@ -148,10 +148,16 @@
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
       "cache_schema_version": "1.176",
       "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unasserted-predicate-boundary.json",
+      "cache_schema_version": "1.184",
+      "reason": "captured at 1.184 by 29f3917caa before the branch merged the 1.189 generation; the regeneration guard judges none of the fields that bump touched for this subject, so its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
     }
   ],
   "report_digest_exemptions": [],
   "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-rebound-let.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
@@ -202,10 +208,205 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json",
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unasserted-predicate-boundary.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-assert-eq-match-arms.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json"
   ],
   "cases": [
+    {
+      "id": "rust_repo_exposure_lib_test_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
+      "report_subject": "fixtures/rust_lib_test_false_skipped/input",
+      "vector": "skipped_library_unit_test_gives_no_repo_seam_reach",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::f",
+          "expression": "a + 2",
+          "grip_class": "ungripped",
+          "reach": "no"
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_test_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_test_false_skipped",
+      "vector": "lib_target_with_test_false_withholds_in_crate_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_bin_autobins_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_bin_autobins_false_skipped",
+      "vector": "autobins_false_without_bin_entry_withholds_main_unit_tests",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 0
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "rust_bin_explicit_path_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_bin_explicit_path_enabled",
+      "vector": "autobins_false_with_explicit_bin_path_credits_main_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_autolib_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_autolib_false_skipped",
+      "vector": "autolib_false_without_lib_entry_withholds_lib_unit_tests",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 0
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_explicit_path_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_explicit_path_enabled",
+      "vector": "autolib_false_with_explicit_lib_path_credits_lib_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_example_default_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_example_default_skipped",
+      "vector": "default_example_target_without_test_true_withholds_example_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_example_test_true_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_example_test_true_enabled",
+      "vector": "example_target_with_test_true_credits_example_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_review_card_unrelated_oracle",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-review-card-unrelated-oracle.json",
+      "vector": "unrelated_same_file_assertion_cannot_lend_an_oracle_or_test_to_a_changed_predicate",
+      "assertions": [
+        {
+          "type": "unobserved_review_card",
+          "seam_id": "e49f8011f2288c94"
+        },
+        {
+          "type": "unobserved_review_card",
+          "seam_id": "1077a643e5ccaff8"
+        }
+      ]
+    },
     {
       "id": "python_route_response_json_patch",
       "language": "python",
@@ -257,6 +458,87 @@
         {
           "type": "expected_finding_owner",
           "owner": "python:shop/app.py::price"
+        }
+      ]
+    },
+    {
+      "id": "python_boundary_star_args_rows",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_boundary_star_args_rows",
+      "vector": "star_args_rows_do_not_witness_a_boundary_flip",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:fmt/clamp.py::clamp"
+        }
+      ]
+    },
+    {
+      "id": "python_boundary_named_constant_rows",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_boundary_named_constant_rows",
+      "vector": "named_value_rows_do_not_witness_a_boundary_flip",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:fmt/tiers.py::tier"
+        }
+      ]
+    },
+    {
+      "id": "python_boundary_float_coercion",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_boundary_float_coercion",
+      "vector": "leading_float_coercion_reads_the_off_boundary_literal",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:fmt/stamp.py::seconds"
         }
       ]
     },
@@ -720,6 +1002,20 @@
       ]
     },
     {
+      "id": "python_membership_removed_member",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_membership_removed_member",
+      "vector": "literal_collection_member_removed_without_a_row_on_it_does_not_promote",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "weakly_exposed"},
+        {"type": "expected_finding_owner", "owner": "python:truthy/convert.py::to_bool"}
+      ]
+    },
+    {
       "id": "typescript_jest_only_literal_timeout_push_argument_length",
       "language": "typescript",
       "tier": "pure",
@@ -732,6 +1028,20 @@
         {"type": "must_not_promote"},
         {"type": "expected_class", "class": "weakly_exposed"},
         {"type": "expected_oracle", "kind": "exact_value", "strength": "strong"}
+      ]
+    },
+    {
+      "id": "typescript_vitest_unpinned_literal_arm_return",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_unpinned_literal_arm_return",
+      "vector": "exact_assertion_on_another_arm_does_not_pin_changed_arm",
+      "probe_family": "return_value",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "infection_unknown"}
       ]
     },
     {
@@ -2729,6 +3039,129 @@
         },
         {
           "type": "must_not_emit_repair_packet"
+        }
+      ]
+    },
+    {
+      "id": "python_patched_callee_reachable_unrevealed",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_patched_callee_reachable_h",
+      "vector": "change_inside_patched_callee_every_related_test_replaces_it_reached_but_unrevealed",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:src/subject.py::rate_for"
+        }
+      ]
+    },
+    {
+      "id": "python_reload_rebind_propagation_static_unknown",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_dynamic_namespace_reload",
+      "vector": "reload_rebind_built_to_reach_propagation_python_never_emits_propagation_unknown_so_static_unknown_is_the_honest_ceiling",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "python:shop/route.py::checkout"
+        }
+      ]
+    },
+    {
+      "id": "typescript_untaken_arm_reachable_unrevealed",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_untaken_arm_reachable_unrevealed",
+      "vector": "arm_no_test_input_enters_reached_but_unrevealed_never_weakly_exposed",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/price.ts::price"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        }
+      ]
+    },
+    {
+      "id": "typescript_floating_promise_propagation_static_unknown",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_floating_promise_static_unknown",
+      "vector": "floating_promise_assertion_built_to_reach_propagation_typescript_never_emits_propagation_unknown_so_static_unknown_is_the_honest_ceiling",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/settings.ts::f"
         }
       ]
     },
@@ -9129,7 +9562,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "maximum_class",
@@ -9200,6 +9633,64 @@
         {
           "type": "maximum_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_stubbed_namespace_owner_observes_the_stub",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_adversarial_stubbed_namespace_owner",
+      "vector": "owner_function_stubbed_on_its_module_object_in_a_hook",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_namespace_owner_call_through_spy_keeps_credit",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_namespace_owner_call_through_spy",
+      "vector": "call_through_spy_on_the_owner_control_keeps_credit",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
         }
       ]
     },
@@ -11752,6 +12243,72 @@
       ]
     },
     {
+      "id": "rust_trait_sibling_type_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_sibling_type_receiver",
+      "vector": "trait_dispatch_identity_sibling_type_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "square_area",
+          "file": "src/lib.rs",
+          "line": 20,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_sibling_type_other_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_sibling_type_other_receiver",
+      "vector": "trait_dispatch_identity_sibling_type_other_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "line_area",
+          "file": "src/lib.rs",
+          "line": 20,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
       "id": "rust_trait_default_overridden",
       "language": "rust",
       "tier": "pure",
@@ -13740,7 +14297,7 @@
     },
     {
       "id": "javascript_awaited_local_registration_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-local-root.json",
       "vector": "local_async_test_helper_does_not_execute_exact_assertion_callback",
@@ -13763,7 +14320,7 @@
     },
     {
       "id": "javascript_awaited_forged_require_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-forged-require.json",
       "vector": "awaited_commonjs_forged_require_does_not_execute_assertion_callback",
@@ -13786,7 +14343,7 @@
     },
     {
       "id": "javascript_awaited_rebound_runner_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-rebound-runner.json",
       "vector": "awaited_commonjs_rebound_runner_does_not_execute_assertion_callback",
@@ -15044,6 +15601,41 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_field_construction_alias_sibling_field_read_does_not_pin_changed_field",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_field_construction_alias_sibling_field",
+      "vector": "alias_sibling_field_read_does_not_pin_changed_field",
+      "control": "must_stay_weakly_exposed",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "keeps the verbose flag",
+          "file": "tests/config.test.ts",
+          "line": 3,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call",
+          "miss": "assertion_not_observing"
         }
       ]
     },
@@ -17592,7 +18184,6 @@
       "tier": "pure",
       "source_fixture": "fixtures/module_reach_cfg_comment_hidden",
       "vector": "cfg_hidden_by_a_comment_does_not_admit_a_gated_module_entry",
-      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"
@@ -17772,7 +18363,6 @@
       "tier": "pure",
       "source_fixture": "fixtures/module_reach_cfg_alt_reexport",
       "vector": "cfg_alternate_reexport_rebinds_the_module_path_away_from_the_changed_file",
-      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"
@@ -19342,6 +19932,42 @@
       ]
     },
     {
+      "id": "rust_predicate_constant_of_other_function",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_constant_of_other_function",
+      "vector": "constant_assertion_on_another_pure_function_credits_no_predicate_observation",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "smoke",
+          "file": "src/lib.rs",
+          "line": 18,
+          "kind": "unknown",
+          "strength": "none"
+        }
+      ]
+    },
+    {
       "id": "python_table_reflection_unconnected",
       "language": "python",
       "tier": "pure",
@@ -20755,6 +21381,54 @@
       ]
     },
     {
+      "id": "rust_computed_return_tail_crate_qualified_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_computed_return_tail_crate_qualified",
+      "vector": "own_crate_qualified_exact_pin_of_a_call_that_statically_reaches_the_changed_computed_tail",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_computed_return_tail_crate_rebound_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_computed_return_tail_crate_rebound",
+      "vector": "a_rebound_crate_name_cannot_make_a_qualified_pin_an_owner_call",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_added_disjunct_sibling_field",
       "language": "rust",
       "tier": "pure",
@@ -20857,6 +21531,78 @@
       "source_fixture": "fixtures/rust_predicate_appended_char_arm_old_input",
       "vector": "a_char_tail_return_sink_does_not_promote_an_original_arm_input",
       "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_return_value_name_only_comparison_tail_far_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_return_value_name_only_comparison_tail_far_input",
+      "vector": "a_name_only_comparison_tail_return_sink_does_not_promote_a_far_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_return_value_name_only_comparison_tail_far_input_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_return_value_name_only_comparison_tail_far_input",
+      "vector": "a_name_only_comparison_tail_does_not_promote_a_far_input_predicate",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_tail_if_path_arms_far_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_tail_if_path_arms_far_input",
+      "vector": "a_tail_if_path_arm_return_sink_does_not_promote_a_far_input",
+      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"
@@ -21019,6 +21765,44 @@
       ]
     },
     {
+      "id": "rust_bench_rejected_workspace",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_bench_rejected_workspace",
+      "vector": "unchanged_bench_test_in_package_rejected_by_enclosing_workspace",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" }
+      ]
+    },
+    {
+      "id": "rust_masked_comparison_return",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_masked_comparison_return",
+      "vector": "closed_boolean_gate_masks_changed_return",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "propagation_unknown"
+        }
+      ]
+    },
+    {
       "id": "typescript_boundary_literal_in_other_parameter",
       "language": "typescript",
       "tier": "pure",
@@ -21087,6 +21871,130 @@
         {
           "type": "expected_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_owner_value_masked_is_some",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_owner_value_masked_is_some",
+      "vector": "predicate_assertion_discards_owner_call_value_through_is_some",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "at_the_boundary",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "exact_value",
+          "strength": "weak",
+          "relation_reason": "direct_owner_call",
+          "miss": "observation_unconfirmed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_owner_value_masked_tuple_projection",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_owner_value_masked_tuple_projection",
+      "vector": "predicate_assertion_projects_tuple_element_other_than_owner_call",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "at_the_boundary",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "exact_value",
+          "strength": "weak",
+          "relation_reason": "direct_owner_call",
+          "miss": "observation_unconfirmed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_owner_value_observed_payload",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_owner_value_observed_payload",
+      "vector": "predicate_assertion_compares_variant_payload_holding_owner_call_value",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "at_the_boundary",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
         }
       ]
     }

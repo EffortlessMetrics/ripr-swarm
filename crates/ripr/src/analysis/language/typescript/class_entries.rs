@@ -196,8 +196,10 @@ fn class_entries_for(
                 class_member: Some(entry.method_kind),
                 decorated: None,
                 instance_factory: false,
+                instance_kind: TypeScriptInstanceKind::default(),
                 hops: 0,
                 cross_module: None,
+                closure: false,
             })
             .collect();
         entries.sort();

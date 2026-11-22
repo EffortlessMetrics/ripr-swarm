@@ -91,6 +91,90 @@ pub fn is_typescript_docs_site_path(path: &Path) -> bool {
         .any(|component| component.as_os_str().to_str() == Some("docs"))
 }
 
+/// Tools whose `<tool>.config.<ext>` file (and suffixed variants such as
+/// `vitest.config.e2e.ts`) configures a build, lint, format or test-runner
+/// process rather than shipping product behavior.
+const TYPESCRIPT_TOOL_CONFIG_STEMS: &[&str] = &[
+    "astro",
+    "ava",
+    "babel",
+    "commitlint",
+    "cypress",
+    "eslint",
+    "jest",
+    "lint-staged",
+    "next",
+    "nuxt",
+    "playwright",
+    "postcss",
+    "prettier",
+    "rolldown",
+    "rollup",
+    "rsbuild",
+    "rspack",
+    "stylelint",
+    "svelte",
+    "tailwind",
+    "tsdown",
+    "tsup",
+    "vite",
+    "vitest",
+    "webpack",
+];
+
+/// Tool config names that do not follow `<tool>.config.<ext>`: the
+/// `<tool>.conf.<ext>` runners, Vitest workspace files and script-form rc
+/// files. Each is matched as a whole-name prefix ending at a `.`.
+const TYPESCRIPT_TOOL_CONFIG_NAME_PREFIXES: &[&str] = &[
+    ".babelrc.",
+    ".eslintrc.",
+    ".mocharc.",
+    ".prettierrc.",
+    "karma.conf.",
+    "vitest.workspace.",
+    "wdio.conf.",
+];
+
+/// Whether a UTF-8 file name is a known tool configuration script.
+///
+/// `jest.config.ts`, `vitest.config.e2e.mts`, `.eslintrc.cjs` and
+/// `karma.conf.js` match. `config.ts`, `app.config.ts`, `jest.configuration.ts`,
+/// `jest.setup.ts` and `myjest.config.ts` are near-misses and stay ordinary
+/// source: only a listed tool name, as the whole stem before `.config.`, is a
+/// tool config.
+pub fn is_typescript_tool_config_name(name: &str) -> bool {
+    TYPESCRIPT_TOOL_CONFIG_STEMS.iter().any(|stem| {
+        name.strip_prefix(stem)
+            .is_some_and(|rest| rest.starts_with(".config."))
+    }) || TYPESCRIPT_TOOL_CONFIG_NAME_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
+/// Whether a changed TypeScript/JavaScript file is a tool configuration
+/// script (#15947).
+///
+/// A runner or bundler loads such a file; no test imports it, so a changed
+/// field of `jest.config.ts` would otherwise read as product code with no
+/// test path. Like the docs-site rule this refuses the file as a finding
+/// subject only: the workspace walk keeps reading it, because alias and
+/// runner detection consume its text. A config that carries real, tested
+/// logic opts back in with `[languages.typescript] handwritten_files`.
+pub fn is_typescript_tool_config_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(is_typescript_tool_config_name)
+}
+
+/// Whether a TypeScript/JavaScript file is refused as a finding subject while
+/// staying in the workspace walk: a docs-site file or a tool configuration
+/// script. The diff loop, the pipeline's admitted-diff measure and repo-mode
+/// selection share this one answer; each applies the `handwritten_files`
+/// opt-in itself.
+pub fn is_typescript_non_product_path(path: &Path) -> bool {
+    is_typescript_docs_site_path(path) || is_typescript_tool_config_path(path)
+}
+
 /// Path-shaped TypeScript compiler reference-output trees.
 fn is_typescript_reference_output_path(path: &Path) -> bool {
     TYPESCRIPT_REFERENCE_OUTPUT_DIR_PAIRS
@@ -350,9 +434,11 @@ pub const TYPESCRIPT_WORKSPACE_CONTAINERS: &[&str] = &["packages", "apps", "libs
 /// workspace container (`packages/*`, `apps/*`, `libs/*`, `libraries/*`):
 /// valibot keeps its sources in `library/`, remeda in `packages/remeda`.
 /// Each candidate directory is judged by the same presence-only markers as
-/// the root. Excluded, vendored and hidden directories never count, so a
-/// `node_modules` or `dist` tree cannot enable the adapter; `package.json`
-/// stays a non-marker (#10941).
+/// the root, and a container's package also by the package-led JavaScript
+/// rule (`detect_javascript_led_root`), which is how a JavaScript-only
+/// npm/yarn/pnpm workspace selects the adapter. Excluded, vendored and
+/// hidden directories never count, so a `node_modules` or `dist` tree cannot
+/// enable the adapter; `package.json` alone stays a non-marker (#10941).
 #[cfg(any(feature = "lang-typescript", test))]
 fn detect_nested_typescript_package(root: &Path) -> bool {
     child_directories(root).into_iter().any(|child| {
@@ -370,10 +456,14 @@ fn detect_nested_typescript_package(root: &Path) -> bool {
         if !is_source_dir && detect_typescript_package_root(&child, true) {
             return true;
         }
+        // A JavaScript workspace has no `tsconfig.json` and no `.ts` file:
+        // its packages are package-led roots (#11336), so each container
+        // child also gets that test. Only containers qualify; a `website/`
+        // or tooling directory with a manifest stays a non-marker (#10941).
         TYPESCRIPT_WORKSPACE_CONTAINERS.contains(&name)
-            && child_directories(&child)
-                .iter()
-                .any(|package| detect_typescript_package_root(package, true))
+            && child_directories(&child).iter().any(|package| {
+                detect_typescript_package_root(package, true) || detect_javascript_led_root(package)
+            })
     })
 }
 
@@ -665,6 +755,54 @@ mod tests {
                 "{name} is a near-miss"
             );
         }
+    }
+
+    #[test]
+    fn tool_config_scripts_are_non_product_but_near_misses_are_source() {
+        for path in [
+            "jest.config.ts",
+            "packages/core/vitest.config.mts",
+            "vitest.config.e2e.ts",
+            "vitest.workspace.ts",
+            "apps/web/next.config.js",
+            "lint-staged.config.mjs",
+            ".eslintrc.cjs",
+            ".mocharc.js",
+            "karma.conf.js",
+            "wdio.conf.ts",
+        ] {
+            assert!(
+                is_typescript_tool_config_path(Path::new(path)),
+                "{path} is a tool config"
+            );
+            assert!(
+                is_typescript_non_product_path(Path::new(path)),
+                "{path} is refused as a finding subject"
+            );
+        }
+        for path in [
+            "src/config.ts",
+            "src/app.config.ts",
+            "src/jest.configuration.ts",
+            "jest.setup.ts",
+            "src/myjest.config.ts",
+            "src/jest.ts",
+            "src/jest.config/loader.ts",
+            "src/eslintrc.ts",
+            "src/karma.conference.ts",
+        ] {
+            assert!(
+                !is_typescript_tool_config_path(Path::new(path)),
+                "{path} is ordinary source"
+            );
+            assert!(
+                !is_typescript_non_product_path(Path::new(path)),
+                "{path} stays a finding subject"
+            );
+        }
+        assert!(is_typescript_non_product_path(Path::new(
+            "packages/docs/theme/index.ts"
+        )));
     }
 
     #[test]
@@ -1019,6 +1157,53 @@ mod tests {
         );
         write(&root, "app/tsconfig.json")?;
         assert!(detect_typescript_project(&root), "child marker sanity");
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// A JavaScript-only workspace: the root manifest holds no source, each
+    /// package is a package-led root. Only a workspace container's package
+    /// counts, and only with source beside its manifest.
+    #[test]
+    fn javascript_workspace_packages_select_the_adapter() -> Result<(), String> {
+        let root = detection_root("js-workspace")?;
+        write(&root, "package.json")?;
+        write(&root, "packages/app/package.json")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "a package manifest with no source"
+        );
+        write(&root, "packages/tool/src/index.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "JavaScript source with no package manifest"
+        );
+        write(&root, "packages/app/node_modules/dep/index.js")?;
+        write(&root, "packages/app/dist/index.js")?;
+        write(&root, "packages/app/eslint.config.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "dependencies, build output and tooling config are not source"
+        );
+        write(&root, "website/package.json")?;
+        write(&root, "website/src/index.js")?;
+        write(&root, "tools/gen/package.json")?;
+        write(&root, "tools/gen/src/index.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "a package outside the workspace containers stays a non-marker"
+        );
+        write(&root, "packages/app/src/index.js")?;
+        assert!(
+            detect_typescript_project(&root),
+            "a container package with a manifest and JavaScript source"
+        );
+        std::fs::remove_dir_all(root.join("packages")).map_err(|err| err.to_string())?;
+        write(&root, "apps/web/package.json")?;
+        write(&root, "apps/web/index.mjs")?;
+        assert!(
+            detect_typescript_project(&root),
+            "every container name, source at the package root"
+        );
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 }

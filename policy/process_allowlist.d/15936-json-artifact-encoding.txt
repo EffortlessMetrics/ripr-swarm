@@ -1,0 +1,1 @@
+crates/ripr/tests/json_artifact_encoding.rs|Command::new|1|json-artifact-encoding|#15936: the integration control runs `git init`, `git add`, `git write-tree` and the built `ripr` binary in a private temp workspace through one helper. Direct argv spawns with no shell, each waited through `.output()`, and no network.

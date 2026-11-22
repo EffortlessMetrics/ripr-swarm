@@ -1,0 +1,20 @@
+{
+  "id": "rust_equal_arguments_swapped_arms_equal_value_at_the_asserted_input",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/invisible_change_equal_arguments_swapped_arms",
+  "vector": "boundary_input_returns_the_baseline_value_under_swapped_arms",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    }
+  ]
+}

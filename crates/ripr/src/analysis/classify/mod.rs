@@ -52,6 +52,7 @@ mod mask_pin;
 mod match_transfer;
 mod operand_pin;
 mod out_parameter;
+mod owner_baseline;
 mod owner_pin;
 mod owner_prelude;
 mod owner_shape;
@@ -101,7 +102,8 @@ pub(in crate::analysis) use binding_return_flow::{
 };
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, assertion_is_discriminating, has_same_test_boundary_oracle_pairing,
-    observed_owner_call_rows_on_line, same_test_pairing_missing_summary,
+    helper_argument_is_boundary_call, observed_owner_call_rows_on_line,
+    same_test_pairing_missing_summary, test_helper_call_arguments, unpaired_return_gate,
     wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
@@ -112,8 +114,8 @@ pub(in crate::analysis) use builder_override::{
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, bare_owner_call_settles_on_owner,
     bound_free_owner_calls, qualified_owner_calls_resolve, shared_owner_call_identity,
-    test_calls_only_a_local_value_item, test_calls_only_through_local_rival_module,
-    text_calls_owner,
+    test_call_settles_on_owner, test_calls_only_a_local_value_item,
+    test_calls_only_through_local_rival_module, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use compile_time_guard::constrained_by_compile_time_assertion;
@@ -131,7 +133,7 @@ pub(in crate::analysis) use decision::{
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::{
-    drop_is_plain_in_closed_sources, observes_returned_element_field,
+    drop_is_plain, drop_is_plain_in_closed_sources, observes_returned_element_field,
     returned_array_construction_plain, workspace_has_visible_non_plain_drop,
 };
 pub(in crate::analysis) use facade_reach::{
@@ -167,7 +169,7 @@ pub(in crate::analysis) use helper_transfer::{
     chain_forwards_return_to_observed_hops, chain_forwards_to_observed_hops,
     chain_passes_effect_target_to_observed_hops, helper_only_reach,
     hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
-    returned_ledger_caller_is_observed, selected_inherent_calls,
+    returned_ledger_caller_is_observed, selected_inherent_calls, single_tuple_field_type,
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
 pub(in crate::analysis) use implicit_call::{
@@ -191,6 +193,7 @@ pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names
 pub(in crate::analysis) use out_parameter::{
     assertion_out_parameter, expression_writes_parameter, file_shadows_buffer_types,
 };
+pub(in crate::analysis) use owner_baseline::{agreeing_inputs_infection, sole_line_owner_baseline};
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::SCAN_LOG;
 pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
@@ -202,7 +205,9 @@ pub(in crate::analysis) use owner_pin::{
     returned_closure_pin_required, targeted_free_call_reaches_owner, targeted_name_is_alias,
     targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
-pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
+pub(in crate::analysis) use owner_pin::{
+    FallibleCheckReceipt, derived_fields_compare_by_value, fallible_check_receipt,
+};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use owner_value_sink::{
     bool_field_assertion, owner_record_read_masked_anywhere, use_may_rebind_owner,
@@ -247,9 +252,10 @@ pub(in crate::analysis) use related_tests::{
     find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
     inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
-    owner_call_is_direct, owner_call_selects_generic_sibling, owner_call_text,
-    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
-    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
+    own_crate_qualified_owner_path, owner_call_is_direct, owner_call_selects_generic_sibling,
+    owner_call_text, owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name,
+    package_prefix, requires_inherent_receiver_identity, resolves_method_in_prefix,
+    test_calls_free_function,
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;

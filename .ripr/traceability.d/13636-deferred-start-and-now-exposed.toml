@@ -1,0 +1,17 @@
+# Registers the remaining #13636 editor items: a deferred-seam snapshot lists
+# the repair start inert as `seam_evidence_deferred` (RIPR-SPEC-0129), and the
+# analysis status names gaps a saved test turned `exposed` (RIPR-SPEC-0069).
+[[extend]]
+id = "RIPR-SPEC-0129"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh",
+  "crates/ripr/src/lsp/diagnostics.rs::seam_inventory_on_full_refresh_follows_the_inventory_gate",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0069"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::analysis_status_names_a_gap_that_became_exposed_since_the_previous_commit",
+  "crates/ripr/src/lsp/tests.rs::resolved_findings_require_the_same_root_and_a_current_gap_before",
+  "crates/ripr/src/lsp/backend.rs::exposed_preview_findings_are_not_disclosed_as_withheld",
+]

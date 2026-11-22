@@ -230,3 +230,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — boundary_pairing_sibling_owner (18)
+
+Reason:
+RIPR-SPEC-0186: the repair explanation identifies the missing exact boundary assertion when the fixture has no paired oracle (#15664).
+
+Command:
+`cargo xtask goldens bless boundary_pairing_sibling_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`

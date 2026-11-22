@@ -308,6 +308,38 @@ impl Counter {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum State {
+    Idle,
+    Running,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Event {
+    Start,
+    Fail,
+}
+
+pub struct Machine {
+    state: State,
+}
+
+impl Machine {
+    pub fn new() -> Self {
+        Machine { state: State::Idle }
+    }
+
+    pub fn step(&mut self, ev: Event) -> State {
+        self.state = match (self.state, ev) {
+            (State::Idle, Event::Start) => State::Running,
+            (State::Running, Event::Fail) => State::Failed,
+            (state, _) => state,
+        };
+        self.state
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +372,9 @@ enum Expect {
     /// As `StopsAtRiprTodo`, and the stub text holds this receiver line, so
     /// the run proves the constructor call compiled and ran before the todo.
     BuildsReceiver(&'static str),
+    /// As `StopsAtRiprTodo`, and the stub text holds this input value, so the
+    /// run proves the arm's pattern compiled as an argument (#8361).
+    WritesInput(&'static str),
     /// No stub; the refusal names this kind.
     Refused(&'static str),
 }
@@ -424,7 +459,11 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         // `impl<'a> Parser<'a>` with a `&mut self` method.
         ("end > start", Expect::StopsAtRiprTodo, Some("more_tests")),
         // `impl FromStr for Unit` returning `Result<Self, Self::Err>`.
-        ("\"m\" =>", Expect::StopsAtRiprTodo, Some("more_tests")),
+        (
+            "\"m\" =>",
+            Expect::WritesInput("\"m\";"),
+            Some("more_tests"),
+        ),
         // A field of the struct literal the owner returns.
         (
             "minor: self.minor + 1",
@@ -447,6 +486,11 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         (
             "sum > cap",
             Expect::BuildsReceiver("let subject: Ledger = Ledger::empty();"),
+        ),
+        // A match arm's own pattern names the event that reaches it.
+        (
+            "(State::Running, Event::Fail) =>",
+            Expect::WritesInput("Event::Fail;"),
         ),
         // `#[derive(Default)]` beside an inherent `default(hits)`.
         (
@@ -498,7 +542,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                     "{needle}: a refusal must not touch the file"
                 );
             }
-            Expect::StopsAtRiprTodo | Expect::BuildsReceiver(_) => {
+            Expect::StopsAtRiprTodo | Expect::BuildsReceiver(_) | Expect::WritesInput(_) => {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
@@ -517,6 +561,10 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                         !text.contains("that `"),
                         "{needle}: no receiver todo remains:\n{text}"
                     );
+                }
+                if let Expect::WritesInput(value) = expect {
+                    let text = document["text"].as_str().unwrap_or_default();
+                    assert!(text.contains(value), "{needle}: input `{value}`:\n{text}");
                 }
                 if fixture == FIXTURE_5471 {
                     // Two inline test modules: one is picked, not refused.
@@ -3276,6 +3324,8 @@ fn existing_target_scratch(
 /// `[[test]]` exists, so the file is not a registered target and no command is
 /// offered; edition 2018+ still auto-discovers, and `autotests = true` restores
 /// discovery in 2015. The human output says the file is not a registered target.
+/// #15877: Cargo never builds the undiscovered `tests/discount.rs`, so it is not
+/// a related test and the stub proposes a new file, which is equally unregistered.
 #[test]
 fn legacy_edition_discovery_fails_closed_and_controls_register() -> Result<(), String> {
     let other = "\n[[test]]\nname = \"other\"\npath = \"tests/other.rs\"\n";
@@ -3308,13 +3358,20 @@ fn legacy_edition_discovery_fails_closed_and_controls_register() -> Result<(), S
             let text = String::from_utf8_lossy(&out.stdout).to_string();
             assert!(
                 out.status.success()
-                    && text.contains("tests/discount.rs is not a registered cargo test target"),
+                    && text.contains(
+                        "tests/discount_boundary.rs is not a registered cargo test target"
+                    ),
                 "{edition}: {text}"
             );
         }
         let document = stub_json(root, "src/lib.rs:2")?;
         let case = format!("{edition} {tail}: {document}");
-        assert_eq!(document["placement"]["file"], "tests/discount.rs", "{case}");
+        let placed = if registered {
+            "tests/discount.rs"
+        } else {
+            "tests/discount_boundary.rs"
+        };
+        assert_eq!(document["placement"]["file"], placed, "{case}");
         if registered {
             let run = document["run_command"].as_str().ok_or(case.clone())?;
             assert!(run.contains("--test discount "), "{case}");

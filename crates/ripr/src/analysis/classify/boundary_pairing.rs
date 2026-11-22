@@ -25,10 +25,81 @@ use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 #[cfg(test)]
 use crate::value_origins::LocatedValueFact as ValueFact;
-use ra_ap_syntax::ast::HasArgList;
+use ra_ap_syntax::ast::{HasArgList, HasName};
 use ra_ap_syntax::{AstNode, ast};
 
 mod bound_result;
+
+/// A whole returned comparison with a sibling gate needs an observed call on
+/// which the old and new Boolean results differ. Read both results from the
+/// same asserted operands so another call cannot lend its input or oracle.
+pub(in crate::analysis) fn unpaired_return_gate(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    tests: &[&TestSummary],
+    index: &RustIndex,
+    admitted: impl Fn(&TestSummary, &OracleFact) -> bool,
+) -> Option<String> {
+    use super::owner_pin::short_circuit::ShortCircuitTail;
+    if probe.family != ProbeFamily::ReturnValue
+        || !(probe.expression.contains("&&") || probe.expression.contains("||"))
+    {
+        return None;
+    }
+    let after = ShortCircuitTail::parse(&owner.body, &probe.expression)?;
+    let before = after.with_chain(probe.before.as_deref()?)?;
+    let change = after.comparison_gate(&before)?;
+    let paired = tests.iter().any(|test| {
+        test.assertions.iter().any(|assertion| {
+            if !(test.start_line..=test.end_line).contains(&assertion.line)
+                || !admitted(test, assertion)
+                || !super::call_identity::boundary_owner_calls_resolve(
+                    index,
+                    owner,
+                    test,
+                    &assertion.text,
+                    assertion.line,
+                )
+            {
+                return false;
+            }
+            let bare = assertion_comparison_operands(&assertion.text).is_none();
+            asserted_result_operands(test, &assertion.text, owner)
+                .iter()
+                .any(|operand| {
+                    let bound = super::owner_pin::let_bound_owner_call(
+                        test,
+                        assertion,
+                        operand,
+                        "",
+                        &owner.name,
+                        true,
+                        bare,
+                    );
+                    let (call, line) = match bound {
+                        Some(call) => {
+                            // The initializer is a borrowed slice of this test's body.
+                            let offset = call.as_ptr() as usize - test.body.as_ptr() as usize;
+                            let line = test.start_line
+                                + test.body[..offset]
+                                    .bytes()
+                                    .filter(|ch| *ch == b'\n')
+                                    .count();
+                            (call, line)
+                        }
+                        None => (operand.as_str(), assertion.line),
+                    };
+                    super::owner_pin::is_whole_free_owner_call(call, &owner.name)
+                        && super::call_identity::boundary_owner_calls_resolve(
+                            index, owner, test, call, line,
+                        )
+                        && call_arguments(call, &owner.name)
+                            .is_some_and(|args| change.witnessed_by(test, &args, line, &owner.name))
+                })
+        })
+    });
+    (!paired).then(|| format!("Propagation unknown: no observed call establishes a changed return through the Boolean gate `{}`", change.gate_name))
+}
 
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
@@ -247,7 +318,7 @@ fn test_pairs_boundary_input_with_oracle(
             activation,
             scope,
             &calls_resolve,
-            assertion.line,
+            (assertion.line, None),
         );
         if !assertion_admitted(test, assertion)
             || !(assertion_is_discriminating(assertion) || owner_pinned(test, assertion))
@@ -658,7 +729,28 @@ fn whole_owner_call_operands(
     assertion_text: &str,
     owner: &FunctionSummary,
 ) -> Vec<Vec<String>> {
-    let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
+    asserted_result_operands(test, assertion_text, owner)
+        .iter()
+        .filter_map(|operand| {
+            let operand = operand.trim();
+            let lists = owner_call_argument_lists(operand, &owner.name);
+            let [(_, arguments)] = lists.as_slice() else {
+                return None;
+            };
+            (operand.starts_with(&format!("{}(", owner.name))
+                && delimited_contents_at(operand, owner.name.len())
+                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            .then(|| arguments.clone())
+        })
+        .collect()
+}
+
+fn asserted_result_operands(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &FunctionSummary,
+) -> Vec<String> {
+    match assertion_comparison_operands(assertion_text) {
         // An expected side that reaches the owner again compares the owner
         // with itself (`assert_eq!(pos(&[0]), pos(&[0]))`): nothing pairs.
         Some(compared) => {
@@ -688,21 +780,7 @@ fn whole_owner_call_operands(
                     .to_string(),
             ]
         }
-    };
-    operands
-        .iter()
-        .filter_map(|operand| {
-            let operand = operand.trim();
-            let lists = owner_call_argument_lists(operand, &owner.name);
-            let [(_, arguments)] = lists.as_slice() else {
-                return None;
-            };
-            (operand.starts_with(&format!("{}(", owner.name))
-                && delimited_contents_at(operand, owner.name.len())
-                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
-            .then(|| arguments.clone())
-        })
-        .collect()
+    }
 }
 
 /// Whether an activation value (`input == 10`, or a conjunction such as
@@ -731,7 +809,7 @@ pub(in crate::analysis) fn same_scalar_literal(fed: &str, literal: &str) -> bool
 
 /// `-?digits` with `_` separators and an optional integer type suffix,
 /// as its canonical digits; `None` for any other spelling.
-fn decimal_integer_value(text: &str) -> Option<String> {
+pub(in crate::analysis::classify) fn decimal_integer_value(text: &str) -> Option<String> {
     let (sign, rest) = text
         .strip_prefix('-')
         .map_or(("", text), |rest| ("-", rest));
@@ -1058,7 +1136,7 @@ fn boundary_bound_locals(
     activation: &ActivationEvidence,
     scope: super::argument_fold::FoldScope<'_>,
     calls_resolve: &dyn Fn(&str, usize) -> bool,
-    before_assertion_line: usize,
+    before: (usize, Option<usize>),
 ) -> Vec<String> {
     // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
     // does not keep the shadowed boundary result. A post-let mutation
@@ -1072,7 +1150,7 @@ fn boundary_bound_locals(
     // stays on the original line so a quoted boundary argument
     // (`gate("alpha")`) is still visible; mutation walks the mask.
     // Line-start `let` keeps an unmutated binding inside a block pairing.
-    // Mutations on or after `before_assertion_line` must not void an earlier
+    // Mutations after the observation must not void an earlier
     // assertion's valid pairing (#7042 item 1). Bindings are tracked per
     // brace depth so an inner block's mutation does not void an outer binding
     // (#7042 item 3).
@@ -1083,10 +1161,18 @@ fn boundary_bound_locals(
     let mut pending = String::new();
     for (offset, original_line) in test.body.lines().enumerate() {
         let line_number = test.start_line + offset;
-        if line_number > before_assertion_line {
+        if line_number > before.0 {
             break;
         }
         let masked_line = masked_lines.get(offset).copied().unwrap_or(original_line);
+        // A helper may share its line with an earlier reassignment or a
+        // later shadow. Stop at the actual call, keeping only its prefix.
+        let (original_line, masked_line) = match before {
+            (line, Some(column)) if line_number == line => {
+                (&original_line[..column], &masked_line[..column])
+            }
+            _ => (original_line, masked_line),
+        };
         let bound = let_binding_name(masked_line).and_then(|_| let_binding_name(original_line));
         if let Some(name) = bound.as_deref() {
             // Only this binding's initializer supplies its result. An
@@ -1338,6 +1424,119 @@ fn owner_call_activates_boundary(
     !result.block_tail
         && sites.len() == 1
         && activation_marks_boundary_call(activation, call, &test.file)
+}
+
+/// Eager helper call statements in the test itself. Keep the syntax node
+/// with its complete arguments so both the values and the observation
+/// position belong to this call, even when the invocation spans lines.
+pub(in crate::analysis) fn test_helper_call_arguments(
+    test: &TestSummary,
+    helper: &str,
+    index: &RustIndex,
+) -> Vec<(ast::CallExpr, Vec<String>)> {
+    let body = index
+        .source_syntax
+        .parse_fragment(&test.body)
+        .and_then(|parse| parse.tree().syntax().children().find_map(ast::Fn::cast))
+        .and_then(|function| function.body())
+        .and_then(|body| body.stmt_list());
+    let Some(body) = body else { return Vec::new() };
+    body.statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .chain(body.tail_expr())
+        .filter_map(|expression| match expression {
+            ast::Expr::CallExpr(call) if call.expr()?.syntax().text() == helper => {
+                let arguments = call
+                    .arg_list()?
+                    .args()
+                    .map(|arg| arg.syntax().text().to_string())
+                    .collect();
+                Some((call, arguments))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A test-local asserting helper can receive the owner result as a value
+/// (including a clone), or through an invoked zero-argument callback. Verify
+/// the input of this argument's own call, independently of other statements.
+pub(in crate::analysis) fn helper_argument_is_boundary_call(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    argument: &str,
+    helper_call: &ast::CallExpr,
+    activation: &ActivationEvidence,
+    index: &RustIndex,
+) -> bool {
+    let argument = argument.trim();
+    let expression = argument.strip_prefix("||").unwrap_or(argument).trim();
+    let expression = expression.strip_suffix(".clone()").unwrap_or(expression);
+    let scope = super::argument_fold::FoldScope::of_test(test, index);
+    let resolves = |text: &str, line| {
+        super::call_identity::boundary_owner_calls_resolve(index, owner, test, text, line)
+    };
+    let whole_owner_call = |text: &str| {
+        super::owner_pin::direct_call_name(text) == Some(owner.name.as_str())
+            || (owner.item.container == FunctionContainer::Free
+                && path_qualified_whole_call(text, &owner.name).is_some())
+    };
+    let start = helper_call.syntax().text_range().start();
+    let Some(prefix) = test.body.get(..usize::from(start)) else {
+        return false;
+    };
+    let line = test.start_line + prefix.bytes().filter(|byte| *byte == b'\n').count();
+    if argument_is_plain_identifier(expression) {
+        // Only declarations preceding the observation can shadow the
+        // line-start binding that boundary_bound_locals recognizes.
+        let Some(function) = helper_call.syntax().ancestors().find_map(ast::Fn::cast) else {
+            return false;
+        };
+        let preceding_bindings = function
+            .syntax()
+            .descendants()
+            .filter(|node| node != function.syntax())
+            .filter_map(|node| ast::AnyHasName::cast(node).and_then(|named| named.name()))
+            .filter(|name| name.syntax().text_range().end() <= start && name.text() == expression)
+            .count();
+        if preceding_bindings != 1 {
+            return false;
+        }
+        let column = prefix.rsplit('\n').next().map_or(0, str::len);
+        return boundary_bound_locals(
+            probe,
+            owner,
+            test,
+            activation,
+            scope,
+            &|binding, line| {
+                let initializer = binding
+                    .split_once('=')
+                    .map_or(binding, |(_, rhs)| rhs)
+                    .trim();
+                whole_owner_call(initializer)
+                    && resolves(initializer, line)
+                    && (line_owner_call_count(test, line, owner) <= 1
+                        || owner_call_sites(initializer, owner).iter().any(|args| {
+                            argument_list_activates_boundary(probe, owner, test, args, scope)
+                        }))
+            },
+            (line, Some(column)),
+        )
+        .iter()
+        .any(|name| name == expression);
+    }
+    if !whole_owner_call(expression) || !resolves(expression, line) {
+        return false;
+    }
+    let calls = owner_call_sites(expression, owner);
+    matches!(calls.as_slice(), [args] if argument_list_activates_boundary(
+        probe, owner, test, args, scope
+    ))
 }
 
 fn argument_list_activates_boundary(
@@ -4065,6 +4264,7 @@ mod tests {
 
     fn predicate_probe(expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::gate".to_string())),

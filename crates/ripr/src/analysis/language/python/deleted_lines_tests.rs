@@ -1844,6 +1844,209 @@ fn changed_raise_message_inside_brackets_is_not_exposed_by_a_return_assertion() 
     Ok(())
 }
 
+/// #16018: a literal keyword argument on a continuation line of a bracketed
+/// call takes the call's shape, as the same call has on one line. A changed
+/// `stacklevel=` of a statement-level `warnings.warn(` is a side effect the
+/// return assertion does not observe, so it is not `exposed` (werkzeug
+/// `Response.get_wsgi_headers`).
+#[test]
+fn literal_keyword_argument_line_takes_the_call_shape() -> Result<(), String> {
+    let test = "from src.cart import headers\n\n\ndef test_headers():\n    assert headers(\"x\") == {\"a\": \"x\"}\n";
+    let warning = "import warnings\n\n\ndef headers(env):\n    warnings.warn(\n        \"deprecated\",\n        DeprecationWarning,\n        stacklevel=3,\n    )\n    return {\"a\": env}\n";
+    let findings = analyze_with_test(
+        "warn-stacklevel",
+        warning,
+        test,
+        &[8],
+        vec![line(8, 8, "        stacklevel=2,")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 8)
+        .ok_or_else(|| format!("no finding on the keyword line: {findings:?}"))?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::SideEffect,
+        "{finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        crate::domain::ExposureClass::Exposed,
+        "a return assertion does not observe a warning argument: {finding:?}"
+    );
+
+    // Control: the same keyword line continuing `return build(` is part of
+    // the returned value.
+    let returning = "def build(limit):\n    return {\"a\": limit}\n\n\ndef headers(env):\n    return build(\n        limit=3,\n    )\n";
+    let findings = analyze_with_test(
+        "return-keyword",
+        returning,
+        test,
+        &[7],
+        vec![line(7, 7, "        limit=2,")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 7)
+        .ok_or_else(|| format!("no finding on the returned keyword: {findings:?}"))?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::ReturnValue,
+        "{finding:?}"
+    );
+
+    // Comments on the call's own lines, including after the closing `)`, do
+    // not hide the call.
+    let commented = "import warnings\n\n\ndef headers(env):\n    warnings.warn(  # old API\n        \"deprecated\",\n        DeprecationWarning,\n        stacklevel=3,  # caller's caller\n    )  # removed in 2.0\n    return {\"a\": env}\n";
+    let findings = analyze_with_test(
+        "warn-commented",
+        commented,
+        test,
+        &[8],
+        vec![line(8, 8, "        stacklevel=2,  # caller's caller")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 8)
+        .ok_or_else(|| format!("commented: no finding: {findings:?}"))?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::SideEffect,
+        "commented: {finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        crate::domain::ExposureClass::Exposed,
+        "commented: {finding:?}"
+    );
+
+    // A parameter default in a `def` header is not a call argument: another
+    // default's imported call does not put an import limit on it.
+    let defaults = "import os\n\n\ndef headers(\n    env,\n    limit=3,\n    base=os.getcwd(),\n):\n    return {\"a\": env, \"limit\": limit}\n";
+    let pinned = "from src.cart import headers\n\n\ndef test_headers():\n    assert headers(\"x\") == {\"a\": \"x\", \"limit\": 3}\n";
+    let findings = analyze_with_test(
+        "def-default",
+        defaults,
+        pinned,
+        &[6],
+        vec![line(6, 6, "    limit=2,")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 6)
+        .ok_or_else(|| format!("def default: no finding: {findings:?}"))?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(crate::domain::StaticLimitKind::MissingImportGraph),
+        "def default: {finding:?}"
+    );
+
+    // A keyword whose value is not a literal (`stacklevel=level`) or that
+    // carries a comparison (`strict=level > 2`) keeps the line's own shape.
+    for (label, new, old) in [
+        (
+            "name value",
+            "        stacklevel=level,",
+            "        stacklevel=depth,",
+        ),
+        (
+            "comparison",
+            "        stacklevel=level > 2,",
+            "        stacklevel=level > 1,",
+        ),
+    ] {
+        let source = format!(
+            "import warnings\n\n\ndef headers(env, level=2, depth=2):\n    warnings.warn(\n        \"deprecated\",\n        DeprecationWarning,\n{new}\n    )\n    return {{\"a\": env}}\n"
+        );
+        let findings = analyze_with_test(label, &source, test, &[8], vec![line(8, 8, old)])?;
+        let finding = findings
+            .iter()
+            .find(|finding| finding.probe.location.line == 8)
+            .ok_or_else(|| format!("{label}: no finding: {findings:?}"))?;
+        assert_eq!(
+            finding.probe.family,
+            crate::domain::ProbeFamily::Predicate,
+            "{label}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+const TO_BOOL_LINES: &str = "def to_bool(val):\n    if val in (\n        True,\n        \"yes\",\n        \"on\",\n    ):\n        return True\n    return False\n";
+
+fn to_bool_test(cases: &str) -> String {
+    format!(
+        "import pytest\n\nfrom src.cart import to_bool\n\n\n@pytest.mark.parametrize(\"val\", [{cases}])\ndef test_truthy(val):\n    assert to_bool(val) == True\n"
+    )
+}
+
+/// #15632: deleting the `"y",` line of a multi-line membership display is a
+/// removed-only line. It credits `exposed` only when a strong row passes
+/// `"y"`.
+#[test]
+fn a_deleted_membership_member_line_needs_a_row_on_the_member() -> Result<(), String> {
+    for (label, cases, expected) in [
+        (
+            "membership-missed",
+            "\"yes\", \"on\"",
+            crate::domain::ExposureClass::WeaklyExposed,
+        ),
+        (
+            "membership-hit",
+            "\"yes\", \"y\"",
+            crate::domain::ExposureClass::Exposed,
+        ),
+    ] {
+        let findings = analyze_with_test(
+            label,
+            TO_BOOL_LINES,
+            &to_bool_test(cases),
+            &[],
+            vec![line(5, 5, "        \"y\",")],
+        )?;
+        let finding = findings
+            .iter()
+            .find(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+            .ok_or_else(|| format!("no base-side record for the deleted member: {findings:?}"))?;
+        assert_eq!(finding.class, expected, "{label}: {finding:?}");
+    }
+    Ok(())
+}
+
+/// #15632: deleting two adjacent member lines (`"y",` and `"on",`) arrives
+/// as one removed line plus a fragment. Rows that pass both removed members
+/// keep `exposed`; a row on only one of them does not.
+#[test]
+fn deleting_two_adjacent_membership_member_lines_needs_a_row_on_each() -> Result<(), String> {
+    let source = "def to_bool(val):\n    if val in (\n        True,\n        \"yes\",\n    ):\n        return True\n    return False\n";
+    for (label, cases, expected) in [
+        (
+            "membership-run-missed",
+            "\"yes\", \"y\"",
+            crate::domain::ExposureClass::WeaklyExposed,
+        ),
+        (
+            "membership-run-hit",
+            "\"yes\", \"y\", \"on\"",
+            crate::domain::ExposureClass::Exposed,
+        ),
+    ] {
+        let findings = analyze_with_test(
+            label,
+            source,
+            &to_bool_test(cases),
+            &[],
+            vec![line(5, 5, "        \"y\","), line(6, 5, "        \"on\",")],
+        )?;
+        let finding = findings
+            .iter()
+            .find(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+            .ok_or_else(|| format!("no base-side record for the deleted members: {findings:?}"))?;
+        assert_eq!(finding.class, expected, "{label}: {finding:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn changed_string_after_explicit_join_matches_parenthesized_value() -> Result<(), String> {
     let shape = |first: &str, close: &str, original: &str| {
@@ -1927,5 +2130,162 @@ fn explicit_join_lookalikes_and_standalone_strings_stay_quiet() -> Result<(), St
         )?;
         assert!(findings.is_empty(), "{source}: {findings:?}");
     }
+    Ok(())
+}
+
+const CAP_TEST_PY: &str = "from src.cart import capped_total\n\n\ndef test_capped_total_stops_at_the_cap():\n    assert capped_total(150, 100) == 100\n    assert capped_total(50, 100) == 50\n";
+
+/// Order-free comparison: the adapter's finding order is not the claim.
+fn sorted(mut texts: Vec<String>) -> Vec<String> {
+    texts.sort();
+    texts
+}
+
+/// The candidate-side findings as (line, trimmed expression).
+fn candidate_side(findings: &[Finding]) -> Vec<(usize, String)> {
+    findings
+        .iter()
+        .filter(|finding| finding.source_currentness == SourceCurrentness::CandidateCurrent)
+        .map(|finding| {
+            (
+                finding.probe.location.line,
+                finding.probe.expression.trim().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Code replaced by a comment was deleted. The diff pairs the comment with
+/// the removed guard; reading the pair as an edit reported the comment text
+/// as a changed predicate and graded it `exposed` (click f67c2bb replay).
+/// The guard and its body are base-side records naming the removed code, as
+/// they are when nothing is added, and the comment is no finding at all.
+#[test]
+fn code_replaced_by_a_comment_is_base_side_evidence_naming_the_code() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # The cap moved to the caller.\n\n    return result\n";
+    let removed = || {
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+        ]
+    };
+    let findings = analyze_with_test("comment-for-code", source, CAP_TEST_PY, &[3], removed())?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        vec!["if total > cap:".to_string(), "result = cap".to_string()],
+        "{findings:?}"
+    );
+    assert_base_side_shape(&findings, "if total > cap:")?;
+    // The same deletion with no comment added reads the same.
+    let bare = "def capped_total(total, cap):\n    result = total\n\n    return result\n";
+    let pure = analyze_with_test("comment-for-code-pure", bare, CAP_TEST_PY, &[], removed())?;
+    let classes = |findings: &[Finding]| {
+        sorted(
+            findings
+                .iter()
+                .map(|finding| {
+                    format!("{} => {:?}", finding.probe.expression.trim(), finding.class)
+                })
+                .collect(),
+        )
+    };
+    assert_eq!(classes(&findings), classes(&pure));
+    Ok(())
+}
+
+/// A blank line and a comment beside an added import hold no code either.
+#[test]
+fn code_replaced_by_a_comment_and_an_import_is_base_side_evidence() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Imported late.\n    import textwrap\n\n    return result\n";
+    let findings = analyze_with_test(
+        "comment-and-import-for-code",
+        source,
+        CAP_TEST_PY,
+        &[3, 4],
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+        ],
+    )?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        vec!["if total > cap:".to_string(), "result = cap".to_string()],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A `#` line inside a multi-line string is content. It replaced the old
+/// content line, so the pair stays an edit on the candidate side.
+#[test]
+fn hash_line_inside_a_multi_line_string_keeps_its_pairing() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    note = \"\"\"\n    # capped\n    \"\"\"\n    return min(total, cap), note\n";
+    let findings = analyze_with_test(
+        "hash-in-string",
+        source,
+        CAP_TEST_PY,
+        &[3],
+        vec![line(3, 3, "    uncapped")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        candidate_side(&findings),
+        vec![(3, "# capped".to_string())],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// The continuation rows of a parenthesized import are part of the import,
+/// so a comment and a wrapped import that replace code hold no code.
+#[test]
+fn code_replaced_by_a_comment_and_a_wrapped_import_is_base_side_evidence() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Loaded late.\n    from textwrap import (\n        dedent,\n    )\n    return result\n";
+    let removed = || {
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+            line(5, 3, "    if result < 0:"),
+            line(6, 3, "        result = 0"),
+        ]
+    };
+    let findings = analyze_with_test(
+        "comment-and-wrapped-import-for-code",
+        source,
+        CAP_TEST_PY,
+        &[3, 4, 5, 6],
+        removed(),
+    )?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    // The same deletion with nothing added records the same removed code.
+    let bare = "def capped_total(total, cap):\n    result = total\n    return result\n";
+    let pure = analyze_with_test("wrapped-import-pure", bare, CAP_TEST_PY, &[], removed())?;
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        sorted(base_side_texts(&pure)),
+        "{findings:?}"
+    );
+    assert!(
+        base_side_texts(&findings).contains(&"if total > cap:".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A continuation row of a wrapped import that replaces one re-points a
+/// name: the pair stays an edit and the old row is no deletion.
+#[test]
+fn wrapped_import_row_replacing_a_row_keeps_its_pairing() -> Result<(), String> {
+    let source = "from textwrap import (\n    indent,\n)\n\n\ndef capped_total(total, cap):\n    return min(total, cap)\n";
+    let findings = analyze_with_test(
+        "wrapped-import-row-edit",
+        source,
+        CAP_TEST_PY,
+        &[2],
+        vec![line(2, 2, "    dedent,")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
     Ok(())
 }

@@ -41,6 +41,11 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_write_options(args)?;
+    // #15249: an explicit `--root` that is not a directory is the shared root
+    // refusal, before the git HEAD lookup or any receipt write.
+    if let Some(root) = opts.root.as_deref() {
+        crate::cli::commands_context::ensure_command_root_dir(root, "receipt write")?;
+    }
     // Receipts land under `target/ripr/receipts`, never the cache, so an
     // explicit `RIPR_CACHE_DIR` must not waive the link check, and the default
     // path is cwd-relative when `--root` is omitted (#11477).
@@ -379,7 +384,8 @@ Options:
                         alongside --current-head, the writer resolves the actual
                         git rev-parse HEAD and rejects if the caller-provided
                         sha does not match. Without --root, --current-head is
-                        format-checked only.
+                        compared against the HEAD of the repository in the
+                        current directory.
   --out PATH            Write receipt JSON to this path. When omitted, writes to
                         target/ripr/receipts/<canonical_gap_id>.json with
                         filename-unsafe characters (`:`, etc.) percent-encoded

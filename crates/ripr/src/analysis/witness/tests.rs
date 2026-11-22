@@ -132,6 +132,7 @@ impl FindingSpec {
                 normalized_discriminator: self.discriminator.to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing".to_string()),
                 location: SourceLocation::new("src/pricing.rs", self.line, 5),
                 owner: Some(SymbolId(self.owner.to_string())),
@@ -238,6 +239,7 @@ impl SeamSpec {
         with_target: bool,
     ) -> Self {
         self.related.push(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 10,

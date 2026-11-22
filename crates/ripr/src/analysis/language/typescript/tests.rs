@@ -142,8 +142,10 @@ pub(super) fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -215,8 +217,10 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -274,8 +278,10 @@ pub(super) fn direct_test_with_assertion(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -327,8 +333,10 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -1897,8 +1905,10 @@ fn find_related_tests_matches_by_call_name() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
@@ -1923,8 +1933,10 @@ fn find_related_tests_matches_by_call_name() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
@@ -1978,8 +1990,10 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -3784,8 +3798,10 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -3840,8 +3856,10 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
@@ -3865,8 +3883,10 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
@@ -4119,8 +4139,10 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -4524,8 +4546,10 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -4616,8 +4640,10 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
@@ -4641,8 +4667,10 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
@@ -5478,8 +5506,10 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -5579,8 +5609,10 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -7851,8 +7883,10 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
@@ -7882,8 +7916,10 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             scope_bindings: Default::default(),
             identity_helpers_in_file: Default::default(),
             default_member_only_locals_in_file: Default::default(),
+            barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),
@@ -8091,8 +8127,10 @@ fn mock_paths_projection_matches_reference_loop_in_order() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -8215,8 +8253,10 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -8275,8 +8315,10 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -8336,8 +8378,10 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -8438,8 +8482,10 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -8589,8 +8635,10 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -8704,8 +8752,10 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -8974,8 +9024,10 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -9621,8 +9673,10 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -9711,8 +9765,10 @@ fn named_limitation_dynamic_assertion_not_emitted_for_other_family_assertion() -
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -9785,8 +9841,10 @@ fn named_limitation_dynamic_assertion_emitted_for_error_family_assertion_on_erro
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -9856,8 +9914,10 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -9943,8 +10003,10 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10136,8 +10198,10 @@ fn package_local_filter_selects_same_package_test() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10236,8 +10300,10 @@ fn package_local_filter_rejects_cross_package_test() {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10290,8 +10356,10 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10365,8 +10433,10 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10602,8 +10672,10 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10628,8 +10700,10 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10712,8 +10786,10 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10855,8 +10931,10 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -10973,8 +11051,10 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11089,8 +11169,10 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11198,8 +11280,10 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11307,8 +11391,10 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11414,8 +11500,10 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11521,8 +11609,10 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11649,8 +11739,10 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11757,8 +11849,10 @@ fn ts_sideeffect_imported_callee_observation_stays_exposed() -> Result<(), Strin
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11873,8 +11967,10 @@ fn ts_sideeffect_compound_foreign_and_channel_observation_stays_exposed() -> Res
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -11983,8 +12079,10 @@ fn ts_sideeffect_unrelated_strong_assertion_downgrades() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -12093,8 +12191,10 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -12201,8 +12301,10 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -12295,6 +12397,235 @@ fn ts_fieldconstruction_sibling_field_read_downgrades() -> Result<(), String> {
     assert!(
         all_text.contains("propagation_unknown"),
         "expected propagation_unknown in missing, got: {all_text:?}"
+    );
+    Ok(())
+}
+
+/// #14856: the alias form of #14814. `const cfg = buildConfig()` puts the
+/// owner call in a local, so the assertion `cfg.verbose` never names the
+/// owner call; a read of the sibling field through that alias still cannot
+/// witness the `retries` change and must downgrade to `weakly_exposed`.
+#[test]
+fn ts_fieldconstruction_alias_sibling_field_read_downgrades() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg.verbose).toBe(false); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "an alias sibling-field read must not read as exposed, got {:?}",
+        finding.class
+    );
+    // The downgrade must be affirmative, like the direct form: the row
+    // asserts, but not on the changed value, not merely unconfirmed.
+    assert_eq!(
+        finding.related_tests.first().map(|row| row.miss),
+        Some(Some(crate::domain::RelatedTestMiss::AssertionNotObserving)),
+        "an alias sibling-field read must be affirmatively not observing, rows: {:?}",
+        finding.related_tests
+    );
+    Ok(())
+}
+
+/// #14856 control: the changed field through the same alias stays
+/// `exposed`. A fix that downgrades both is over-broad.
+#[test]
+fn ts_fieldconstruction_alias_changed_field_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"retries\", () => { const cfg = buildConfig(); expect(cfg.retries).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "the changed field read through an alias must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #14856: the bracket and optional-chain forms of the alias sibling read
+/// downgrade affirmatively too, like the dotted form.
+#[test]
+fn ts_fieldconstruction_alias_bracket_and_optional_sibling_reads_downgrade() -> Result<(), String> {
+    for test_src in [
+        "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg[\"verbose\"]).toBe(false); });\n",
+        "import { buildConfig } from \"./owner\";\ntest(\"verbose flag\", () => { const cfg = buildConfig(); expect(cfg?.verbose).toBe(false); });\n",
+    ] {
+        let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+        let owners = extract_owners(Path::new("owner.ts"), owner_src);
+        let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+        let finding = classify_change_with_alias_state(
+            Path::new("owner.ts"),
+            3,
+            "  return { retries: 5, verbose: false };",
+            Some("  return { retries: 3, verbose: false };"),
+            &owners,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            None,
+        )
+        .ok_or_else(|| "expected a finding".to_string())?;
+        assert!(
+            matches!(finding.class, ExposureClass::WeaklyExposed),
+            "an alias bracket/optional sibling read must not read as exposed, got {:?} for {test_src:?}",
+            finding.class
+        );
+        assert_eq!(
+            finding.related_tests.first().map(|row| row.miss),
+            Some(Some(crate::domain::RelatedTestMiss::AssertionNotObserving)),
+            "an alias bracket/optional sibling read must be affirmatively not observing for {test_src:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #14856 should-stay controls: a whole-object assertion on the alias pins
+/// every field and stays `exposed`; a sibling read on a FOREIGN local stays
+/// unexposed without the alias guard needing to claim it.
+#[test]
+fn ts_fieldconstruction_alias_whole_object_and_foreign_local_stay() -> Result<(), String> {
+    let owner_src = "export interface C { retries: number; verbose: boolean }\nexport function buildConfig(): C {\n  return { retries: 3, verbose: false };\n}\n";
+    let whole_src = "import { buildConfig } from \"./owner\";\ntest(\"whole\", () => { const cfg = buildConfig(); expect(cfg).toEqual({ retries: 5, verbose: false }); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), whole_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a whole-object assertion on the alias must stay exposed, got {:?}",
+        finding.class
+    );
+
+    let foreign_src = "import { buildConfig } from \"./owner\";\ntest(\"foreign\", () => { buildConfig(); const other = { retries: 3, verbose: false }; expect(other.verbose).toBe(false); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), foreign_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        3,
+        "  return { retries: 5, verbose: false };",
+        Some("  return { retries: 3, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        !matches!(finding.class, ExposureClass::Exposed),
+        "a foreign local read must not read as exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15875 review: a local bound to a PROJECTION of the owner result
+/// (`const retries = buildConfig(5).retries`) holds the changed field
+/// itself, not the whole result. A read inside it (`retries.limit`)
+/// observes the change and must stay `exposed`; the sibling guard must
+/// not treat the projected alias as a whole-result alias.
+#[test]
+fn ts_fieldconstruction_projected_alias_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function buildConfig(limit: number) {\n  return { retries: { limit: 3 }, verbose: false };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"retries limit\", () => { const retries = buildConfig(5).retries; expect(retries.limit).toBe(5); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return { retries: { limit: limit }, verbose: false };",
+        Some("  return { retries: { limit: 3 }, verbose: false };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a read inside a projected alias of the changed field must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15875 review: the changed field can select the asserted value from
+/// inside a computed index (`cfg.items[cfg.selectedIndex]`). The alias
+/// member check must see `selectedIndex` inside the brackets; the
+/// sibling guard must not downgrade the assertion.
+#[test]
+fn ts_fieldconstruction_alias_index_read_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function buildConfig(selectedIndex: number) {\n  return { selectedIndex: 0, items: [{ label: \"first\" }, { label: \"second\" }] };\n}\n";
+    let test_src = "import { buildConfig } from \"./owner\";\ntest(\"selected label\", () => { const cfg = buildConfig(1); expect(cfg.items[cfg.selectedIndex].label).toBe(\"second\"); });\n";
+
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return { selectedIndex: selectedIndex, items: [{ label: \"first\" }, { label: \"second\" }] };",
+        Some("  return { selectedIndex: 0, items: [{ label: \"first\" }, { label: \"second\" }] };"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "a changed field read inside a computed index must stay exposed, got {:?}",
+        finding.class
     );
     Ok(())
 }
@@ -12586,6 +12917,368 @@ fn ts_fieldconstruction_changed_field_read_stays_exposed() -> Result<(), String>
     assert!(
         matches!(finding.class, ExposureClass::Exposed),
         "the changed field read by name must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285: `??` -> `||` differs only for a falsy non-nullish operand
+/// (`""`, `0`, `false`). A test that only supplies `"-"` passes on both
+/// versions, so it must read `weakly_exposed`, not `exposed`.
+#[test]
+fn ts_input_class_nullish_to_or_without_falsy_input_downgrades() -> Result<(), String> {
+    let owner_src = "export function joinWords(words: string[], delimiter?: string): string {\n  return words.join(delimiter ?? \" \");\n}\n";
+    let test_src = "import { joinWords } from \"./owner\";\ntest(\"dash\", () => { expect(joinWords([\"a\", \"b\"], \"-\")).toBe(\"a-b\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return words.join(delimiter || \" \");",
+        Some("  return words.join(delimiter ?? \" \");"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "?? -> || with no falsy input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control: a test supplying the falsy class (`""`) discriminates
+/// `??` from `||`, so it stays `exposed`.
+#[test]
+fn ts_input_class_nullish_to_or_with_falsy_input_stays_exposed() -> Result<(), String> {
+    let owner_src = "export function joinWords(words: string[], delimiter?: string): string {\n  return words.join(delimiter ?? \" \");\n}\n";
+    let test_src = "import { joinWords } from \"./owner\";\ntest(\"empty\", () => { expect(joinWords([\"a\", \"b\"], \"\")).toBe(\"ab\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return words.join(delimiter || \" \");",
+        Some("  return words.join(delimiter ?? \" \");"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "?? -> || with an empty-string input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285: dropping `.trim()` differs only for whitespace-padded input.
+/// A test with only unpadded input must read `weakly_exposed`.
+#[test]
+fn ts_input_class_dropped_trim_without_padded_input_downgrades() -> Result<(), String> {
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"plain\", () => { expect(slugify(\"Hello World\")).toBe(\"hello world\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "dropped .trim() with no padded input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control: a padded input discriminates a dropped `.trim()`.
+#[test]
+fn ts_input_class_dropped_trim_with_padded_input_stays_exposed() -> Result<(), String> {
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"padded\", () => { expect(slugify(\"  Hello World  \")).toBe(\"hello world\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "dropped .trim() with a padded input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 control (method owner): a padded argument supplied through an
+/// instance receiver (`new TokenValidator(...)` then
+/// `validator.validate(" abc ")`) witnesses the added `.trim()`, so the
+/// finding stays `exposed`. Mirrors
+/// `typescript_same_method_owner_identity_positive`, which must never lose
+/// `exposed`.
+#[test]
+fn ts_input_class_trim_on_method_with_padded_instance_input_stays_exposed() -> Result<(), String> {
+    let owner_src = "export class TokenValidator {\n  private valid: Set<string>;\n  constructor(valid: string[]) { this.valid = new Set(valid); }\n  validate(token: string): boolean {\n    return this.valid.has(token.trim());\n  }\n}\n";
+    let test_src = "import { TokenValidator } from \"./owner\";\ntest(\"padded\", () => { const validator = new TokenValidator([\"abc\"]); expect(validator.validate(\" abc \")).toBe(true); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        5,
+        "    return this.valid.has(token.trim());",
+        Some("    return this.valid.has(token);"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "padded instance input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285 (method owner): the same method change with only an unpadded
+/// instance input must read `weakly_exposed`.
+#[test]
+fn ts_input_class_trim_on_method_without_padded_input_downgrades() -> Result<(), String> {
+    let owner_src = "export class TokenValidator {\n  private valid: Set<string>;\n  constructor(valid: string[]) { this.valid = new Set(valid); }\n  validate(token: string): boolean {\n    return this.valid.has(token.trim());\n  }\n}\n";
+    let test_src = "import { TokenValidator } from \"./owner\";\ntest(\"plain\", () => { const validator = new TokenValidator([\"abc\"]); expect(validator.validate(\"abc\")).toBe(true); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        5,
+        "    return this.valid.has(token.trim());",
+        Some("    return this.valid.has(token);"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "unpadded instance input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+/// #15285: a changed destructured default differs only when the field is
+/// omitted. A test that always supplies the field cannot discriminate it,
+/// so it must not read `exposed`. (On this shape the changed line is not
+/// itself a return sink, so the pre-existing observation guard already
+/// caps it; the input-class guard keeps that cap if credit ever reaches
+/// the `Exposed` branch.)
+#[test]
+fn ts_input_class_later_trim_edit_without_padded_input_downgrades() -> Result<(), String> {
+    // An unchanged `.trim()` earlier in the line must not hide the edited
+    // one: `a.trim() + text.trim()` -> `a.trim() + text` differs only for
+    // padded `text`.
+    let owner_src = "export function label(a: string, text: string): string {\n  return a.trim() + text.trim();\n}\n";
+    let test_src = "import { label } from \"./owner\";\ntest(\"plain\", () => { expect(label(\"x\", \"Hello\")).toBe(\"xHello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return a.trim() + text;",
+        Some("  return a.trim() + text.trim();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "later .trim() edit with no padded input must read weakly_exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_optional_trim_with_null_input_stays_exposed() -> Result<(), String> {
+    // `text?.trim()` -> `text` also differs for `null` (old `undefined`,
+    // new `null`), so a null-supplying test discriminates it.
+    let owner_src = "export function show(text?: string | null): string {\n  return text?.trim() ?? \"none\";\n}\n";
+    let test_src = "import { show } from \"./owner\";\ntest(\"null\", () => { expect(show(null)).toBe(\"none\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text ?? \"none\";",
+        Some("  return text?.trim() ?? \"none\";"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "?.trim() removal with a null input must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_escaped_padding_stays_exposed() -> Result<(), String> {
+    // Padding written as an escape (`\t`) discriminates a dropped `.trim()`.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"tab\", () => { expect(slugify(\"\\tHello\")).toBe(\"hello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "escaped padding must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_unicode_escape_padding_stays_exposed() -> Result<(), String> {
+    // Padding written as a unicode escape in the source literal
+    // (`"\\u0020Hello"`) discriminates a dropped `.trim()`.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"u\", () => { expect(slugify(\"\\u0020Hello\")).toBe(\"hello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "unicode-escaped padding must stay exposed, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_trim_with_escaped_backslash_not_padded_downgrades() -> Result<(), String> {
+    // A literal backslash followed by `t` (`"\\\\tHello"` in source) is
+    // not padding: the escaped backslash consumes the pair, so no test
+    // supplies the whitespace class and the finding downgrades.
+    let owner_src =
+        "export function slugify(text: string): string {\n  return text.trim().toLowerCase();\n}\n";
+    let test_src = "import { slugify } from \"./owner\";\ntest(\"bs\", () => { expect(slugify(\"\\\\tHello\")).toBe(\"\\\\thello\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  return text.toLowerCase();",
+        Some("  return text.trim().toLowerCase();"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "escaped backslash must not count as padding, got {:?}",
+        finding.class
+    );
+    Ok(())
+}
+
+#[test]
+fn ts_input_class_destructured_default_with_supplied_field_not_exposed() -> Result<(), String> {
+    let owner_src = "export function greet(options: { name: string; punct?: string }): string {\n  const { name, punct = \"!\" } = options;\n  return name + punct;\n}\n";
+    let test_src = "import { greet } from \"./owner\";\ntest(\"supplied\", () => { expect(greet({ name: \"a\", punct: \"!\" })).toBe(\"a!\"); });\n";
+    let owners = extract_owners(Path::new("owner.ts"), owner_src);
+    let tests = extract_tests(Path::new("owner.test.ts"), test_src);
+    let finding = classify_change_with_alias_state(
+        Path::new("owner.ts"),
+        2,
+        "  const { name, punct = \"?\" } = options;",
+        Some("  const { name, punct = \"!\" } = options;"),
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        None,
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    assert!(
+        !matches!(finding.class, ExposureClass::Exposed),
+        "destructured default with the field always supplied must not read exposed, got {:?}",
         finding.class
     );
     Ok(())
@@ -12985,8 +13678,10 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -13094,8 +13789,10 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -13234,8 +13931,10 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -13327,8 +14026,10 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -13422,8 +14123,10 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -13850,8 +14553,10 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -13939,8 +14644,10 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14021,8 +14728,10 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14100,8 +14809,10 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14180,8 +14891,10 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14276,8 +14989,10 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14373,8 +15088,10 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14479,8 +15196,10 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14590,8 +15309,10 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14640,8 +15361,10 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14750,8 +15473,10 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14855,8 +15580,10 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -14993,8 +15720,10 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -15893,8 +16622,10 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -16010,8 +16741,10 @@ pub(super) fn exact_value_test(owner_name: &str, observed: &str, expected: &str)
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -22013,14 +22746,17 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 
 mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
+mod barrel_import_forward_tests;
 mod boolean_pin_tests;
 mod call_lexer_tests;
 mod catch_arm_tests;
+mod changed_field_scope_tests;
 mod changed_field_tests;
 mod class_barrel_reexport_tests;
 mod class_entry_tests;
 mod class_receiver_overclaim_tests;
 mod close_to_pin_tests;
+mod closure_entry_tests;
 mod committed_snapshot_tests;
 mod commonjs_barrel_tests;
 mod commonjs_class_receiver_tests;
@@ -22041,16 +22777,19 @@ mod error_payload_tests;
 mod floating_promise_tests;
 mod folded_module_constant_tests;
 mod function_reference_callback_tests;
+mod function_replacement_tests;
 mod gap_reach_config_tests;
 mod getter_matcher_key_tests;
 mod guard_entry_tests;
 mod infection_tests;
+mod inherited_and_factory_receiver_tests;
 mod instance_class_tests;
 mod instance_factory_tests;
 mod issue10925_alias_resolution_tests;
 mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
+mod literal_arm_return_tests;
 mod literal_container_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;
@@ -22090,6 +22829,7 @@ mod string_write_scan_tests;
 mod suite_factory_tests;
 mod table_case_tests;
 mod table_loop_tests;
+mod tool_config_tests;
 mod typed_loose_equality_tests;
 mod unemitted_stage_unknown_tests;
 mod unused_default_tests;
@@ -22128,8 +22868,10 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),

@@ -237,6 +237,7 @@ fn extract_tests_expanding_suite_factories(
             .with_registers_matchers(file_may_register_matchers(source)),
             admission,
             hook_calls,
+            tap_arguments: super::tap::RegistrationArguments::of_program(&ret.program),
             ..TestScope::default()
         };
         scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
@@ -301,7 +302,8 @@ fn extract_tests_expanding_suite_factories(
                 test.identity_helpers_in_file = helpers.clone();
             }
         }
-        let member_only = default_member_only_locals(&imports, &code);
+        let mut member_only = default_member_only_locals(&imports, &code);
+        member_only.extend(namespace_member_call_locals(&imports, &code));
         if !member_only.is_empty() {
             let member_only: Shared<_> = member_only.into();
             for test in &mut tests {
@@ -320,6 +322,14 @@ fn extract_tests_expanding_suite_factories(
             let replacements: Shared<_> = replacements.into();
             for test in &mut tests {
                 test.member_replacements_in_file = replacements.clone();
+            }
+        }
+        let function_replacements =
+            super::function_replacement::replaced_function_member_names(source);
+        if !function_replacements.is_empty() {
+            let function_replacements: Shared<_> = function_replacements.into();
+            for test in &mut tests {
+                test.function_replacements_in_file = function_replacements.clone();
             }
         }
         let loads = dynamic_load_specifiers(source);
@@ -900,6 +910,7 @@ pub(crate) struct RegistrationScope {
     unshadowed_undefined: bool,
     /// The object-row table loop this list is the body of (#11196).
     row_loop: Option<RowLoop>,
+    tap_arguments: super::tap::RegistrationArguments,
 }
 
 impl RegistrationScope {
@@ -923,6 +934,7 @@ impl RegistrationScope {
                     .chain(scope.registration_levels.iter().flatten().cloned()),
             ),
             unshadowed_undefined,
+            tap_arguments: scope.tap_arguments.clone(),
         }
     }
 }
@@ -1495,6 +1507,7 @@ pub(crate) struct TestScope {
     fixtures: Option<super::fixture_receivers::PlaywrightFixtures>,
     /// The object-row table loop whose body is being walked (#11196).
     row_loop: Option<RowLoop>,
+    tap_arguments: super::tap::RegistrationArguments,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -2112,6 +2125,106 @@ fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(
                     clean = false;
                     break;
                 }
+            }
+        }
+        if clean {
+            pairs.extend(
+                members
+                    .into_iter()
+                    .map(|member| (import.local.clone(), member)),
+            );
+        }
+    }
+    pairs
+}
+
+/// `(local, member)` for each member the file directly calls
+/// (`local.member(`) on an ES namespace import (`import * as local`) whose
+/// local is used, across the whole file, only as its own import binding and
+/// as a member receiver the file never writes (#15923). A member read is
+/// allowed and records nothing. Any other use withholds every pair of that
+/// local: a bare mention (an argument such as `spyOn(local, ..)`, a spread, a
+/// destructure, a shadowing declaration or parameter), an index access, a
+/// member assignment, update or `delete`, and a member of another object
+/// spelled the same.
+fn namespace_member_call_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    const WRITES: [&str; 17] = [
+        "++", "--", "+=", "-=", "*=", "/=", "%=", "**=", "<<=", ">>=", ">>>=", "&=", "|=", "^=",
+        "&&=", "||=", "??=",
+    ];
+    let ident = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let mut pairs = Vec::new();
+    for import in imports
+        .iter()
+        .filter(|import| import.namespace && import.imported.is_none())
+    {
+        let mut members: Vec<String> = Vec::new();
+        let mut clean = true;
+        for at in word_occurrences(code, &import.local) {
+            let before = code[..at].trim_end();
+            // The binding itself: `import * as local`.
+            if before
+                .strip_suffix("as")
+                .is_some_and(|rest| rest.trim_end().ends_with('*'))
+            {
+                continue;
+            }
+            let rest = &code[at + import.local.len()..];
+            let name = ["?.", "!.", "."]
+                .iter()
+                .find_map(|dot| rest.strip_prefix(dot))
+                .map(|after| {
+                    let name: String = after.chars().take_while(|ch| ident(*ch)).collect();
+                    let tail = &after[name.len()..];
+                    (name, tail)
+                });
+            let Some((name, tail)) = name.filter(|(name, _)| !name.is_empty()) else {
+                clean = false;
+                break;
+            };
+            // The rest of the member path (`lib.Cart.prototype.apply`): a
+            // write at its end, or any reach into a prototype, is a write
+            // through the namespace.
+            let mut path_end = tail;
+            let mut reaches_prototype = false;
+            loop {
+                let rest = path_end.trim_start();
+                let Some(next) = ["?.", "!.", "."]
+                    .iter()
+                    .find_map(|dot| rest.strip_prefix(dot))
+                else {
+                    break;
+                };
+                let segment: String = next.chars().take_while(|ch| ident(*ch)).collect();
+                if segment.is_empty() {
+                    break;
+                }
+                reaches_prototype |= segment == "prototype" || segment == "__proto__";
+                path_end = &next[segment.len()..];
+            }
+            let after = path_end.trim_start();
+            let assigned =
+                after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+            let prefix_write = before.ends_with("++")
+                || before.ends_with("--")
+                || before
+                    .strip_suffix("delete")
+                    .is_some_and(|rest| !rest.ends_with(ident));
+            if before.ends_with(['.', '#'])
+                || reaches_prototype
+                || after.starts_with('[')
+                || assigned
+                || prefix_write
+                || WRITES.iter().any(|write| after.starts_with(write))
+            {
+                clean = false;
+                break;
+            }
+            if tail.starts_with('(') && !members.contains(&name) {
+                members.push(name);
             }
         }
         if clean {
@@ -3509,8 +3622,10 @@ pub(crate) fn test_from_statement<'s, 'a>(
         scope_bindings: Default::default(),
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
+        barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -3913,6 +4028,14 @@ fn test_name_and_assertions_from_registration(
     // (#4638 review, fail-closed).
     let receiver =
         test_callback_receiver_name(callback).filter(|receiver| !bindings.binds_local(receiver));
+    let tap_registration = registration
+        .is_some_and(|scope| scope.context.binds_tap_test(callee_root_name(&call.callee)));
+    if tap_registration
+        && (!registration.is_some_and(|scope| scope.tap_arguments.admits(call))
+            || !super::tap::callback_has_assertion_authority(callback, receiver.as_deref(), source))
+    {
+        return Some((name, Vec::new()));
+    }
     // A test callback parameter or a test-body declaration named like an
     // imported assertion binding shadows it (#4638 review; the #4102 guard).
     let parameters = argument_parameter_names(callback);
@@ -3943,6 +4066,12 @@ fn test_name_and_assertions_from_registration(
                 || body_declarations.iter().any(|declared| declared == name)
                 || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
         });
+    let bindings = if tap_registration {
+        bindings.without_ambient_expect()
+    } else {
+        bindings
+    };
+
     if vitest_for {
         return vitest_for_assertions(call, callback, call_text, source, &bindings)
             .map(|assertions| (name, assertions));
@@ -6703,7 +6832,7 @@ fn assignment_follows(after: &str) -> bool {
 
 /// The content of the second top-level argument of `args` when it is a plain
 /// string literal (no template interpolation), else `None`.
-fn second_argument_literal(args: &str) -> Option<&str> {
+pub(crate) fn second_argument_literal(args: &str) -> Option<&str> {
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;

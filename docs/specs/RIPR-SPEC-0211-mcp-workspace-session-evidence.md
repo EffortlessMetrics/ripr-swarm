@@ -75,7 +75,7 @@ official SDK transport:
   be a string when present; `ripr_list_gaps`'s `offset` and `limit` must
   be integers within their advertised ranges. Explicit null returns a
   correlated `-32602` Invalid Params error naming the field before session
-  lookup. Omitted fields retain their defaults, valid values reach session
+  lookup, and the refusal says to omit the field. Omitted fields retain their defaults, valid values reach session
   lookup, and a subsequent request can recover on the same connection.
 - The `tools/call` `arguments` member is also omittable, but when present
   must be an object. Explicit null is Invalid Params (`-32602`), including
@@ -272,12 +272,15 @@ official SDK transport:
     and a failed committed request never relabels a retained worktree one.
     Callers that pass no `source` on a clean tree see the unchanged v1
     shapes.
-  - A committed zero-item empty-scope snapshot (`no_scope`,
+  - A zero-item empty-scope snapshot (`no_scope`,
     `no_changed_lines`, `no_behavioral_candidates`) examined no behavior, so
     its `last_completed_snapshot` summary adds `analysis_status:
     "not_analyzed"` and `clean: false` beside `finding_count: 0`, using the
-    same predicate as `ripr_refresh` and `ripr_list_gaps`. Complete runs omit
-    both fields.
+    same predicate as `ripr_refresh` and `ripr_list_gaps`. The fields
+    describe the outcome kind, not the capture source, so a worktree-source
+    snapshot carries them too (#13096 worktree leg); only the
+    committed-specific `empty_scope_hint` below stays committed-only.
+    Complete runs omit both fields.
   - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
     last-commit retry (`{"source": "committed", "base": "HEAD~1"}`) beside `pass_base` and
     `pass_source`. It is present only when the committed zero-item snapshot
@@ -438,6 +441,10 @@ official SDK transport:
   the stored selection by conjunction before paging; they never re-run
   analysis or widen the shared budget. File matching removes a leading `./`
   and accepts exact paths, segment-bounded prefixes, and trailing segments.
+  An absolute `file` under the workspace root is applied as its
+  root-relative form and echoed that way; any other absolute path is
+  refused as an invalid argument without echoing the host path, never
+  answered with an empty page.
   Class/language are exact wire tokens. An unknown `class` is Invalid
   Params (`-32602`) naming the seven exposure-class tokens, with the echoed
   token truncated so the error stays bounded; an unknown `language` is
@@ -605,7 +612,13 @@ official SDK transport:
   `workspace_unavailable` replies still arrive.
   On a usable root, reads before the first successful refresh fail closed
   with `no_snapshot`; reads during an
-  attempt report `analysis_in_flight`; unknown item ids fail closed with
+  attempt report `analysis_in_flight` (over stdio a snapshot or repair read
+  written during a refresh is instead held until the refresh reply is
+  flushed, while workspace status, `ping`, the catalog listings and a
+  repeated `ripr_refresh`, which is refused `analysis_in_flight`, are
+  answered beside the running refresh, one at a time; after a typed
+  `notifications/cancelled` for that refresh nothing is held and such a read
+  reports `analysis_in_flight` until the attempt ends; #15983); unknown item ids fail closed with
   `item_not_found`; a document whose complete tool envelope cannot fit the
   128-KiB response bound fails closed with `result_too_large` — for tool
   and resource responses the envelope is measured in its final form
@@ -946,6 +959,16 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_stdio.rs::running_refresh_answers_status_and_orders_snapshot_reads`
+  (Unix) — #15983 over real stdio with the refresh held inside its own
+  `git diff`: status (tool and resource) and `tools/list` answer during the
+  attempt, a repeated refresh is refused `analysis_in_flight`, and a held
+  `ripr_list_gaps` plus the status written behind it are answered after the
+  refresh, in order, bound to its snapshot. Slot accounting, cancellation
+  release and end of input are in
+  `crates/ripr/src/mcp/transport_backpressure_tests.rs`; the refusal of a
+  repeat whose first attempt has already committed is
+  `crates/ripr/src/mcp/server_tests.rs::refresh_admitted_beside_a_running_one_is_refused_after_it_commits`.
 - `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
   (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
   early-primary pipe holders, typed failure, last-good retention, same-session

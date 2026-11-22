@@ -68,6 +68,10 @@ this repository's license, one per test library or library feature:
   generator function; dunder methods (`__add__`, `__eq__`, `__lt__`,
   `__repr__`, `__str__`, `__bool__`); a context-manager class; `match`
   statements; and relative imports through a package `__init__` re-export.
+- `authored-py-pytest-membership`: RIPR-SPEC-0238 rule 34 (#15632), a
+  `to_bool` owner whose membership collections lose one member; parametrize
+  rows pass some spellings and not others, so one removal survives and one is
+  caught.
 - `authored-py-pytest-idioms`: test-library idioms beyond the first seven.
   `MagicMock` call expectations, `patch`, `monkeypatch.setenv`, doctests
   collected with `--doctest-modules`, `pytest.approx`, `pytest.raises(match=)`,
@@ -276,9 +280,10 @@ The latter's classification ladder returns `exposed`, `weakly_exposed`,
 `no_static_path` or `static_unknown`, and also `reachable_unrevealed` when every
 related test patches the changed owner (`owner_patched_by_every_test`) and
 `infection_unknown` for an unmodeled loop boundary behind a strong aligned
-oracle (`loop_boundary_unknown`). No current corpus row exercises either shape,
-so their zero-floor axes are explicit coverage waivers (produced but uncovered),
-not claims that no producer exists. There is no producer for
+oracle (`loop_boundary_unknown`). Four `py-stage-*` corpus cases now label
+those shapes with runtime mutant truth (two per class; each edit survives its
+patched or integer-pinned test and is not promoted to `exposed`), so both axes
+carry floor 2. There is no producer for
 `propagation_unknown`; its waiver is absence of a producer. The landed
 `python/unemitted_stage_unknown_tests.rs` supplies named rebind inputs that read
 `static_unknown`, together with an exposed live control.

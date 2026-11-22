@@ -110,6 +110,19 @@ other keys are unaffected):
 - `seam_coverage`: mutants total, caught and missed counts, `canonical_precise`
   and no-containing-seam counts, and their shares of all recorded mutants.
 
+- Genre cross-tabs (also additive, no schema bump): each receipt carries
+  `outcomes_by_disposition_and_genre` and `outcomes_by_grip_class_and_genre`
+  at the top level, on each repo, and in the synthetic-diff section, plus
+  `genre_outcomes_by_language` merging the per-repo tables per language so
+  each language keeps its own genre vocabulary. The per-record JSONL
+  (`mutation-spot-check-records.jsonl`) carries the same `genre` per record.
+  A genre is the producing tool's own operator name (a cargo-mutants genre,
+  a Stryker mutator name, a cosmic-ray operator name); a producer that names
+  no operator, such as mutmut, records `unknown_genre` rather than a site
+  label. A receipt written before genre retention carries none of these
+  keys, and re-deriving summaries from it invents none: absence means the
+  run recorded no genre, not a zero count.
+
 - `replacement_criterion`: the stated "replaces cargo-mutants" criterion, one
   row per criterion with `threshold`, `observed`, `status` (`met`, `not_met`,
   `not_established`, or `informational` for the unthresholded strict recall)
@@ -373,6 +386,35 @@ disposition, verdict, outcome, file and line, so a located miss can be traced
 without re-running the join. A mutmut record with no diff has no location or
 JSONL row; its status is counted in `records_without_diff`.
 
+## Python: bounded in-repo real-mutant calibration
+
+`python-calibration.json` plus `run_python_calibration.py` is a bounded
+in-repo slice, distinct from the hosted cosmic-ray/mutmut lanes above: 20
+real mutant edits (comparison, arithmetic and constant operators) on three
+authored Python verdict-corpus subjects (`authored-py-pytest-pricing`,
+`authored-py-grid-arithmetic`, `authored-py-grid-boundary`). Each mutant is
+applied to a scratch copy of its subject, executed against the subject's own
+pytest suite (runtime outcome `caught`/`missed` only), and scored against
+`ripr check --diff` on a synthetic one-hunk diff of the same edit, using the
+same grip-class map as the synthetic-diff join. Weak, unknown, ambiguous and
+absent verdicts are `unscored` — never counted as successes, and a static
+classification is never rewritten as a runtime outcome.
+
+```bash
+cargo build -p ripr
+python benchmarks/mutation_spot_check/run_python_calibration.py \
+  --ripr target/debug/ripr --python python
+cargo test -p xtask python_calibration
+```
+
+The selected Python must provide pytest. The harness checks that
+prerequisite before writing either receipt and exits nonzero without
+replacing the committed receipts when it is missing.
+
+The committed receipt is `python-calibration-receipt.{json,md}`; the xtask
+tests re-derive its precision/recall from the per-mutant rows. It is an
+authored-subject calibration, not a population estimate or suite adequacy.
+
 ## Pilot top recommendations
 
 The receipt also runs `ripr pilot --max-seams 10` on each checkout and judges
@@ -383,12 +425,15 @@ recommendation is the first error a developer meets. A recommendation is:
 | --- | --- |
 | confirmed | on a predicate or return seam whose expression occurs once on its line, a viable operator mutant starting inside that expression was missed (`seam` tier); with none, a viable non-`FnValue` mutant on the recommended line was missed (`line` tier, coarse: it can belong to another expression on that line); with none on the line, a whole-body (`FnValue`) mutant of the innermost function containing the line was missed (`owner` tier) |
 | refuted | every such mutant was caught |
-| unscored | no tier has a caught or missed mutant |
+| unscored | no tier has a caught or missed mutant, or the whole-body tier is blocked: the seam line only timed out, the pick is an `error_variant`, or a missed mutant sits in the same innermost function |
 
 `pilot_top_recommendations.precision` is confirmed over confirmed plus
 refuted, with counts split by tier (`seam`, `line`, `owner`) and grip class. The
 owner tier is coarser: a caught whole-body mutant shows the function's tests
 notice when the function does nothing, not that they discriminate the seam.
+For that reason the whole-body tier cannot refute a pick whose line only
+timed out, an `error_variant` pick, or a pick whose innermost function also
+has a missed mutant; those picks stay unscored.
 If `ripr pilot` fails, times out, or writes a summary whose status is not
 `complete` (pilot's own budget ran out) on a repository, that repository's entry
 carries `unavailable` with the reason and counts in `unavailable_repos`; its

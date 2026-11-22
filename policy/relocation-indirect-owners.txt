@@ -104,5 +104,8 @@ crates/ripr/src/output/agent_seam_packets_live.rs
 crates/ripr/src/output/agent_seam_packets_live/currentness.rs
 crates/ripr/src/output/agent_seam_packets_live/render.rs
 crates/ripr/src/output/gap_source_subject/shared.rs
+crates/ripr/src/output/suppressions.rs
+crates/ripr/src/output/suppressions/typo_hint_tests.rs
+crates/ripr/src/output/suppressions_confined.rs
 crates/ripr/src/terminal_text_kani.rs
 crates/ripr/src/testing/compiler_environment.rs

@@ -685,3 +685,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (53)
+
+Reason:
+RIPR-SPEC-0122: the summary line names the unconfirmed test link for a partly-noticed behavior (#5335 restack)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`

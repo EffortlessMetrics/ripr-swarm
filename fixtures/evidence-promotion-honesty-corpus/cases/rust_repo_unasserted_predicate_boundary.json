@@ -1,0 +1,44 @@
+{
+  "id": "rust_repo_unasserted_predicate_boundary",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unasserted-predicate-boundary.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/unasserted-predicate-boundary",
+  "vector": "boundary_input_and_discriminating_oracle_from_different_tests",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::discount",
+      "expression": "qty >= 10",
+      "grip_class": "weakly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "qty >= 10",
+      "test": "below_boundary",
+      "file": "src/lib.rs",
+      "line": 10,
+      "oracle_strength": "strong",
+      "relation_reason": "direct_owner_call"
+    },
+    {
+      "type": "expected_repo_seam_related_test",
+      "owner": "src/lib.rs::discount",
+      "expression": "qty >= 10",
+      "test": "boundary",
+      "file": "src/lib.rs",
+      "line": 15,
+      "oracle_strength": "none",
+      "relation_reason": "direct_owner_call"
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::discount",
+      "expression": "qty >= 10",
+      "category": "missing_discriminator_evidence",
+      "present": true
+    }
+  ]
+}

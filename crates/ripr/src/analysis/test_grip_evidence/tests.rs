@@ -4,6 +4,7 @@ mod boundary_input_limit;
 mod framework_snapshot;
 mod module_extraction;
 pub(super) mod panic_marker;
+mod predicate_boundary_pairing;
 mod rebound_assertion_macro;
 mod shared_execution_context;
 mod unread_owner_result_field;
@@ -3249,6 +3250,7 @@ fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |file: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from(file),
         line: 3,
@@ -3281,6 +3283,7 @@ fn window_boundaries_release_only_unheld_shared_grips() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |test_name: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: test_name.to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3312,6 +3315,7 @@ fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let base = RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3443,6 +3447,7 @@ fn shared_grips_retain_one_record_per_distinct_grip_at_high_fan_out() -> Result<
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |test_name: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: test_name.to_string(),
         file: PathBuf::from("tests/f.rs"),
         line: 3,
@@ -3477,6 +3482,7 @@ fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> 
     let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
     let context = CompactGripContext::new(&index);
     let grip = |file: &str| RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "f_works".to_string(),
         file: PathBuf::from(file),
         line: 3,
@@ -3517,6 +3523,7 @@ fn cancelled_evidence_pass_releases_provisional_shared_grips() -> Result<(), Str
         .ok_or("fixture must build a context")?;
     let provisional: Weak<RelatedTestGrip> = {
         let shared = context.share_grip(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing_tests.rs"),
             line: 12,
@@ -13472,6 +13479,42 @@ fn given_assertion_target_token_in_test_assertion_when_related_tests_are_ranked_
         grip.relation_reason,
         RelationReason::AssertionTargetAffinity
     );
+    if grip.assertion_targets_non_function != Some(false) {
+        return Err(format!(
+            "function affinity acquired module authority: {grip:?}"
+        ));
+    }
+    // Exercise the same full producer on a supplied non-function seam. The
+    // Rust inventory does not currently emit predicate seams for const items.
+    let path = PathBuf::from("src/pricing.rs");
+    let expression = "6 >= discount_threshold";
+    let source = "const discount_threshold: i32 = 5;
+pub const DISCOUNTED: bool = 6 >= discount_threshold;";
+    let index = index_from_files(&[(path.clone(), source), (PathBuf::from(test.0), test.1)])?;
+    let seam = RepoSeam::new(
+        path,
+        "DISCOUNTED",
+        SeamKind::PredicateBoundary,
+        source.find(expression).ok_or("missing const expression")?,
+        2,
+        expression,
+        RequiredDiscriminator::BoundaryValue {
+            description: expression.into(),
+        },
+        ExpectedSink::ReturnValue,
+    );
+    let evidence = evidence_for_seam(&seam, &index);
+    let module = evidence
+        .related_tests
+        .first()
+        .ok_or("missing module assertion-target row")?;
+    if module.relation_reason != RelationReason::AssertionTargetAffinity
+        || module.assertion_targets_non_function != Some(true)
+    {
+        return Err(format!(
+            "indexed module assertion target lost owner authority: {module:?}"
+        ));
+    }
     assert_eq!(grip.relation_confidence, RelationConfidence::Medium);
     Ok(())
 }
@@ -24671,6 +24714,59 @@ fn branch_local_return_value_seam_record_agrees_with_the_stage() -> Result<(), S
     Ok(())
 }
 
+#[test]
+fn tuple_field_guard_agrees_with_the_per_test_oracle_grade() -> Result<(), String> {
+    let path = PathBuf::from("src/lib.rs");
+    let missed =
+        include_str!("../../../../../fixtures/rust_tuple_guard_other_branch/input/src/lib.rs");
+    let taken = missed.replace(
+        "f(Money(2), Money(3)), Money(0)",
+        "f(Money(102), Money(3)), Money(105)",
+    );
+    let custom_eq = missed.replace(", PartialEq", "")
+        + r#"
+impl PartialEq for crate::Money {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && f(Money(102), Money(3)).0 == 105
+    }
+}
+"#;
+    let custom_drop = missed.replace("Clone, Copy, ", "")
+        + r#"
+impl Drop for crate::Money {
+    fn drop(&mut self) {
+        if self.0 == 2 { assert_eq!(f(Money(102), Money(3)).0, 105); }
+    }
+}
+"#;
+    for (source, expected) in [
+        (missed, OracleStrength::Weak),
+        (taken.as_str(), OracleStrength::Strong),
+        (custom_eq.as_str(), OracleStrength::Strong),
+        (custom_drop.as_str(), OracleStrength::Strong),
+    ] {
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let seam = seams
+            .iter()
+            .find(|seam| {
+                seam.kind() == SeamKind::ReturnValue && seam.expression() == "Money(b.0 + a.0)"
+            })
+            .ok_or("missing edited return seam")?;
+        let evidence = evidence_for_seam(seam, &index);
+        let [record] = evidence.related_tests.as_slice() else {
+            return Err("expected the one assertion on the owner".into());
+        };
+        assert_eq!(record.test_name, "observes");
+        assert_eq!(record.oracle_strength, expected);
+        assert_eq!(
+            evidence.discriminate.state == StageState::Yes,
+            expected == OracleStrength::Strong
+        );
+    }
+    Ok(())
+}
+
 /// #14496: a value-transparent wrapper around the call is the sibling
 /// convention, so the gate reads through it. `block_on(owner(..))` from the
 /// else branch must not strongly grip the then-branch return.
@@ -25156,6 +25252,54 @@ fn related_tests_name_the_owner_caller_test_before_name_order_neighbours() -> Re
     // Nearness only breaks ties: a stronger oracle still leads.
     let weaker = related_rows_for_clamp("assert!(score(3) > 0);")?;
     assert_ne!(weaker[0].0, "z_score", "{weaker:?}");
+    Ok(())
+}
+
+/// #11726 item 2: a field write in a method has no returned struct, so its
+/// upgrade suggestion names where the written field is read, by receiver
+/// mode. A struct-literal field keeps the returned-struct wording.
+#[test]
+fn a_field_write_upgrade_suggestion_names_where_the_field_is_read() -> Result<(), String> {
+    let upgrade_for = |signature: &str, body: &str, pick: &dyn Fn(&RepoSeam) -> bool| {
+        let prod = PathBuf::from("src/upgrade_wording.rs");
+        let prod_src = format!(
+            "pub struct Counter {{\n    pub count: u32,\n    pub other: u32,\n}}\n\nimpl Counter {{\n    {signature} {{\n        {body}\n    }}\n}}\n"
+        );
+        let index = index_from_files(&[(prod, prod_src.as_str())])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/upgrade_wording.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::FieldConstruction && pick(seam))
+            .ok_or_else(|| format!("expected a field seam for `{signature}`: {seams:?}"))?;
+        Ok::<_, String>(
+            oracle_semantics_for_seam(&OracleKind::Unknown, &OracleStrength::None, seam)
+                .upgrade_suggestion,
+        )
+    };
+    let writes_count = |seam: &RepoSeam| seam.expression().contains("self.count");
+    let receiver = upgrade_for("pub fn bump(&mut self)", "self.count = 2;", &writes_count)?;
+    assert_eq!(
+        receiver.as_deref(),
+        Some("assert the changed field on the value the method was called on")
+    );
+    let by_value = upgrade_for(
+        "pub fn with_count(mut self) -> Self",
+        "self.count = 2;\n        self",
+        &writes_count,
+    )?;
+    assert_eq!(
+        by_value.as_deref(),
+        Some("assert the changed field on the value the method call returns")
+    );
+    let literal = upgrade_for(
+        "pub fn make() -> Counter",
+        "Counter { count: 2, other: 0 }",
+        &|seam: &RepoSeam| !seam.expression().contains("self."),
+    )?;
+    assert_eq!(
+        literal.as_deref(),
+        Some("assert the specific output field that carries the changed behavior")
+    );
     Ok(())
 }
 

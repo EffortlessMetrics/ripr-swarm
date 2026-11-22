@@ -428,23 +428,25 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             .and_then(Value::as_str)
             .is_some();
         let ledger_path = string_path(&packet, &["inputs", "gap_ledger"])
-            .ok_or("first-pr --check: no-action source ledger is unavailable; recompose before relying on the packet")?;
+            .ok_or("first-pr --check: no-action source ledger is unavailable; run `ripr first-pr` again with the packet's original inputs, then rerun --check")?;
+        // Recomposing alone does not rebuild a standalone `--gap-ledger`
+        // input, so the advice names the ledger and how each route restores it.
         let (ledger, ledger_digest) = read_json_with_digest(&resolve_path(&root, &ledger_path)).map_err(|_ledger_error| {
-            "first-pr --check: no-action source ledger is missing or malformed; recompose before relying on the packet".to_string()
+            format!("first-pr --check: no-action source ledger is missing or malformed (`{ledger_path}`); regenerate or restore that file, then rerun --check. Rerunning `ripr first-pr` with the packet's original --check-output rebuilds it; a ledger passed with --gap-ledger comes from `ripr reports gap-ledger` with its original inputs")
         })?;
         let recorded_digest = string_path(&packet, &["inputs", "gap_ledger_sha256"]).ok_or(
-            "first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose before relying on it",
+            "first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose it: run `ripr first-pr` again with the packet's original inputs, then rerun --check",
         )?;
         if recorded_digest != ledger_digest {
-            return Err("first-pr --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packet. Recompose before relying on it".to_string());
+            return Err("first-pr --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packet. Recompose it: run `ripr first-pr` again with the packet's original inputs, then rerun --check".to_string());
         }
         let source_kind = string_path(&ledger, &["inputs", "source_kind"])
-            .ok_or("first-pr --check: no-action source kind is unavailable; recompose before relying on the packet")?;
+            .ok_or("first-pr --check: no-action source kind is unavailable; run `ripr first-pr` again with the packet's original inputs, then rerun --check")?;
         if direct_check_output || requires_no_action_source_limit(&ledger) {
-            return Err("first-pr --check: source_currentness_unavailable; this historical no-action packet cannot establish current source-corpus identity. Recompose from its original inputs and inspect a fresh selected-workspace check; a fresh check alone cannot establish unavailable preview/mixed corpus provenance (#7452).".to_string());
+            return Err("first-pr --check: source_currentness_unavailable; this historical no-action packet cannot establish current source-corpus identity. Recompose it (run `ripr first-pr` again with its original inputs) and inspect a fresh selected-workspace check; a fresh check alone cannot establish unavailable preview/mixed corpus provenance (#7452).".to_string());
         }
         if !matches!(source_kind.as_str(), "records" | "repo_exposure") {
-            return Err("first-pr --check: no-action source kind is unrecognized; recompose before relying on the packet".to_string());
+            return Err("first-pr --check: no-action source kind is unrecognized; run `ripr first-pr` again with the packet's original inputs, then rerun --check".to_string());
         }
     }
     print!(
@@ -782,7 +784,7 @@ fn materialize_check_output_gap_ledger(
         return Ok(());
     };
     let check_output_path = resolve_path(root, check_output);
-    let contents = crate::bounded_input::read_to_string(&check_output_path).map_err(|err| {
+    let contents = crate::bounded_input::read_artifact_text(&check_output_path).map_err(|err| {
         format!(
             "first-pr --check-output {} is invalid: read failed: {err}",
             check_output_path.display()
@@ -3020,7 +3022,7 @@ enum ArtifactReadError {
 }
 
 fn read_json(path: &Path) -> Result<Value, ArtifactReadError> {
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ArtifactReadError::Missing
         } else {
@@ -3040,7 +3042,11 @@ fn read_json_with_digest(path: &Path) -> Result<(Value, String), ArtifactReadErr
             ArtifactReadError::Malformed(format!("read failed: {error}"))
         }
     })?;
-    let value = serde_json::from_slice(&bytes)
+    // The digest covers the file as written; the parse decodes a PowerShell
+    // 5.1 encoding of the same bytes when one is marked (#15936).
+    let text = crate::bounded_input::decode_artifact_text(&bytes)
+        .map_err(|error| ArtifactReadError::Malformed(format!("read failed: {error}")))?;
+    let value = serde_json::from_str(&text)
         .map_err(|error| ArtifactReadError::Malformed(error.to_string()))?;
     Ok((value, format!("sha256:{:x}", Sha256::digest(&bytes))))
 }
@@ -9158,9 +9164,12 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --output-dir must fail".to_string()),
         };
+        // The product renders the path through `human_path` (forward slashes
+        // and no verbatim prefix on Windows).
+        let shown = crate::output::path::human_path(&env.target);
         assert!(
             error.contains(&format!(
-                "--output-dir {out} is an existing file, but --output-dir names the directory"
+                "--output-dir {shown} is an existing file, but --output-dir names the directory"
             )),
             "a file occupying the output directory names the flag and the fix: {error}"
         );

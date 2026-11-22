@@ -773,7 +773,15 @@ pub(crate) struct CachedSeamLimitInfo {
 /// summary without the token would lose its category.
 /// `1.184`: a macro-generated test takes no invocation scopes when its file or
 /// invocation scope rebinds an exempt std macro name (#12852).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
+/// `1.185`: an explicit registered harness uses only the selected Cargo target
+/// key under an aliased workspace root (#15846).
+/// `1.187`: a macro-generated test carrying an unrecognised attribute macro takes
+/// no invocation scopes (#12857).
+/// `1.189`: a std- or core-rooted import of an exempt macro name lets a
+/// generated test keep its invocation scopes when the root is not shadowed (#12876).
+/// `1.191`: a helper wrapper that reads `env!` or `option_env!` forwards
+/// the helper result when neither name is rebound (#10357).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.191";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -998,7 +1006,11 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.184";
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
 /// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
+/// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.193";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1225,7 +1237,11 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
 /// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
 /// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.186";
+/// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.193";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1447,9 +1463,15 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// and need a re-serialization of every entry to verify, so they are not read.
 /// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
+/// `1.64`: `env` and `option_env` join the trusted macro names, so the
+/// stored binding candidates may name them (#14116); `1.63` candidates
+/// cannot, and would hide a `macro_rules! env` from the binding scan.
 /// `1.63`: a unit owner's tail block of `;`-terminated statements is not
 /// probed as `return_value` (#15459); `1.62` facts still carry that shape.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.63";
+/// `1.65`: `include_bytes` and `include_str` join the trusted macro names
+/// (#14116); `1.64` candidates cannot name them, and would hide a
+/// `macro_rules! include_str` from the binding scan.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.65";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -2127,6 +2149,17 @@ impl WorkspaceKeyContext<'_> {
                 )),
                 None => workspace_manifests_hash,
             };
+        // #16045 review: a symlinked crate root (`src -> real`,
+        // `src/lib.rs -> ../real/lib.rs`) decides which files the repo
+        // inventory lists, and the link can move with no manifest or Rust
+        // file changing (discovery skips links). Fold where each built root
+        // lands into the key. A workspace without linked roots keeps its key.
+        let workspace_manifests_hash = match linked_crate_root_identity(self.workspace_root) {
+            Some(identity) => hash_str(&format!(
+                "{workspace_manifests_hash}:linked-crate-roots:{identity}"
+            )),
+            None => workspace_manifests_hash,
+        };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -4833,6 +4866,39 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a_64(bytes))
 }
 
+/// Where every symlinked production root the workspace's manifests build
+/// lands, root-relative, or `None` when no built root is reached through a
+/// link (#16045 review).
+fn linked_crate_root_identity(root: &Path) -> Option<String> {
+    let mut manifests = Vec::new();
+    collect_named_workspace_files(root, root, "Cargo.toml", &mut manifests);
+    let relative = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+    let mut lines = BTreeSet::new();
+    for (manifest, bytes) in manifests {
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        let package_dir = match manifest.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => root.join(parent),
+            _ => root.to_path_buf(),
+        };
+        for (file, dir) in super::workspace::linked_production_roots(root, &package_dir, text) {
+            lines.insert(format!(
+                "{}\t{}\t{}",
+                relative(&manifest),
+                relative(&file),
+                relative(&dir)
+            ));
+        }
+    }
+    (!lines.is_empty()).then(|| hash_str(&lines.into_iter().collect::<Vec<_>>().join("\n")))
+}
+
 fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
     workspace_named_file_identity(root, file_name)
         .unwrap_or_else(|| hash_str("<no matching workspace files>"))
@@ -5552,7 +5618,9 @@ mod tests {
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
         // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.63");
+        // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
+        // 1.64 -> 1.65: `include_bytes`/`include_str` binding candidates (#14116).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.65");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5764,7 +5832,12 @@ mod tests {
         // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
         // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
         // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.184");
+        // 1.185 -> 1.187: attribute-macro generated tests refuse invocation scopes (#12857).
+        // 1.187 -> 1.189: std-rooted imports keep invocation scopes (#12876).
+        // 1.188 / 0.190 is left for #13041.
+        // 1.189 -> 1.191: env!-reading wrappers forward helper results (#10357).
+        // 1.190 / 0.192 is left for #13041.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.191");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5929,8 +6002,12 @@ mod tests {
         // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
         // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
         // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.186");
+        // 0.187 -> 0.189: same attribute-macro scope refusal as full 1.187 (#12857).
+        // 1.186 / 0.188 is left for #13041.
+        // 0.189 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
+        // 0.191 -> 0.193: same env!-reading wrapper forwarding as full 1.191 (#10357).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.193");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.193");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -6395,6 +6472,7 @@ mod tests {
             ("1.71", "0.77"),
             ("1.72", "0.78"),
             ("1.73", "0.79"),
+            ("1.184", "0.186"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {

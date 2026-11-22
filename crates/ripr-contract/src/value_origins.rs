@@ -159,6 +159,7 @@ mod tests {
     }
     fn probe() -> Probe {
         Probe {
+            before_condition: None,
             id: domain::ProbeId("p".into()),
             location: domain::SourceLocation::new("src/lib.rs", 3, 1),
             owner: None,

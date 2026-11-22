@@ -379,6 +379,7 @@ fn classify_change_full<'a>(
             line,
             owner,
             old_guard: None,
+            deleted_membership: None,
         },
         line_text,
         old_line_text,
@@ -401,6 +402,18 @@ pub(super) struct ChangeSite<'a> {
     pub(super) owner: &'a PythonOwner,
     /// A deleted line's old-side view (#11889), `None` for a live line.
     pub(super) old_guard: Option<OldGuardView<'a>>,
+    /// A deleted line's old and new files, for the membership rule (#15632);
+    /// `None` for a live line.
+    pub(super) deleted_membership: Option<DeletedMembershipView<'a>>,
+}
+
+/// The two files around a removed-only line: the old file and its 1-based
+/// line, and the candidate file (the site line is the new-side coordinate).
+#[derive(Clone, Copy)]
+pub(super) struct DeletedMembershipView<'a> {
+    pub(super) old_source: &'a str,
+    pub(super) old_line: usize,
+    pub(super) new_source: &'a str,
 }
 
 /// Where a deleted line sat in the old file: the old text, the owner re-spanned
@@ -501,6 +514,7 @@ fn classify_change_for_owner_inner<'a>(
         line,
         owner,
         old_guard,
+        deleted_membership,
     } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
     // Python does not enforce type annotations at runtime at module scope, so a
@@ -1002,8 +1016,14 @@ fn classify_change_for_owner_inner<'a>(
             unpinned_equality_dunder_limit(owner, &related_candidates, alignment.credited.is_some())
         })
     };
+    // A literal keyword-argument line (`stacklevel=3,`) is read as the call it
+    // continues (#16018), so the limits that look for that call see it.
+    let limit_text = statement_text
+        .as_deref()
+        .filter(|_| super::no_behavior::is_literal_keyword_argument_line(line_text))
+        .unwrap_or(line_text);
     let static_limit = static_limit_for_focused_change(
-        line_text,
+        limit_text,
         old_line_text,
         log_evidence.as_ref(),
         &focus,
@@ -1142,25 +1162,62 @@ fn classify_change_for_owner_inner<'a>(
     // arguments, `exposed` requires one of those calls to bind both operands
     // to equal values (or, for `==` -> `==`, either compared literal).
     // Unresolved operands never count as observed, so this fails closed to
-    // `weakly_exposed` without naming a boundary they may already reach. With no
-    // literal owner inputs at all the gate cannot see the activation either
-    // way; that case keeps the oracle verdict and carries a named
-    // `boundary_activation_unresolved` limitation instead.
-    let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
-        .then(|| {
-            python_boundary_evidence(
-                line_text,
-                old_line_text,
-                owner,
-                owner_source,
-                &related_candidates,
-                &focus,
-            )
-        })
+    // `weakly_exposed` without naming a boundary they may already reach. A
+    // recognized owner call whose inputs went unread (`UnreadInput`, #15287)
+    // fails closed the same way. With no recognized owner call at all the gate
+    // cannot see the activation either way; that case keeps the oracle verdict
+    // and carries a named `boundary_activation_unresolved` limitation instead.
+    // #15632: an edit to the members of a literal collection in a membership
+    // test changes the result only for an input equal to an altered member,
+    // whatever statement holds the comparison.
+    let membership_gap = static_limit
+        .is_none()
+        .then(
+            || match (owner_source.zip(old_line_text), deleted_membership) {
+                (Some((source, old)), _) => {
+                    super::membership_activation::python_membership_member_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old,
+                        &related_candidates,
+                        &focus,
+                    )
+                }
+                (None, Some(view)) => super::membership_activation::python_membership_deleted_gap(
+                    owner,
+                    view.old_source,
+                    view.old_line,
+                    view.new_source,
+                    line,
+                    line_text,
+                    &related_candidates,
+                    &focus,
+                ),
+                (None, None) => None,
+            },
+        )
         .flatten();
+    let boundary = membership_gap.or_else(|| {
+        (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
+            .then(|| {
+                python_boundary_evidence(
+                    line_text,
+                    old_line_text,
+                    owner,
+                    owner_source,
+                    &related_candidates,
+                    &focus,
+                )
+            })
+            .flatten()
+    });
     let loop_boundary_unknown = boundary.as_ref().is_some_and(|e| {
-        e.activation == BoundaryActivation::Unresolved
-            || (e.activation == BoundaryActivation::Missing && e.discriminator.is_none())
+        matches!(
+            e.activation,
+            BoundaryActivation::Unresolved | BoundaryActivation::UnreadInput
+        ) || (e.activation == BoundaryActivation::Missing && e.discriminator.is_none())
     }) && super::boundary::unresolved_loop_list_boundary(
         line,
         line_text,
@@ -1170,9 +1227,19 @@ fn classify_change_for_owner_inner<'a>(
         &related_candidates,
         &focus,
     );
-    let boundary_gap = boundary
-        .as_ref()
-        .filter(|evidence| evidence.activation == BoundaryActivation::Missing);
+    // Fail closed (#15287): a boundary no strong related call is established to
+    // reach is a gap whether the calls were readable and off the boundary
+    // (`Missing`) or passed test-side inputs the reader cannot see
+    // (`UnreadInput`: a `*args` row, a test local, a parametrize row naming a
+    // value). `Unresolved` (no recognized owner call, or an operand the owner
+    // rebinds while every call was read) keeps the oracle verdict with its
+    // named limitation.
+    let boundary_gap = boundary.as_ref().filter(|evidence| {
+        matches!(
+            evidence.activation,
+            BoundaryActivation::Missing | BoundaryActivation::UnreadInput
+        )
+    });
     let mut boundary_downgraded = false;
     // A removed or added additive call term changes the result only where the
     // term is nonzero (#6733). When every strong related call gives it the
@@ -1324,7 +1391,9 @@ fn classify_change_for_owner_inner<'a>(
         .flatten();
     // Class-attribute text gate (#15294): a changed class-body string constant
     // is exposed only when a related assertion carries a literal that the old
-    // text accepts and the new text rejects. Other shapes fail open.
+    // text accepts and the new text rejects. A non-string value (#16009) is
+    // exposed only when a related test reads the name or calls a method that
+    // reads it. Other shapes fail open.
     let class_attr_gap = static_limit
         .is_none()
         .then(|| {
@@ -1336,6 +1405,19 @@ fn classify_change_for_owner_inner<'a>(
                 line,
                 &related_candidates,
             )
+            .or_else(|| {
+                // #16009: the same reading for a non-string class attribute
+                // value, through the class methods that read the name.
+                super::class_attr_reader::python_class_attr_reader_gap(
+                    line_text,
+                    old_line_text,
+                    owner,
+                    owner_source,
+                    line,
+                    &related_candidates,
+                    all_tests,
+                )
+            })
         })
         .flatten();
     // #13622: an old-type exact assertion after a raised-type replacement is
@@ -1738,8 +1820,8 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}. Add an assertion (for example `pytest.raises(..., match=...)`) that the old text satisfies and the new text does not.",
-                owner.name, gap.reason,
+                "A strong Python oracle reaches `{}`, but {}. {}",
+                owner.name, gap.reason, gap.next_step,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -1908,6 +1990,7 @@ fn classify_change_for_owner_inner<'a>(
         probe_id.0.insert_str(separator + 1, marker);
     }
     let probe = Probe {
+        before_condition: None,
         id: probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner.symbol_id()),

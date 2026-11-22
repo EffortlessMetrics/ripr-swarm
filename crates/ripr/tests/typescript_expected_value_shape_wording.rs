@@ -3,6 +3,8 @@
 //! variables is not "computed". Wording only: all three shapes stay
 //! unresolved and no repair is offered.
 
+#![cfg(feature = "lang-typescript")]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};

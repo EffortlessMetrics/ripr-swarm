@@ -103,7 +103,10 @@ pub(crate) fn startable_typescript_gap_record(finding: &Finding) -> Option<GapRe
 /// `root` (the live diff source selection included; `base: None` lets the
 /// loader resolve the default base exactly as check does). The one analysis
 /// behind a gap-bound before snapshot and behind the start admission that
-/// `ripr agent status` consults (#10001), so they cannot drift.
+/// `ripr agent status` consults (#10001), so they cannot drift. With no
+/// `base` on a clean checkout of the comparison base, it rescopes to the last
+/// commit under check's own guards (#13644, #16082), as the bare human check
+/// does.
 pub(crate) fn default_check_output(
     root: &std::path::Path,
     base: Option<&str>,
@@ -131,8 +134,32 @@ pub(crate) fn default_check_output(
     } else {
         super::AnalysisProgressScope::Diff
     };
+    let rescope_input = (base.is_none() && !worktree_run).then(|| {
+        let mut retry = input.clone();
+        retry.base = Some(super::diff_source::LAST_COMMIT_BASE.to_string());
+        retry
+    });
+    let git_timeout = input.git_timeout;
     let mut output = super::check_with_progress_core(input, config, scope, None)
         .map_err(|error| error.to_string())?;
+    if let Some(retry) = rescope_input
+        && super::diff_source::last_commit_fallback_applies(&output, root, git_timeout)
+    {
+        // Check prints the retry's own stderr notes only when it replaces
+        // the shown output; this caller shows none of check's stderr, so
+        // they are dropped either way.
+        let (retried, _disclosures) = crate::analysis::capture_disclosures(|| {
+            super::check_with_progress_core(retry, config, scope, None)
+        });
+        if let Ok(retried) = retried
+            && retried
+                .analysis_outcome
+                .as_ref()
+                .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
+        {
+            output = retried;
+        }
+    }
     // The same disclosure normalization `ripr check` applies: a working-tree
     // read analyzed the live files, so the committed-history flag is off.
     if worktree_run {

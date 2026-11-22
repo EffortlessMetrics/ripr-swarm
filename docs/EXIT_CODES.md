@@ -365,6 +365,7 @@ reached the caller.
   | `no_current_attempt` | 3 | `not_started` | `continue`: no attempt to continue |
   | `attempt_baseline_blocked` | 3 | `not_started` | `continue`: the retained before baseline is ambiguous or unavailable; no after phase ran; inspect the shared status and its admitted recovery |
   | `unanchored_root` | 3 | `not_started` | no workspace, package or Git repository anchors the current directory, so the repair spellings answer nothing there; an explicit `--root` skips the discovery gate (#12417) |
+  | `subdirectory_root` | 3 | `not_started` | the root is below the Git top-level, where a repair attempt cannot start; rerun from the Git top-level (#15488) |
   | `ambiguous_attempts` | 3 | `needs_selection` | `continue`: pass `--attempt` |
   | `attempt_ended_without_receipt` | 3 | `terminal` | the attempt failed, went stale, or is incomparable |
   | `attempt_completion_unconfirmed` | 3 | `terminal` | finished, but no compliant receipt confirms it |
@@ -372,8 +373,10 @@ reached the caller.
   | `attempt_stale` | 2 | `terminal` | the cage rejected the edit and HEAD had moved after the repair started |
   | `attempt_incomparable` | 2 | `terminal` | the cage could not compare the files |
 
-  A repeated `ripr continue` after a confirmed-complete attempt reports
-  that attempt's already-complete status and exits `0`: with `--attempt`,
+  A repeated `ripr continue` after a confirmed-complete attempt prints a
+  short already-complete summary (the receipt, the next `ripr repair`, and
+  the `ripr status --attempt` command for the full page; `--json` prints
+  the attempt's status document) and exits `0`: with `--attempt`,
   or without it when the newest attempt (the only one with the latest
   creation time) is the confirmed-complete one and no prepared or
   trust-bound attempt remains. A cage violation is exit `2` and terminal;

@@ -674,6 +674,64 @@ impl ClassifiedProbeEvidence {
             }
             _ => infect,
         };
+        // #15272: a credited infection does not survive related tests that
+        // assert the owner only where it and its base side return the same
+        // value. Withholding only.
+        let infect = match (context.owner_fn, context.owner_baseline.as_deref()) {
+            (Some(owner), Some(baseline))
+                if matches!(infect.state, StageState::Yes) && !assertion_macros_rebound =>
+            {
+                crate::analysis::classify::agreeing_inputs_infection(
+                    owner,
+                    baseline,
+                    &test_summaries,
+                    owner_has_other_callers,
+                    context.index,
+                )
+                .unwrap_or(infect)
+            }
+            _ => infect,
+        };
+        // #15770: every related call must skip this exact edit. Confirm that
+        // replacing the expression did not also move the guard.
+        let infect = if infect.state == StageState::Yes
+            && context.probe.family == ProbeFamily::ReturnValue
+            && context.workspace_complete
+            && !owner_has_other_callers
+            && !assertion_macros_rebound
+            && let Some(owner) = context.owner_fn
+            && let Some(old) = context.owner_sole_change.as_deref()
+            && !old.contains(['{', '}', ';'])
+            && context.probe.before.as_deref().map(str::trim) == Some(old.trim())
+            && context
+                .probe
+                .location
+                .line
+                .checked_sub(owner.start_line)
+                .and_then(|line| owner.body.lines().nth(line))
+                .map(str::trim)
+                == Some(context.probe.expression.trim())
+            && !context.related_tests.is_empty()
+            && context.related_tests.iter().all(|(test, reason)| {
+                *reason == RelationReason::DirectOwnerCall
+                    && crate::analysis::test_grip_evidence::tuple_branch_reached(
+                        owner,
+                        &context.probe.expression,
+                        context.probe.location.line,
+                        test,
+                        context.index,
+                        true,
+                    ) == Some(false)
+            }) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Every related test selects the other branch of the tuple-field guard",
+            )
+        } else {
+            infect
+        };
+
         // #10980: when the whole-test contradiction withheld EVERY credited
         // activation path that establishes reach (#7007), the stage
         // discloses the withholding instead of reading the withheld tests'
@@ -1372,11 +1430,23 @@ impl ClassifiedProbeEvidence {
                 && owner_types_are_primitive()
                 && bool_field_pin_admitted(test, assertion)
                 && context.owner_fn.is_some_and(|owner| {
+                    // An integration test may pin the owner through its own
+                    // library path with no `use` (`pkg::owner(..)`). The fold
+                    // reads a bare owner call only, so the established path
+                    // is read as that call; any other qualified spelling
+                    // stays unevaluated.
+                    let qualified_owner_path =
+                        crate::analysis::classify::own_crate_qualified_owner_path(
+                            context.index,
+                            test,
+                            owner,
+                        );
                     crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
                         owner,
                         &context.probe.expression,
                         context.probe.location.line,
                         &assertion.text,
+                        qualified_owner_path.as_deref(),
                         test,
                         &|name| {
                             // Only a top-level owner reads the file's
@@ -1524,6 +1594,13 @@ impl ClassifiedProbeEvidence {
                         owner_reach
                             .get_or_init(|| proximity_reach.owner_reach(&owner.name))
                             .assertion_pins_other_function(owner, test, assertion, &text)
+                    })
+                },
+                closed_constant_call: &|test, assertion, path| {
+                    context.owner_fn.is_some_and(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .assertion_calls_closed_constant(owner, test, assertion, path)
                     })
                 },
                 owner_parameters: &owner_parameters,
@@ -1968,6 +2045,26 @@ impl ClassifiedProbeEvidence {
             )
         } else {
             discriminate
+        };
+        let propagate = if matches!(propagate.state, StageState::Yes | StageState::Weak)
+            && let Some(reason) = context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::unpaired_return_gate(
+                    context.probe,
+                    owner,
+                    &test_summaries,
+                    context.index,
+                    |test, assertion| {
+                        assertion_admitted(test, assertion)
+                            && (crate::analysis::classify::assertion_is_discriminating(assertion)
+                                || owner_pin_admits(test, assertion))
+                            && !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
+                    },
+                )
+            }) {
+            StageEvidence::new(StageState::Unknown, Confidence::Low, reason)
+        } else {
+            propagate
         };
         // The missing-field fact is the authority on whether an assertion
         // observes the constructed field. A token that merely coincides with
@@ -4191,6 +4288,7 @@ mod tests {
     /// confirmation rides solely on the producer-owned bare binding.
     fn owner_harness_context(index: &RustIndex, test: TestSummary) -> ClassifiedProbeEvidence {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:alpha:expect_response".to_string()),
             location: SourceLocation::new("crates/alpha/src/lib.rs", 10, 2),
             owner: Some(SymbolId(
@@ -4277,6 +4375,7 @@ mod tests {
                 .find(|test| test.name == "makes")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:returned-type-drop".to_string()),
                 location: SourceLocation::new("src/lib.rs", 11, 5),
                 owner: Some(owner.id.clone()),
@@ -4347,6 +4446,7 @@ mod tests {
                 .find(|test| test.name == "nearby")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:helper-behind-caller".to_string()),
                 location: SourceLocation::new("src/lib.rs", 6, 5),
                 owner: Some(owner.id.clone()),
@@ -4424,6 +4524,7 @@ mod tests {
                 .find(|test| test.name == "pins_second_row")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:returned-array-exit".to_string()),
                 location: SourceLocation::new("src/lib.rs", 6, 5),
                 owner: Some(owner.id.clone()),
@@ -4491,6 +4592,7 @@ mod tests {
             .find(|test| test.name == "makes")
             .ok_or("missing test")?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:local-drop-guard".to_string()),
             location: SourceLocation::new("src/lib.rs", 21, 5),
             owner: Some(owner.id.clone()),
@@ -4563,6 +4665,7 @@ mod tests {
                 "nonempty subject: the fixture must parse its assertions"
             );
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:contradiction".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 5),
                 owner: Some(owner.id.clone()),
@@ -4673,6 +4776,7 @@ mod tests {
         ];
         assert_eq!(tests.len(), 3, "nonempty subject: all fixture tests parse");
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:composed-contradiction".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: Some(owner.id.clone()),
@@ -4749,6 +4853,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(tests.len(), 2, "nonempty subject: both fixture tests parse");
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:zero-arg-mixed".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: Some(owner.id.clone()),
@@ -4886,6 +4991,7 @@ mod tests {
     fn gather_retains_digest_valid_propagation_witness_for_internal_consumer() -> Result<(), String>
     {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:fixture:1".to_string()),
             location: SourceLocation::new("src/lib.rs", 10, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),
@@ -4937,6 +5043,7 @@ mod tests {
     #[test]
     fn corrupt_digest_is_retained_as_rejected_diagnostic_outcome() -> Result<(), String> {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:fixture:corrupt".to_string()),
             location: SourceLocation::new("src/lib.rs", 10, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),
@@ -5342,6 +5449,7 @@ mod tests {
         let chain = resolve_chain("record", &index, true, &[]);
         assert_eq!(chain.hops.len(), 1);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:selected-ledger-caller".into()),
             location: SourceLocation::new("src/lib.rs", 4, 1),
             owner: Some(owner.id.clone()),

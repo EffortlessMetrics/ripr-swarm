@@ -249,7 +249,10 @@ pub(crate) fn rust_test_stub_for_classified_seam(
         // The repair packet's edit cage allows only this existing integration
         // file, so the stub goes there rather than into the production file.
         RepairTargetSelection::Existing(existing)
-            if existing.test_kind() == TestKind::Integration =>
+            if matches!(
+                existing.test_kind(),
+                TestKind::Integration | TestKind::DeclaredIntegration
+            ) =>
         {
             let file = existing.file().to_path_buf();
             let crate_name = library_crate_name_for_root_file(root, entry.seam.file(), Some(&file));
@@ -895,6 +898,23 @@ fn stub_body(
         });
     }
 
+    // #8361: a match-arm stub writes the value the changed arm's own pattern
+    // names (`Event::Fail`, `2`) for each parameter it decides.
+    // The receiver state the arm also needs is named on the receiver line.
+    let mut arm_state = Vec::new();
+    if seam.kind() == SeamKind::MatchArm {
+        let arm = match_inputs::match_arm_inputs(
+            seam,
+            signature,
+            source,
+            matches!(path_scope, PathScope::ChildModule),
+        );
+        boundary.extend(arm.inputs);
+        arm_state = arm.state;
+    }
+    let state_note = (!arm_state.is_empty())
+        .then(|| format!("; for this arm, set it so {}", arm_state.join(" and ")));
+
     // #11402: the pushed-into buffer starts empty, so the contents check
     // below reads exactly what this one call pushed.
     let pushed = pushed_buffer_parameter(seam, signature, source);
@@ -902,8 +922,9 @@ fn stub_body(
     let receiver = match (signature.receiver, self_type) {
         (Some(receiver), Some(self_type)) => {
             let label = format!(
-                "ripr: build the `{self_type}` that `{}` runs on",
-                signature.name
+                "ripr: build the `{self_type}` that `{}` runs on{}",
+                signature.name,
+                state_note.as_deref().unwrap_or_default()
             );
             let keyword = if receiver == OwnerReceiver::RefMut {
                 "let mut"
@@ -925,15 +946,20 @@ fn stub_body(
                 .flatten();
             match construction {
                 Some(construction) => {
-                    lines.push(format!("// {}", construction.comment()));
+                    lines.push(format!(
+                        "// {}{}",
+                        construction.comment(),
+                        state_note.as_deref().unwrap_or_default()
+                    ));
                     lines.push(format!(
                         "{keyword} {subject}: {self_type} = {};",
                         construction.expression
                     ));
                     receiver_setup = Some(format!(
-                        "{subject} = {}, {}",
+                        "{subject} = {}, {}{}",
                         construction.expression,
-                        construction.origin_text()
+                        construction.origin_text(),
+                        state_note.as_deref().unwrap_or_default()
                     ));
                 }
                 None => {
@@ -1976,6 +2002,7 @@ fn escape(text: &str) -> String {
         .replace('}', "}}")
 }
 
+mod match_inputs;
 mod receiver;
 
 #[cfg(test)]

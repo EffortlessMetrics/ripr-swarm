@@ -180,7 +180,7 @@ mod reports;
 pub(crate) mod ripr_plus_command;
 pub(super) use assistant_loop::assistant_loop;
 pub(super) use first_action::first_action;
-pub(super) use first_pr::first_pr;
+pub(super) use first_pr::{first_pr, start_here};
 #[cfg(test)]
 pub(super) use reports::reports;
 pub(super) use reports::reports_command;
@@ -278,14 +278,10 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_evidence_health_options(args)?;
-    if !options.root.is_dir() {
-        return Err(format!(
-            "evidence-health root {} does not exist or is not a directory; pass `--root <dir>` naming the workspace directory",
-            options.root.display()
-        ));
-    }
-    // Analysis below writes the seam cache under `target/ripr/cache`.
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    // #15249: the shared root refusal (with its imperative next step); it also
+    // checks the output containment the analysis below needs, because it
+    // writes the seam cache under `target/ripr/cache`.
+    crate::cli::commands_context::ensure_command_root(&options.root, "evidence-health")?;
 
     let config = load_for_root(&options.root)?;
     // #13055: the whole-workspace walk can run for minutes on a very large
@@ -412,16 +408,18 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
 }
 
 pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
+    // The bare group prints its help, like every other group. It used to
+    // imply `plan` (#2013, when `plan` was the only subcommand) and so wrote
+    // the default plan files for a command that named no action (#15985).
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_group_help("pr-comments", args);
+        return Ok(());
+    };
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_group_help("pr-comments", args);
         return Ok(());
     }
-    // `plan` is implied when the command runs bare: `ripr pr-comments`
-    // behaves like `ripr pr-comments plan` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("plan", &[][..]),
-    };
+    let subcommand = subcommand.as_str();
     match subcommand {
         "plan" => pr_comments_plan(rest),
         "existing" => pr_comments_github::pr_comments_existing(rest),
@@ -498,7 +496,9 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     let mut reads = SuppliedInputReads::default();
     let input = output::ripr_zero_status::RiprZeroStatusInput {
         root: ".".to_string(),
-        generated_at: baseline_created_at()?,
+        // Zero status judges review deadlines and baseline age against this
+        // stamp, so it stays on the wall clock under `RIPR_GENERATED_AT`.
+        generated_at: crate::cli::commands_timestamps::wall_clock_unix_ms()?,
         baseline_path,
         delta_path: output::ripr_zero_status::display_path(&options.delta),
         gap_ledger_path,
@@ -698,6 +698,12 @@ fn pr_comments_plan(args: &[String]) -> Result<(), String> {
 
 fn pr_review_front_panel(args: &[String]) -> Result<(), String> {
     let options = parse_pr_review_front_panel_options(args)?;
+    // #15249: the shared root refusal, before any artifact is read or a report
+    // is written. `--root` is the report's label; its outputs follow `--out`.
+    crate::cli::commands_context::ensure_command_root_dir(
+        Path::new(&options.root),
+        "pr-review front-panel",
+    )?;
     let pr_guidance_path = options
         .pr_guidance
         .as_ref()
@@ -2078,7 +2084,18 @@ impl SuppliedInputReads {
         label: &str,
         path: &Path,
     ) -> Result<String, String> {
-        let read = self.read(flag, label, path)?;
+        // A JSON flag names a ripr artifact a shell redirect may have
+        // written, so read it in the PowerShell 5.1 encodings too (#15936).
+        let read = crate::bounded_input::read_artifact_text(path).map_err(|err| {
+            format!(
+                "read {label} {} failed: {err}",
+                output::baseline_delta::display_path(path)
+            )
+        });
+        if let Err(err) = &read {
+            self.failures.push(format!("{flag}: {err}"));
+        }
+        let read = read?;
         if let Err(err) = serde_json::from_str::<serde_json::Value>(&read) {
             self.failures.push(format!(
                 "{flag}: {label} {} is not valid JSON: {err}",
@@ -2295,6 +2312,22 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
             &typed_root,
             options.base.as_deref(),
             crate::core_error::CoreError::from(error),
+        ));
+    }
+    // #15249: a missing or non-directory `--root` is the shared root refusal
+    // before config loading or default-base resolution, so it is not reported
+    // as an unresolvable base (which would misdirect the caller to `--base`).
+    if let Err(error) = crate::cli::commands_context::ensure_command_root(&options.root, "diff") {
+        if !json {
+            return Err(error);
+        }
+        return Err(crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            crate::core_error::CoreError::repository_root_unusable(error),
         ));
     }
     // #7331: every post-argv-parse failure of a JSON diff run writes the
@@ -4937,42 +4970,20 @@ language = "rust"
     }
     #[test]
     fn pr_comments_plan_rejects_bad_subcommands_and_options() {
-        // Bare `ripr pr-comments` is the `plan` alias (#2013). The dispatch
-        // writes the default plan files, so they are cleaned on both sides.
-        for residue in [
-            "target/ripr/review/comment-publish-plan.json",
-            "target/ripr/review/comment-publish-plan.md",
-        ] {
-            let _ = std::fs::remove_file(residue);
-        }
-        let bare_result = pr_comments(&args(&[]));
+        // Bare `ripr pr-comments` prints the group help and writes no plan
+        // (#15985); only an explicit `plan` writes the default files.
         let json_path = "target/ripr/review/comment-publish-plan.json";
         let md_path = "target/ripr/review/comment-publish-plan.md";
-        let json_text = std::fs::read_to_string(json_path);
-        assert!(json_text.is_ok(), "bare dispatch must write {json_path}");
-        let json_text = json_text.unwrap_or_default();
-        let plan = serde_json::from_str::<serde_json::Value>(&json_text);
-        assert!(
-            plan.is_ok(),
-            "plan output must be valid JSON: {}",
-            plan.err().map(|err| err.to_string()).unwrap_or_default()
-        );
-        let plan = plan.unwrap_or_default();
-        assert!(
-            plan.get("schema_version").is_some() || plan.get("mode").is_some(),
-            "plan output lost its contract shape: {json_text}"
-        );
-        assert!(
-            std::path::Path::new(md_path).is_file(),
-            "bare dispatch must write the markdown plan"
-        );
         for residue in [json_path, md_path] {
             let _ = std::fs::remove_file(residue);
         }
-        assert!(
-            bare_result.is_ok(),
-            "bare pr-comments must dispatch to plan with defaults"
-        );
+        assert_eq!(pr_comments(&args(&[])), Ok(()));
+        for residue in [json_path, md_path] {
+            assert!(
+                !std::path::Path::new(residue).exists(),
+                "bare pr-comments must not write {residue}"
+            );
+        }
         assert_eq!(
             pr_comments(&args(&["publish"])),
             Err("unknown pr-comments subcommand \"publish\". Accepted: plan, existing, requests, summary.".to_string())

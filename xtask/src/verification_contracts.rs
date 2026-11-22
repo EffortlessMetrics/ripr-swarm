@@ -85,6 +85,25 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // `ripr help --json`, versioned with an integer: the prefix ends at
+        // `= ` and the reconciliation reads the value up to its semicolon.
+        "help",
+        &[producer(
+            "crates/ripr/src/cli/help_json.rs",
+            "pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = ",
+            1,
+        )],
+    ),
+    (
+        // The targeted rerun report of `ripr rerun --json`.
+        "rerun",
+        &[producer(
+            "crates/ripr/src/cli/rerun.rs",
+            "const TARGETED_RERUN_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // The refusal envelope `ripr rerun --json` writes when it cannot
         // produce a targeted rerun report, keyed with that report's version
         // through its own mirrored constant.
@@ -107,9 +126,39 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // `ripr agent packet --seam-id <id> --json`, the one-seam packet
+        // document. The `--gap-ledger` document shares the constant and has
+        // its own schema, `agent-gap-packet`.
+        "agent-packet",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr check --format agent-seam-packets-json`, the repository-wide
+        // packet document over the same packet definitions.
+        "agent-seam-packets",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr agent packet --gap-ledger <path> --gap-id <id> --json`, the
+        // GapRecord-backed packet document.
+        "agent-gap-packet",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // The refusal envelope `ripr agent packet --json` writes when it
-        // cannot produce a seam packet. The packet's own version constant
-        // keys it; the packet document itself is not a published schema.
+        // cannot produce a seam packet, keyed with the packet's version.
         "agent-packet-refusal",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -548,6 +597,22 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["limited_partial_scope"],
     },
+    // `ripr check --format check-findings-json` is the check document plus a
+    // leading `artifact` envelope (#9103). Before #15376 the closed top-level
+    // object had no `artifact` property, so every such document failed the
+    // published schema. The fixture is a capture of `ripr check --root
+    // fixtures/helper_chain_controls/input --diff
+    // fixtures/helper_chain_controls/diff.patch --format check-findings-json`
+    // with `RIPR_GENERATED_AT` pinned and the checkout root and head
+    // replaced by neutral values; its `base_revision` is null (a --diff run).
+    VerificationContract {
+        schema_path: "schemas/ripr/check.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/check-findings.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["check_findings_artifact"],
+    },
     // The analysis_timeout refusal of `ripr check` renders at refusal
     // generation 0.3 with `input_context` (RIPR-SPEC-0241 amendment
     // #10796). Before this row the product emitted 0.3 documents no
@@ -589,6 +654,29 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["analysis_scope.scope", "run_limitations"],
     },
+    // `ripr help --json`. The fixture is a capture of the real document
+    // trimmed to ten command rows and one workflow (the whole document
+    // exceeds the validator's evaluation budget); the producer-byte
+    // authority is `help_json_schema.rs`, which checks every row.
+    VerificationContract {
+        schema_path: "schemas/ripr/help.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/help.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["catalog_digest", "flags_scope"],
+    },
+    // `ripr rerun --json`. The fixture is a capture of a gap-selector run
+    // whose ledger carries typed command specs, with host paths made
+    // portable; the producer-byte authority is `rerun_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/rerun.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/rerun.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["scope_limitations", "receipt_command_conflict"],
+    },
     // The refusal envelopes of `ripr rerun --json`, `ripr agent brief --json`
     // and `ripr agent packet --json`: captures of real refusals with the
     // host path replaced by `.`, kept as edge fixtures.
@@ -615,6 +703,40 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["seam_id_unknown", "run_limitations"],
+    },
+    // `ripr agent packet --seam-id <id> --json`. The fixture is a capture of
+    // a write-targeted-test packet with the host's absolute root made
+    // portable; the producer-byte authority is `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-packet.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-packet.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["--seam-id", "write_targeted_test"],
+    },
+    // `ripr check --format agent-seam-packets-json`. The fixture is a capture
+    // of a one-packet run with the host's absolute root made portable; the
+    // producer-byte authority is `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-seam-packets.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-seam-packets.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["agent-seam-packets-json", "receipt_after_verify"],
+    },
+    // `ripr agent packet --gap-ledger <path> --gap-id <id> --json`. The
+    // fixture is a capture of an advisory packet with the host's absolute
+    // root made portable; the producer-byte authority is
+    // `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-gap-packet.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-gap-packet.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["agent-gap-packet.schema.json", "blocked_candidate"],
     },
     // `ripr agent status --json`. The fixture is a capture of a finished
     // repair loop with the host's absolute root replaced by `.`; the
@@ -1107,14 +1229,15 @@ fn version_authority_violations(
             continue;
         }
         let schema = read_json(root.join(&schema_path))?;
-        let pinned = schema
-            .pointer("/properties/schema_version/const")
-            .and_then(Value::as_str);
+        let pinned = pinned_version(&schema);
         for producer in *producers {
+            if let Some(violation) = version_type_mismatch(&schema_path, &schema, producer.prefix) {
+                violations.push(violation);
+            }
             let source = read_source(producer.source_path)?;
             if let Some(violation) = version_mismatch(
                 &schema_path,
-                pinned,
+                pinned.as_deref(),
                 producer.source_path,
                 &source,
                 producer.prefix,
@@ -1126,6 +1249,38 @@ fn version_authority_violations(
         }
     }
     Ok(registered)
+}
+
+/// The schema's pinned `schema_version`: a string const as written, or an
+/// unsigned integer const (`ripr help --json` versions with an integer) as
+/// its decimal spelling, which is how its producer constant reads.
+fn pinned_version(schema: &Value) -> Option<String> {
+    match schema.pointer("/properties/schema_version/const")? {
+        Value::String(version) => Some(version.clone()),
+        Value::Number(version) => version.as_u64().map(|version| version.to_string()),
+        _ => None,
+    }
+}
+
+/// `pinned_version` spells an integer const in decimal, so `5` and `"5"`
+/// would read alike. The JSON type is part of the contract: a string const
+/// pairs only with a string producer constant (a prefix ending in its opening
+/// quote) and an integer const only with an integer one.
+fn version_type_mismatch(schema_path: &str, schema: &Value, prefix: &str) -> Option<String> {
+    let schema_is_string = match schema.pointer("/properties/schema_version/const")? {
+        Value::String(_) => true,
+        Value::Number(_) => false,
+        _ => return None,
+    };
+    let producer_is_string = prefix.ends_with('"');
+    (schema_is_string != producer_is_string).then(|| {
+        let kind = |string: bool| if string { "a string" } else { "an integer" };
+        format!(
+            "{schema_path} pins `schema_version` as {} but its producer constant `{prefix}` is {}",
+            kind(schema_is_string),
+            kind(producer_is_string)
+        )
+    })
 }
 
 fn version_mismatch(
@@ -1140,7 +1295,9 @@ fn version_mismatch(
     let producers = source
         .split(prefix)
         .skip(1)
-        .filter_map(|rest| rest.split_once('"').map(|(version, _)| version))
+        // A string constant ends at its closing quote; an integer constant
+        // (a prefix ending in `= `) ends at its semicolon.
+        .filter_map(|rest| rest.split_once(['"', ';']).map(|(version, _)| version))
         .collect::<Vec<_>>();
     let doc_row_prefix = format!("| `{schema_path}` | `");
     let documented = version_doc
@@ -3434,6 +3591,57 @@ mod tests {
         );
     }
 
+    /// An integer `schema_version` (`ripr help --json`) reconciles through
+    /// the same row: the schema's integer const, the producer's integer
+    /// constant read up to its semicolon, and the documented decimal.
+    #[test]
+    fn integer_schema_versions_reconcile_and_drift_is_rejected() {
+        let path = "schemas/ripr/example.schema.json";
+        let prefix = "const VERSION: u64 = ";
+        let source = "const VERSION: u64 = 5;";
+        let doc = "| `schemas/ripr/example.schema.json` | `5` | producer |";
+        let pinned =
+            pinned_version(&serde_json::json!({"properties": {"schema_version": {"const": 5}}}));
+        assert_eq!(pinned.as_deref(), Some("5"));
+        let check = |pinned: Option<&str>, source: &str, doc: &str| {
+            version_mismatch(path, pinned, "producer.rs", source, prefix, 1, doc)
+        };
+        assert!(check(pinned.as_deref(), source, doc).is_none());
+        assert!(check(Some("6"), source, doc).is_some());
+        assert!(check(pinned.as_deref(), "const VERSION: u64 = 6;", doc).is_some());
+        assert!(
+            check(
+                pinned.as_deref(),
+                source,
+                "| `schemas/ripr/example.schema.json` | `6` | producer |"
+            )
+            .is_some()
+        );
+        assert_eq!(
+            pinned_version(&serde_json::json!({"properties": {"schema_version": {"const": -1}}})),
+            None
+        );
+        assert_eq!(
+            pinned_version(&serde_json::json!({"properties": {"schema_version": {"const": true}}})),
+            None
+        );
+    }
+
+    /// The decimal spelling hides the JSON type, so the gate also compares
+    /// the schema const's type with the producer constant's.
+    #[test]
+    fn version_type_mismatch_rejects_a_string_const_for_an_integer_producer() {
+        let path = "schemas/ripr/example.schema.json";
+        let integer = serde_json::json!({"properties": {"schema_version": {"const": 5}}});
+        let string = serde_json::json!({"properties": {"schema_version": {"const": "5"}}});
+        let integer_prefix = "const VERSION: u64 = ";
+        let string_prefix = "const VERSION: &str = \"";
+        assert!(version_type_mismatch(path, &integer, integer_prefix).is_none());
+        assert!(version_type_mismatch(path, &string, string_prefix).is_none());
+        assert!(version_type_mismatch(path, &string, integer_prefix).is_some());
+        assert!(version_type_mismatch(path, &integer, string_prefix).is_some());
+    }
+
     /// Mutate only the installed `ripr pr-evidence` producer and require the
     /// real inventory to reject it, so the unpublished xtask copy cannot stand
     /// in for the binary users actually run.
@@ -4365,6 +4573,100 @@ mod tests {
             !violations_of(&malformed).is_empty(),
             "the schema must reject a refusal block missing `message`/`next`"
         );
+        Ok(())
+    }
+
+    /// #15376: the check-findings capture validates, a plain check document
+    /// without `artifact` still validates, and each envelope drift a consumer
+    /// relies on is rejected. The nullable `base_revision` and the
+    /// `unavailable` clock disclosure are admitted because the producer
+    /// emits them.
+    #[test]
+    fn check_schema_admits_and_closes_the_check_findings_artifact() -> Result<(), String> {
+        type Mutation = fn(&mut Value);
+        let root = repo_root()?;
+        let schema = read_json(root.join("schemas/ripr/check.schema.json"))?;
+        let fixture =
+            read_json(root.join("tests/fixtures/verification/ripr/check-findings.valid.json"))?;
+        let violations_of = |value: &Value| {
+            let mut violations = Vec::new();
+            validate_value_against_schema(
+                value,
+                &schema,
+                &schema,
+                "check-findings fixture".to_string(),
+                &mut violations,
+            );
+            violations
+        };
+        assert_eq!(
+            fixture["artifact"]["kind"], "check_findings",
+            "premise: the fixture is a check-findings document"
+        );
+        assert_eq!(
+            fixture["artifact"]["analysis"]["base_revision"],
+            Value::Null,
+            "premise: the capture carries the null base revision of a --diff run"
+        );
+        let found = violations_of(&fixture);
+        assert!(found.is_empty(), "{found:#?}");
+
+        let mut plain = fixture.clone();
+        if let Some(object) = plain.as_object_mut() {
+            object.remove("artifact");
+        }
+        let found = violations_of(&plain);
+        assert!(found.is_empty(), "plain check document: {found:#?}");
+
+        let admitted: [(&str, Mutation); 2] = [
+            ("string base revision", |doc| {
+                doc["artifact"]["analysis"]["base_revision"] = Value::from("origin/main")
+            }),
+            ("unavailable clock", |doc| {
+                doc["artifact"]["generated_at"] = Value::from("unavailable")
+            }),
+        ];
+        for (label, mutate) in admitted {
+            let mut document = fixture.clone();
+            mutate(&mut document);
+            let found = violations_of(&document);
+            assert!(found.is_empty(), "{label}: {found:#?}");
+        }
+
+        let rejected: [(&str, Mutation); 7] = [
+            ("repo-exposure kind", |doc| {
+                doc["artifact"]["kind"] = Value::from("repo_exposure")
+            }),
+            ("unknown envelope field", |doc| {
+                doc["artifact"]["verdict"] = Value::Bool(true)
+            }),
+            ("malformed content digest", |doc| {
+                doc["artifact"]["content_sha256"] = Value::from("sha256:nope")
+            }),
+            ("numeric generated_at", |doc| {
+                doc["artifact"]["generated_at"] = Value::from(123)
+            }),
+            ("another analysis format", |doc| {
+                doc["artifact"]["analysis"]["format"] = Value::from("json")
+            }),
+            ("undisclosed worktree state", |doc| {
+                doc["artifact"]["analysis"]["worktree"] = Value::from("unknown")
+            }),
+            ("missing snapshot identity", |doc| {
+                if let Some(object) = doc["artifact"].as_object_mut() {
+                    object.remove("snapshot_identity");
+                }
+            }),
+        ];
+        for (label, mutate) in rejected {
+            let mut document = fixture.clone();
+            mutate(&mut document);
+            assert_ne!(document, fixture, "{label}: the mutation changed nothing");
+            assert!(
+                !violations_of(&document).is_empty(),
+                "the check schema accepted a forbidden check-findings document: {label}"
+            );
+        }
         Ok(())
     }
 

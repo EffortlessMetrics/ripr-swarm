@@ -913,6 +913,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -1166,7 +1167,7 @@ mod tests {
         let mut finding = super::super::gaps::test_finding()?;
         finding.probe.location.file = root.join("pricing_%FF.rs");
         let item = GapItem::from_finding(&finding, &root)?;
-        if item.file != "./pricing_%25FF.rs" {
+        if item.file != "pricing_%25FF.rs" {
             return Err(format!("wire spelling must stay encoded: {}", item.file));
         }
         let changed = inventory_changed_files(&root, std::slice::from_ref(&finding));
@@ -1630,6 +1631,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,

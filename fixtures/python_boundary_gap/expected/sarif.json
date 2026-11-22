@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.py:python_preview:d1182145|probe:src_discount.py:python_preview:d1182145|src/discount.py"
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.py:python_preview:d1182145|probe:src_discount.py:python_preview:d1182145|fixtures/python_boundary_gap/input/src/discount.py"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/discount.py"
+                  "uri": "fixtures/python_boundary_gap/input/src/discount.py"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "Missing check: changed Python equality-boundary at line 2 lacks a concrete repair discriminator. weakly_exposed static exposure for predicate probe:     if amount >= threshold:. Next step: Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `amount == threshold`."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.py:python_preview:d1182145|probe:src_discount.py:python_preview:d1182145|src/discount.py"
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.py:python_preview:d1182145|probe:src_discount.py:python_preview:d1182145|fixtures/python_boundary_gap/input/src/discount.py"
           },
           "properties": {
             "canonical_gap": {

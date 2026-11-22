@@ -525,6 +525,15 @@ points and must name the upstream repository, command template, exact 40-hex
 commit, checked-in patch, runtime budget, and artifact-size budget before the
 gate will accept them.
 
+A pure case's corpus `language` label must match a finding language in its
+own report or golden — derived from the findings' probe owner prefixes and
+probe file extensions and from `changed_files_by_language` entries with a
+non-zero file count. When a finding language can be derived and the label is
+none of them, the gate fails closed and names the case; a case whose report
+carries no derivable finding language (for example an empty or repo-seam
+report) leaves its label unconstrained. Relabeling a case never changes its
+assertions or classifications.
+
 The corpus summary envelope is the canonical result/failure projection for this
 corpus runner. The older `evidence-promotion-honesty.md` and
 `evidence-promotion-pinned-external.{json,md}` reports remain detailed
@@ -574,7 +583,7 @@ gate-specific artifacts.
 | ts_decorator_indirection_limit | typescript | typescript_static_limit_taxonomy | decorator_indirection_named_limitation_not_promoted (also `must_emit_limitation: decorator_indirection`, `maximum_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | ts_dynamic_dispatch_limit | typescript | typescript_static_limit_taxonomy | dynamic_dispatch_named_limitation_not_promoted (also `must_emit_limitation: dynamic_dispatch`, `maximum_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | ts_missing_import_graph_limit | typescript | typescript_static_limit_taxonomy | unresolved_import_missing_import_graph_named_limitation (also `must_emit_limitation: missing_import_graph`, `maximum_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
-| ts_hoc_wrapped_owner | typescript | typescript_adversarial_hoc_wrapped_owner | higher_order_wrapper_obscures_owner_identity (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
+| ts_hoc_wrapped_owner | typescript | typescript_adversarial_hoc_wrapped_owner | higher_order_wrapper_obscures_owner_identity (also `expected_class=static_unknown`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | ts_token_substring | typescript | typescript_adversarial_token_substring | token_substring_coincidence (also `expected_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | ts_render_reaches_unobserved_sink | typescript | typescript_adversarial_render_unobserved_sink | render_test_reaches_not_observes_changed_sink (also `expected_class=static_unknown`, `maximum_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
 | ts_owner_identity_after_insertion | typescript | typescript_adversarial_owner_identity_after_insertion | stale_line_owner_identity_after_insertion (also `maximum_class=weakly_exposed`, `must_not_report_clean`, `must_disclose_scope`, no verify/receipt commands, and no repair packet) |
@@ -637,7 +646,7 @@ TypeScript/JavaScript families and their charter coverage:
 | same method name on a different class/receiver | `ts_same_method_other_class` | `no_static_path` (receiver identity required) |
 | imported function name collision across modules | `ts_imported_function_name_collision` | `maximum_class=weakly_exposed` (barrel re-export resolves to the other module) |
 | decorator wrapper obscuring the owner | `ts_decorator_indirection_limit` | `must_emit_limitation: decorator_indirection`, not promoted |
-| higher-order wrapper obscuring the owner | `ts_hoc_wrapped_owner` | `weakly_exposed` (wrapper boundary stays opaque) |
+| higher-order wrapper obscuring the owner | `ts_hoc_wrapped_owner` | `static_unknown` (closure reach only, #13592; wrapper boundary stays opaque, no oracle borrowed) |
 | token substring collision | `ts_token_substring` | `weakly_exposed` (call-boundary match, heuristic-only link) |
 | component/render test reaches but does not observe the changed sink | `ts_render_reaches_unobserved_sink` | `static_unknown`, `maximum_class=weakly_exposed` (reach through a same-module caller cannot borrow the strong assertion) |
 | stale line/owner identity after an insertion | `ts_owner_identity_after_insertion` | `maximum_class=weakly_exposed` (post-insertion owner identity; sibling oracle not borrowed) |

@@ -282,6 +282,12 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
 pub(crate) const SEAM_ID_SOURCE_HINT: &str =
     "Use an id that `ripr check` or `ripr pilot --root <dir>` printed";
 
+/// Where the id comes from for `agent start` and `agent brief`, which take an
+/// exact seam id and do not resolve a `ripr check` finding id the way
+/// `agent packet` does. Naming `ripr check` alone would send the reader to a
+/// `probe:...` id these two refuse (#15985).
+pub(crate) const EXACT_SEAM_ID_SOURCE_HINT: &str = "Use an id that `ripr pilot --root <dir>` lists, or the spot id on the `ripr repair` line that `ripr check` prints; a `probe:...` finding id is not accepted here";
+
 fn parse_agent_start_command(args: &[String]) -> Result<AgentCommand, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return Ok(AgentCommand::StartHelp);
@@ -701,11 +707,11 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         );
     }
     if phase == AgentRepairPhase::Verify && verify_rollback && !verify_authorized {
-        // Unreachable through the pair rules above (an authority without the
-        // flag is already refused); kept as an explicit guard so a rollback
-        // demand can never ride on an absent verification authorization.
+        // Reached by `--verify-rollback` alone: the pair rules above only
+        // refuse a half-supplied pair, not an absent one. A rollback demand
+        // can never ride on an absent verification authorization.
         return Err(
-            "agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>; pass both, and if you did, report this as a ripr bug with the command you ran"
+            "agent repair --verify-rollback requires --verify-authorized and --verify-authority <identity>; pass `--verify-authorized --verify-authority <identity>` together with `--verify-rollback`"
                 .to_string(),
         );
     }
@@ -851,7 +857,9 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
         seam_id: seam_id.ok_or_else(|| {
             crate::cli::usage_refusal::missing_required(
                 "--seam-id",
-                "agent start requires --seam-id; add `--seam-id` to the command",
+                &format!(
+                    "agent start requires --seam-id; add `--seam-id <id>`. {EXACT_SEAM_ID_SOURCE_HINT}"
+                ),
             )
         })?,
         out_dir: out_dir.unwrap_or_else(|| PathBuf::from("target/ripr/workflow")),
@@ -929,7 +937,9 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         .ok_or_else(|| {
             crate::cli::usage_refusal::missing_required(
                 "--diff",
-                "agent brief requires exactly one of --diff, --base, --files, or --seam-id",
+                &format!(
+                    "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev> --json` to brief the changes since that revision, or `--seam-id <id> --json` for one seam. {EXACT_SEAM_ID_SOURCE_HINT}"
+                ),
             )
         })?
         .into_working_set();
@@ -2547,7 +2557,9 @@ mod tests {
         );
         assert_eq!(
             parse_agent_start_options(&args(&[])),
-            Err("agent start requires --seam-id; add `--seam-id` to the command".to_string())
+            Err(format!(
+                "agent start requires --seam-id; add `--seam-id <id>`. {EXACT_SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id", ""])),
@@ -2693,10 +2705,9 @@ mod tests {
     fn agent_brief_requires_exactly_one_working_set() {
         assert_eq!(
             parse_agent_brief_options(&args(&["--json"])),
-            Err(
-                "agent brief requires exactly one of --diff, --base, --files, or --seam-id"
-                    .to_string()
-            )
+            Err(format!(
+                "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev> --json` to brief the changes since that revision, or `--seam-id <id> --json` for one seam. {EXACT_SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[

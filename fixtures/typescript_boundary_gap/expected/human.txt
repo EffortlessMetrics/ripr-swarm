@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_boundary_gap/input
 config: <cwd>/fixtures/typescript_boundary_gap/input/ripr.toml
 
-Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed (1 through a test link ripr could not confirm), 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 

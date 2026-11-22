@@ -24,6 +24,8 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
+mod removal_action;
+
 /// A changed Python predicate that holds several relational comparisons, as
 /// the boundary analysis names it in the Missing check (`The changed predicate
 /// `rate < 0 or rate >= 1` holds 2 relational comparisons; ...`). #13790 only
@@ -379,6 +381,12 @@ pub(crate) fn render_human_triage(
         "  State: {}\n",
         if all_noticed {
             "no test gap found"
+        } else if triage.selected.is_none()
+            && triage.state == HumanTriageState::NoActionableGap
+            && removal_action::is_removal_only(&triage.omitted)
+        {
+            // #15335: name why nothing is selected for a removal-only run.
+            removal_action::REMOVAL_ONLY_STATE
         } else {
             triage.state.plain_label()
         }
@@ -406,6 +414,10 @@ pub(crate) fn render_human_triage(
             // currentness distinction — `unresolved_subject` is the
             // explicit unknown, not base-side evidence.
             out.push_str(&no_selection_safe_action_line(&triage.omitted));
+            // #15617: a removal-only run also lists what was removed.
+            if let Some(rows) = removal_action::removal_only_rows(&output.root, &triage.omitted) {
+                out.push_str(&rows);
+            }
         }
         NextActionCheckCase::SuppressedByPolicy => {
             // #13819: a run whose findings an owner opt-out withheld names
@@ -892,7 +904,10 @@ pub(crate) fn render_human_triage(
             let mut row = String::new();
             row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
@@ -1119,7 +1134,7 @@ fn grouped_hidden_row(
     let label = if kinds.len() == 1 { "kind" } else { "kinds" };
     Some(format!(
         "    - {}:{} ({}{}); {} changed behaviors{}; {}: {}; reason: {}\n",
-        crate::analysis::finding_location_text(root, &first.probe.location.file),
+        crate::output::path::human_location_text(root, &first.probe.location.file),
         lines,
         first.class.plain_label_with_stage(),
         currentness,
@@ -1902,6 +1917,9 @@ fn no_selection_hidden_line(omitted: &[&Finding]) -> String {
 
 /// The safe-next-action line for a run where nothing was candidate-actionable.
 fn no_selection_safe_action_line(omitted: &[&Finding]) -> String {
+    if let Some(line) = removal_action::removal_only_safe_action_line(omitted) {
+        return line;
+    }
     match no_selection_mix(omitted) {
         NoSelectionMix::AllBaseSide => {
             "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n".to_string()
@@ -2790,13 +2808,14 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    fn test_finding(id: &str) -> Finding {
+    pub(super) fn test_finding(id: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
             confidence_basis: Vec::new(),
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation::new("src/lib.rs", 1, 1),
                 owner: None,
@@ -3575,8 +3594,9 @@ mod tests {
         backslash_root.root = PathBuf::from(["C:", "tmp", "probe win space"].join(r"\"));
         let raw = backslash_root.root.display().to_string();
         // Independent slash-stable contract: forward-slash join of the
-        // same components, not `display_path` output.
-        let expected = ["C:", "tmp", "probe win space"].join("/");
+        // same components, not `display_path` output. On Unix the backslash
+        // is a file-name byte, spelled `%5C` (#15908).
+        let expected = ["C:", "tmp", "probe win space"].join(if cfg!(unix) { "%5C" } else { "/" });
         if raw == expected {
             return Err(format!(
                 "fixture lost its discriminator: raw display {raw:?} already matches {expected:?}"
@@ -3612,15 +3632,15 @@ mod tests {
 
         // Verbatim Windows prefix: never `\\?\` in JSON identity (#5996). On
         // Windows it folds to the plain drive spelling, as every printed path
-        // does (#9660); on Unix `\` is a filename byte, so the text only
-        // slash-unifies.
+        // does (#9660); on Unix `\` is a filename byte, spelled `%5C`
+        // (#15908).
         let mut verbatim = test_output(Vec::new());
         verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
         let verbatim_raw = verbatim.root.display().to_string();
         let verbatim_expected = if cfg!(windows) {
             ["C:", "tmp", "probe"].join("/")
         } else {
-            ["//?", "C:", "tmp", "probe"].join("/")
+            ["%5C%5C?", "C:", "tmp", "probe"].join("%5C")
         };
         if verbatim_raw == verbatim_expected {
             return Err(format!(

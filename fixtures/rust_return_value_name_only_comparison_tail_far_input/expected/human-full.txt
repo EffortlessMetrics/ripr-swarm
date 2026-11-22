@@ -1,0 +1,75 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_return_value_name_only_comparison_tail_far_input/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach yes: Related tests appear to reach over_limit: a_large_value_is_over
+  E2 [findings 1, 2]: infection weak: Related tests contain input values, but the equality-boundary check is missing
+  E3 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E4 [findings 1, 2]: discriminator missing: `n == LIMIT`; related oracle: Strong oracle found: exact value or pattern assertion
+  E5 [findings 1, 2]: local flow reaches returned value: n >= LIMIT (line 4)
+  E6 [findings 1, 2]: related test src/lib.rs:12 a_large_value_is_over uses strong exact value oracle: assert_eq!(over_limit(5000), true); misses: no test input reaches `n == LIMIT`
+  E7 [findings 1, 2]: source assertion argument value true at line 13
+  E8 [findings 1, 2]: source function argument value n = 5000 at line 13
+
+Finding 1: WARNING ./src/lib.rs:4
+  id: probe:src_lib.rs:predicate:b03084cc
+Changed
+  before: n > LIMIT
+  after:  n >= LIMIT
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::over_limit
+  gap id (for scripts): gap:rust:src/lib.rs:over_limit:predicate_boundary:predicate:n==limit
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence returned value: n >= LIMIT
+  shared evidence: E3, E4, E5, E6, E7, E8
+Weakness
+  - missing discriminator n == LIMIT: No related test call uses n equal to LIMIT; observed n values: 5000; target LIMIT value: 1000
+Next step
+  - Add boundary tests for below, equal, and above the changed threshold with exact assertions
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_return_value_name_only_comparison_tail_far_input/input --diff <cwd>/fixtures/rust_return_value_name_only_comparison_tail_far_input/diff.patch --mode fast probe:src_lib.rs:predicate:b03084cc
+  ripr context --root <cwd>/fixtures/rust_return_value_name_only_comparison_tail_far_input/input --diff <cwd>/fixtures/rust_return_value_name_only_comparison_tail_far_input/diff.patch --mode fast --at probe:src_lib.rs:predicate:b03084cc
+
+Finding 2: WARNING ./src/lib.rs:4
+  id: probe:src_lib.rs:return_value:c5d2a3eb
+Changed
+  before: n > LIMIT
+  after:  n >= LIMIT
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::over_limit
+  gap id (for scripts): gap:rust:src/lib.rs:over_limit:return_value:return_value:n>=limit
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Complete propagation witness reaches returned value: n >= LIMIT
+  shared evidence: E3, E4, E5, E6, E7, E8
+Weakness
+  - missing discriminator n == LIMIT: No related test call uses n equal to LIMIT; observed n values: 5000; target LIMIT value: 1000
+Next step
+  - The related test `a_large_value_is_over` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns. Missing discriminator: `n == LIMIT`
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_return_value_name_only_comparison_tail_far_input/input --diff <cwd>/fixtures/rust_return_value_name_only_comparison_tail_far_input/diff.patch --mode fast probe:src_lib.rs:return_value:c5d2a3eb
+  ripr context --root <cwd>/fixtures/rust_return_value_name_only_comparison_tail_far_input/input --diff <cwd>/fixtures/rust_return_value_name_only_comparison_tail_far_input/diff.patch --mode fast --at probe:src_lib.rs:return_value:c5d2a3eb
