@@ -830,6 +830,7 @@ fn persist_before_repair_attempt(
         baseline_ambiguous,
         typescript_test_cache_guidance,
         focused_test_command: focused_test_command(root, &packet_text),
+        declared_cargo_test_target: policy.declared_cargo_test_target,
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -926,9 +927,11 @@ fn persist_before_repair_attempt(
 fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(packet).ok()?;
     let test = value.pointer("/packets/0/recommended_test")?;
-    let file = test.get("file")?.as_str()?;
+    // The packet spells the file as stable path text; the manifest lookup
+    // compares native names (`spec/discount%.rs`, not `spec/discount%25.rs`).
+    let file = crate::analysis::decode_stable_path_text(test.get("file")?.as_str()?);
     let name = test.get("name")?.as_str()?;
-    crate::app::test_stub::focused_test_run_command(root, file, name)
+    crate::app::test_stub::focused_test_run_command(root, file.to_str()?, name)
 }
 
 #[cfg(test)]

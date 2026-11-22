@@ -658,6 +658,11 @@ pub(crate) struct BeforePhaseAttemptContinuation {
     /// summary only; the `--json` continuation is unchanged. `None` when no
     /// exact command can be established.
     pub(crate) focused_test_command: Option<String>,
+    /// The selected file is a `[[test]]` target the manifest declares
+    /// outside `tests/` (#15910), from the attempt's cage policy. The human
+    /// summary then words it as a test file, not as a source file's inline
+    /// test module, which is what its path shape alone would suggest.
+    pub(crate) declared_cargo_test_target: bool,
 }
 
 /// Augment one rendered agent-packet envelope with the additive

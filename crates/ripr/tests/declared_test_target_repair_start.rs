@@ -16,6 +16,10 @@ const WEAK_TEST: &str = "use pricing::discount;\n\n#[test]\nfn big_orders_get_di
 const BOUNDARY_TEST: &str =
     "\n#[test]\nfn discount_boundary_discriminator() {\n    assert_eq!(discount(100), 90);\n}\n";
 
+/// The `[[test]]` target name. It differs from every fixture file stem, so a
+/// command that names it was read from the manifest, not from the file name.
+const TARGET_NAME: &str = "boundary_checks";
+
 struct Repo(PathBuf);
 
 impl Repo {
@@ -58,7 +62,7 @@ impl Repo {
     fn declared(test_path: &str) -> Result<Self, String> {
         Self::create(
             test_path,
-            &format!("\n[[test]]\nname = \"pricing\"\npath = \"{test_path}\"\n"),
+            &format!("\n[[test]]\nname = \"{TARGET_NAME}\"\npath = \"{test_path}\"\n"),
         )
     }
 
@@ -105,19 +109,36 @@ impl Repo {
         Ok(text(&self.ripr(&["check", "--base", "main"])?))
     }
 
-    /// Starts the repair `ripr check` offers and returns the attempt id.
-    fn start(&self, test_path: &str) -> Result<String, String> {
+    /// The spot id `ripr check` offers a repair start for.
+    fn start_id(&self) -> Result<String, String> {
         let check = self.check()?;
-        let id = check_start_id(&check)
-            .ok_or_else(|| format!("check must offer a repair start:\n{check}"))?;
-        let started = self.ripr(&["repair", id, "--root", "."])?;
+        check_start_id(&check)
+            .map(str::to_string)
+            .ok_or_else(|| format!("check must offer a repair start:\n{check}"))
+    }
+
+    /// Starts the repair `ripr check` offers and returns the attempt id.
+    /// `shown_path` is the test file as the screen spells it.
+    fn start(&self, shown_path: &str) -> Result<String, String> {
+        let id = self.start_id()?;
+        let started = self.ripr(&["repair", &id, "--root", "."])?;
         let screen = text(&started);
         if !started.status.success() {
             return Err(format!("repair must start:\n{screen}"));
         }
-        let surface = format!("Files you may change: {test_path}");
+        let surface = format!("Files you may change: {shown_path}");
         if !screen.contains(&surface) {
             return Err(format!("repair must name `{surface}`:\n{screen}"));
+        }
+        let step = format!("edit one test file: {shown_path} ");
+        if !screen.contains(&step) {
+            return Err(format!("repair must say `{step}`:\n{screen}"));
+        }
+        let run = format!("--test {TARGET_NAME} discount_boundary_discriminator");
+        if !screen.contains(&run) {
+            return Err(format!(
+                "repair must run the manifest's target `{run}`:\n{screen}"
+            ));
         }
         screen
             .split_whitespace()
@@ -185,9 +206,14 @@ fn assert_linked_without_start(case: &str, repo: &Repo, test_path: &str) -> Resu
 
 #[test]
 fn declared_test_path_outside_tests_starts_and_completes_a_repair() -> Result<(), String> {
-    for test_path in ["spec/pricing.rs", "Tests/pricing.rs"] {
+    // The last file has a literal `%` in its name, which screens spell `%25`.
+    for (test_path, shown_path) in [
+        ("spec/pricing.rs", "spec/pricing.rs"),
+        ("Tests/pricing.rs", "Tests/pricing.rs"),
+        ("spec/discount%.rs", "spec/discount%25.rs"),
+    ] {
         let repo = Repo::declared(test_path)?;
-        let attempt = repo.start(test_path)?;
+        let attempt = repo.start(shown_path)?;
         repo.append(test_path, BOUNDARY_TEST)?;
         let (finished, screen) = repo.finish(&attempt)?;
         if !finished
@@ -206,6 +232,36 @@ fn declared_test_path_outside_tests_starts_and_completes_a_repair() -> Result<()
         }
     }
     Ok(())
+}
+
+/// The stub preview for the same spot goes to the declared file and runs
+/// under the manifest's target name, so it agrees with the file the attempt
+/// lets the developer edit.
+#[test]
+fn stub_for_a_declared_test_target_lands_in_the_declared_file() -> Result<(), String> {
+    let repo = Repo::declared("spec/pricing.rs")?;
+    let id = repo.start_id()?;
+    let stub = text(&repo.ripr(&["agent", "stub", "--root", ".", "--seam-id", &id])?);
+    let mut failures = Vec::new();
+    if !stub.contains("for spec/pricing.rs (end of existing integration test file)") {
+        failures.push("the stub must land in the declared test file");
+    }
+    if !stub.contains("use pricing::*;") {
+        failures.push("the stub must import the library by its crate name");
+    }
+    if !stub.contains(&format!(
+        "--test {TARGET_NAME} discount_boundary_discriminator"
+    )) {
+        failures.push("the stub must run under the manifest's target name");
+    }
+    if stub.contains("src/lib.rs, but the repair packet admits only") {
+        failures.push("the stub must not disagree with the repair's edit surface");
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("{}\n{stub}", failures.join("\n")))
+    }
 }
 
 #[test]
@@ -257,7 +313,7 @@ fn declared_test_path_under_src_gets_no_start() -> Result<(), String> {
 fn test_path_that_also_roots_another_target_gets_no_start() -> Result<(), String> {
     let repo = Repo::create(
         "spec/pricing.rs",
-        "\n[[test]]\nname = \"pricing\"\npath = \"spec/pricing.rs\"\n\n[[example]]\nname = \"demo\"\npath = \"spec/pricing.rs\"\n",
+        "\n[[test]]\nname = \"boundary_checks\"\npath = \"spec/pricing.rs\"\n\n[[example]]\nname = \"demo\"\npath = \"spec/pricing.rs\"\n",
     )?;
     assert_linked_without_start("also an example root", &repo, "spec/pricing.rs")
 }

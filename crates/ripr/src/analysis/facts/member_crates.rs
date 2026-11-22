@@ -96,6 +96,9 @@ pub(crate) struct MemberCrates {
     /// Kept for this analysis only. A missing entry or macro is not an
     /// absence certificate and must never clear a broader ambiguity.
     imported_macro_exports: Arc<Mutex<ImportedMacroExports>>,
+    /// Per root-relative file: [`Self::is_declared_test_only_entry`], so the
+    /// related tests of one declared file read its manifest once per analysis.
+    declared_test_only_entries: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
 }
 
 impl MemberCrates {
@@ -108,6 +111,7 @@ impl MemberCrates {
             library_exports: Arc::default(),
             library_roots: Arc::default(),
             imported_macro_exports: Arc::default(),
+            declared_test_only_entries: Arc::default(),
         }
     }
 
@@ -1144,9 +1148,18 @@ impl MemberCrates {
     /// `[[bench]]` `path`, or its build script, so a manifest can never turn
     /// production code into a test file by declaring it twice.
     pub(crate) fn is_declared_test_only_entry(&self, file: &Path) -> bool {
-        self.is_declared_test_target_entry(file, false)
+        if let Ok(memo) = self.declared_test_only_entries.lock()
+            && let Some(answer) = memo.get(file)
+        {
+            return *answer;
+        }
+        let answer = self.is_declared_test_target_entry(file, false)
             && !self.is_declared_entry_of(file, &["bin", "example", "bench"])
-            && !self.is_library_or_build_script_entry(file)
+            && !self.is_library_or_build_script_entry(file);
+        if let Ok(mut memo) = self.declared_test_only_entries.lock() {
+            memo.insert(file.to_path_buf(), answer);
+        }
+        answer
     }
 
     /// Whether the nearest package manifest names `file` as its `[lib]

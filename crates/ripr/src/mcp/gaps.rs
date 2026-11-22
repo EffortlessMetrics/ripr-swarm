@@ -266,7 +266,7 @@ impl RepairReadiness {
             // condition (strength and relation confidence are applied by
             // `fix_site_candidates`); the test-surface predicate is re-applied
             // here so swapping candidates can never widen the edit surface.
-            Some(candidate) if !crate::analysis::is_test_surface(root, &candidate.file) => {
+            Some(candidate) if !fix_site_is_test_surface(root, &candidate.file) => {
                 self.ready = false;
                 self.fix_site = Some(candidate);
                 self.ineligibility = Some("fix_site_not_test_surface");
@@ -378,7 +378,7 @@ impl RepairReadiness {
         };
         let Some(fix_site) = candidates
             .into_iter()
-            .find(|site| crate::analysis::is_test_surface(root, &site.file))
+            .find(|site| fix_site_is_test_surface(root, &site.file))
         else {
             return Self {
                 ready: false,
@@ -456,6 +456,16 @@ impl RepairReadiness {
             }
         }
     }
+}
+
+/// Whether a fix site's file is a test surface. The site spells its file as
+/// stable path text (`%` escaped as `%25`), while the manifest authority
+/// compares native names, so `spec/discount%.rs` is decoded before it asks
+/// (#15910). A name that is not UTF-8 is not admitted.
+fn fix_site_is_test_surface(root: &Path, file: &str) -> bool {
+    crate::analysis::decode_stable_path_text(file)
+        .to_str()
+        .is_some_and(|native| crate::analysis::is_test_surface(root, native))
 }
 
 /// High-confidence directly-related tests that can be the fix site, strongest

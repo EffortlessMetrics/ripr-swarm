@@ -5470,10 +5470,15 @@ pub(in crate::cli) fn before_phase_stdout(
             continuation,
         );
     }
-    let mut document = before_phase_summary(packet, packet_path, !continuation.baseline_ambiguous)
-        .unwrap_or_else(|| {
-            format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
-        });
+    let mut document = before_phase_summary(
+        packet,
+        packet_path,
+        !continuation.baseline_ambiguous,
+        continuation.declared_cargo_test_target,
+    )
+    .unwrap_or_else(|| {
+        format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
+    });
     if continuation.typescript_test_cache_guidance {
         document.push_str(output::agent_seam_packets::TYPESCRIPT_TEST_CACHE_GUIDANCE);
         document.push('\n');
@@ -5512,7 +5517,7 @@ pub(in crate::cli) fn before_phase_stdout_owns_start_result(
     // unambiguous baseline, so both calls render the same summary.
     !json
         && !continuation.baseline_ambiguous
-        && before_phase_summary(packet, "", true).is_some()
+        && before_phase_summary(packet, "", true, continuation.declared_cargo_test_target).is_some()
         && summary_target_is_the_cage_target(packet)
 }
 
@@ -5675,7 +5680,12 @@ fn after_phase_human_stdout(
     out
 }
 
-fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -> Option<String> {
+fn before_phase_summary(
+    packet: &str,
+    packet_path: &str,
+    edit_directive: bool,
+    declared_cargo_test_target: bool,
+) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(packet).ok()?;
     let item = value.get("packets")?.as_array()?.first()?;
     let text = |pointer: &str| {
@@ -5707,7 +5717,8 @@ fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -
     if let Some(missing) = text("/missing_discriminators/0/value") {
         lines.push(format!("  missing discriminator: {missing}"));
     }
-    let inline_module_target = !crate::analysis::is_test_surface_path(test_file);
+    let inline_module_target =
+        !declared_cargo_test_target && !crate::analysis::is_test_surface_path(test_file);
     // #7204: an unscorable attempt's summary may not hand out an unqualified
     // edit instruction; it names the target and defers to the baseline
     // warning instead.
@@ -8000,6 +8011,7 @@ mod before_phase_stdout_tests {
             baseline_ambiguous: false,
             typescript_test_cache_guidance: false,
             focused_test_command: None,
+            declared_cargo_test_target: false,
         }
     }
 
