@@ -1010,7 +1010,8 @@ does not say "before treating this run as actionable", which read as
 "nothing to look at" for a removal that tests reach.
 
 Under that line the run lists what was removed (#15617). A
-`Removed code (static evidence on the old lines, not a test result):` heading
+`Removed code (static evidence on the old lines, not a test result; each
+location is where the code stood in the current file):` heading
 is followed by one row per finding on a removed line: its location, the code
 that stood there in a code span, the finding kind as `(kind: predicate)` so two
 findings on one line stay distinct, and what the class says about the old line
@@ -1018,7 +1019,11 @@ findings on one line stay distinct, and what the class says about the old line
 only loosely`, `tests reach it but none appears to check it`, `no test path
 was found`, or `ripr could not tell whether a test checks it (analysis limited,
 not a verdict)`). At most three rows are listed; identical rows print once,
-and a final `N more listed under Hidden` row counts the rest. The rows
+and a final `N more: rerun with --format human-full` row counts the rest
+(the Hidden list is bounded too, so it is not named as holding them). A
+finding on removed code carries the position in the current file where the
+code stood, not the old line number, so several removed statements can share
+one location; the heading says so. The rows
 restate classes the findings already carry. They select nothing for repair
 and add no verdict.
 

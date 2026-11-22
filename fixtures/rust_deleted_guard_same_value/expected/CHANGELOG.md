@@ -44,3 +44,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_deleted_guard_same_value (5)
+
+Reason:
+RIPR-SPEC-0122: removed-code rows state their location basis and overflow route
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -23,7 +23,7 @@ pub(super) fn removal_only_safe_action_line(omitted: &[&Finding]) -> Option<Stri
 }
 
 /// How many removed lines the `Removed code` block lists before it points
-/// at the Hidden list for the rest.
+/// at `--format human-full` for the rest (the Hidden list is bounded too).
 const REMOVED_ROW_LIMIT: usize = 3;
 
 /// #15617: the lines under `Safe next action` for a removal-only run. Each
@@ -57,14 +57,15 @@ pub(super) fn removal_only_rows(root: &std::path::Path, omitted: &[&Finding]) ->
             rows.push(row);
         }
     }
-    let mut out =
-        String::from("  Removed code (static evidence on the old lines, not a test result):\n");
+    let mut out = String::from(
+        "  Removed code (static evidence on the old lines, not a test result; each location is where the code stood in the current file):\n",
+    );
     for row in rows.iter().take(REMOVED_ROW_LIMIT) {
         out.push_str(row);
     }
     if rows.len() > REMOVED_ROW_LIMIT {
         out.push_str(&format!(
-            "    - {} more listed under Hidden\n",
+            "    - {} more: rerun with --format human-full\n",
             rows.len() - REMOVED_ROW_LIMIT
         ));
     }
@@ -196,7 +197,7 @@ mod tests {
         assert_eq!(
             rows.as_deref(),
             Some(
-                "  Removed code (static evidence on the old lines, not a test result):\n    - src/lib.rs:2 `if percent < 0:` (kind: unclear): tests reach it but check it only loosely\n    - src/lib.rs:3 `raise ValueError(\"negative\")` (kind: unclear): tests reach it but none appears to check it\n    - src/lib.rs:9 (kind: unclear): ripr could not tell whether a test checks it (analysis limited, not a verdict)\n"
+                "  Removed code (static evidence on the old lines, not a test result; each location is where the code stood in the current file):\n    - src/lib.rs:2 `if percent < 0:` (kind: unclear): tests reach it but check it only loosely\n    - src/lib.rs:3 `raise ValueError(\"negative\")` (kind: unclear): tests reach it but none appears to check it\n    - src/lib.rs:9 (kind: unclear): ripr could not tell whether a test checks it (analysis limited, not a verdict)\n"
             )
         );
     }
@@ -216,7 +217,7 @@ mod tests {
             3
         );
         assert!(
-            rows.ends_with("    - 2 more listed under Hidden\n"),
+            rows.ends_with("    - 2 more: rerun with --format human-full\n"),
             "{rows}"
         );
     }

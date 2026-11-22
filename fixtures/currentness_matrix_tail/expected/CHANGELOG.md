@@ -392,3 +392,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (31)
+
+Reason:
+RIPR-SPEC-0122: removed-code rows state their location basis and overflow route
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
