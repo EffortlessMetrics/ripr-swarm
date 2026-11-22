@@ -6849,12 +6849,14 @@ fn integration_rename_case() {
 
     /// #12876: an import of std's own item under an exempt macro name
     /// (`use std::panic;`) is not a rebinding, so the generated test keeps its
-    /// invocation scopes. When the file can make `std`/`core` mean something
-    /// else, the refusal stays. Each case below was checked with rustc 1.95:
-    /// the positive imports leave `a::render` as the callee, the three
-    /// shadowed roots compile and call `b::render` through the hostile macro.
-    /// The glob and macro-declared roots are refused conservatively (rustc
-    /// rejects them as ambiguous with the extern prelude).
+    /// invocation scopes. When the file can make `std` mean something else,
+    /// the refusal stays. Each case below was checked with rustc 1.95: the
+    /// positive imports leave `a::render` as the callee; the three shadowed
+    /// roots, and a `no_std` file whose macro argument renames `b` to `std`,
+    /// compile and call `b::render` through the hostile macro. The glob and
+    /// macro-declared roots in a std file are refused conservatively (rustc
+    /// rejects them as ambiguous with the extern prelude). `core` is refused
+    /// because a Cargo dependency renamed `core` can stand in for that path.
     #[test]
     fn std_rooted_import_keeps_invocation_scopes_unless_the_root_is_shadowed()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -6882,9 +6884,11 @@ fn integration_rename_case() {
             root.join("src/b.rs"),
             "pub fn render(x: i32) -> i32 {\n    x + 2\n}\npub use crate::hostile_assertion as assert_eq;\npub use crate::hostile_assertion;\n",
         )?;
-        let settle_with = |import: &str| -> Result<Option<CallTarget>, Box<dyn std::error::Error>> {
+        let settle_with = |prefix: &str,
+                           import: &str|
+         -> Result<Option<CallTarget>, Box<dyn std::error::Error>> {
             let source = format!(
-                "macro_rules! shadowed {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(render(1), 3);\n        }}\n    }};\n}}\n\nmod cases {{\n    use modules::a::render;\n    {import}\n    shadowed!(shadowed_case);\n}}\n"
+                "{prefix}macro_rules! shadowed {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(render(1), 3);\n        }}\n    }};\n}}\n\nmod cases {{\n    use modules::a::render;\n    {import}\n    shadowed!(shadowed_case);\n}}\n"
             );
             std::fs::write(root.join("tests/gen.rs"), source)?;
             let index = crate::analysis::facts::build_index(
@@ -6910,29 +6914,39 @@ fn integration_rename_case() {
             "use std::panic;",
             "use std::panic::{self, catch_unwind};",
             "use std::fmt::write;",
-            "use core::panic;",
             "use std::assert_eq;",
             "use std::vec;",
         ] {
             assert_eq!(
-                settle_with(import)?,
+                settle_with("", import)?,
                 Some(CallTarget::Owner),
                 "{import:?} imports std's own item and must keep the invocation scopes"
             );
         }
-        for import in [
-            "mod std { pub use modules::b::assert_eq; } use std::assert_eq;",
-            "use modules::b as std; use std::assert_eq;",
-            "extern crate modules as std; use std::b::assert_eq;",
-            "use modules::shim::*; use std::assert_eq;",
-            "macro_rules! mk { () => { mod std { pub use modules::b::assert_eq; } } } use std::assert_eq;",
-            "use other::panic;",
-            "use alloc::vec;",
+        let rename = "macro_rules! rename { ($alias:ident) => { use modules::b as $alias; }; } rename!(std); use std::assert_eq;";
+        for (prefix, import) in [
+            (
+                "",
+                "mod std { pub use modules::b::assert_eq; } use std::assert_eq;",
+            ),
+            ("", "use modules::b as std; use std::assert_eq;"),
+            ("", "extern crate modules as std; use std::b::assert_eq;"),
+            ("#![no_std]\n", rename),
+            ("", rename),
+            ("#![no_std]\n", "use std::assert_eq;"),
+            ("", "use modules::shim::*; use std::assert_eq;"),
+            (
+                "",
+                "macro_rules! mk { () => { mod std { pub use modules::b::assert_eq; } } } use std::assert_eq;",
+            ),
+            ("", "use core::panic;"),
+            ("", "use other::panic;"),
+            ("", "use alloc::vec;"),
         ] {
             assert_ne!(
-                settle_with(import)?,
+                settle_with(prefix, import)?,
                 Some(CallTarget::Owner),
-                "{import:?} may not import std's item, so the test must not borrow scopes"
+                "{prefix:?}{import:?} may not import std's item, so the test must not borrow scopes"
             );
         }
         let _ = std::fs::remove_dir_all(&root);

@@ -289,14 +289,15 @@ the credit, while an attribute whose path cannot be read withholds it.
 
 An explicit import at the invocation site that binds the name of an exempt
 std expression macro (`use other::assert_eq;`) also withholds the scopes
-(#12852), except an import of std's own item: a `std::` or `core::` path that
-ends in the bound name (`use std::panic;`, `use std::fmt::write;`). That
-exception holds only while the root names the real crate, so a local module,
-rename, `extern crate .. as`, `use` leaf or macro-token declaration of `std` or
-`core` anywhere in the file, or a glob import in the importing scope, keeps
-the refusal (#12876). `alloc` paths stay refused, because `alloc` enters scope
-only through an `extern crate` the file usually does not show, and a crate-root
-rebinding in another file is not seen.
+(#12852), except an import of std's own item: a `std::` path that ends in
+the bound name (`use std::panic;`, `use std::fmt::write;`). That exception
+holds only while `std` names the real crate, so a `no_std` attribute, a local
+module, rename, `extern crate .. as` or `use` leaf binding `std`, or a macro
+token `std` anywhere but as a path root (a macro argument can become a
+binding), anywhere in the file, or a glob import in the importing scope, keeps
+the refusal (#12876). `core` and `alloc` paths stay refused, because a Cargo
+dependency renamed to either can stand in for that path unseen, and a
+crate-root rebinding in another file is not seen.
 
 A generator that is a table, itoa's `test! { name(value, expected) ... }`
 (#6925), is the one repetition shape: the whole matcher is
