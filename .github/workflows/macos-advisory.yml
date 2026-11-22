@@ -67,7 +67,7 @@ jobs:
     name: macos-advisory-${{ matrix.check }}
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -116,7 +116,7 @@ jobs:
       # observed builds took 28 to over 34 minutes.
       - name: Build the library test executable (advisory outcome)
         if: matrix.check == 'lib-build'
-        timeout-minutes: 37
+        timeout-minutes: 65
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/macos-advisory" "$RUNNER_TEMP/macos-lib-binary"
@@ -205,7 +205,7 @@ jobs:
     needs: macos-advisory
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 70
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
