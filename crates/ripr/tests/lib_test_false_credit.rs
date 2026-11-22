@@ -1190,10 +1190,13 @@ fn edition_2015_declared_test_turns_off_test_discovery() -> Result<(), String> {
             "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\n{package_keys}\n[[test]]\nname = \"declared\"\npath = \"tests/declared.rs\"\n\n[workspace]\n"
         )
     };
+    // Edition 2015 integration tests name the library through `extern
+    // crate`, so the opt-in control is a test Cargo can build and run.
+    let integration = format!("extern crate lib_test_false;\n\n{INTEGRATION_TEST}");
     let files = [
         ("src/lib.rs", OWNER),
         ("tests/declared.rs", "#[test]\nfn unrelated() {}\n"),
-        ("tests/integration.rs", INTEGRATION_TEST),
+        ("tests/integration.rs", integration.as_str()),
     ];
     let legacy = TempCrate::create_in(&manifest(""), &files, "src/lib.rs", 1)?;
     let finding = legacy.finding()?;
@@ -1210,6 +1213,56 @@ fn edition_2015_declared_test_turns_off_test_discovery() -> Result<(), String> {
         assert!(
             credits_a_discriminator(&finding.class),
             "{label} builds tests/integration.rs: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A unit test inside a binary root Cargo never builds is no discriminator
+/// (#16051 review): `autobins = false` with no `[[bin]]`, or edition 2015
+/// declaring a different `[[bin]]`, leaves `src/bin/extra.rs` undiscovered,
+/// so its test cannot run. The discovered binary keeps the credit.
+#[test]
+fn a_test_in_an_undiscovered_bin_is_not_a_discriminator() -> Result<(), String> {
+    let manifest = |package_keys: &str, targets: &str| {
+        format!(
+            "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\n{package_keys}\n{targets}\n[workspace]\n"
+        )
+    };
+    let bin = "extern crate lib_test_false;\n\nfn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(lib_test_false::f(5), 7);\n    }\n}\n";
+    let files = [
+        ("src/lib.rs", OWNER),
+        ("src/bin/extra.rs", bin),
+        ("src/declared.rs", "fn main() {}\n"),
+    ];
+    let discovered = TempCrate::create_in(
+        &manifest("edition = \"2021\"\n", ""),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    let finding = discovered.finding()?;
+    assert!(
+        credits_a_discriminator(&finding.class),
+        "control: the discovered bin's test runs: {finding:?}"
+    );
+    for (keys, targets, label) in [
+        (
+            "edition = \"2021\"\nautobins = false\n",
+            "",
+            "autobins = false",
+        ),
+        (
+            "",
+            "[[bin]]\nname = \"declared\"\npath = \"src/declared.rs\"\n",
+            "edition 2015 with a declared bin",
+        ),
+    ] {
+        let undiscovered = TempCrate::create_in(&manifest(keys, targets), &files, "src/lib.rs", 1)?;
+        let finding = undiscovered.finding()?;
+        assert!(
+            !credits_a_discriminator(&finding.class),
+            "{label} never builds src/bin/extra.rs: {finding:?}"
         );
     }
     Ok(())

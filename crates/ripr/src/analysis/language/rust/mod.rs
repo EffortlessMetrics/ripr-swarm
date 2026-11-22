@@ -324,7 +324,7 @@ fn drop_unreached_test_files(
         .collect::<BTreeSet<_>>();
     let mut mentioned = None;
     let mut manifests = BTreeMap::new();
-    let mut discovery_off = BTreeMap::new();
+    let mut target_manifests = BTreeMap::new();
     let suspects = loaded_files
         .iter()
         .filter(|(path, bytes)| {
@@ -333,7 +333,7 @@ fn drop_unreached_test_files(
         .filter(|(path, _)| {
             let mentioned = mentioned
                 .get_or_insert_with(|| mentioned_module_names(root, &loaded_files, &mut manifests));
-            may_be_unreached(root, path, mentioned, &mut manifests, &mut discovery_off)
+            may_be_unreached(root, path, mentioned, &mut manifests, &mut target_manifests)
         })
         .map(|(path, _)| path.as_path())
         .collect::<Vec<_>>();
@@ -559,20 +559,23 @@ fn mentioned_module_names(
 }
 
 /// Whether `path` could be a file no target reaches: a module file whose
-/// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
-/// manifest sets `autotests`, `autobenches` or `autoexamples = false`.
+/// name nothing mentions, a target root (`tests/x.rs`) in a package whose
+/// manifest turns `autotests`, `autobenches` or `autoexamples` discovery
+/// off, or a binary root (`src/main.rs`, `src/bin/x.rs`) in a package whose
+/// manifest turns `autobins` discovery off (#15877).
 ///
-/// One cost cut that changes no verdict: `src/bin/x.rs` is never a suspect,
-/// because the walk always counts it as a production root and could only
-/// pay for a parse it cannot turn into a verdict. A file under a `src/tests/`
-/// module directory is an ordinary module file: no manifest sits beside that
-/// `tests/`, so the module-name check below decides (#6979).
+/// One cost cut that changes no verdict: while bin discovery is on,
+/// `src/main.rs` and `src/bin/x.rs` are never suspects, because the walk
+/// counts them as production roots and could only pay for a parse it cannot
+/// turn into a verdict. A file under a `src/tests/` module directory is an
+/// ordinary module file: no manifest sits beside that `tests/`, so the
+/// module-name check below decides (#6979).
 fn may_be_unreached(
     root: &Path,
     path: &Path,
     mentioned: &MentionedModules,
     manifests: &mut BTreeMap<PathBuf, bool>,
-    discovery_off: &mut BTreeMap<PathBuf, Option<bool>>,
+    target_manifests: &mut BTreeMap<PathBuf, Option<Option<toml::Value>>>,
 ) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -583,6 +586,26 @@ fn may_be_unreached(
         .parent()
         .and_then(Path::file_name)
         .and_then(|name| name.to_str());
+    // `None`: no manifest beside the directory, so it is not a target
+    // directory. `Some(None)`: a manifest that does not parse, which leaves
+    // the walk nothing to prove. Read through the committed-source overlay,
+    // as the walk does, so a committed-history diff sees the committed
+    // manifest.
+    let mut manifest_at = |package_dir: &Path| {
+        target_manifests
+            .entry(package_dir.to_path_buf())
+            .or_insert_with(|| {
+                committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                    .ok()
+                    .flatten()
+                    .map(|bytes| {
+                        String::from_utf8(bytes)
+                            .ok()
+                            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                    })
+            })
+            .clone()
+    };
     let is_target_dir = |name: Option<&str>| matches!(name, Some("tests" | "benches" | "examples"));
     // A target root: `tests/x.rs`, or `tests/x/main.rs` (and the bench and
     // example twins).
@@ -596,43 +619,50 @@ fn may_be_unreached(
     // `src/tests/x.rs` sits under a module directory named `tests`, not a
     // target directory: with no manifest beside it, it is an ordinary module
     // file and takes the module-name check below (#6979).
-    if let Some(package_dir) = package_dir {
-        // `None`: no manifest beside the directory, so it is not a target
-        // directory. Read through the committed-source overlay, as the walk
-        // does, so a committed-history diff sees the committed manifest.
-        let discovery = *discovery_off
-            .entry(package_dir.to_path_buf())
-            .or_insert_with(|| {
-                // The same reading `evidence_roots` applies: an explicit
-                // `auto* = false`, or edition 2015 with a declared target of
-                // that kind (#15877), turns discovery off. An unparsable
-                // manifest leaves the walk nothing to prove.
-                committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
-                    .ok()
-                    .flatten()
-                    .map(|bytes| {
-                        String::from_utf8(bytes)
-                            .ok()
-                            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-                            .is_some_and(|manifest| {
-                                [
-                                    ("autotests", "test"),
-                                    ("autobenches", "bench"),
-                                    ("autoexamples", "example"),
-                                ]
-                                .iter()
-                                .any(|(key, section)| {
-                                    !workspace::discovers_targets(&manifest, key, section)
-                                })
-                            })
-                    })
-            });
-        if let Some(off) = discovery {
-            return off;
-        }
+    if let Some(package_dir) = package_dir
+        && let Some(manifest) = manifest_at(package_dir)
+    {
+        // The same reading `evidence_roots` applies: an explicit
+        // `auto* = false`, or edition 2015 with a declared target of that
+        // kind (#15877), turns discovery off.
+        return manifest.is_some_and(|manifest| {
+            [
+                ("autotests", "test"),
+                ("autobenches", "bench"),
+                ("autoexamples", "example"),
+            ]
+            .iter()
+            .any(|(key, section)| !workspace::discovers_targets(&manifest, key, section))
+        });
     }
-    if parent_name == Some("bin") && grandparent_name == Some("src") {
-        return false;
+    // A binary root: `src/main.rs`, `src/bin/x.rs` or `src/bin/x/main.rs`.
+    let great_grandparent_name = parent
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let bin_package_dir = if file_name == "main.rs" && parent_name == Some("src") {
+        parent.parent()
+    } else if parent_name == Some("bin") && grandparent_name == Some("src") {
+        parent.parent().and_then(Path::parent)
+    } else if file_name == "main.rs"
+        && grandparent_name == Some("bin")
+        && great_grandparent_name == Some("src")
+    {
+        parent
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+    } else {
+        None
+    };
+    if let Some(package_dir) = bin_package_dir {
+        // With bin discovery off only declared binaries build; the walk
+        // roots every declared one, so a suspect costs a parse and never
+        // drops a built binary (#15877).
+        return manifest_at(package_dir)
+            .flatten()
+            .is_some_and(|manifest| !workspace::discovers_targets(&manifest, "autobins", "bin"));
     }
     let module_name = match file_name {
         "lib.rs" | "main.rs" | "build.rs" => return false,

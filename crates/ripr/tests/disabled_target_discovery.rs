@@ -236,3 +236,36 @@ fn an_edition_2015_declared_bin_turns_off_bin_discovery() -> Result<(), String> 
     }
     Ok(())
 }
+
+/// Cargo resolves a path-less edition 2015 `[[bin]]` through its inferred
+/// layout first, so `src/bin/cli.rs` wins and a stray `src/cli.rs` is never
+/// compiled (#16051 review). Without `src/bin/cli.rs` the legacy fallback
+/// builds `src/cli.rs`, which then reports.
+#[test]
+fn an_edition_2015_bin_prefers_the_inferred_layout_over_the_legacy_fallback() -> Result<(), String>
+{
+    let manifest = "[package]\nname = \"price\"\nversion = \"0.1.0\"\n\n[[bin]]\nname = \"cli\"\n\n[workspace]\n";
+    let stray = Fixture::with_files(&[
+        ("Cargo.toml", manifest),
+        ("src/lib.rs", "pub fn unrelated() {}\n"),
+        ("src/bin/cli.rs", "fn main() {}\n"),
+        ("src/cli.rs", BULK),
+        ("diff.patch", &predicate_diff("src/cli.rs")),
+    ])?;
+    assert!(
+        !stray.reports("src/cli.rs")?,
+        "src/bin/cli.rs is the `cli` target, so src/cli.rs is never compiled"
+    );
+
+    let legacy = Fixture::with_files(&[
+        ("Cargo.toml", manifest),
+        ("src/lib.rs", "pub fn unrelated() {}\n"),
+        ("src/cli.rs", BULK),
+        ("diff.patch", &predicate_diff("src/cli.rs")),
+    ])?;
+    assert!(
+        legacy.reports("src/cli.rs")?,
+        "control: with no inferred layout the legacy fallback builds src/cli.rs"
+    );
+    Ok(())
+}

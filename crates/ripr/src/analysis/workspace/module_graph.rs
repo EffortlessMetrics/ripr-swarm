@@ -723,9 +723,14 @@ fn external_root_declarers(
         let Some((manifest_text, manifest)) = read_manifest(workspace_root, &package_dir) else {
             continue;
         };
-        if production_roots(&manifest, &package_dir)
+        if production_roots(workspace_root, &manifest, &package_dir)
             .iter()
-            .chain(&evidence_roots(&manifest, &manifest_text, &package_dir))
+            .chain(&evidence_roots(
+                workspace_root,
+                &manifest,
+                &manifest_text,
+                &package_dir,
+            ))
             .any(|root| !root.starts_with(&package_dir))
         {
             declarers.insert(package_dir);
@@ -750,7 +755,11 @@ fn read_manifest(workspace_root: &Path, package_dir: &Path) -> Option<(String, t
 
 /// Explicit `[lib]`/`[[bin]]` paths plus the autodiscovered `src/lib.rs`
 /// (unless `[lib] path` replaces it), `src/main.rs` and `src/bin/` roots.
-fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<PathBuf> {
+fn production_roots(
+    workspace_root: &Path,
+    manifest: &toml::Value,
+    package_dir: &Path,
+) -> BTreeSet<PathBuf> {
     let mut roots = BTreeSet::new();
     collect_explicit_paths(manifest.get("bin"), package_dir, &mut roots);
     if let Some(lib) = manifest.get("lib") {
@@ -819,9 +828,14 @@ fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<Path
             roots.insert(src.join("main.rs"));
         }
         // Edition 2015 resolves a path-less `[[bin]]` that matches no
-        // inferred layout through Cargo's legacy fallback: `src/<name>.rs`,
-        // then `src/main.rs`, then `src/bin/main.rs`. An inherited or absent
-        // edition may be 2015, so those stay rooted too (#15892 review).
+        // inferred layout (`src/bin/<name>.rs`, `src/bin/<name>/main.rs`,
+        // `src/main.rs` for the package's name) through Cargo's legacy
+        // fallback: the first of `src/<name>.rs`, `src/main.rs` and
+        // `src/bin/main.rs` that exists. An inherited or absent edition may
+        // be 2015, so the fallback stays modeled there too (#15892 review).
+        // Presence is read through the committed-source view the walk
+        // reads; an unreadable candidate counts as present, so it can only
+        // keep a root, never drop a built one (#16051 review).
         let edition = package.and_then(|package| package.get("edition"));
         let modern_edition = edition
             .and_then(toml::Value::as_str)
@@ -835,16 +849,32 @@ fn production_roots(manifest: &toml::Value, package_dir: &Path) -> BTreeSet<Path
                 .filter(|bin| bin.get("path").is_none())
                 .filter_map(|bin| bin.get("name").and_then(toml::Value::as_str))
                 .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .collect::<Vec<_>>();
-            if !legacy_names.is_empty() {
-                roots.extend(
-                    legacy_names
-                        .iter()
-                        .map(|name| src.join(format!("{name}.rs"))),
-                );
-                roots.insert(src.join("main.rs"));
-                roots.insert(src.join("bin").join("main.rs"));
+                .filter(|name| !name.is_empty());
+            for name in legacy_names {
+                let mut inferred = vec![
+                    src.join("bin").join(format!("{name}.rs")),
+                    src.join("bin").join(name).join("main.rs"),
+                ];
+                if Some(name) == package_name {
+                    inferred.push(src.join("main.rs"));
+                }
+                if inferred
+                    .iter()
+                    .any(|candidate| root_present(workspace_root, candidate) != Some(false))
+                {
+                    continue;
+                }
+                for candidate in [
+                    src.join(format!("{name}.rs")),
+                    src.join("main.rs"),
+                    src.join("bin").join("main.rs"),
+                ] {
+                    let present = root_present(workspace_root, &candidate) == Some(true);
+                    roots.insert(candidate);
+                    if present {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -912,6 +942,7 @@ pub(crate) fn discovers_targets(manifest: &toml::Value, auto_key: &str, section:
 
 /// Test, bench, example and build-script roots, declared and autodiscovered.
 fn evidence_roots(
+    workspace_root: &Path,
     manifest: &toml::Value,
     manifest_text: &str,
     package_dir: &Path,
@@ -935,7 +966,11 @@ fn evidence_roots(
         if discovers_targets(manifest, auto_key, section) {
             roots.extend(autodiscovered(&dir));
         } else {
-            roots.extend(named_default_roots(manifest.get(section), &dir));
+            roots.extend(named_default_roots(
+                workspace_root,
+                manifest.get(section),
+                &dir,
+            ));
         }
     }
     roots
@@ -969,7 +1004,11 @@ fn named_default_candidates(target_entries: Option<&toml::Value>, dir: &Path) ->
         .collect()
 }
 
-fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<PathBuf> {
+fn named_default_roots(
+    workspace_root: &Path,
+    target_entries: Option<&toml::Value>,
+    dir: &Path,
+) -> Vec<PathBuf> {
     let Some(entries) = target_entries.and_then(toml::Value::as_array) else {
         return Vec::new();
     };
@@ -982,21 +1021,34 @@ fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<
         .flat_map(|name| {
             let file = dir.join(format!("{name}.rs"));
             let directory = dir.join(name).join("main.rs");
-            let file_present = file.is_file();
-            let directory_present = directory.is_file();
-            if file_present && directory_present {
+            // Presence through the committed-source view, so a staged
+            // alternate layout cannot drop a committed target (#16051
+            // review). An unreadable layout is not proof of absence.
+            let file_present = root_present(workspace_root, &file);
+            let directory_present = root_present(workspace_root, &directory);
+            if file_present == Some(true) && directory_present == Some(true) {
                 return Vec::new();
             }
             let mut roots = Vec::new();
-            if file_present || !directory_present {
+            if !(file_present == Some(false) && directory_present == Some(true)) {
                 roots.push(file);
             }
-            if directory_present || !file_present {
+            if !(directory_present == Some(false) && file_present == Some(true)) {
                 roots.push(directory);
             }
             roots
         })
         .collect()
+}
+
+/// Whether a candidate target root exists in the committed-source view the
+/// walk reads: `None` when it cannot be read.
+fn root_present(workspace_root: &Path, file: &Path) -> Option<bool> {
+    match read_source(workspace_root, file) {
+        SourceRead::Text(_) => Some(true),
+        SourceRead::Absent => Some(false),
+        SourceRead::Unreadable => None,
+    }
 }
 
 /// Cargo's autodiscovery shapes under one directory: `<dir>/<name>.rs` and
@@ -1022,8 +1074,8 @@ impl PackageWalk {
     /// directory holds no package manifest.
     fn new(workspace_root: &Path, package_dir: &Path) -> Option<Self> {
         let (manifest_text, manifest) = read_manifest(workspace_root, package_dir)?;
-        let production_roots = production_roots(&manifest, package_dir);
-        let evidence_roots = evidence_roots(&manifest, &manifest_text, package_dir);
+        let production_roots = production_roots(workspace_root, &manifest, package_dir);
+        let evidence_roots = evidence_roots(workspace_root, &manifest, &manifest_text, package_dir);
         let production_root_read =
             manifest_rules_out_production(workspace_root, &manifest, package_dir);
         let package_dir = lexical(&normalize(package_dir));
