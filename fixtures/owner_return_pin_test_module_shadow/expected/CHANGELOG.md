@@ -350,11 +350,10 @@ Updated:
 ## Pending — owner_return_pin_test_module_shadow (28)
 
 Reason:
-RIPR-SPEC-0094: a related assertion comparing a value with a copy of itself is capped at weak unless the #6692 clone-field pin admits it (#13037)
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
 
 Command:
 `cargo xtask goldens bless owner_return_pin_test_module_shadow --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human-full.txt`
+- `expected/human.txt`

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The `ripr check` Summary line no longer counts a finding as plainly "partly noticed" or "reached but not noticed" when ripr only found a heuristic test link: the bucket now says how many are in that state, for example `1 partly noticed (1 through a test link ripr could not confirm)`, so it agrees with the finding's own reason, "test reach to this change is not established" (#15295).

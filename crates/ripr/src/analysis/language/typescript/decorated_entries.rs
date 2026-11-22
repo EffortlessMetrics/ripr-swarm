@@ -113,6 +113,7 @@ pub(crate) fn assign_decorated_entries(
                     exported_as_default: false,
                     class_member: None,
                     instance_factory: false,
+                    instance_kind: TypeScriptInstanceKind::default(),
                     hops: 0,
                     cross_module: None,
                     decorated: Some(TypeScriptDecoratedMethod {

@@ -51,6 +51,8 @@ pub(crate) enum Product {
     ModuleDeclarationGate,
     ClosedOwnerRead,
     ExitRecordTypes,
+    ScalarReturnExits,
+    ReturnsLeaveTheFunction,
 }
 
 impl Product {
@@ -81,6 +83,8 @@ impl Product {
             Self::ModuleDeclarationGate => "module_declaration_gate",
             Self::ClosedOwnerRead => "closed_owner_read",
             Self::ExitRecordTypes => "exit_record_types",
+            Self::ScalarReturnExits => "scalar_return_exits",
+            Self::ReturnsLeaveTheFunction => "returns_leave_the_function",
         }
     }
 }

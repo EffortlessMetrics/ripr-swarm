@@ -3732,12 +3732,21 @@ pub fn surcharge(total: i32) -> Result<i32, String> {
             .as_str()
             .ok_or_else(|| format!("related test file is not a string: {seam}"))?;
 
-        if seam_file != "crates/faultline-app/src/lib.rs" {
-            return Err(format!("seam file must use forward slashes: {seam_file}"));
+        // A backslash is a separator on Windows and a file-name byte, spelled
+        // `%5C`, on Unix (#15908).
+        let host = |path: &str| {
+            if cfg!(unix) {
+                path.replace('/', "%5C")
+            } else {
+                path.to_string()
+            }
+        };
+        if seam_file != host("crates/faultline-app/src/lib.rs") {
+            return Err(format!("seam file must use the host spelling: {seam_file}"));
         }
-        if related_file != "crates/faultline-app/tests/integration.rs" {
+        if related_file != host("crates/faultline-app/tests/integration.rs") {
             return Err(format!(
-                "related test file must use forward slashes: {related_file}"
+                "related test file must use the host spelling: {related_file}"
             ));
         }
         Ok(())

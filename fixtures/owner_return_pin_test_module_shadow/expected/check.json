@@ -48,7 +48,7 @@
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach weak: No test is seen calling clone; tests share only a name token", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: start: self.start", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches constructed field: start: self.start (line 17)", "related test src/lib.rs:34 a_clone_equals_its_original uses weak exact value oracle: assert_eq!(window.clone(), window);", "missing discriminator start: self.start: No field-value assertion observes the constructed field: start: self.start"],
+      "evidence_path": ["reach weak: No test is seen calling clone; tests share only a name token", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: start: self.start", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches constructed field: start: self.start (line 17)", "related test src/lib.rs:34 a_clone_equals_its_original uses strong exact value oracle: assert_eq!(window.clone(), window);", "missing discriminator start: self.start: No field-value assertion observes the constructed field: start: self.start"],
       "flow_sinks": [
         {"kind":"struct_field","text":"start: self.start","line":17}
       ],
@@ -82,7 +82,7 @@
           "name": "a_clone_equals_its_original",
           "file": "src/lib.rs",
           "line": 34,
-          "oracle_strength": "weak",
+          "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(window.clone(), window);",
           "relation_reason": "weak_token_substring",
@@ -93,7 +93,7 @@
       ],
       "stop_reasons": [],
       "oracle_kind": "exact_value",
-      "oracle_strength": "weak",
+      "oracle_strength": "strong",
       "recommended_next_step": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
       "suggested_next_action": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
       "language": "rust",

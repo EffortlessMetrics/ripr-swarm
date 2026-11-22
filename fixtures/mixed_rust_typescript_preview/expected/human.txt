@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/mixed_rust_typescript_preview/input
 config: <cwd>/fixtures/mixed_rust_typescript_preview/input/ripr.toml
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed (1 through a test link ripr could not confirm), 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: rust = 1, typescript = 1
 

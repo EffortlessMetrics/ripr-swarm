@@ -643,3 +643,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_adversarial_owner_module_mock (39)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_owner_module_mock --reason "..."`
+
+Updated:
+- `expected/human.txt`

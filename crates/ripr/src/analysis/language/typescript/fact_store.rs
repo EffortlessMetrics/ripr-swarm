@@ -37,7 +37,7 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses.
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "11";
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "12";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -568,8 +568,10 @@ mod tests {
         // envelopes written before them must read as misses. "11" adds the
         // per-file function replacement list (#15939): a test
         // extraction persisted without it would keep crediting a stubbed
-        // owner.
-        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "11");
+        // owner. "12" adds import-then-export forwards, class heritage,
+        // namespace member calls and method-owner instance factories
+        // (#15922-#15924).
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "12");
         // A stale-schema envelope: the exact bytes the pre-#11250 ("3")
         // binary wrote — same identity, valid integrity digest, older
         // schema version — sitting at the entry path the current key
@@ -747,14 +749,36 @@ mod tests {
         };
         let envelope = TypeScriptFileFactEnvelope::new(&key, facts, None, None);
         let digest = envelope.expected_digest()?;
-        let mut bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
-        let flip = bytes.len() / 2;
-        bytes[flip] = bytes[flip].wrapping_add(1);
-        // A tampered entry must not be served, whether the flip breaks the
-        // JSON outright (a decode refusal) or leaves a digest mismatch.
-        if let Ok(decoded) = serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes) {
-            assert!(!decoded.matches_key(&key) || decoded.validate_integrity().is_err())
+        let bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
+        // Every single-byte flip, not one position: where a fixed offset
+        // lands depends on the build identity's length. A tampered entry is
+        // either refused (decode, key or digest) or carries exactly the
+        // original content: a flip inside the name of a defaulted empty
+        // field decodes to the same facts, and the semantic digest binds
+        // content, not spelling.
+        let mut refused_by_key_or_digest = 0usize;
+        for flip in 0..bytes.len() {
+            let mut tampered = bytes.clone();
+            tampered[flip] = tampered[flip].wrapping_add(1);
+            let Ok(decoded) = serde_json::from_slice::<TypeScriptFileFactEnvelope>(&tampered)
+            else {
+                continue;
+            };
+            if !decoded.matches_key(&key) || decoded.validate_integrity().is_err() {
+                refused_by_key_or_digest += 1;
+                continue;
+            }
+            let digest = decoded.expected_digest()?;
+            assert_eq!(
+                seam_cache::encode_integrity_body(&decoded, digest)?,
+                bytes,
+                "flip at byte {flip} was served with different content"
+            );
         }
+        assert!(
+            refused_by_key_or_digest > 0,
+            "no flip reached the key or digest check"
+        );
         Ok(())
     }
 }

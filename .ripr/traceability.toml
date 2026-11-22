@@ -12928,6 +12928,8 @@ tests = [
   "crates/ripr/src/lsp/watched_source_drift.rs::tests::rewritten_script_source_without_diagnostics_drifts",
   "crates/ripr/src/lsp/watched_source_drift.rs::tests::script_sources_in_dependency_and_build_directories_do_not_drift",
   "crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_clean_source_refreshes_in_every_language",
+  "crates/ripr/src/lsp/watched_source_drift.rs::tests::declared_handwritten_and_excluded_script_paths_follow_configuration",
+  "crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_declared_handwritten_source_refreshes",
 ]
 fixtures = []
 code = [
@@ -22431,12 +22433,13 @@ tests = [
   "crates/ripr/tests/lib_test_false_credit.rs::an_example_included_into_the_library_test_tree_keeps_credit",
   "crates/ripr/tests/lib_test_false_credit.rs::an_example_included_into_an_integration_test_keeps_credit",
   "crates/ripr/tests/lib_test_false_credit.rs::bench_unit_tests_are_not_a_discriminator_unless_the_bench_is_tested",
+  "crates/ripr/tests/lib_test_false_credit.rs::bare_bench_requires_a_runnable_target",
   "crates/ripr/tests/lib_test_false_credit.rs::a_bench_included_into_an_integration_test_keeps_credit",
   "crates/ripr/src/analysis/facts/role_composition.rs::tests::mount_operand_doubt_needs_a_dynamic_mount_operand",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::crate_root_unit_test_skip_follows_metadata_test_flags",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::reuse_reviving_cargo_test_skipped_tests_matches_fresh",
 ]
-fixtures = []
+fixtures = ["fixtures/rust_bench_rejected_workspace"]
 code = [
   "crates/ripr/src/analysis/facts/stray_files.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs",
