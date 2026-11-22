@@ -2265,6 +2265,46 @@ mod tests {
     }
 
     #[test]
+    fn name_only_target_layouts_are_judged_in_the_committed_view() -> Result<(), String> {
+        // #16051 review: a name-only `[[test]]` with both default layouts in
+        // the working tree is ambiguous there, but `HEAD` holds only
+        // `tests/smoke.rs`, so a committed-history walk keeps that root.
+        let root = fixture(
+            "committed-layouts",
+            &[
+                ("Cargo.toml", MANIFEST),
+                ("src/lib.rs", ""),
+                ("tests/smoke.rs", ""),
+                ("tests/smoke/main.rs", ""),
+            ],
+        )?;
+        let entries: toml::Value =
+            toml::from_str("test = [{ name = \"smoke\" }]").map_err(|error| error.to_string())?;
+        let tests = root.join("tests");
+        assert!(
+            named_default_roots(&root, entries.get("test"), &tests).is_empty(),
+            "both layouts in one snapshot are ambiguous"
+        );
+        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+            &root,
+            [
+                ("tests/smoke.rs", Some(b"".as_slice())),
+                ("tests/smoke/main.rs", None),
+            ],
+        );
+        let committed = crate::analysis::committed_source::with_overlay(
+            Some(std::sync::Arc::new(overlay)),
+            || named_default_roots(&root, entries.get("test"), &tests),
+        );
+        assert_eq!(
+            committed,
+            vec![tests.join("smoke.rs")],
+            "a worktree-only alternate layout keeps the committed root"
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
     fn escaping_scan_reads_committed_files_missing_from_disk() -> Result<(), String> {
         // Re-review on #4556: at `HEAD`, `a/src/gen.rs` reaches `b`'s
         // undeclared file through `#[path]`; the working tree deleted it.
