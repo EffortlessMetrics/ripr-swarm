@@ -5366,8 +5366,10 @@ line, `before_condition` is `total >= 100` and `after` is `total > 200`. It is
 display evidence at the granularity of `after`; `before` is unchanged. The
 field is absent when `before` is already the old condition, and when the old
 condition is not established from the line: a second `if`/`while` head on the
-line, an `if let` or `while let`, a match guard, or a block expression inside
-the condition. MCP `ripr_get_gap` and `ripr_prepare_repair` carry the same
+line, an `if let` or `while let`, a match guard, a block expression inside
+the condition, a comparison or boolean operator elsewhere on the line (the
+changed predicate may be that one, not the head's condition), or an old
+condition that does not start with the identifier `after` starts with. MCP `ripr_get_gap` and `ripr_prepare_repair` carry the same
 value as `changed_behavior.before_condition` (present only when read), and
 the MCP gap brief's `changed:` line pairs it with `after`. The editor hover
 prints it as `old condition`, and human `ripr explain` prints an
