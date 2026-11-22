@@ -3909,6 +3909,12 @@ impl Backend {
         else {
             return false;
         };
+        // The current configuration, not the snapshot's: a configuration
+        // change schedules its own refresh.
+        let languages = self
+            .analysis_config()
+            .map(|config| config.repo_config().languages.clone())
+            .unwrap_or_default();
         let committed = super::watched_source_drift::CommittedSources {
             root: &snapshot.root,
             consumed: &snapshot.rust_consumed_sources,
@@ -3921,6 +3927,7 @@ impl Backend {
                     .flat_map(|finding| finding.related_tests.iter())
                     .map(|test| test.file.as_path()),
             ),
+            languages: &languages,
         };
         super::watched_source_drift::events_drift_committed_sources(&committed, changes, &|uri| {
             self.quarantine
