@@ -74,6 +74,44 @@ const FILE_OPAQUE_WORDS: [&str; 4] = [
     "__proto__",
 ];
 
+/// Whether the file's text can replace a class member from outside a class
+/// body: any [`FILE_OPAQUE_WORDS`], `prototype` or `Object.assign` mention.
+/// Text-level, so it can only over-report.
+pub(crate) fn rewires_prototypes(source: &str) -> bool {
+    FILE_OPAQUE_WORDS.iter().any(|word| source.contains(word))
+        || source.contains("prototype")
+        || source.contains("Object.assign")
+}
+
+/// The top-level class declarations the file's text rebinds (`Cart = class
+/// {...}`): the name no longer has to hold the declared class.
+pub(crate) fn rebound_class_names(
+    body: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &str,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in body {
+        let class = match statement {
+            Statement::ClassDeclaration(class) => Some(&**class),
+            Statement::ExportNamedDeclaration(export) => match export.declaration.as_ref() {
+                Some(Declaration::ClassDeclaration(class)) => Some(&**class),
+                _ => None,
+            },
+            Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+                ExportDefaultDeclarationKind::ClassDeclaration(class) => Some(&**class),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(id) = class.and_then(|class| class.id.as_ref())
+            && super::tests_extract::identifier_written_strictly(source, id.name.as_str())
+        {
+            names.push(id.name.as_str().to_string());
+        }
+    }
+    names
+}
+
 /// The heritage facts of one parsed module.
 pub(crate) fn class_heritage_facts(
     body: &oxc_allocator::Vec<'_, Statement<'_>>,
@@ -127,6 +165,9 @@ pub(crate) fn class_heritage_facts(
         }
     }
     let file_opaque = FILE_OPAQUE_WORDS.iter().any(|word| source.contains(word));
+    // Whitespace-free text, so `SpecialCart .prototype` and `this .apply =`
+    // read like their unspaced forms.
+    let compact_source: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
     let mut facts = Vec::new();
     for (class, exported, default_export) in classes {
         let (Some(id), Some(base)) = (class.id.as_ref(), class.super_class.as_ref()) else {
@@ -144,10 +185,11 @@ pub(crate) fn class_heritage_facts(
             || !class.decorators.is_empty()
             || declared.get(name) != Some(&1)
             || super::tests_extract::identifier_written_strictly(source, name)
-            || source.contains(&format!("{name}.prototype"))
+            // The base binding may be rebound before `extends` reads it.
+            || super::tests_extract::identifier_written_strictly(source, base.name.as_str())
+            || compact_source.contains(&format!("{name}.prototype"))
             || text.is_empty()
-            || text.contains("this[")
-            || text.contains("Object.assign(this");
+            || super::instance_factories::this_written_without_a_name(text);
         for element in &class.body.body {
             let (key, computed) = match element {
                 ClassElement::MethodDefinition(method) => {
@@ -207,6 +249,8 @@ pub(crate) fn class_heritage_facts(
             }
         }
         members.extend(this_rebound_names(text));
+        let compact_text: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+        members.extend(this_rebound_names(&compact_text));
         members.sort();
         members.dedup();
         facts.push(ClassHeritageFact {

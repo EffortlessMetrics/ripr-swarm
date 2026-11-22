@@ -128,6 +128,10 @@ pub(crate) struct ReExportIndex {
     /// Every top-level class that extends a plain identifier, with its file
     /// (#15924). Read by [`Self::inheriting_subclasses`].
     class_heritage: Vec<(PathBuf, super::class_heritage::ClassHeritageFact)>,
+    /// Modules whose text can rewire a prototype (#15924).
+    prototype_writing_modules: HashSet<String>,
+    /// `(module, class)` for each top-level class its file rebinds (#15924).
+    rebound_classes: HashSet<(String, String)>,
 }
 
 /// Most classes followed as inheritors of one changed member (#15924). Past
@@ -293,6 +297,8 @@ impl ReExportIndex {
         let mut commonjs_entries: Vec<((String, String), (String, String))> = Vec::new();
         let mut import_forwards: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut class_heritage = Vec::new();
+        let mut prototype_writing_modules: HashSet<String> = HashSet::new();
+        let mut rebound_classes: HashSet<(String, String)> = HashSet::new();
         for file in workspace_files {
             let module = normalized_module_path(file);
             let path = normalized_path(file);
@@ -335,6 +341,12 @@ impl ReExportIndex {
             star_edges.extend(file_facts.star_edges);
             for (key, value) in file_facts.import_forwards {
                 import_forwards.entry(key).or_insert(value);
+            }
+            if file_facts.prototype_writes {
+                prototype_writing_modules.insert(module.clone());
+            }
+            for class in file_facts.rebound_classes {
+                rebound_classes.insert((module.clone(), class));
             }
             class_heritage.extend(
                 file_facts
@@ -399,6 +411,8 @@ impl ReExportIndex {
             commonjs_own_names,
             import_forwards,
             class_heritage,
+            prototype_writing_modules,
+            rebound_classes,
         };
         index.admit_commonjs_entries(commonjs_entries);
         index.index_outbound_calls();
@@ -691,6 +705,14 @@ impl ReExportIndex {
             return Vec::new();
         }
         let owner_module = normalized_module_path(&owner.file);
+        // The owner's own file can replace the member on its prototype.
+        if self.prototype_writing_modules.contains(&owner_module)
+            || self
+                .rebound_classes
+                .contains(&(owner_module.clone(), class_name.to_string()))
+        {
+            return Vec::new();
+        }
         let mut visited: BTreeSet<(String, String)> =
             BTreeSet::from([(owner_module.clone(), class_name.to_string())]);
         let mut frontier = std::collections::VecDeque::from([SubclassFrame {
@@ -711,13 +733,20 @@ impl ReExportIndex {
                 if fact.opaque
                     || fact.members.iter().any(|member| member == &owner.name)
                     || visited.contains(&key)
-                    || !self.class_extends(file, &module, fact, &frame, alias_map, workspace_root)
                 {
                     continue;
                 }
+                let Some(binding_modules) =
+                    self.class_extends(file, &module, fact, &frame, alias_map, workspace_root)
+                else {
+                    continue;
+                };
                 visited.insert(key);
                 let mut chain = frame.chain.clone();
                 chain.insert(module.clone());
+                // Every module the base binding was resolved through: a mock
+                // of a barrel between the two classes replaces the base.
+                chain.extend(binding_modules);
                 if fact.exported {
                     if entries.len() >= MAX_INHERITING_SUBCLASSES {
                         return entries;
@@ -749,8 +778,11 @@ impl ReExportIndex {
         entries
     }
 
-    /// Whether `fact`'s `extends` identifier, written in `file`, binds the
-    /// class `base` stands for.
+    /// When `fact`'s `extends` identifier, written in `file`, binds the class
+    /// `base` stands for: every module the binding was resolved through (the
+    /// import's own target and each module the bounded chain consulted),
+    /// empty for a class of the same file. `None` when it binds anything
+    /// else.
     fn class_extends(
         &self,
         file: &Path,
@@ -759,7 +791,7 @@ impl ReExportIndex {
         base: &SubclassFrame,
         alias_map: Option<&TsAliasMap>,
         workspace_root: Option<&Path>,
-    ) -> bool {
+    ) -> Option<Vec<String>> {
         let imports = self.enum_imports.get(module);
         let matching: Vec<&TypeScriptImport> = imports
             .into_iter()
@@ -768,28 +800,33 @@ impl ReExportIndex {
             .collect();
         match matching.as_slice() {
             // No import binds the name: a class of the same file.
-            [] => imports.is_some() && module == base.module && fact.base == base.class,
+            [] => (imports.is_some() && module == base.module && fact.base == base.class)
+                .then(Vec::new),
             [import] if !import.namespace => {
-                let Some(imported) = import.imported.as_deref() else {
-                    return false;
-                };
-                let Some(source) = normalized_relative_import_module(
+                let imported = import.imported.as_deref()?;
+                let source = normalized_relative_import_module(
                     file,
                     &import.source,
                     alias_map,
                     workspace_root,
-                ) else {
-                    return false;
+                )?;
+                let consulted = std::cell::RefCell::new(vec![source.clone()]);
+                let record = |candidate: &str| {
+                    consulted.borrow_mut().push(candidate.to_string());
+                    false
                 };
+                let resolution =
+                    self.resolve_export(&source, imported, 0, &mut Vec::new(), &record);
                 matches!(
-                    self.resolve_export(&source, imported, 0, &mut Vec::new(), &|_| false),
+                    resolution,
                     ExportResolution::Found(found_module, found_name)
                         if found_module == base.module
                             && (found_name == base.class
                                 || (found_name == "default" && base.default_export))
                 )
+                .then(|| consulted.into_inner())
             }
-            _ => false,
+            _ => None,
         }
     }
 
@@ -1789,6 +1826,14 @@ impl ReExportIndex {
             return Vec::new();
         };
         let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
+        // A spy or stub anywhere in the file that names the member may have
+        // reached the barrel's object through another binding of it (a
+        // second namespace import, a `require`).
+        let replaced = |name: &str| {
+            test.member_replacements_in_file.iter().any(|replaced| {
+                replaced == name || replaced == super::tests_extract::MEMBER_REPLACEMENT_ANY
+            })
+        };
         let mut members = Vec::new();
         for import in test
             .imports_in_file
@@ -1805,7 +1850,7 @@ impl ReExportIndex {
             };
             let barrel = self.canonical_module(&module);
             for (local, member) in test.namespace_member_calls_in_file() {
-                if *local != import.local || member == "default" {
+                if *local != import.local || member == "default" || replaced(member) {
                     continue;
                 }
                 let ExportResolution::Found(target_module, target_name) =
@@ -2208,6 +2253,13 @@ pub(crate) struct ModuleExportFacts {
     /// Top-level classes that extend a plain identifier (#15924).
     #[serde(default)]
     pub(crate) class_heritage: Vec<super::class_heritage::ClassHeritageFact>,
+    /// The file's text can rewire a prototype without naming a class member
+    /// in a class body (#15924).
+    #[serde(default)]
+    pub(crate) prototype_writes: bool,
+    /// Top-level classes the file's text rebinds (#15924).
+    #[serde(default)]
+    pub(crate) rebound_classes: Vec<String>,
 }
 
 impl ModuleExportFacts {
@@ -2308,6 +2360,8 @@ pub(crate) fn module_export_facts(
     let mut facts = ModuleExportFacts {
         enum_imports: extract_imports_for_test_file(body),
         class_heritage: super::class_heritage::class_heritage_facts(body, source),
+        prototype_writes: super::class_heritage::rewires_prototypes(source),
+        rebound_classes: super::class_heritage::rebound_class_names(body, source),
         ..ModuleExportFacts::default()
     };
     for statement in body {
@@ -4022,13 +4076,20 @@ fn factory_built_method_call(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> bool {
-    if owner.method_kind != TypeScriptMethodKind::Ordinary {
+    if owner.method_kind != TypeScriptMethodKind::Ordinary || !has_instance_factory(owner) {
         return false;
     }
     let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
     factory_built_receivers(test, owner, &masked, alias_map, workspace_root)
         .iter()
         .any(|receiver| contains_member_call_name(&masked, receiver, &owner.name))
+}
+
+/// Whether the owner's module establishes any factory of the owner's class.
+fn has_instance_factory(owner: &TypeScriptOwner) -> bool {
+    owner.module_entries.iter().any(|entry| {
+        entry.instance_factory && entry.instance_kind != TypeScriptInstanceKind::Subclass
+    })
 }
 
 /// The locals the test body binds to a fresh instance of the owner's class
@@ -4398,7 +4459,7 @@ pub(crate) fn owner_method_receiver_names(
                 push_unique_string(&mut receivers, format!("new {constructor}"));
             }
             // A receiver a factory of the owner's class built (#15924).
-            if owner.method_kind == TypeScriptMethodKind::Ordinary {
+            if owner.method_kind == TypeScriptMethodKind::Ordinary && has_instance_factory(owner) {
                 let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
                 for receiver in
                     factory_built_receivers(test, owner, &masked, alias_map, workspace_root)

@@ -1,9 +1,11 @@
 //! Barrels a test reaches the owner through without an `export ... from`:
 //!
 //! - import-then-export (#15922): `import { f } from './x'; export { f };`, a
-//!   renamed export list entry and `export const g = f`. An import binding is
-//!   immutable, so the export is the imported module's binding and resolves
-//!   through the same bounded chain as `export { f } from './x'`.
+//!   renamed export list entry and `export const g = f`. An import binding
+//!   cannot be reassigned, so an export list entry is the imported module's
+//!   binding as `export { f } from './x'` is, and `export const g = f` is a
+//!   `const` initialized from it. Both resolve through the same bounded
+//!   chain.
 //! - a namespace import of a barrel (#15923): `import * as lib from '../src';
 //!   lib.f()`. The member name is the exported name, so it resolves like a
 //!   named import, but only when the whole test file uses the namespace as a
@@ -443,6 +445,12 @@ fn namespace_used_as_a_value_or_written_stays_unreached() -> Result<(), String> 
         (
             "ns-neg-spy-in-hook",
             "beforeEach(() => { vi.spyOn(lib, 'applyDiscount').mockReturnValue(100); });",
+            NAMESPACE_CALL,
+        ),
+        // A second binding of the same barrel object carries the spy.
+        (
+            "ns-neg-spy-through-second-namespace",
+            "import * as other from '../src/index';\nbeforeEach(() => { vi.spyOn(other, 'applyDiscount').mockReturnValue(100); });",
             NAMESPACE_CALL,
         ),
         (

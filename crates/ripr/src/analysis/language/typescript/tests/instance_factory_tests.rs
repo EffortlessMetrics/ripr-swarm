@@ -285,9 +285,17 @@ fn only_getters_and_ordinary_methods_record_a_factory_entry() {
     // is read on one (#15924).
     let method = CACHE.replace("get value(): T", "value(): T");
     assert_eq!(factory_entry_names(&method), ["cached"]);
+    // The negative rows must still extract the owner they speak about.
+    let has_value_owner = |source: &str| {
+        extract_owners(Path::new("src/cache.ts"), source)
+            .iter()
+            .any(|owner| owner.name == "value")
+    };
     let setter = CACHE.replace("get value(): T", "set value(next: T)");
+    assert!(has_value_owner(&setter), "setter owner");
     assert!(factory_entry_names(&setter).is_empty(), "setter");
     let static_method = CACHE.replace("get value(): T", "static value(): T");
+    assert!(has_value_owner(&static_method), "static owner");
     assert!(factory_entry_names(&static_method).is_empty(), "static");
 }
 

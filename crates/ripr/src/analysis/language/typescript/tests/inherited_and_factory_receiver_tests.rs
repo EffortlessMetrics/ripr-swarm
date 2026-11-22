@@ -272,6 +272,11 @@ fn static_member_that_is_not_a_sole_fresh_instance_factory_stays_unreached() -> 
             "Cart.make = () => ({ apply: () => 100 }) as unknown as Cart;\n",
         ),
         (
+            "recv-neg-static-index-written-in-owner",
+            "    static make(): Cart { return new Cart(); }\n",
+            "Cart['make'] = () => ({ apply: () => 100 }) as unknown as Cart;\n",
+        ),
+        (
             "recv-neg-static-async",
             "    static async make(): Promise<Cart> { return new Cart(); }\n",
             "",
@@ -479,6 +484,23 @@ fn subclass_that_can_supply_its_own_member_stays_unreached() -> Result<(), Strin
             "recv-neg-index-assign",
             "export class SpecialCart extends BaseCart { constructor() { super(); this['apply'] = (a: number, t: number) => a; } }\n",
         ),
+        // Spacing does not hide a write.
+        (
+            "recv-neg-spaced-index-assign",
+            "export class SpecialCart extends BaseCart { constructor() { super(); this ['apply'] = (a: number, t: number) => a; } }\n",
+        ),
+        (
+            "recv-neg-spaced-member-assign",
+            "export class SpecialCart extends BaseCart { constructor() { super(); this .apply = (a: number, t: number) => a; } }\n",
+        ),
+        (
+            "recv-neg-spaced-object-assign",
+            "export class SpecialCart extends BaseCart { constructor() { super(); Object.assign( this, { apply: (a: number, t: number) => a }); } }\n",
+        ),
+        (
+            "recv-neg-spaced-prototype-edit",
+            "export class SpecialCart extends BaseCart {}\n(SpecialCart .prototype as any).apply = (a: number, t: number) => a;\n",
+        ),
         (
             "recv-neg-static-block",
             "export class SpecialCart extends BaseCart { static { SpecialCart.prototype.apply = (a: number, t: number) => a; } }\n",
@@ -668,7 +690,7 @@ fn barrel_namespace_member_that_is_another_class_stays_unreached() -> Result<(),
     let owner = cart("");
     let other = class_source("Internal", "");
     let sibling = format!("{owner}{}", class_source("Sibling", ""));
-    let rows: [(&str, &str, &str, &str, &str); 5] = [
+    let rows: [(&str, &str, &str, &str, &str); 7] = [
         // The barrel's `Cart` is another module's class.
         (
             "recv-ns-neg-renamed-other",
@@ -700,6 +722,21 @@ fn barrel_namespace_member_that_is_another_class_stays_unreached() -> Result<(),
             "vi.mock('../src/cart');",
             "const c = new lib.Cart();",
         ),
+        // A write through the class member reaches its prototype.
+        (
+            "recv-ns-neg-prototype-assigned",
+            owner.as_str(),
+            "export * from './cart';\n",
+            "beforeEach(() => { lib.Cart.prototype.apply = () => 100; });",
+            "const c = new lib.Cart();",
+        ),
+        (
+            "recv-ns-neg-prototype-spied",
+            owner.as_str(),
+            "export * from './cart';\n",
+            "beforeEach(() => { vi.spyOn(lib.Cart.prototype, 'apply').mockReturnValue(100); });",
+            "const c = new lib.Cart();",
+        ),
         // A namespace the file hands to a spy may no longer hold the class.
         (
             "recv-ns-neg-spied",
@@ -721,4 +758,79 @@ fn barrel_namespace_member_that_is_another_class_stays_unreached() -> Result<(),
         )?;
     }
     Ok(())
+}
+
+/// What lies between the subclass and the changed class can replace the
+/// member without either class file saying so.
+#[test]
+fn inherited_member_replaced_between_the_classes_stays_unreached() -> Result<(), String> {
+    let base = base_cart();
+    // The subclass binds its base through a barrel the test mocks: the mock
+    // supplies the base, so the changed method never runs.
+    let through_barrel = "import { BaseCart } from './index';\nexport class SpecialCart extends BaseCart { extra() { return 1; } }\n";
+    assert_no_static_path(
+        "recv-neg-mock-base-barrel",
+        &[
+            ("src/cart.ts", base.as_str()),
+            ("src/index.ts", "export * from './cart';\n"),
+            ("src/special.ts", through_barrel),
+        ],
+        &special_test("vi.mock('../src/index');"),
+    )?;
+    // The changed class's own file replaces the method on its prototype.
+    let replaced = format!("{base}BaseCart.prototype.apply = () => 100;\n");
+    assert_no_static_path(
+        "recv-neg-base-prototype-written-in-owner",
+        &[
+            ("src/cart.ts", replaced.as_str()),
+            ("src/special.ts", SPECIAL),
+        ],
+        &special_test(""),
+    )
+}
+
+/// The changed class's own file can make its name or its instances hold
+/// something else.
+#[test]
+fn owner_file_that_rebinds_the_class_or_the_member_stays_unreached() -> Result<(), String> {
+    let base = base_cart();
+    // The class name is rebound before a same-file subclass extends it.
+    let rebound_same_file = format!(
+        "{base}(BaseCart as any) = class {{ apply(a: number, t: number) {{ return a; }} }};\nexport class SpecialCart extends BaseCart {{}}\n"
+    );
+    assert_no_static_path(
+        "recv-neg-base-rebound-same-file",
+        &[("src/cart.ts", rebound_same_file.as_str())],
+        &test_file(
+            "import { SpecialCart } from '../src/cart';",
+            "",
+            "const c = new SpecialCart();",
+        ),
+    )?;
+    // The class name is rebound in its own file; the subclass lives elsewhere.
+    let rebound = format!("{base}BaseCart = class {{ apply(a, t) {{ return a; }} }};\n");
+    assert_no_static_path(
+        "recv-neg-base-rebound-other-file",
+        &[
+            ("src/cart.ts", rebound.as_str()),
+            ("src/special.ts", SPECIAL),
+        ],
+        &special_test(""),
+    )?;
+    // The constructor writes the member through an index: a factory-built
+    // receiver's `apply` is that property.
+    let indexed = class_source(
+        "Cart",
+        "    constructor() { this['apply'] = (a: number, t: number) => a; }\n",
+    );
+    let indexed = format!("{indexed}{FUNCTION_FACTORY}");
+    assert_no_static_path(
+        "recv-neg-owner-constructor-index-assign",
+        &[("src/cart.ts", indexed.as_str())],
+        &test_file(
+            "import { makeCart } from '../src/cart';",
+            "",
+            "const c = makeCart();",
+        ),
+    )
 }

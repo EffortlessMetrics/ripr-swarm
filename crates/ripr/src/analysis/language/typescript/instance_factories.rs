@@ -158,8 +158,14 @@ pub(crate) fn assign_instance_factories(
                 });
             }
         }
+        // Exported factories keep their slots: a class with many static
+        // factories must not displace one a test already relates through.
+        entries.sort();
+        entries.dedup();
+        entries.truncate(INSTANCE_FACTORY_MAX_PER_OWNER);
+        let mut statics: Vec<TypeScriptModuleEntry> = Vec::new();
         for name in static_factories.get(class_name).into_iter().flatten() {
-            entries.push(TypeScriptModuleEntry {
+            statics.push(TypeScriptModuleEntry {
                 name: name.clone(),
                 exported_as_default: false,
                 class_member: None,
@@ -170,9 +176,11 @@ pub(crate) fn assign_instance_factories(
                 cross_module: None,
             });
         }
+        statics.sort();
+        statics.dedup();
+        statics.truncate(INSTANCE_FACTORY_MAX_PER_OWNER.saturating_sub(entries.len()));
+        entries.extend(statics);
         entries.sort();
-        entries.dedup();
-        entries.truncate(INSTANCE_FACTORY_MAX_PER_OWNER);
         if !entries.is_empty() {
             additions.push((index, entries));
         }
@@ -303,6 +311,20 @@ fn static_factories(
         if !wanted.contains(class_name) {
             return;
         }
+        // An indexed or bulk write on the class (`Cart['make'] = ...`,
+        // `Object.assign(Cart, ...)`) can replace a static this scan trusts.
+        let indexed = format!("{class_name}[");
+        if text.match_indices(&indexed).any(|(at, _)| {
+            // `Cart[]` is an array type, and `SmartCart[` another name.
+            !text[at + indexed.len()..].trim_start().starts_with(']')
+                && !text[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_javascript_identifier_char)
+        }) || text.contains(&format!("Object.assign({class_name}"))
+        {
+            return;
+        }
         // Every plain member name with how often the class declares it; a
         // key this scan cannot name could be any of them.
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -405,6 +427,8 @@ fn class_cannot_replace_getter(
     if member_sources.is_some_and(|sources| {
         sources.iter().any(|(kind, source)| {
             rebinds_this_member(source, name)
+                // An indexed or bulk write on `this` can name any member.
+                || this_written_without_a_name(source)
                 // A constructor that returns a value hands back another object.
                 || (*kind == TypeScriptMethodKind::Constructor
                     && word_offsets(source, "return").next().is_some())
@@ -424,6 +448,13 @@ fn class_cannot_replace_getter(
         ]
         .iter()
         .any(|word| file_text.contains(word)))
+}
+
+/// `this[...]` or `Object.assign(this`, whatever the spacing: a write on the
+/// instance that names no member this scan can read.
+pub(crate) fn this_written_without_a_name(source: &str) -> bool {
+    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact.contains("this[") || compact.contains("Object.assign(this")
 }
 
 fn collect_statement<'a>(

@@ -2173,7 +2173,27 @@ fn namespace_member_call_locals(imports: &[TypeScriptImport], code: &str) -> Vec
                 clean = false;
                 break;
             };
-            let after = tail.trim_start();
+            // The rest of the member path (`lib.Cart.prototype.apply`): a
+            // write at its end, or any reach into a prototype, is a write
+            // through the namespace.
+            let mut path_end = tail;
+            let mut reaches_prototype = false;
+            loop {
+                let rest = path_end.trim_start();
+                let Some(next) = ["?.", "!.", "."]
+                    .iter()
+                    .find_map(|dot| rest.strip_prefix(dot))
+                else {
+                    break;
+                };
+                let segment: String = next.chars().take_while(|ch| ident(*ch)).collect();
+                if segment.is_empty() {
+                    break;
+                }
+                reaches_prototype |= segment == "prototype" || segment == "__proto__";
+                path_end = &next[segment.len()..];
+            }
+            let after = path_end.trim_start();
             let assigned =
                 after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
             let prefix_write = before.ends_with("++")
@@ -2182,6 +2202,8 @@ fn namespace_member_call_locals(imports: &[TypeScriptImport], code: &str) -> Vec
                     .strip_suffix("delete")
                     .is_some_and(|rest| !rest.ends_with(ident));
             if before.ends_with(['.', '#'])
+                || reaches_prototype
+                || after.starts_with('[')
                 || assigned
                 || prefix_write
                 || WRITES.iter().any(|write| after.starts_with(write))
