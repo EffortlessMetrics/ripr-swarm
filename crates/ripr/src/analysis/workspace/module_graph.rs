@@ -84,13 +84,13 @@ const MAX_PENDING_READ_AHEAD: usize = 512;
 /// How a reached file anchors its own default `mod name;` children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum ChildAnchor {
-    /// Crate roots and `mod.rs` files: children live beside the file.
+    /// Crate roots, `mod.rs` files and files loaded through `#[path]`:
+    /// children live beside the file. rustc makes a `#[path]` file a
+    /// directory owner, so its `mod child;` resolves to `<dir>/child.rs`,
+    /// never `<dir>/<stem>/child.rs` (#15877).
     Directory,
     /// Ordinary module files: children live under `<dir>/<stem>/`.
     Stem,
-    /// Files loaded through `#[path]`: try both anchors, so the walk
-    /// over-reaches rather than miss a child.
-    Both,
     /// Files pasted in by `include!`: their `mod name;` declarations resolve
     /// against the including module, which this walk does not model, so any
     /// such declaration makes the walk incomplete. Their `#[path]` and
@@ -661,7 +661,7 @@ impl EscapingReach {
             for edge in scan.edges {
                 match edge {
                     RustModuleTreeEdge::Path(target) => {
-                        roots.push((lexical(&directory.join(target)), ChildAnchor::Both));
+                        roots.push((lexical(&directory.join(target)), ChildAnchor::Directory));
                     }
                     RustModuleTreeEdge::Include(target) => {
                         roots.push((lexical(&directory.join(target)), ChildAnchor::Included));
@@ -1453,7 +1453,7 @@ impl PackageWalk {
                 }
                 RustModuleTreeEdge::Path(target) => {
                     self.seen_load_edge = true;
-                    pending.push((lexical(&directory.join(target)), ChildAnchor::Both));
+                    pending.push((lexical(&directory.join(target)), ChildAnchor::Directory));
                 }
                 RustModuleTreeEdge::Include(target) => {
                     self.seen_load_edge = true;
@@ -1471,7 +1471,9 @@ impl PackageWalk {
                     // resolution, so the default targets are routes too.
                     let mut targets = candidates
                         .iter()
-                        .map(|candidate| (lexical(&directory.join(candidate)), ChildAnchor::Both))
+                        .map(|candidate| {
+                            (lexical(&directory.join(candidate)), ChildAnchor::Directory)
+                        })
                         .collect::<Vec<_>>();
                     let bases = if default_applies {
                         child_bases(&file, &directory, anchor)
@@ -1576,7 +1578,7 @@ fn child_bases(file: &Path, directory: &Path, anchor: ChildAnchor) -> Vec<PathBu
         ChildAnchor::Directory => vec![directory.to_path_buf()],
         ChildAnchor::Stem if is_mod_rs => vec![directory.to_path_buf()],
         ChildAnchor::Stem => vec![stem_dir],
-        ChildAnchor::Both | ChildAnchor::Included => vec![directory.to_path_buf(), stem_dir],
+        ChildAnchor::Included => vec![directory.to_path_buf(), stem_dir],
     }
 }
 
@@ -2540,6 +2542,9 @@ mod tests {
                 ("src/reached.rs", ""),
                 ("src/platform/unix_impl.rs", "mod inner;\n"),
                 ("src/platform/inner.rs", ""),
+                // A `#[path]` file is a directory owner: `mod inner;` never
+                // loads its stem-directory twin (#15877).
+                ("src/platform/unix_impl/inner.rs", ""),
                 // Default resolution when the `cfg_attr` does not apply.
                 ("src/sys.rs", ""),
                 // A plain `#[path]` always applies, so `mod dynamic;` never
@@ -2556,6 +2561,7 @@ mod tests {
             &[
                 "src/platform/unix_impl.rs",
                 "src/platform/inner.rs",
+                "src/platform/unix_impl/inner.rs",
                 "src/sys.rs",
                 "src/reached.rs",
                 "src/dynamic.rs",
@@ -2807,10 +2813,10 @@ mod tests {
         let files = wide_package_files(&[
             (
                 "tests/it.rs",
-                "#[path = \"../src/m00.rs\"]\nmod m00;\n#[path = \"helper.rs\"]\nmod helper;\n",
+                "#[path = \"../src/m00.rs\"]\nmod m00;\n#[path = \"support/helper.rs\"]\nmod helper;\n",
             ),
-            ("tests/helper.rs", "mod child;\n"),
-            ("tests/helper/child.rs", ""),
+            ("tests/support/helper.rs", "mod child;\n"),
+            ("tests/support/child.rs", ""),
         ]);
         let root = fixture("evidence-first-escape", &wide_package_refs(&files))?;
         let package = lexical(&normalize(&root));
@@ -2846,18 +2852,18 @@ mod tests {
             Some(Origin::Evidence)
         );
         assert_eq!(
-            leftover.find(&root, &[path("tests/helper/child.rs")]),
+            leftover.find(&root, &[path("tests/support/child.rs")]),
             Some(Origin::Evidence),
-            "fallback must keep the #[path] child's stem anchor"
+            "fallback must keep the #[path] child's directory anchor"
         );
         assert_eq!(
             leftover
                 .reached
-                .get(&path("tests/helper/child.rs"))
+                .get(&path("tests/support/child.rs"))
                 .copied(),
             baseline
                 .reached
-                .get(&path("tests/helper/child.rs"))
+                .get(&path("tests/support/child.rs"))
                 .copied()
         );
 
@@ -2865,7 +2871,7 @@ mod tests {
             &root,
             &[
                 "tests/it.rs",
-                "tests/helper/child.rs",
+                "tests/support/child.rs",
                 "src/orphan.rs",
                 "src/m00.rs",
             ],
@@ -2875,7 +2881,7 @@ mod tests {
             &[
                 "src/m00.rs",
                 "tests/it.rs",
-                "tests/helper/child.rs",
+                "tests/support/child.rs",
                 "src/orphan.rs",
             ],
         );

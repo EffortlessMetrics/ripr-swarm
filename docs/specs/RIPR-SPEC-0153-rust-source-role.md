@@ -105,7 +105,9 @@ the CLI reports. Other loose non-`src` files (panel subjects under
 `seeds_diff_probes` also consults module-tree evidence (#4435). A changed
 file seeds only when a Cargo target's module tree reaches it through
 `mod`, `#[path]` or literal `include!` edges, walked from every target
-root (a declared `[lib] path` replaces `src/lib.rs`). `autobins = false`
+root (a declared `[lib] path` replaces `src/lib.rs`). A `#[path]` file owns
+its directory, as in rustc: its `mod child;` resolves to `child.rs` or
+`child/mod.rs` beside it, never under its stem directory (#15877). `autobins = false`
 drops the undiscovered `src/main.rs` and `src/bin/*` roots, and
 `autolib = false` drops `src/lib.rs` unless a `[lib]` table remains; a
 path-less declaration keeps its default path, including edition 2015's
