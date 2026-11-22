@@ -159,6 +159,11 @@ pub(crate) struct ParserProbeShape<'a> {
     /// the edit, so the probe built from it carries the changed line as its
     /// `after` text while the label stays the expression and identity.
     pub(crate) unsafe_interior: bool,
+    /// #15274: the old text of a tail `if` arm whose value alone changed
+    /// (`Some(x)` before `None`), when the arm shares its line with the
+    /// unchanged condition. A text cut cannot place it when the new arm's
+    /// text repeats on the line (`{ None } else { None }`).
+    pub(crate) removed_arm: Option<String>,
 }
 
 pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
@@ -282,6 +287,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             standalone_call: true,
             unsafe_boundary,
             unsafe_interior: unsafe_boundary && shape.start_line() < line,
+            removed_arm: None,
         };
         if let Some(position) = selected
             .iter()
@@ -313,6 +319,42 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
         // They share a family, but their source identities are not interchangeable.
         selected.push((declaration, None));
     }
+    // #15274: a one-line tail `if` whose condition is unchanged and whose arm
+    // value changed (`{ Some(x) } else { None }` to `{ None } else { None }`)
+    // changed the returned value, not the predicate. Probe the changed arms as
+    // the rustfmt layout with each arm on its own line already does, and drop
+    // the condition's predicate, which would ask for a boundary the edit
+    // never moved.
+    if let Some(removed) = removed_text
+        && let Some(edit) = inline_tail_if_arm_edit(&facts.source, line, removed)
+    {
+        selected.retain(|(shape, _)| {
+            let inside = edit.if_range.contains(&shape.start_byte);
+            !(inside
+                && matches!(
+                    shape.family,
+                    ProbeFamily::Predicate | ProbeFamily::ReturnValue
+                ))
+        });
+        for arm in edit.changed_arms {
+            let Some(text) = facts.source.get(arm.range.clone()) else {
+                continue;
+            };
+            selected.push((
+                ParserProbeShape {
+                    family: ProbeFamily::ReturnValue,
+                    start_line: line,
+                    start_byte: arm.range.start,
+                    text,
+                    standalone_call: true,
+                    unsafe_boundary: false,
+                    unsafe_interior: false,
+                    removed_arm: Some(arm.removed),
+                },
+                None,
+            ));
+        }
+    }
     selected.sort_by(|(left, _), (right, _)| {
         left.family
             .as_str()
@@ -321,6 +363,173 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             .then(left.text.cmp(right.text))
     });
     selected.into_iter().map(|(shape, _)| shape).collect()
+}
+
+/// #15274: one arm of a one-line tail `if` whose value the edit changed.
+struct ChangedInlineArm {
+    /// The new arm value's byte range in the file.
+    range: Range<usize>,
+    /// The old arm value's text.
+    removed: String,
+}
+
+struct InlineTailIfArmEdit {
+    /// The whole `if` expression's byte range in the file.
+    if_range: Range<usize>,
+    changed_arms: Vec<ChangedInlineArm>,
+}
+
+/// #15274: when `line` holds the whole `if`/`else` that is the tail of a
+/// function returning a value, the line around the `if` is unchanged, the
+/// condition text is unchanged, and exactly one arm value differs from the
+/// paired `removed` line, that arm.
+///
+/// Fails closed: both versions must parse as one `if` with a plain `else`
+/// block (no `else if`), every arm block must hold only its value, and every
+/// changed arm value must be a plain value the tail-if return reader probes on
+/// its own line (not control flow, not a comparison or boolean connective,
+/// which is a predicate of its own).
+fn inline_tail_if_arm_edit(
+    source: &str,
+    line: usize,
+    removed: &str,
+) -> Option<InlineTailIfArmEdit> {
+    let line_range = source_line_byte_range(source, line)?;
+    let parse = last_file_parse(source)?;
+    let root = parse.tree();
+    let tail_if = root
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .ret_type()
+                .and_then(|ret| ret.ty())
+                .is_some_and(|ty| ty.syntax().text().to_string().trim() != "()")
+        })
+        .filter_map(|function| function.body()?.tail_expr())
+        .find_map(|tail| {
+            let ast::Expr::IfExpr(if_expr) = tail else {
+                return None;
+            };
+            let range = if_expr.syntax().text_range();
+            let start = usize::from(range.start());
+            let end = usize::from(range.end());
+            (line_range.start <= start && end <= line_range.end).then_some(if_expr)
+        })?;
+    let if_range = {
+        let range = tail_if.syntax().text_range();
+        usize::from(range.start())..usize::from(range.end())
+    };
+    let changed_line = source.get(line_range.clone())?;
+    let prefix = source.get(line_range.start..if_range.start)?;
+    let suffix = source.get(if_range.end..line_range.end)?;
+    // The paired removed line may arrive with or without its indentation.
+    let removed_trimmed = removed.trim();
+    let old_if_text = removed_trimmed
+        .strip_prefix(prefix.trim_start())?
+        .strip_suffix(suffix.trim_end())?
+        .trim();
+    if old_if_text.is_empty() || changed_line.trim() == removed_trimmed {
+        return None;
+    }
+    let old_parse =
+        parse_clean_source_file(&format!("fn __ripr_removed_arm() {{ {old_if_text} }}"))?;
+    let old_if = old_parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .next()?
+        .body()?
+        .tail_expr()?;
+    let ast::Expr::IfExpr(old_if) = old_if else {
+        return None;
+    };
+    let condition_text = |if_expr: &ast::IfExpr| {
+        if_expr
+            .condition()
+            .map(|condition| condition.syntax().text().to_string())
+    };
+    if condition_text(&tail_if)? != condition_text(&old_if)? {
+        return None;
+    }
+    let new_arms = inline_arm_values(&tail_if)?;
+    let old_arms = inline_arm_values(&old_if)?;
+    let mut changed_arms = Vec::new();
+    for (new, old) in new_arms.iter().zip(&old_arms) {
+        let new_text = new.syntax().text().to_string();
+        let old_text = old.syntax().text().to_string();
+        if new_text == old_text {
+            continue;
+        }
+        if !plain_arm_value(new) {
+            return None;
+        }
+        let range = new.syntax().text_range();
+        changed_arms.push(ChangedInlineArm {
+            range: usize::from(range.start())..usize::from(range.end()),
+            removed: old_text,
+        });
+    }
+    // Two changed arms (`{ a } else { b }` to `{ b } else { a }`) can be one
+    // inverted decision, which the condition's predicate judges.
+    (changed_arms.len() == 1).then_some(InlineTailIfArmEdit {
+        if_range,
+        changed_arms,
+    })
+}
+
+/// The then-arm and else-arm values of an `if` with a plain `else` block,
+/// each block holding only its value.
+fn inline_arm_values(if_expr: &ast::IfExpr) -> Option<[ast::Expr; 2]> {
+    let Some(ast::ElseBranch::Block(else_block)) = if_expr.else_branch() else {
+        return None;
+    };
+    let value = |block: ast::BlockExpr| {
+        let list = block.stmt_list()?;
+        if list.statements().next().is_some() {
+            return None;
+        }
+        list.tail_expr()
+    };
+    Some([value(if_expr.then_branch()?)?, value(else_block)?])
+}
+
+/// A value the own-line tail-if reader would probe as `return_value`: not
+/// control flow, and not a comparison or boolean connective (a predicate).
+fn plain_arm_value(value: &ast::Expr) -> bool {
+    let mut core = value.clone();
+    loop {
+        let inner = match &core {
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) => {
+                prefix.expr()
+            }
+            _ => None,
+        };
+        match inner {
+            Some(inner) => core = inner,
+            None => break,
+        }
+    }
+    let predicate = ast::BinExpr::cast(core.syntax().clone()).is_some_and(|binary| {
+        binary
+            .op_kind()
+            .is_some_and(|op| matches!(op, ast::BinaryOp::CmpOp(_) | ast::BinaryOp::LogicOp(_)))
+    });
+    !predicate
+        && !matches!(
+            value,
+            ast::Expr::IfExpr(_)
+                | ast::Expr::MatchExpr(_)
+                | ast::Expr::WhileExpr(_)
+                | ast::Expr::ForExpr(_)
+                | ast::Expr::LoopExpr(_)
+                | ast::Expr::BlockExpr(_)
+                | ast::Expr::ReturnExpr(_)
+                | ast::Expr::MacroExpr(_)
+        )
 }
 
 thread_local! {
@@ -1249,6 +1458,61 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// #15274: one changed arm of an inline tail `if` is found with its old
+    /// text; a condition edit, two changed arms, swapped arms, an `else if`
+    /// and a unit function are not arm edits.
+    #[test]
+    fn an_inline_tail_if_arm_edit_needs_exactly_one_changed_value_arm() -> Result<(), String> {
+        let source = |line: &str| format!("pub fn f(x: i32) -> Option<i32> {{\n    {line}\n}}\n");
+        let new = "if x % 2 == 0 { None } else { Some(0) }";
+        let found = inline_tail_if_arm_edit(
+            &source(new),
+            2,
+            "if x % 2 == 0 { Some(x) } else { Some(0) }",
+        );
+        let edit = found.ok_or("the one-arm edit was not found")?;
+        let [arm] = edit.changed_arms.as_slice() else {
+            return Err(format!(
+                "expected one changed arm, got {}",
+                edit.changed_arms.len()
+            ));
+        };
+        assert_eq!(arm.removed, "Some(x)");
+        assert_eq!(source(new).get(arm.range.clone()), Some("None"));
+        // Indented removed text pairs too.
+        assert!(
+            inline_tail_if_arm_edit(
+                &source(new),
+                2,
+                "    if x % 2 == 0 { Some(x) } else { Some(0) }"
+            )
+            .is_some()
+        );
+        for removed in [
+            "if x % 2 != 0 { None } else { Some(0) }",
+            "if x % 2 == 0 { Some(x) } else { Some(1) }",
+            "if x % 2 == 0 { Some(0) } else { None }",
+            new,
+        ] {
+            assert!(
+                inline_tail_if_arm_edit(&source(new), 2, removed).is_none(),
+                "{removed}"
+            );
+        }
+        let chained = "if x == 0 { None } else if x == 1 { Some(1) } else { Some(0) }";
+        assert!(
+            inline_tail_if_arm_edit(
+                &source(chained),
+                2,
+                "if x == 0 { Some(x) } else if x == 1 { Some(1) } else { Some(0) }"
+            )
+            .is_none()
+        );
+        let unit = "pub fn g(x: i32) {\n    if x == 0 { a() } else { b() }\n}\n";
+        assert!(inline_tail_if_arm_edit(unit, 2, "if x == 0 { c() } else { b() }").is_none());
+        Ok(())
+    }
 
     fn numbered_lines(count: usize) -> Vec<crate::analysis::diff::ChangedLine> {
         (1..=count)
@@ -2385,6 +2649,7 @@ mod tests {
                     standalone_call: true,
                     unsafe_boundary: false,
                     unsafe_interior: false,
+                    removed_arm: None,
                 };
                 if let Some(position) = expected
                     .iter()

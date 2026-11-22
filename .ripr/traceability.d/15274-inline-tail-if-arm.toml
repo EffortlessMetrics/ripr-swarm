@@ -1,0 +1,8 @@
+# Registers the one-arm edit of an inline tail `if` (#15274 repro 4) under
+# RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/probes/classify.rs::tests::an_inline_tail_if_arm_edit_needs_exactly_one_changed_value_arm",
+  "crates/ripr/src/analysis/classify/flow.rs::tests::an_inline_tail_if_names_only_its_whole_value_arms",
+]

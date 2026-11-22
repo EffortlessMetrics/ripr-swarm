@@ -853,6 +853,11 @@ pub(crate) fn probes_for_file_with_relations(
                 // keeps reading it as unknown: which arm changed is not
                 // established there.
                 let before = before.map(|line| {
+                    // #15274: the old arm value of an inline tail `if` arm
+                    // edit, placed by the parser where a text cut cannot.
+                    if let Some(removed_arm) = &shape.removed_arm {
+                        return removed_arm.clone();
+                    }
                     if shape.family == ProbeFamily::MatchArm && line.matches("=>").count() > 1 {
                         return line;
                     }
@@ -6597,6 +6602,7 @@ mod tests {
             standalone_call: false,
             unsafe_boundary: false,
             unsafe_interior: false,
+            removed_arm: None,
         }
     }
 

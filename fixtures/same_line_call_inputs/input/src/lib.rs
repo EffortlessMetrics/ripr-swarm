@@ -1,5 +1,5 @@
 pub fn shipping(weight: u32) -> u32 {
-    if weight > 100 { 60 } else { 10 }
+    if weight > 100 { 50 } else { 10 }
 }
 
 #[test]

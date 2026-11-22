@@ -186,6 +186,7 @@ pub(super) fn declaration_shape<'a>(
                 standalone_call: false,
                 unsafe_boundary: false,
                 unsafe_interior: false,
+                removed_arm: None,
             });
         }
     }
@@ -198,6 +199,7 @@ pub(super) fn declaration_shape<'a>(
             standalone_call: false,
             unsafe_boundary: false,
             unsafe_interior: false,
+            removed_arm: None,
         });
     }
     None

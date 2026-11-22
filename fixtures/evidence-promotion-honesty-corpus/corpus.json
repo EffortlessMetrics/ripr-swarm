@@ -21977,6 +21977,54 @@
           "relation_reason": "direct_owner_call"
         }
       ]
+    },
+    {
+      "id": "rust_return_value_inline_tail_if_arm_other_branch",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_return_value_inline_tail_if_arm_other_branch",
+      "vector": "a_test_of_the_unchanged_inline_arm_does_not_promote_the_changed_arm",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_return_value_inline_tail_if_arm_repeated_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_return_value_inline_tail_if_arm_repeated_value",
+      "vector": "an_inline_arm_value_repeated_on_its_line_fails_closed",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
     }
   ]
 }

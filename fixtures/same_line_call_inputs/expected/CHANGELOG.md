@@ -35,3 +35,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_line_call_inputs (4)
+
+Reason:
+RIPR-SPEC-0001: the fixture's edit moves into the condition so its predicate reading stays in view after #15274
+
+Command:
+`cargo xtask goldens bless same_line_call_inputs --reason "..."`
+
+Updated:
+- `expected/check.json`

@@ -9789,7 +9789,13 @@ fn closed_guard_return(
     } else {
         return None;
     };
-    if after.trim() != statement {
+    // #15274: a value arm of a one-line tail `if` (`if c { None } else
+    // { Some(0) }`) is read like the same arm on a line of its own, when the
+    // line spells the value exactly once, so the old line is unambiguous.
+    let inline_arm = !returned(expression)
+        && super::flow::inline_tail_if_has_arm(after, &statement)
+        && after.matches(statement.as_str()).count() == 1;
+    if after.trim() != statement && !inline_arm {
         return None;
     }
     let old_line = after.replacen(&statement, &old_statement, 1);

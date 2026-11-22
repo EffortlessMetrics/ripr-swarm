@@ -551,6 +551,19 @@ fn return_value_sink(
         );
     }
     if let Some(return_fact) = nearest_return(owner_fn, probe.location.line) {
+        // #15274: an arm value of a one-line tail `if` (`if c { None } else
+        // { None }`) is itself the returned value, as it is when rustfmt puts
+        // the arm on a line of its own; the whole `if` on the line is not.
+        if return_fact.line == probe.location.line
+            && inline_tail_if_has_arm(&return_fact.text, &probe.expression)
+        {
+            return flow_sink(
+                FlowSinkKind::ReturnValue,
+                return_sink_text(&probe.expression),
+                probe.location.line,
+                owner,
+            );
+        }
         return flow_sink(
             FlowSinkKind::ReturnValue,
             return_sink_text(&return_fact.text),
@@ -597,6 +610,51 @@ fn return_value_sink(
         probe.location.line,
         owner,
     )
+}
+
+/// #15274: whether `returned` is one `if`/`else` (no `else if`) whose
+/// then-arm or else-arm block holds only `arm` as its value.
+pub(super) fn inline_tail_if_has_arm(returned: &str, arm: &str) -> bool {
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::{AstNode, ast};
+
+    let returned = returned.trim();
+    let arm = arm.trim();
+    if !returned.starts_with("if ") || returned.contains('\n') || arm.is_empty() {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(&format!("fn __ripr_tail() {{ {returned} }}")) else {
+        return false;
+    };
+    let Some(ast::Expr::IfExpr(if_expr)) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .next()
+        .and_then(|function| function.body()?.tail_expr())
+    else {
+        return false;
+    };
+    let Some(ast::ElseBranch::Block(else_block)) = if_expr.else_branch() else {
+        return false;
+    };
+    let only_value = |block: ast::BlockExpr| {
+        block.stmt_list().and_then(|list| {
+            if list.statements().next().is_some() {
+                return None;
+            }
+            list.tail_expr()
+                .map(|value| value.syntax().text().to_string())
+        })
+    };
+    [
+        if_expr.then_branch().and_then(only_value),
+        only_value(else_block),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|value| value.trim() == arm)
 }
 
 /// Whether a comparison tail orders its operands (`<`, `<=`, `>`, `>=`). An
@@ -2426,6 +2484,25 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::ReturnFact;
     use std::path::PathBuf;
+
+    /// #15274: the inline tail `if` names its value arms exactly, and a
+    /// value only part of an arm, a multi-line `if`, or an arm with
+    /// statements is not an arm.
+    #[test]
+    fn an_inline_tail_if_names_only_its_whole_value_arms() {
+        let returned = "if x % 2 == 0 { None } else { Some(0) }";
+        assert!(inline_tail_if_has_arm(returned, "None"));
+        assert!(inline_tail_if_has_arm(returned, " Some(0) "));
+        assert!(!inline_tail_if_has_arm(returned, "0"));
+        assert!(!inline_tail_if_has_arm(returned, "x % 2 == 0"));
+        assert!(!inline_tail_if_has_arm("if a { 1 }\nelse { 2 }", "1"));
+        assert!(!inline_tail_if_has_arm("if a { log(); 1 } else { 2 }", "1"));
+        assert!(!inline_tail_if_has_arm(
+            "if a { 1 } else if b { 2 } else { 3 }",
+            "3"
+        ));
+        assert!(!inline_tail_if_has_arm("Some(1)", "Some(1)"));
+    }
 
     /// #15189: a long line's memoized arm reading equals the scan, also
     /// when lines alternate and when only an arm's string differs.
