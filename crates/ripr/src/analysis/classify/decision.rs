@@ -542,7 +542,7 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
     if strongest
         .oracle
         .as_deref()
-        .is_some_and(compares_value_with_its_own_copy)
+        .is_some_and(super::reveal::compares_value_with_its_own_copy)
     {
         return None;
     }
@@ -580,32 +580,6 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
         "The related test `{}` {oracle_context}. {family_gap}.{missing_value}",
         strongest.name,
     ))
-}
-
-/// True when an equality assertion's two operands are the same expression up
-/// to a trailing copy (`.clone()`, `.to_owned()`, `.to_vec()`) or a leading
-/// borrow. Such an assertion cannot tell the changed behavior from a wrong
-/// one, whatever oracle strength the row carries.
-fn compares_value_with_its_own_copy(assertion: &str) -> bool {
-    fn base(operand: &str) -> String {
-        let mut text: String = operand.chars().filter(|c| !c.is_whitespace()).collect();
-        loop {
-            let before = text.len();
-            for suffix in [".clone()", ".to_owned()", ".to_vec()"] {
-                if let Some(stripped) = text.strip_suffix(suffix) {
-                    text = stripped.to_string();
-                }
-            }
-            if let Some(stripped) = text.strip_prefix('&') {
-                text = stripped.to_string();
-            }
-            if text.len() == before {
-                return text;
-            }
-        }
-    }
-    super::reveal::equality_operands(assertion)
-        .is_some_and(|[left, right]| !left.trim().is_empty() && base(&left) == base(&right))
 }
 
 /// Guidance for an assertion-shaped owner, phrased for oracles rather than for
@@ -1611,10 +1585,6 @@ mod tests {
                 .is_some_and(|step| step.contains("depends on the changed call")),
             "{independent:?}"
         );
-        assert!(compares_value_with_its_own_copy("assert_eq!(x.clone(), x)"));
-        assert!(!compares_value_with_its_own_copy(
-            "assert_eq!(x, y.clone())"
-        ));
     }
 
     // Controls: a broad related oracle, a stronger broad oracle outranking

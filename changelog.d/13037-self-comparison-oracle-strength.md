@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A related assertion that compares a value with a copy of itself (`assert_eq!(b.0, b.0.clone())`) no longer reports a `strong` oracle. It cannot tell a changed value from a wrong one, so its strength relative to the finding is `weak` and it never confirms observation, like a self-computed expected value. A hand-written `Clone::clone` pinned through a derived `PartialEq` keeps its credit (#13037).

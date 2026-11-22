@@ -19,7 +19,7 @@ Shared evidence and guidance
   E4 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E6 [findings 1, 2]: local flow reaches state write: v.push(x * 1) (line 3)
-  E7 [findings 1, 2]: related test src/lib.rs:10 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, b.0.clone()); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E7 [findings 1, 2]: related test src/lib.rs:10 records_into_the_bag uses weak exact value oracle: assert_eq!(b.0, b.0.clone()); misses: assertion too weak to tell the old behavior from the new
   E8 [findings 1, 2]: source function argument value v = 0 at line 12
   E9 [findings 1, 2]: source function argument value x = 11 at line 12
   E10 [findings 1, 2]: source assertion argument value 0 at line 13

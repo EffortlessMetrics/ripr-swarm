@@ -16,7 +16,7 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1
   Changed behavior: v.push(x * 1)
   Missing check: No strong assertion was detected
-  Related test: src/lib.rs:10 records_into_the_bag (ripr could not confirm that this assertion observes the changed behavior)
+  Related test: src/lib.rs:10 records_into_the_bag (assertion too weak to tell the old behavior from the new)
   Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;

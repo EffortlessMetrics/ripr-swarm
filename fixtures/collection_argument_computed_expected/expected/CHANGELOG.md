@@ -371,3 +371,16 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — collection_argument_computed_expected (29)
+
+Reason:
+RIPR-SPEC-0094: a related assertion comparing a value with a copy of itself is capped at weak unless the #6692 clone-field pin admits it (#13037)
+
+Command:
+`cargo xtask goldens bless collection_argument_computed_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

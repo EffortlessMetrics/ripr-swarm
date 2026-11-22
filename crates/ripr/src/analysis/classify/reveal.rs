@@ -3236,8 +3236,18 @@ fn analyze_related_assertions(
                     }
                     (None, None) => false,
                 };
-            let self_computed =
-                self_computed || empty_after_skipped_push || seeded_after_skipped_push;
+            // #13037: an equality of a value with a copy of itself
+            // (`assert_eq!(b.0, b.0.clone())`) passes whatever value the
+            // code produced, so like a self-computed expected value it
+            // neither pins nor confirms. The one exception is the #6692
+            // clone-field pin, where the owner is the hand-written `clone`
+            // and the owner pin already admitted the comparison.
+            let compared_with_own_copy =
+                matched && !owner_pinned && compares_value_with_its_own_copy(&assertion.text);
+            let self_computed = self_computed
+                || empty_after_skipped_push
+                || seeded_after_skipped_push
+                || compared_with_own_copy;
             // #6692: the owner pin is credited only through an assertion
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
@@ -3973,6 +3983,34 @@ fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
 
 #[cfg(kani)]
 mod kani_proofs;
+
+/// True when an equality assertion's two operands are the same expression up
+/// to a trailing copy (`.clone()`, `.to_owned()`, `.to_vec()`) or a leading
+/// borrow (#13037). Such an assertion cannot tell the changed behavior from a
+/// wrong one. An exact self-comparison (`assert_eq!(x, x)`) is already a weak
+/// relation at extraction (RIPR-SPEC-0231 step 3); this reads the copy forms
+/// relative to a probe, so the #6692 clone-field pin can still admit them.
+pub(in crate::analysis::classify) fn compares_value_with_its_own_copy(assertion: &str) -> bool {
+    fn base(operand: &str) -> String {
+        let mut text: String = operand.chars().filter(|c| !c.is_whitespace()).collect();
+        loop {
+            let before = text.len();
+            for suffix in [".clone()", ".to_owned()", ".to_vec()"] {
+                if let Some(stripped) = text.strip_suffix(suffix) {
+                    text = stripped.to_string();
+                }
+            }
+            if let Some(stripped) = text.strip_prefix('&') {
+                text = stripped.to_string();
+            }
+            if text.len() == before {
+                return text;
+            }
+        }
+    }
+    equality_operands(assertion)
+        .is_some_and(|[left, right]| !left.trim().is_empty() && base(&left) == base(&right))
+}
 
 /// A self-computed assertion's probe-relative strength is at most `weak`.
 fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStrength {
@@ -14715,6 +14753,54 @@ return Err(\"typed pin\".into());
             "{}",
             discriminate.summary
         );
+    }
+
+    /// #13037: `assert_eq!(RATE, RATE.clone())` names the changed constant,
+    /// so before this rule its token confirmed observation at full strength,
+    /// yet it compares a value with a copy of itself and passes whatever the
+    /// code does. Neither side calls the owner, so the #5830 self-computed
+    /// reading does not apply. The row is capped at weak and observation
+    /// stays unconfirmed. The control compares the same constant with an
+    /// independent literal and keeps its credit.
+    #[test]
+    fn comparison_with_own_copy_is_weak_and_unconfirmed() {
+        let params = vec!["subtotal".to_string()];
+        for text in [
+            "assert_eq!(RATE, RATE.clone());",
+            "assert_eq!(&RATE.to_owned(), &RATE);",
+        ] {
+            let test = test_with_assertions("rate_is_itself", vec![exact(text)]);
+            let (discriminate, strength) =
+                tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
+            assert_eq!(strength, OracleStrength::Weak, "{text}");
+            assert_eq!(
+                discriminate.state,
+                StageState::Weak,
+                "{text}: {}",
+                discriminate.summary
+            );
+        }
+        let test = test_with_assertions("rate_is_pinned", vec![exact("assert_eq!(RATE, 8);")]);
+        let (discriminate, strength) = tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
+        assert_eq!(strength, OracleStrength::Strong);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        assert!(compares_value_with_its_own_copy(
+            "assert_eq!(b.0, b.0.clone());"
+        ));
+        assert!(compares_value_with_its_own_copy(
+            "assert!(&v.to_vec() == &v);"
+        ));
+        assert!(!compares_value_with_its_own_copy(
+            "assert_eq!(b.0, c.0.clone());"
+        ));
+        assert!(!compares_value_with_its_own_copy(
+            "assert_eq!(b.0.len(), 1);"
+        ));
     }
 
     #[test]

@@ -17,6 +17,7 @@ Linked issues:
 - #7820
 - #7966
 - #12234
+- #13037
 
 Linked PRs:
 
@@ -707,6 +708,19 @@ test that never runs the owner activates, observes and discriminates
 nothing. These
 rules govern diff-mode reveal; repo exposure grading (`test_grip_evidence`)
 does not apply them yet.
+
+An equality that compares a value with a copy of itself (#13037), with the
+same operands up to a trailing `.clone()`, `.to_owned()` or `.to_vec()` and a
+leading borrow (`assert_eq!(b.0, b.0.clone())`), passes whatever the code under
+test produced. It is read like a self-computed expected value: it never
+confirms observation and its probe-relative strength is at most `weak`, for
+every family, whether or not either side calls the owner. The one exception is
+the #6692 clone-field pin, where the owner is a hand-written `Clone::clone` and
+the owner-return pin has already admitted `assert_eq!(recv.clone(), recv)`
+through a derived `PartialEq`; that comparison does discriminate a changed
+field of the clone and keeps its credit. Proof:
+`comparison_with_own_copy_is_weak_and_unconfirmed` and the
+`collection_argument_computed_expected` fixture (row `exact_value` / `weak`).
 
 Proof: `owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner`,
 `a_type_qualified_expected_call_reaches_only_through_its_own_type`, the
