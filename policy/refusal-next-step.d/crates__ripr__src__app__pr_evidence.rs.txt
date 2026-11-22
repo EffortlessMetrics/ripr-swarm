@@ -1,0 +1,7 @@
+crates/ripr/src/app/pr_evidence.rs|failed to run git {}: {err}
+crates/ripr/src/app/pr_evidence.rs|generated PR evidence error packet failed contract validation:\n{} - {violation} \n
+crates/ripr/src/app/pr_evidence.rs|generated PR evidence failed contract validation:\n{} - {violation} \n
+crates/ripr/src/app/pr_evidence.rs|git {} failed\nstdout:\n{stdout}\nstderr:\n{stderr}
+crates/ripr/src/app/pr_evidence.rs|missing or unreadable {PR_EVIDENCE_JSON}: {err}
+crates/ripr/src/app/pr_evidence.rs|pr-evidence root {root} is not inside the Git work tree of the current directory \              ({}); pr-evide
+crates/ripr/src/app/pr_evidence.rs|{PR_EVIDENCE_JSON} is not valid JSON: {err}

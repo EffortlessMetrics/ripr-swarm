@@ -8,8 +8,13 @@ use std::path::{Component, Path};
 struct NativePytestRoute<'a> {
     program: &'static str,
     args: [&'a str; 3],
-    cwd: &'static str,
+    /// Root-relative project directory the route runs in (`.` for the root).
+    cwd: &'a str,
 }
+
+/// Evidence line the Python producer writes when a nested project owns the
+/// test file (#15302); its pytest route is relative to that directory.
+const VERIFY_CWD: &str = "suggested_verify_cwd: ";
 
 /// Build only from the producer's declared file and pytest node, never by
 /// parsing an arbitrary user-authored shell command.
@@ -34,9 +39,15 @@ fn native_pytest_route(finding: &Finding) -> Option<NativePytestRoute<'_>> {
     let node = unique("suggested_test_node_id: ")?;
     let raw = unique("suggested_verify_command: ")?;
     let selected = crate::domain::python_suggested_related_test(finding)?;
-    native_pytest_route_parts(file, node, raw, &selected.name, cfg!(windows), false)
+    let cwd = if finding.evidence.iter().any(|s| s.starts_with(VERIFY_CWD)) {
+        unique(VERIFY_CWD)?
+    } else {
+        "."
+    };
+    native_pytest_route_parts_in(cwd, file, node, raw, &selected.name, cfg!(windows), false)
 }
 
+#[cfg(test)]
 fn native_pytest_route_parts<'a>(
     file: &str,
     node: &'a str,
@@ -45,6 +56,34 @@ fn native_pytest_route_parts<'a>(
     windows: bool,
     allow_qualified: bool,
 ) -> Option<NativePytestRoute<'a>> {
+    native_pytest_route_parts_in(".", file, node, raw, selected, windows, allow_qualified)
+}
+
+/// `cwd` is the root-relative project directory (`.` for the root). The
+/// producer's `raw` command and the route arguments name `file` and `node`
+/// relative to it.
+fn native_pytest_route_parts_in<'a>(
+    cwd: &'a str,
+    file: &str,
+    node: &'a str,
+    raw: &str,
+    selected: &str,
+    windows: bool,
+    allow_qualified: bool,
+) -> Option<NativePytestRoute<'a>> {
+    let (relative_file, relative_node) = if cwd == "." {
+        (file, node)
+    } else {
+        if cwd.split('/').any(|part| matches!(part, "" | "." | ".."))
+            || cwd.chars().any(char::is_control)
+        {
+            return None;
+        }
+        (
+            file.strip_prefix(cwd)?.strip_prefix('/')?,
+            node.strip_prefix(cwd)?.strip_prefix('/')?,
+        )
+    };
     let name = node.strip_prefix(file)?.strip_prefix("::")?;
     // The producer chose the interpreter once (#13801): PATH `python`, or a
     // project venv interpreter it found statically. The route repeats that
@@ -53,7 +92,8 @@ fn native_pytest_route_parts<'a>(
     if !safe_qualified_name(&name.replace("::", "."))
         || (!allow_qualified && name.contains("::"))
         || name.rsplit("::").next()? != selected
-        || crate::domain::python_pytest_verify_display_for(program, file, name, windows).as_deref()
+        || crate::domain::python_pytest_verify_display_for(program, relative_file, name, windows)
+            .as_deref()
             != Some(raw)
         || file.chars().chain(node.chars()).any(char::is_control)
         || Path::new(file)
@@ -64,8 +104,8 @@ fn native_pytest_route_parts<'a>(
     }
     Some(NativePytestRoute {
         program,
-        args: ["-m", "pytest", node],
-        cwd: ".",
+        args: ["-m", "pytest", relative_node],
+        cwd,
     })
 }
 
@@ -113,7 +153,7 @@ pub(crate) fn manual_python_raw(finding: &Finding) -> Option<&str> {
         return None;
     }
     if let Some(node) = unique("suggested_test_node_id: ") {
-        native_pytest_route_parts(file, node, raw, &selected.name, cfg!(windows), true)?;
+        native_pytest_route_parts_in(".", file, node, raw, &selected.name, cfg!(windows), true)?;
         let name = node.strip_prefix(file)?.strip_prefix("::")?;
         if name.contains("::") {
             let qualified = unique("suggested_test_qualified_name: ")?;
@@ -190,6 +230,9 @@ pub(crate) struct PythonRepairCard {
     pub(crate) suggested_test_name: String,
     pub(crate) suggested_test_node_id: Option<String>,
     pub(crate) verify_command: String,
+    /// Root-relative directory the verify command runs from; `None` runs it
+    /// from the selected root (#15302).
+    pub(crate) verify_cwd: Option<String>,
     pub(crate) verify_command_confidence: String,
     pub(crate) receipt_command: Option<String>,
     pub(crate) receipt_status: String,
@@ -244,6 +287,7 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
     let verify_command = evidence_value(finding, "suggested_verify_command: ")?.to_string();
     let verify_command_confidence =
         evidence_value(finding, "suggested_verify_command_confidence: ")?.to_string();
+    let verify_cwd = evidence_value(finding, VERIFY_CWD).map(ToString::to_string);
     let stop_conditions = stop_conditions(&repair_family, &missing_discriminator, &verify_command);
     let repair_action = evidence_value(finding, "suggested_repair_action: ")
         .unwrap_or("add_or_strengthen_test")
@@ -282,6 +326,7 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
         suggested_test_name,
         suggested_test_node_id,
         verify_command,
+        verify_cwd,
         verify_command_confidence,
         receipt_command: None,
         receipt_status: "unavailable_until_python_gap_ledger".to_string(),
@@ -289,6 +334,26 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
         stop_conditions,
         limits: limits(),
     })
+}
+
+/// The verify command as a person or agent runs it from the selected root: a
+/// nested project's command (#15302) is wrapped in `(cd -- <dir> && ...)`;
+/// a root-level command is returned unchanged.
+pub(crate) fn rooted_verify_display(cwd: Option<&str>, command: &str) -> String {
+    match cwd {
+        Some(dir) => format!(
+            "(cd -- {} && {command})",
+            crate::agent::loop_commands::shell_arg(dir)
+        ),
+        None => command.to_string(),
+    }
+}
+
+impl PythonRepairCard {
+    /// [`rooted_verify_display`] for this card.
+    pub(crate) fn verify_display(&self) -> String {
+        rooted_verify_display(self.verify_cwd.as_deref(), &self.verify_command)
+    }
 }
 
 pub(crate) fn python_repair_card_json_value(card: &PythonRepairCard) -> Value {
@@ -305,6 +370,16 @@ pub(crate) fn python_repair_card_json_value(card: &PythonRepairCard) -> Value {
         suggested_location.insert("pytest_node_id".to_string(), json!(node_id));
     }
 
+    let mut verify = Map::new();
+    verify.insert("command".to_string(), json!(card.verify_command.as_str()));
+    if let Some(cwd) = &card.verify_cwd {
+        verify.insert("cwd".to_string(), json!(cwd));
+    }
+    verify.insert(
+        "confidence".to_string(),
+        json!(card.verify_command_confidence.as_str()),
+    );
+
     json!({
         "card_version": card.card_version.as_str(),
         "source": card.source.as_str(),
@@ -320,10 +395,7 @@ pub(crate) fn python_repair_card_json_value(card: &PythonRepairCard) -> Value {
         "recommended_test_shape": card.recommended_test_shape.as_str(),
         "suggested_assertion": card.suggested_assertion.as_str(),
         "suggested_location": Value::Object(suggested_location),
-        "verify": {
-            "command": card.verify_command.as_str(),
-            "confidence": card.verify_command_confidence.as_str()
-        },
+        "verify": Value::Object(verify),
         "receipt": {
             "command": card.receipt_command.as_deref(),
             "status": card.receipt_status.as_str(),

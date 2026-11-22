@@ -833,6 +833,20 @@
       ]
     },
     {
+      "id": "typescript_vitest_unpinned_literal_arm_return",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_unpinned_literal_arm_return",
+      "vector": "exact_assertion_on_another_arm_does_not_pin_changed_arm",
+      "probe_family": "return_value",
+      "assertions": [
+        {"type": "must_not_report_clean"},
+        {"type": "expected_finding_count", "count": 1},
+        {"type": "must_not_promote"},
+        {"type": "expected_class", "class": "infection_unknown"}
+      ]
+    },
+    {
       "id": "typescript_vitest_unused_default_parameter",
       "language": "typescript",
       "tier": "pure",
@@ -11973,6 +11987,72 @@
       ]
     },
     {
+      "id": "rust_trait_sibling_type_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_sibling_type_receiver",
+      "vector": "trait_dispatch_identity_sibling_type_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "square_area",
+          "file": "src/lib.rs",
+          "line": 20,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_sibling_type_other_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_sibling_type_other_receiver",
+      "vector": "trait_dispatch_identity_sibling_type_other_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "line_area",
+          "file": "src/lib.rs",
+          "line": 20,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
       "id": "rust_trait_default_overridden",
       "language": "rust",
       "tier": "pure",
@@ -13961,7 +14041,7 @@
     },
     {
       "id": "javascript_awaited_local_registration_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-local-root.json",
       "vector": "local_async_test_helper_does_not_execute_exact_assertion_callback",
@@ -13984,7 +14064,7 @@
     },
     {
       "id": "javascript_awaited_forged_require_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-forged-require.json",
       "vector": "awaited_commonjs_forged_require_does_not_execute_assertion_callback",
@@ -14007,7 +14087,7 @@
     },
     {
       "id": "javascript_awaited_rebound_runner_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-rebound-runner.json",
       "vector": "awaited_commonjs_rebound_runner_does_not_execute_assertion_callback",

@@ -820,7 +820,7 @@ impl OwnerCallIdentity {
         if owner.item.container != FunctionContainer::Free {
             return None;
         }
-        let owner_path = definition_module_path(owner)?;
+        let owner_path = definition_module_path_in(index, owner)?;
         let owner_package = package_key(&owner.file);
         let owner_absolute = super::related_tests::path_is_absolute_form(&owner.file);
         let mut rivals = Vec::new();
@@ -858,7 +858,7 @@ impl OwnerCallIdentity {
                             return None;
                         }
                         CrateClass::Crate(class) if class == owner_crate => {
-                            definitions.push(definition_module_path(function));
+                            definitions.push(definition_module_path_in(index, function));
                         }
                         _ => {}
                     }
@@ -1027,7 +1027,7 @@ impl OwnerCallIdentity {
             && self.layout.class(&test.file) == self.owner_crate
             && package_key(&test.file) == self.owner_package;
         TestScope {
-            file_segments: file_module_segments(&test.file).filter(|_| same_crate),
+            file_segments: file_module_segments_in(index, &test.file).filter(|_| same_crate),
             scopes,
             crate_names: self.own_crate_names(test, index),
         }
@@ -1626,7 +1626,116 @@ pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<S
 /// path of the module that holds its `impl` block (the segments before the
 /// first `impl ` segment); otherwise an impl member has no module-level path.
 fn module_path_of(function: &FunctionSummary, through_impl: bool) -> Option<Vec<String>> {
-    let mut path = file_module_segments(&function.file)?;
+    module_path_from(
+        file_module_segments(&function.file)?,
+        function,
+        through_impl,
+    )
+}
+
+/// [`definition_module_path`] that reads a manifest-declared `[lib] path`
+/// root (#14495). The file a package's `[lib] path` names is its library's
+/// crate root, so a definition there has the empty module path plus its
+/// inline modules. A crate root owns its directory the way `src/lib.rs`
+/// owns `src/`, so a file below the root's directory takes its segments
+/// relative to that directory (`source/pricing.rs` is `pricing` under
+/// `source/entry.rs`). A package with a `#[path]` remap keeps the rule off
+/// at the callers, as for the default layout. Every other file keeps the
+/// path-shape segments.
+pub(super) fn definition_module_path_in(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<Vec<String>> {
+    match custom_lib_root_reading(index, &function.file) {
+        CustomRootReading::Placed(segments) => module_path_from(segments, function, false),
+        CustomRootReading::Unplaced => None,
+        CustomRootReading::NotBelowRoot => definition_module_path(function),
+    }
+}
+
+/// [`file_module_segments`] read the way [`definition_module_path_in`]
+/// reads definitions, so a test module's own path and the owner's path
+/// below a `[lib] path` root are compared in one reading (#14495 review).
+fn file_module_segments_in(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
+    match custom_lib_root_reading(index, file) {
+        CustomRootReading::Placed(segments) => Some(segments),
+        CustomRootReading::Unplaced => None,
+        CustomRootReading::NotBelowRoot => file_module_segments(file),
+    }
+}
+
+/// How a file reads against its package's `[lib] path` root (#14495).
+enum CustomRootReading {
+    /// The package has no custom root, or the file is not below it: the
+    /// path-shape reading applies.
+    NotBelowRoot,
+    /// The file's module segments below the root.
+    Placed(Vec<String>),
+    /// The file sits below the root, but which crate composes it is not
+    /// established, so it names no module path at all (fail-closed).
+    Unplaced,
+}
+
+fn custom_lib_root_reading(index: &RustIndex, file: &Path) -> CustomRootReading {
+    let Some(segments) = custom_lib_root_segments(index, file) else {
+        return CustomRootReading::NotBelowRoot;
+    };
+    // With `src/main.rs` and no `src/lib.rs`, the layout gives every `src/`
+    // module to the binary, whose paths start at `src/main.rs`, while the
+    // custom root may compose the same file as a library module. Neither
+    // reading is established, so neither names the owner (#14495 review).
+    if call_identity_shape(index, package_key(file).as_deref())
+        .layout
+        .main_only
+    {
+        return CustomRootReading::Unplaced;
+    }
+    CustomRootReading::Placed(segments)
+}
+
+/// Module segments of `file` below its package's `[lib] path` root, or
+/// `None` when the package has no custom root or `file` is not under the
+/// root's directory.
+fn custom_lib_root_segments(index: &RustIndex, file: &Path) -> Option<Vec<String>> {
+    let custom = index.member_crates.custom_lib_path_root_of(file)?;
+    let normalized = super::related_tests::normalize_path(file);
+    let root = super::related_tests::normalize_path(&custom.crate_root);
+    if normalized == root {
+        return Some(Vec::new());
+    }
+    // Other targets' paths never hold the library's modules. They are fixed
+    // relative to the package directory, not to the root's directory, so a
+    // nested root keeps a `tests` or `main` module of its own (#14495 review).
+    let package = super::related_tests::normalize_path(&custom.package);
+    let in_package = if package.is_empty() {
+        Some(normalized.as_str())
+    } else {
+        normalized.strip_prefix(&format!("{package}/"))
+    }?;
+    if ["tests/", "benches/", "examples/", "src/bin/"]
+        .iter()
+        .any(|target| in_package.starts_with(target))
+        || matches!(in_package, "src/main.rs" | "build.rs")
+    {
+        return None;
+    }
+    let directory = match root.rsplit_once('/') {
+        Some((directory, _)) => format!("{directory}/"),
+        None => String::new(),
+    };
+    let body = normalized.strip_prefix(&directory)?.strip_suffix(".rs")?;
+    let mut segments: Vec<String> = body.split('/').map(str::to_string).collect();
+    if segments.last().is_some_and(|last| last == "mod") {
+        segments.pop();
+    }
+    (!segments.is_empty()).then_some(segments)
+}
+
+fn module_path_from(
+    mut path: Vec<String>,
+    function: &FunctionSummary,
+    through_impl: bool,
+) -> Option<Vec<String>> {
     let prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     let rest = function.id.0.strip_prefix(&prefix)?;
     let mut segments: Vec<&str> = rest.split("::").collect();
@@ -1895,7 +2004,7 @@ impl OwnerCallIdentity {
         let Some(owner_module) = self.definitions.first().and_then(Option::as_ref) else {
             return false;
         };
-        let Some(file_module) = file_module_segments(&self.owner_file) else {
+        let Some(file_module) = file_module_segments_in(index, &self.owner_file) else {
             return false;
         };
         let data_types: BTreeSet<Vec<String>> = owner_tree
@@ -3314,7 +3423,7 @@ pub(super) fn bare_name_renames_another_function(
                         function.item.container == FunctionContainer::Free
                             && function.name.trim_start_matches("r#") == target
                             && package_key(&function.file) == owner_package
-                            && definition_module_path(function).as_ref() == Some(&placed)
+                            && definition_module_path_in(index, function).as_ref() == Some(&placed)
                     })
                 });
         }
@@ -3647,7 +3756,7 @@ fn module_reexports_owner(
         if package_key(file) != owner_package
             || under_tests_dir(file)
             || layout.class(file).as_deref() != Some(owner_crate)
-            || file_module_segments(file).is_none_or(|segments| segments != module)
+            || file_module_segments_in(index, file).is_none_or(|segments| segments != module)
         {
             return false;
         }
@@ -3734,7 +3843,7 @@ fn qualified_call_names_owner(
     if package_remaps_module_paths(index, owner_package.as_deref()) {
         return false;
     }
-    let Some(owner_path) = definition_module_path(owner) else {
+    let Some(owner_path) = definition_module_path_in(index, owner) else {
         return false;
     };
     let layout = CrateLayout::new(index, owner_package.as_deref());
@@ -7540,5 +7649,70 @@ mod plain_path_to_raw_module {
             assert_eq!(settle(&index, a, test), Some(on_a), "{test} against a");
             assert_eq!(settle(&index, b, test), Some(on_b), "{test} against b");
         }
+    }
+
+    /// #12857: an attribute macro on a generated test can rewrite its body,
+    /// including adding a rebinding `use`, so the test must not borrow the
+    /// invocation-site scopes. Known harness and body-preserving attributes
+    /// keep the credit.
+    #[test]
+    fn attribute_macro_on_a_generated_test_takes_no_invocation_scopes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-macro-attr-identity-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"modules\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(root.join("src/lib.rs"), "pub mod a;\npub mod b;\n")?;
+        std::fs::write(
+            root.join("src/a.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 1\n}\n",
+        )?;
+        std::fs::write(
+            root.join("src/b.rs"),
+            "pub fn render(x: i32) -> i32 {\n    x + 2\n}\n",
+        )?;
+        std::fs::write(
+            root.join("tests/gen.rs"),
+            "macro_rules! harness {\n    ($name:ident) => {\n        #[test]\n        #[ignore]\n        #[allow(unused)]\n        #[doc = \"Checks an opening ( token\"]\n        #[must_use = \"x\"]\n        #[doc = \"x\"]\n        #[deprecated = \"x\"]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmacro_rules! injected {\n    ($name:ident) => {\n        #[test]\n        #[helpers::inject]\n        fn $name() {\n            assert_eq!(render(1), 2);\n        }\n    };\n}\n\nmod cases {\n    use modules::a::render;\n    harness!(harness_case);\n    injected!(injected_case);\n}\n",
+        )?;
+        let index = crate::analysis::facts::build_index(
+            &root,
+            &[
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("src/b.rs"),
+                PathBuf::from("tests/gen.rs"),
+            ],
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        let index = index?;
+        // Positive control: `#[ignore]`, `#[allow]` and `#[doc]` do not rewrite
+        // a body, even when a doc string holds an unmatched `(`.
+        assert_eq!(
+            settle(&index, "/a.rs::render", "harness_case"),
+            Some(CallTarget::Owner)
+        );
+        // The unknown attribute macro must be indexed, or the negative below
+        // is vacuous.
+        assert!(
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "injected_case"),
+            "the attribute-macro case must be indexed"
+        );
+        assert_ne!(
+            settle(&index, "/a.rs::render", "injected_case"),
+            Some(CallTarget::Owner)
+        );
+        Ok(())
     }
 }
