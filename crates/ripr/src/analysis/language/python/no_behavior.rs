@@ -704,7 +704,7 @@ fn is_bare_string_literal_statement(trimmed: &str) -> bool {
 /// source text, the positional-only / keyword-only group sizes, and the
 /// `*args`/`**kwargs` names. Two headers with equal skeletons differ only in
 /// annotations.
-type DefSignatureSkeleton = (
+pub(super) type DefSignatureSkeleton = (
     bool,                          // is_async
     String,                        // function name
     usize,                         // positional-only count
@@ -714,7 +714,7 @@ type DefSignatureSkeleton = (
     Option<String>,                // **kwargs name
 );
 
-fn def_signature_skeleton(line: &str) -> Option<DefSignatureSkeleton> {
+pub(super) fn def_signature_skeleton(line: &str) -> Option<DefSignatureSkeleton> {
     let trimmed = line.trim_start();
     if !(trimmed.starts_with("def ") || trimmed.starts_with("async def ")) {
         return None;
