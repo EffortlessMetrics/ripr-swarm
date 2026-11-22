@@ -224,6 +224,9 @@ jobs:
           rustc --version
           cargo --version
 
+      - name: Prepare locked fallible-literal owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
