@@ -3016,6 +3016,12 @@ pub(crate) fn owner_call_relation(
     if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default) {
         return None;
     }
+    // #15939: the test file swaps the owner function on its
+    // module object (`sinon.stub(ns, 'owner')`, `ns.owner = fake`, a spy
+    // fabricated in a hook), so the calls below run the substitute.
+    if super::function_replacement::owner_function_replaced_in_file(test, owner) {
+        return None;
+    }
     let observes_generic_call = || {
         test.assertions.iter().any(|assertion| {
             assertion
@@ -4955,11 +4961,24 @@ pub(crate) fn root_relative_mock_names_module(source: &str, module: &str) -> boo
 
 /// Fabrication method shapes that replace a spy's observed value (#4103
 /// shape 4).
-const SPY_FABRICATION_SHAPES: [&str; 4] = [
+const SPY_FABRICATION_SHAPES: [&str; 15] = [
     ".mockReturnValue(",
     ".mockImplementation(",
     ".mockResolvedValue(",
     ".mockRejectedValue(",
+    // A `*Once` fabrication still replaces the call a one-call test asserts.
+    ".mockReturnValueOnce(",
+    ".mockImplementationOnce(",
+    ".mockResolvedValueOnce(",
+    ".mockRejectedValueOnce(",
+    ".mockReturnThis(",
+    // Jasmine spy strategies.
+    ".and.returnValue(",
+    ".and.returnValues(",
+    ".and.callFake(",
+    ".and.throwError(",
+    ".and.resolveTo(",
+    ".and.rejectWith(",
 ];
 
 /// #4103 shape 4: `true` when the test body spies on the owner name
@@ -5003,7 +5022,7 @@ pub(crate) fn test_spies_owner_with_fabrication_for_owner(
 /// `call_start` (with `after_open` the body right after the call's open
 /// paren) fabricates its value: a fabrication shape chained directly after
 /// the call closes, or invoked on the variable the spy result is bound to.
-fn owner_spy_call_fabricated(body: &str, call_start: usize, after_open: &str) -> bool {
+pub(crate) fn owner_spy_call_fabricated(body: &str, call_start: usize, after_open: &str) -> bool {
     let Some(close_rel) = spy_call_close_offset(after_open) else {
         return false;
     };
@@ -5059,6 +5078,23 @@ fn spy_call_close_offset(after_open: &str) -> Option<usize> {
 /// optional `await` and the needle's `vi.` / `jest.` qualifier). A member
 /// tail (`obj.spy = ...`), a compound operator (`==`, `=>`), or any other
 /// prefix returns `None` (conservative: only clear bindings count).
+/// The name a `const` / `let` / `var` declaration with a type annotation
+/// binds, when `assigned` (the text before the `=`) ends with one on its
+/// last line: `spy` for `const spy: ReturnType<typeof vi.spyOn>`.
+fn annotated_declaration_name(assigned: &str) -> Option<String> {
+    let line = assigned.rsplit(['\n', ';']).next()?.trim_start();
+    let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+    let declarator = ["const ", "let ", "var "]
+        .into_iter()
+        .find_map(|keyword| line.strip_prefix(keyword))?;
+    let (name, annotation) = declarator.split_once(':')?;
+    let name = name.trim();
+    (!name.is_empty()
+        && !annotation.contains('=')
+        && name.chars().all(is_javascript_identifier_char))
+    .then(|| name.to_string())
+}
+
 fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
     let mut prefix = body[..call_start].trim_end();
     // The qualified needle forms leave the callee qualifier (`vi.` / `jest.`)
@@ -5070,12 +5106,17 @@ fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
             .take_while(|ch| is_javascript_identifier_char(*ch))
             .map(char::len_utf8)
             .sum::<usize>();
-        prefix = &stripped[..stripped.len() - qualifier_bytes];
+        prefix = stripped[..stripped.len() - qualifier_bytes].trim_end();
     }
     if let Some(stripped) = strip_trailing_await_keyword(prefix) {
         prefix = stripped;
     }
     let assigned = prefix.strip_suffix('=')?.trim_end();
+    // `const spy: ReturnType<typeof vi.spyOn> = ...`: the annotation ends in
+    // `>` and hides the name from the scan below.
+    if let Some(name) = annotated_declaration_name(assigned) {
+        return Some(name);
+    }
     // A compound operator ending in `=` (`==`, `===`, `!=`, `<=`, `>=`,
     // `=>`, `+=`, ...) never binds the call result.
     if assigned
@@ -5577,7 +5618,7 @@ pub(crate) fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
 /// before the import call. Requires the import call to be the declarator's
 /// whole initializer on its line (optionally wrapped in `await`); a trailing
 /// member access like `.default` fails the scan (fail-closed).
-fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
+pub(crate) fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
     let line_start = body[..at].rfind('\n').map_or(0, |offset| offset + 1);
     let trimmed = body[line_start..at].trim();
     // The import must actually be awaited: `const m = import(...)` binds a

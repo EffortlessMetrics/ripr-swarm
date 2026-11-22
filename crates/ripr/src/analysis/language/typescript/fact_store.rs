@@ -37,7 +37,7 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses.
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "11";
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "12";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -565,10 +565,13 @@ mod tests {
     #[test]
     fn schema_version_pins_ast_probe_shape_facts() -> Result<(), String> {
         // #11250 added per-line probe shapes to the persisted facts, so
-        // envelopes written before them must read as misses. #15922-#15924
-        // added import-then-export forwards, class heritage, namespace
-        // member calls and method-owner instance factories.
-        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "11");
+        // envelopes written before them must read as misses. "11" adds the
+        // per-file function replacement list (#15939): a test
+        // extraction persisted without it would keep crediting a stubbed
+        // owner. "12" adds import-then-export forwards, class heritage,
+        // namespace member calls and method-owner instance factories
+        // (#15922-#15924).
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "12");
         // A stale-schema envelope: the exact bytes the pre-#11250 ("3")
         // binary wrote — same identity, valid integrity digest, older
         // schema version — sitting at the entry path the current key

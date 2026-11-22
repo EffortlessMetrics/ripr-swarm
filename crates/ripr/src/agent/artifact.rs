@@ -384,16 +384,35 @@ fn artifact_generated_at_unix_ms() -> Result<String, String> {
     )
 }
 
+/// The `RIPR_GENERATED_AT` pin in milliseconds since the Unix epoch, or `None`
+/// when the variable is unset or empty and the caller should read its clock.
+/// Every command that writes a wall-clock stamp into a retained document asks
+/// here first, so one pin makes receipts and reports repeat byte for byte as
+/// it does the artifact envelope (#14230).
+pub(crate) fn pinned_generated_at_unix_ms() -> Result<Option<u64>, String> {
+    pinned_generated_at_from(std::env::var(GENERATED_AT_ENV))
+}
+
 /// Resolve the stamp from the override value, falling back to `clock` only
-/// when the variable is unset or empty. A set value that is not the canonical
-/// `unix_ms:<millis>` spelling is refused: silently stamping the wall clock
-/// would hand a caller who asked for reproducible bytes a differing artifact.
+/// when the variable is unset or empty.
 fn artifact_generated_at_from(
     override_value: Result<String, std::env::VarError>,
     clock: impl FnOnce() -> String,
 ) -> Result<String, String> {
+    Ok(match pinned_generated_at_from(override_value)? {
+        Some(millis) => format!("unix_ms:{millis}"),
+        None => clock(),
+    })
+}
+
+/// A set value that is not the canonical `unix_ms:<millis>` spelling is
+/// refused: silently stamping the wall clock would hand a caller who asked
+/// for reproducible bytes a differing document.
+fn pinned_generated_at_from(
+    override_value: Result<String, std::env::VarError>,
+) -> Result<Option<u64>, String> {
     let value = match override_value {
-        Err(std::env::VarError::NotPresent) => return Ok(clock()),
+        Err(std::env::VarError::NotPresent) => return Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => {
             return Err(format!(
                 "{GENERATED_AT_ENV} is not valid Unicode; set it to unix_ms:<milliseconds since the Unix epoch> or unset it"
@@ -402,19 +421,18 @@ fn artifact_generated_at_from(
         Ok(value) => value,
     };
     if value.is_empty() {
-        return Ok(clock());
+        return Ok(None);
     }
-    let canonical = value
+    value
         .strip_prefix("unix_ms:")
         .and_then(|digits| digits.parse::<u64>().ok())
-        .map(|millis| format!("unix_ms:{millis}"));
-    if canonical.as_deref() == Some(value.as_str()) {
-        Ok(value)
-    } else {
-        Err(format!(
-            "{GENERATED_AT_ENV} must be unix_ms:<milliseconds since the Unix epoch>, for example unix_ms:1778179200000; got {value:?}. Unset it to stamp the current time"
-        ))
-    }
+        .filter(|millis| format!("unix_ms:{millis}") == value)
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "{GENERATED_AT_ENV} must be unix_ms:<milliseconds since the Unix epoch>, for example unix_ms:1778179200000; got {value:?}. Unset it to stamp the current time"
+            )
+        })
 }
 
 // Deferred negatives (#2921 claim boundary): main has no migration producer

@@ -1,5 +1,16 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.189 for std-rooted imports beside generated tests (#12876)
+
+A macro-generated test beside an import of std's own item under an exempt
+macro name (`use std::panic;`) keeps its invocation scopes, which bumps the
+analyzer cache schema to 1.189 (1.188 is left for #13041). Move the portable
+unchanged-attempt snapshots to 1.189, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.187 for attribute-macro generated tests (#12857)
 
 A macro-generated test that carries an unrecognised attribute macro takes no

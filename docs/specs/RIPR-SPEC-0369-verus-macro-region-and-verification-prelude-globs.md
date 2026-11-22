@@ -286,6 +286,15 @@ test elsewhere, when all of these hold:
   A nested call under the `proptest` root needs the same drop-in proof of
   that root as a qualified outer call: audited locked version, not shadowed,
   and, for a path without a leading `::`, no plain import of `proptest`.
+  Only `::` joins a path: a lone `:` before the call, such as a struct
+  field's (`Check { strategy: proptest::prop_oneof![..] }`), ends it, so the
+  call reads as bare or as rooted as it is spelled.
+
+A leading `::` is read as an extern-crate path, for the outer call and for a
+nested one, and does not consult the edition. In a 2015-edition crate
+`::proptest` names a crate-root item instead, so a root module of that name
+could supply a different `prop_*` macro. That is an accepted residual, as for
+the glob rule above; the scan has no edition input.
 
 A confined argument mention rebinds nothing outside the call, so it does not
 make the trusted calls nested in the arguments (`assert_eq!(v, vec![1])`)

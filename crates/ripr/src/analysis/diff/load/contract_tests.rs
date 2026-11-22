@@ -800,3 +800,137 @@ fn ambient_rename_detection_config_does_not_change_the_source_patch() -> io::Res
     assert!(!no_renames.contains("rename from "), "{no_renames}");
     Ok(())
 }
+
+#[test]
+fn ambient_hunk_and_index_config_does_not_change_the_source_patch() -> io::Result<()> {
+    // #15954: each setting below changed the analyzed patch, and with it
+    // `input_identity`, for one range on two machines. One commit carries a
+    // stimulus for each: a reorder that myers and histogram split
+    // differently, an insertion the indent heuristic slides, two inexact
+    // renames, and source files larger than a low big-file threshold.
+    let repo = Repo::new("ambient-hunk-and-index")?;
+    let function = |n: usize, body: usize| format!("pub fn f{n}() -> u8 {{\n    {body}\n}}\n");
+    let reorder = |order: &[usize]| {
+        let bodies = [2, 0, 1, 1, 1];
+        order
+            .iter()
+            .map(|&n| function(n, bodies[n]))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let test_fn = |name: &str, n: u8| format!("#[test]\nfn {name}() {{\n    check({n});\n}}\n");
+    let numbered = |prefix: &str| {
+        (1..=12)
+            .map(|n| format!("pub fn {prefix}_{n}() -> u16 {{ {n}00 }}\n"))
+            .collect::<String>()
+    };
+    fs::write(repo.root.join("src/reorder.rs"), reorder(&[0, 1, 2, 3, 4]))?;
+    fs::write(
+        repo.root.join("src/slide.rs"),
+        format!("{}\n{}", test_fn("a", 1), test_fn("c", 3)),
+    )?;
+    fs::write(repo.root.join("src/one.rs"), numbered("one"))?;
+    fs::write(repo.root.join("src/two.rs"), numbered("two"))?;
+    git(&repo.root, &["add", "."])?;
+    git(&repo.root, &["commit", "--quiet", "-m", "ambient base"])?;
+    let base = git(&repo.root, &["rev-parse", "HEAD"])?.trim().to_string();
+    fs::write(repo.root.join("src/reorder.rs"), reorder(&[1, 3, 4, 0, 2]))?;
+    fs::write(
+        repo.root.join("src/slide.rs"),
+        format!(
+            "{}\n{}\n{}",
+            test_fn("a", 1),
+            test_fn("b", 2),
+            test_fn("c", 3)
+        ),
+    )?;
+    for (old, new, prefix) in [("one", "uno", "one"), ("two", "dos", "two")] {
+        git(
+            &repo.root,
+            &["mv", &format!("src/{old}.rs"), &format!("src/{new}.rs")],
+        )?;
+        fs::write(
+            repo.root.join(format!("src/{new}.rs")),
+            numbered(prefix).replace("{ 700 }", "{ 701 }"),
+        )?;
+    }
+    git(&repo.root, &["add", "."])?;
+    git(&repo.root, &["commit", "--quiet", "-m", "ambient change"])?;
+
+    let range = format!("{base}...HEAD");
+    let without_index = |patch: &str| {
+        patch
+            .lines()
+            .filter(|line| !line.starts_with("index "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let raw_default = git(&repo.root, &["diff", &range])?;
+    let expected = repo_patches(&repo, &base)?;
+    // An unconfigured machine sees the same hunks as the unpinned git
+    // default; only the `index` line length changes.
+    for patch in &expected {
+        assert_eq!(
+            without_index(patch),
+            without_index(&raw_default),
+            "the pins changed default hunks:\n{patch}"
+        );
+    }
+    assert!(
+        raw_default.contains("rename from src/one.rs") && !raw_default.contains("Binary files"),
+        "the default control lost a rename or a text section:\n{raw_default}"
+    );
+    // Full blob ids, whatever the object format.
+    let full = git(&repo.root, &["rev-parse", "HEAD"])?.trim().len();
+    for line in expected[0]
+        .lines()
+        .filter(|line| line.starts_with("index "))
+    {
+        let ids = line["index ".len()..]
+            .split_whitespace()
+            .next()
+            .and_then(|range| range.split_once(".."));
+        assert!(
+            ids.is_some_and(|(old, new)| old.len() == full && new.len() == full),
+            "abbreviated index line {line:?}:\n{}",
+            expected[0]
+        );
+    }
+
+    for (setting, value) in [
+        ("diff.algorithm", "histogram"),
+        ("diff.indentHeuristic", "false"),
+        ("diff.renameLimit", "1"),
+        ("core.bigFileThreshold", "100"),
+        ("core.abbrev", "12"),
+    ] {
+        repo.config(setting, value)?;
+        // The raw control must differ, or the setting does not discriminate.
+        let raw = git(&repo.root, &["diff", &range])?;
+        assert_ne!(
+            raw, raw_default,
+            "{setting}={value} raw control kept the default patch"
+        );
+        let loaders = ["load_diff", "load_diff_range", "load_worktree_diff"];
+        for ((loader, patch), before) in loaders
+            .into_iter()
+            .zip(repo_patches(&repo, &base)?)
+            .zip(&expected)
+        {
+            assert_eq!(
+                &patch, before,
+                "{loader} let {setting}={value} change the source patch"
+            );
+        }
+        git(&repo.root, &["config", "--unset", setting])?;
+    }
+    Ok(())
+}
+
+fn repo_patches(repo: &Repo, base: &str) -> io::Result<[String; 3]> {
+    Ok([
+        load_diff(&repo.root, Some(base), None, Some(GIT_TIMEOUT)).map_err(io::Error::other)?,
+        load_diff_range(&repo.root, base, "HEAD").map_err(io::Error::other)?,
+        load_worktree_diff(&repo.root, Some(base), Some(GIT_TIMEOUT)).map_err(io::Error::other)?,
+    ])
+}

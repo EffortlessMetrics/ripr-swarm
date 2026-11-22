@@ -287,6 +287,18 @@ such a test borrows no invocation scopes (#12857). Only the attribute's path
 is read for this, so a `#[doc = "..."]` string with an unmatched `(` keeps
 the credit, while an attribute whose path cannot be read withholds it.
 
+An explicit import at the invocation site that binds the name of an exempt
+std expression macro (`use other::assert_eq;`) also withholds the scopes
+(#12852), except an import of std's own item: a `std::` path that ends in
+the bound name (`use std::panic;`, `use std::fmt::write;`). That exception
+holds only while `std` names the real crate, so a `no_std` attribute, a local
+module, rename, `extern crate .. as` or `use` leaf binding `std`, or a macro
+token `std` anywhere but as a path root (a macro argument can become a
+binding), anywhere in the file, or a glob import in the importing scope, keeps
+the refusal (#12876). `core` and `alloc` paths stay refused, because a Cargo
+dependency renamed to either can stand in for that path unseen, and a
+crate-root rebinding in another file is not seen.
+
 A generator that is a table, itoa's `test! { name(value, expected) ... }`
 (#6925), is the one repetition shape: the whole matcher is
 `$( row ) sep? *` (or `+`), where a row is `$name:ident`, `literal`, `tt`
@@ -843,6 +855,7 @@ unresolved rather than credited.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_limited`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
 - `crates/ripr/src/analysis/classify/call_identity.rs::tests::attribute_macro_on_a_generated_test_takes_no_invocation_scopes`
+- `crates/ripr/src/analysis/classify/call_identity.rs::tests::std_rooted_import_keeps_invocation_scopes_unless_the_root_is_shadowed`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::arm_selection_follows_count_and_fragment_shape`

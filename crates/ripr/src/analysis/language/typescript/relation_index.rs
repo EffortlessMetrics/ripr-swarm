@@ -251,6 +251,7 @@ mod tests {
             barrel_namespace_members_in_file: Default::default(),
             written_locals_in_file: Default::default(),
             member_replacements_in_file: Default::default(),
+            function_replacements_in_file: Default::default(),
             dynamic_load_specifiers_in_file: Default::default(),
             mock_factories_in_file: Default::default(),
             mock_spread_sources_in_file: Default::default(),

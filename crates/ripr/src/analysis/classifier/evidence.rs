@@ -674,6 +674,24 @@ impl ClassifiedProbeEvidence {
             }
             _ => infect,
         };
+        // #15272: a credited infection does not survive related tests that
+        // assert the owner only where it and its base side return the same
+        // value. Withholding only.
+        let infect = match (context.owner_fn, context.owner_baseline.as_deref()) {
+            (Some(owner), Some(baseline))
+                if matches!(infect.state, StageState::Yes) && !assertion_macros_rebound =>
+            {
+                crate::analysis::classify::agreeing_inputs_infection(
+                    owner,
+                    baseline,
+                    &test_summaries,
+                    owner_has_other_callers,
+                    context.index,
+                )
+                .unwrap_or(infect)
+            }
+            _ => infect,
+        };
         // #15770: every related call must skip this exact edit. Confirm that
         // replacing the expression did not also move the guard.
         let infect = if infect.state == StageState::Yes
@@ -1412,11 +1430,23 @@ impl ClassifiedProbeEvidence {
                 && owner_types_are_primitive()
                 && bool_field_pin_admitted(test, assertion)
                 && context.owner_fn.is_some_and(|owner| {
+                    // An integration test may pin the owner through its own
+                    // library path with no `use` (`pkg::owner(..)`). The fold
+                    // reads a bare owner call only, so the established path
+                    // is read as that call; any other qualified spelling
+                    // stays unevaluated.
+                    let qualified_owner_path =
+                        crate::analysis::classify::own_crate_qualified_owner_path(
+                            context.index,
+                            test,
+                            owner,
+                        );
                     crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
                         owner,
                         &context.probe.expression,
                         context.probe.location.line,
                         &assertion.text,
+                        qualified_owner_path.as_deref(),
                         test,
                         &|name| {
                             // Only a top-level owner reads the file's
@@ -2008,6 +2038,26 @@ impl ClassifiedProbeEvidence {
             )
         } else {
             discriminate
+        };
+        let propagate = if matches!(propagate.state, StageState::Yes | StageState::Weak)
+            && let Some(reason) = context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::unpaired_return_gate(
+                    context.probe,
+                    owner,
+                    &test_summaries,
+                    context.index,
+                    |test, assertion| {
+                        assertion_admitted(test, assertion)
+                            && (crate::analysis::classify::assertion_is_discriminating(assertion)
+                                || owner_pin_admits(test, assertion))
+                            && !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
+                    },
+                )
+            }) {
+            StageEvidence::new(StageState::Unknown, Confidence::Low, reason)
+        } else {
+            propagate
         };
         // The missing-field fact is the authority on whether an assertion
         // observes the constructed field. A token that merely coincides with

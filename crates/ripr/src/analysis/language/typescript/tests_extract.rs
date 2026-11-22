@@ -237,6 +237,7 @@ fn extract_tests_expanding_suite_factories(
             .with_registers_matchers(file_may_register_matchers(source)),
             admission,
             hook_calls,
+            tap_arguments: super::tap::RegistrationArguments::of_program(&ret.program),
             ..TestScope::default()
         };
         scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
@@ -321,6 +322,14 @@ fn extract_tests_expanding_suite_factories(
             let replacements: Shared<_> = replacements.into();
             for test in &mut tests {
                 test.member_replacements_in_file = replacements.clone();
+            }
+        }
+        let function_replacements =
+            super::function_replacement::replaced_function_member_names(source);
+        if !function_replacements.is_empty() {
+            let function_replacements: Shared<_> = function_replacements.into();
+            for test in &mut tests {
+                test.function_replacements_in_file = function_replacements.clone();
             }
         }
         let loads = dynamic_load_specifiers(source);
@@ -901,6 +910,7 @@ pub(crate) struct RegistrationScope {
     unshadowed_undefined: bool,
     /// The object-row table loop this list is the body of (#11196).
     row_loop: Option<RowLoop>,
+    tap_arguments: super::tap::RegistrationArguments,
 }
 
 impl RegistrationScope {
@@ -924,6 +934,7 @@ impl RegistrationScope {
                     .chain(scope.registration_levels.iter().flatten().cloned()),
             ),
             unshadowed_undefined,
+            tap_arguments: scope.tap_arguments.clone(),
         }
     }
 }
@@ -1496,6 +1507,7 @@ pub(crate) struct TestScope {
     fixtures: Option<super::fixture_receivers::PlaywrightFixtures>,
     /// The object-row table loop whose body is being walked (#11196).
     row_loop: Option<RowLoop>,
+    tap_arguments: super::tap::RegistrationArguments,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -3613,6 +3625,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         barrel_namespace_members_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
@@ -4015,6 +4028,14 @@ fn test_name_and_assertions_from_registration(
     // (#4638 review, fail-closed).
     let receiver =
         test_callback_receiver_name(callback).filter(|receiver| !bindings.binds_local(receiver));
+    let tap_registration = registration
+        .is_some_and(|scope| scope.context.binds_tap_test(callee_root_name(&call.callee)));
+    if tap_registration
+        && (!registration.is_some_and(|scope| scope.tap_arguments.admits(call))
+            || !super::tap::callback_has_assertion_authority(callback, receiver.as_deref(), source))
+    {
+        return Some((name, Vec::new()));
+    }
     // A test callback parameter or a test-body declaration named like an
     // imported assertion binding shadows it (#4638 review; the #4102 guard).
     let parameters = argument_parameter_names(callback);
@@ -4045,6 +4066,12 @@ fn test_name_and_assertions_from_registration(
                 || body_declarations.iter().any(|declared| declared == name)
                 || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
         });
+    let bindings = if tap_registration {
+        bindings.without_ambient_expect()
+    } else {
+        bindings
+    };
+
     if vitest_for {
         return vitest_for_assertions(call, callback, call_text, source, &bindings)
             .map(|assertions| (name, assertions));
