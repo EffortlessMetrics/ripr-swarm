@@ -205,14 +205,16 @@ fn a_truncated_utf16_check_artifact_is_refused_by_name() -> Result<(), String> {
 
 /// `baseline diff --baseline baseline.json --current current.json`, where
 /// each file holds `baseline` or `current` in its own encoding. Returns the
-/// exit code, the `Items:` line and stderr.
+/// exit code, the report's `baseline` and `delta` counts, and stderr.
 fn baseline_diff_of(
     root: &Path,
     baseline: &[u8],
     current: &[u8],
-) -> Result<(Option<i32>, String, String), String> {
+) -> Result<(Option<i32>, serde_json::Value, String), String> {
     fs::write(root.join("baseline.json"), baseline).map_err(|error| format!("write: {error}"))?;
     fs::write(root.join("current.json"), current).map_err(|error| format!("write: {error}"))?;
+    // A run that writes no report must not be read as this run's answer.
+    let _ = fs::remove_file(root.join("delta.json"));
     let output = run(
         root,
         env!("CARGO_BIN_EXE_ripr"),
@@ -229,17 +231,16 @@ fn baseline_diff_of(
             "delta.md",
         ],
     )?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let items = stdout
-        .lines()
-        .find(|line| line.starts_with("Items:"))
-        .unwrap_or_default()
-        .to_string();
-    Ok((
-        output.status.code(),
-        items,
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    ))
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let report = fs::read_to_string(root.join("delta.json"))
+        .map_err(|error| format!("read delta.json: {error}\n{stderr}"))?;
+    let report: serde_json::Value = serde_json::from_str(&report)
+        .map_err(|error| format!("delta.json is not JSON: {error}\n{stderr}"))?;
+    let counts = serde_json::json!({
+        "baseline": report.get("baseline"),
+        "delta": report.get("delta"),
+    });
+    Ok((output.status.code(), counts, stderr))
 }
 
 /// `baseline diff` reads its two JSON flags through the report-input reader,
@@ -258,11 +259,20 @@ fn baseline_diff_reads_both_inputs_in_a_powershell_encoding() -> Result<(), Stri
     }
     let baseline = String::from_utf8(baseline_output.stdout)
         .map_err(|error| format!("baseline stdout: {error}"))?;
-    let current = "{}\n";
+    // A gate decision with no decisions: the baseline gap is then compared
+    // (and classed stale), where an unparsed input would be classed
+    // `missing_current_input`.
+    let current = "{\"schema_version\":\"0.1\",\"decisions\":[]}\n";
 
     let control = baseline_diff_of(&root, baseline.as_bytes(), current.as_bytes())?;
-    if control.2.contains("could not read") {
-        return Err(format!("the UTF-8 control was refused\n{}", control.2));
+    let compared = control.1["baseline"]["valid"].as_u64() == Some(1)
+        && control.1["delta"]["missing_current_input"].as_u64() == Some(0)
+        && control.1["delta"]["stale_baseline_entry"].as_u64() == Some(1);
+    if control.2.contains("could not read") || !compared {
+        return Err(format!(
+            "the UTF-8 control did not compare one baseline entry against the current decision\n{}\n{}",
+            control.1, control.2
+        ));
     }
 
     let with_mark = |text: &str| {
