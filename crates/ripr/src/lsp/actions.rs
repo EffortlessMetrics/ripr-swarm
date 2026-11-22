@@ -85,6 +85,15 @@ pub(super) fn code_action_response(
             diagnostic,
             snapshot,
         ));
+        if client_features.code_action_disabled
+            && let Some(action) = deferred_seam_start_disabled_action(diagnostic, snapshot)
+        {
+            // #13636: an interactive refresh deferred the full spot
+            // inventory, so the finding has no seam-bound start. A
+            // disabled-capable client sees the start inert with the full
+            // refresh named; other clients keep the legacy omission.
+            actions.push(action);
+        }
     }
     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
         title: REFRESH_ANALYSIS_TITLE.to_string(),
@@ -631,6 +640,47 @@ pub(super) mod test_premise {
         let _restore = Restore(PINNED.with(|pinned| pinned.replace(Some(files))));
         body()
     }
+}
+
+/// The inert "Start repair" action for a gap-class finding whose snapshot
+/// came from an interactive refresh that deferred the full spot inventory
+/// (#13636). `None` unless the snapshot is `seams_deferred`, a full refresh
+/// under its configuration builds the spot inventory, and the cited finding
+/// is a candidate-current actionable Rust gap with no static limit: an
+/// exposed or base-side finding never had a start to defer, and a preview,
+/// non-Rust or static-limited finding gets no spot start from a full refresh
+/// either. Under the default actionable profile, or with spot diagnostics
+/// off, a full refresh builds no spots, so naming it would mislead; the
+/// status already names that setting.
+fn deferred_seam_start_disabled_action(
+    diagnostic: &Diagnostic,
+    snapshot: Option<&AnalysisSnapshot>,
+) -> Option<CodeActionOrCommand> {
+    let snapshot = snapshot
+        .filter(|snapshot| snapshot.seams_deferred && snapshot.seam_inventory_on_full_refresh)?;
+    let finding_id = diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("finding_id"))
+        .and_then(Value::as_str)?;
+    snapshot.findings.iter().find(|finding| {
+        finding.id == finding_id
+            && super::diagnostics::finding_is_withheld_gap(finding)
+            && finding.language_status != Some(crate::domain::LanguageStatus::Preview)
+            && finding
+                .language
+                .is_none_or(|language| language == crate::domain::LanguageId::Rust)
+            && finding.static_limit_kind.is_none()
+    })?;
+    disabled_action(
+        AGENT_REPAIR_COMMAND_TITLE,
+        "quickfix.ripr.inspect",
+        "copy_agent_repair_command",
+        COPY_AGENT_REPAIR_COMMAND,
+        diagnostic,
+        Some(snapshot),
+        ActionDisabledReason::SeamEvidenceDeferred,
+    )
 }
 
 /// The inert "Start repair" action for a seam whose start the dirty-premise
@@ -3605,6 +3655,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

@@ -552,6 +552,33 @@ function nearestDiagnostic(
     )[0]?.diagnostic;
 }
 
+/**
+ * The ripr finding diagnostic (one carrying a `finding_id`, with no gap or
+ * seam record) under or nearest the selection (#13636).
+ */
+function nearestFindingDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic | undefined {
+  return nearestDiagnostic(editor, isRiprFindingDiagnostic);
+}
+
+/** Finding codes the server's repair start exists for (`is_actionable_gap_class`). */
+const REPAIR_GAP_FINDING_CODES = new Set(['weakly_exposed', 'reachable_unrevealed', 'no_static_path']);
+
+function isRiprFindingDiagnostic(diagnostic: vscode.Diagnostic): boolean {
+  // Only the gap classes can carry a repair start; an `exposed` or
+  // `*_unknown` finding has none for the server to explain.
+  if (
+    diagnostic.source !== 'ripr'
+    || isRiprGapDiagnostic(diagnostic)
+    || isRiprSeamDiagnostic(diagnostic)
+    || !REPAIR_GAP_FINDING_CODES.has(diagnosticCodeText(diagnostic))
+  ) {
+    return false;
+  }
+  const data = (diagnostic as { data?: unknown }).data;
+  return typeof data === 'object' && data !== null
+    && typeof (data as { finding_id?: unknown }).finding_id === 'string';
+}
+
 function isRiprSeamDiagnostic(diagnostic: vscode.Diagnostic): boolean {
   return diagnostic.source === 'ripr' && diagnosticCodeText(diagnostic).startsWith('ripr-seam-');
 }
@@ -892,6 +919,28 @@ export class AgentHandoffController {
     }
     const diagnostic = nearestRepairDiagnostic(editor);
     if (!diagnostic) {
+      // #13636: a finding with no gap or seam record may still have a start
+      // the server withholds (for example after a save that ran the quick
+      // analysis, which skips repair spots). Ask before saying there is nothing here.
+      const finding = nearestFindingDiagnostic(editor);
+      if (finding) {
+        const generation = this.host.getStartGeneration();
+        // Send only this finding: the server answers for the first finding
+        // diagnostic it is given, so an overlapping marker or exposed
+        // finding must not shadow it.
+        const blocked = await this.serverBlockedStart(editor.document.uri, finding.range, finding);
+        if (
+          !this.host.actionRootStillCurrent(generation, editor.document.uri, (target) =>
+            this.host.copyActionRootBlocker(target)
+          )
+        ) {
+          return;
+        }
+        if (blocked?.actionName === REPAIR_START_ACTION_NAME) {
+          this.host.runtime.showInformationMessage(`ripr cannot start this repair yet. ${blocked.reason}`);
+          return;
+        }
+      }
       this.host.runtime.showInformationMessage('No current ripr repair gap is available near the active selection.');
       return;
     }
@@ -967,14 +1016,20 @@ export class AgentHandoffController {
    * the same ripr diagnostics VS Code would attach. `undefined` when no
    * client is running, the request fails, or no inert action names a reason.
    */
-  private async serverBlockedStart(uri: vscode.Uri, range: vscode.Range): Promise<BlockedRepairStart | undefined> {
+  private async serverBlockedStart(
+    uri: vscode.Uri,
+    range: vscode.Range,
+    only?: vscode.Diagnostic
+  ): Promise<BlockedRepairStart | undefined> {
     const client = this.host.getClient();
     if (!client) {
       return undefined;
     }
-    const diagnostics = vscode.languages
-      .getDiagnostics(uri)
-      .filter((diagnostic) => diagnostic.source === 'ripr' && diagnostic.range.intersection(range) !== undefined)
+    const diagnostics = (only
+      ? [only]
+      : vscode.languages
+        .getDiagnostics(uri)
+        .filter((diagnostic) => diagnostic.source === 'ripr' && diagnostic.range.intersection(range) !== undefined))
       .map(protocolDiagnostic);
     try {
       const actions = await client.sendRequest('textDocument/codeAction', {
