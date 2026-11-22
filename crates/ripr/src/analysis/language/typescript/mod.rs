@@ -1341,8 +1341,17 @@ impl TypeScriptAdapter {
                     ambient_declaration_lines(&changed.path, source, &options.root, alias_map_ref)
                 })
                 .unwrap_or_default();
+            // Comment text is no probe, and the body rows of a block comment
+            // are comment text whatever they start with (#15913).
+            let added_without_code = deleted_lines::added_lines_without_code(
+                changed,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
+            );
             let is_probe_candidate = |line: usize, text: &str| {
                 !should_ignore_typescript_changed_line(text)
+                    && !added_without_code.contains(&line)
                     && !ambient
                         .iter()
                         .any(|(start, end)| (*start..=*end).contains(&line))
@@ -1399,12 +1408,8 @@ impl TypeScriptAdapter {
             // base-side record instead of leaving no record at all (#15913).
             let mut counterparts = changed.aligned_counterparts();
             if !counterparts.is_empty() {
-                let codeless = deleted_lines::added_lines_in_runs_without_code(
-                    changed,
-                    source_by_normalized
-                        .get(&changed_norm)
-                        .map(|source| source.as_str()),
-                );
+                let codeless = changed
+                    .added_lines_in_quiet_runs(|added| added_without_code.contains(&added.line));
                 counterparts.retain(|added_line, _| !codeless.contains(added_line));
             }
             let counterparts = counterparts;

@@ -1429,5 +1429,11 @@ fn code_replaced_by_a_multi_line_block_comment_is_base_side_evidence() -> Result
         vec!["if (total > 100) {".to_string(), "total = 100;".to_string()],
         "{findings:?}"
     );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.source_currentness.is_base_side()),
+        "a comment body row is no candidate finding: {findings:?}"
+    );
     Ok(())
 }

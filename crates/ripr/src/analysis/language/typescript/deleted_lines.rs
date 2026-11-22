@@ -161,13 +161,13 @@ fn removed_runs<'a>(
     runs
 }
 
-/// New-side lines of every contiguous added run that holds no code: each
-/// line is blank, a lone bracket, or comment text, read with the block
-/// comment state the candidate file has where the run starts. A statement
-/// after a closed comment (`/* note */ return value;`) is code, and so is a
-/// line of an unreadable candidate file, so those runs keep their pairing
+/// New-side added lines that hold no code: blank, a lone bracket, or comment
+/// text, read with the block comment state the candidate file has where each
+/// added run starts, so the body rows of a block comment count whatever they
+/// start with. A statement after a closed comment (`/* note */ return
+/// value;`) is code, and so is every line of an unreadable candidate file
 /// (#15913).
-pub(super) fn added_lines_in_runs_without_code(
+pub(super) fn added_lines_without_code(
     changed: &ChangedFile,
     new_source: Option<&str>,
 ) -> BTreeSet<usize> {
@@ -193,7 +193,7 @@ pub(super) fn added_lines_in_runs_without_code(
             without_code.insert(line.line);
         }
     }
-    changed.added_lines_in_quiet_runs(|added| without_code.contains(&added.line))
+    without_code
 }
 
 /// For each candidate line, whether a block comment is open where it starts.
