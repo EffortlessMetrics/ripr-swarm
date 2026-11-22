@@ -11,6 +11,7 @@ import {
   ManifestFetchOutcome,
   ManifestPlacementRequest,
   downloadServer,
+  listZipCentralDirectoryEntries,
   manifestPlacementPlan,
   placementArchiveUrl,
   resolveServerManifestPlacement
@@ -239,6 +240,26 @@ async function buildFixtureArchive(workRoot: string): Promise<{ readonly bytes: 
     await run('tar', ['-czf', archivePath, '-C', staging, executableName]);
   }
   const bytes = await fs.promises.readFile(archivePath);
+  if (isWindows) {
+    // Prove the fixture before the download claims: the archive lists exactly
+    // the probe payload, and the extractor command the downloader uses yields
+    // it. A fixture or host-tool fault then fails here, with the observed
+    // members, instead of as the downloader's missing-executable refusal
+    // (Windows packaged run 45006905751).
+    const members = listZipCentralDirectoryEntries(bytes).map((entry) => entry.name);
+    assert.deepStrictEqual(members, [executableName], `fixture archive members: ${JSON.stringify(members)}`);
+    const trial = path.join(workRoot, 'extract-trial');
+    await fs.promises.mkdir(trial);
+    await run('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      `Expand-Archive -LiteralPath '${archivePath}' -DestinationPath '${trial}' -Force`
+    ]);
+    const extracted = await fs.promises.readdir(trial, { recursive: true });
+    assert.deepStrictEqual(extracted, [executableName], `fixture archive extracted to: ${JSON.stringify(extracted)}`);
+  }
   return { bytes, sha256: sha256Bytes(bytes) };
 }
 

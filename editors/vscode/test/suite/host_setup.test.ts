@@ -90,7 +90,10 @@ suite('VS Code test host setup', () => {
         process.env[key] = value;
       }
     }
-    fs.rmSync(root, { recursive: true, force: true });
+    // Windows can hold a just-written retention file open for a moment after
+    // `main` returns (EPERM in Windows packaged run 45006905751); retry the
+    // removal instead of failing the hook.
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   function assertFailure(message: string) {
