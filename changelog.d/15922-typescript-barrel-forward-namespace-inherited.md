@@ -13,4 +13,4 @@
   rebound namespace or import, an ambiguous or unresolved hop, a class with a
   decorator, computed key, static block or prototype write, an override, a
   spied or replaced member, or a mocked module leaves the finding as it was.
-  TypeScript fact caches are rebuilt once (fact schema 11).
+  TypeScript fact caches are rebuilt once (fact schema 12).
