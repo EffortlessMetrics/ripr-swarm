@@ -78,6 +78,11 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// stop reason and withholds a ruled-out reach (`no_static_path`) as
     /// `static_unknown`; never promotes.
     pub compile_time_guarded: bool,
+    /// #15933: the changed line, with no owner function, is an added line
+    /// inside a `compile_error!` invocation of the new file (its message
+    /// line when split). Selects the `compile_time_invariant` stop reason
+    /// only; no stage or class changes.
+    pub in_compile_error: bool,
     /// #14815: the owner's whole one-line tail gained or lost one prefix
     /// `-`/`!` on a returned parameter, with the base-side owner the diff
     /// establishes. Gives the change a return-value sink and decides its
@@ -137,6 +142,7 @@ impl<'a> ProbeContext<'a> {
             deleted_guard_agreement: None,
             owner_may_be_swapped: false,
             compile_time_guarded: false,
+            in_compile_error: false,
             unary_tail: None,
             literal_condition: None,
             owner_baseline: None,

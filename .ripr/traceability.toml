@@ -22945,11 +22945,14 @@ tests = [
   "crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_registry_is_exhaustive_and_unique",
   "crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::reserved_wire_stop_reasons_have_no_production_push_sites",
   "crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_spec_documents_every_wire_value",
+  "crates/ripr/tests/compile_error_probe_family.rs::a_changed_compile_error_is_one_build_time_finding",
+  "crates/ripr/tests/compile_error_probe_family.rs::a_changed_message_line_of_a_split_compile_error_is_build_time",
 ]
 code = [
   "crates/ripr/src/analysis/classify/stop_reason_contract.rs",
   "crates/ripr/src/analysis/classify/decision.rs",
   "crates/ripr-contract/src/domain/probe.rs",
+  "crates/ripr/src/analysis/probes/lexical.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0411-stop-reason-contract.md",

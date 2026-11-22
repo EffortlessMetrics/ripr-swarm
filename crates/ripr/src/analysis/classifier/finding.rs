@@ -90,7 +90,8 @@ pub(in crate::analysis) fn build_finding_with_origins(
     }
     // #12040: a build-time check constrains this line; a violating edit fails
     // to build. The classifier withholds a ruled-out reach separately.
-    if context.compile_time_guarded
+    // #15933: a line inside a `compile_error!` is build-time code itself.
+    if (context.compile_time_guarded || context.in_compile_error)
         && let Some(at) = stop_reasons
             .iter()
             .position(|reason| *reason == StopReason::NoChangedRustLine)

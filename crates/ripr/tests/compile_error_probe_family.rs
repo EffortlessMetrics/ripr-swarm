@@ -39,6 +39,22 @@ mod tests {
 /// Findings for a diff that adds `added` (whole lines) after line 4 of the
 /// fixture, so the first added line is line 5.
 fn findings_for_added(added: &str) -> Result<Vec<Finding>, String> {
+    let count = added.lines().count();
+    let plus = added
+        .lines()
+        .map(|line| format!("+{line}\n"))
+        .collect::<String>();
+    findings_for(
+        &format!("{HEAD}{added}{TAIL}"),
+        &format!(
+            "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,3 +3,{} @@\n }}\n \n{plus} \n",
+            3 + count
+        ),
+    )
+}
+
+/// Findings for `diff` applied to a crate whose `src/lib.rs` is `lib`.
+fn findings_for(lib: &str, diff: &str) -> Result<Vec<Finding>, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let repo = TempRepo {
         root: std::env::temp_dir().join(format!(
@@ -56,19 +72,8 @@ fn findings_for_added(added: &str) -> Result<Vec<Finding>, String> {
         "Cargo.toml",
         "[package]\nname = \"compile-error\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )?;
-    write("src/lib.rs", &format!("{HEAD}{added}{TAIL}"))?;
-    let count = added.lines().count();
-    let plus = added
-        .lines()
-        .map(|line| format!("+{line}\n"))
-        .collect::<String>();
-    write(
-        "diff.patch",
-        &format!(
-            "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,3 +3,{} @@\n }}\n \n{plus} \n",
-            3 + count
-        ),
-    )?;
+    write("src/lib.rs", lib)?;
+    write("diff.patch", diff)?;
     let output = check_workspace(CheckInput {
         root: root.clone(),
         base: None,
@@ -176,5 +181,62 @@ fn another_macro_or_shared_line_keeps_its_runtime_family() -> Result<(), String>
             describe(&findings)
         );
     }
+    Ok(())
+}
+
+/// Review of #16134: a diff that changes only the message line of a split
+/// invocation leaves the probe holding the message alone. Its line, not its
+/// text, places it inside the invocation, so it still names the build-time
+/// stop reason instead of `no_changed_rust_line`.
+#[test]
+fn a_changed_message_line_of_a_split_compile_error_is_build_time() -> Result<(), String> {
+    let lib = format!(
+        "{HEAD}#[cfg(feature = \"process\")]\ncompile_error!(\n    \"notify(user) > limit is not supported\"\n);\n{TAIL}"
+    );
+    let findings = findings_for(
+        &lib,
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -5,4 +5,4 @@\n #[cfg(feature = \"process\")]\n compile_error!(\n-    \"notify(user) > limit is not supported here\"\n+    \"notify(user) > limit is not supported\"\n );\n",
+    )?;
+    let on_line = findings
+        .iter()
+        .filter(|finding| finding.probe.location.line == 7)
+        .collect::<Vec<_>>();
+    assert!(!on_line.is_empty(), "{}", describe(&findings));
+    for finding in &on_line {
+        assert_eq!(
+            finding.probe.family,
+            ProbeFamily::StaticUnknown,
+            "{}",
+            describe(&findings)
+        );
+        assert!(
+            finding
+                .stop_reasons
+                .iter()
+                .any(|reason| reason.as_str() == "compile_time_invariant"),
+            "{}",
+            describe(&findings)
+        );
+    }
+    Ok(())
+}
+
+/// Review of #16134: a literal after the invocation is code that shares the
+/// line. Changing that returned literal keeps its runtime reading even when
+/// a cfg attribute drops the macro.
+#[test]
+fn a_literal_sharing_the_line_keeps_its_runtime_family() -> Result<(), String> {
+    let lib = "pub fn name() -> &'static str {\n    #[cfg(any())]\n    compile_error!(\"unsupported\"); \"new\"\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn named() {\n        assert_eq!(name(), \"new\");\n    }\n}\n";
+    let findings = findings_for(
+        lib,
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub fn name() -> &'static str {\n     #[cfg(any())]\n-    compile_error!(\"unsupported\"); \"old\"\n+    compile_error!(\"unsupported\"); \"new\"\n }\n",
+    )?;
+    assert!(
+        families_on(&findings, 3)
+            .iter()
+            .any(|family| *family != ProbeFamily::StaticUnknown),
+        "{}",
+        describe(&findings)
+    );
     Ok(())
 }

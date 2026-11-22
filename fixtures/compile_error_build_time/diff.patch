@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ #[cfg(all(target_os = "emscripten", feature = "process"))]
+-compile_error!("Feature process is not supported.");
++compile_error!("Feature process is not supported on emscripten.");
+ #[cfg(all(target_os = "wasi", feature = "signal"))]
+ compile_error!(
+-    "Feature signal is not supported."
++    "Feature signal is not supported on wasi."
+ );

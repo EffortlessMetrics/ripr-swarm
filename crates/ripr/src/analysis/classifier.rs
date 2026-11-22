@@ -365,6 +365,20 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
                         probe.changed_const_name(),
                     )
             });
+    // #15933: an added line inside a split `compile_error!` (only its message
+    // changed) holds no macro name of its own; its line in the new file
+    // places it. A removed probe's line is where the deletion sits, so it is
+    // not read this way.
+    context.in_compile_error = owner_fn.is_none()
+        && probe.family == ProbeFamily::StaticUnknown
+        && probe.after.is_some()
+        && candidate_index
+            .probe_index_file(probe, index)
+            .and_then(|file| find_file_facts(index, &file))
+            .is_some_and(|facts| {
+                crate::analysis::probes::compile_error_lines(&facts.source)
+                    .contains(&probe.location.line)
+            });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
     // #14815: a prefix `-`/`!` added to or removed from the owner's whole

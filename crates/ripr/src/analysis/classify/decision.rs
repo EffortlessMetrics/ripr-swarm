@@ -312,12 +312,14 @@ fn name_segments(token: &str) -> Vec<&str> {
 
 /// #14181: whether file line `line` sits inside a (possibly rustfmt-split)
 /// inline const assertion block in `owner`'s body, whose first body line is
-/// the owner's `start_line`.
+/// the owner's `start_line`. #15933: or inside a split `compile_error!`
+/// invocation there.
 fn in_owner_const_assertion(owner: &FunctionSummary, line: usize) -> bool {
     line.checked_sub(owner.start_line).is_some_and(|offset| {
-        owner.body.contains("const")
+        (owner.body.contains("const")
             && crate::analysis::probes::inline_const_assertion_lines(&owner.body)
-                .contains(&(offset + 1))
+                .contains(&(offset + 1)))
+            || crate::analysis::probes::compile_error_lines(&owner.body).contains(&(offset + 1))
     })
 }
 

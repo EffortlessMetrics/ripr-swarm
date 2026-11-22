@@ -26,7 +26,7 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     }
     // #15933: `compile_error!(..)` stops the build. No test runs past it, so
     // it is no call to delete and writes no log line.
-    if is_compile_error_invocation(&masked) {
+    if is_compile_error_line(text) {
         return vec![ProbeFamily::StaticUnknown];
     }
     if is_constant_declaration(&masked) {
@@ -986,7 +986,22 @@ pub(crate) fn is_inline_const_assertion_line(text: &str) -> bool {
 /// and holds nothing else, the same reading `classify_changed_line` uses to
 /// withhold runtime families.
 pub(crate) fn is_compile_error_line(text: &str) -> bool {
-    is_compile_error_invocation(&mask_comments_and_strings(text.trim_start()))
+    text.contains("compile_error")
+        && is_compile_error_invocation(&mask_keeping_literal_quotes(text.trim_start()))
+}
+
+/// [`mask_comments_and_strings`], with the opening quote of every string and
+/// character literal put back. A literal after the invocation
+/// (`compile_error!("x"); "old"`) is code that shares the line, so it must
+/// not read as the blank a plain mask leaves; a comment still does.
+fn mask_keeping_literal_quotes(text: &str) -> String {
+    let mut masked = mask_comments_and_strings(text).into_bytes();
+    for (open, _) in crate::analysis::extract::rust_identity_spans(text).literal_ranges {
+        if let Some(byte) = masked.get_mut(open) {
+            *byte = b'"';
+        }
+    }
+    String::from_utf8_lossy(&masked).into_owned()
 }
 
 /// Masked text that is one `compile_error!` invocation: the macro, bare or
@@ -1050,7 +1065,7 @@ pub(crate) fn compile_error_lines(source: &str) -> std::collections::BTreeSet<us
     if !source.contains("compile_error") {
         return lines;
     }
-    let masked = mask_comments_and_strings(source);
+    let masked = mask_keeping_literal_quotes(source);
     let mut offset = 0;
     let mut open_until: Option<usize> = None;
     for (index, line) in masked.split('\n').enumerate() {
@@ -1290,6 +1305,9 @@ mod tests {
             "compile_errors!(\"no\");",
             "compile_error!(\"no\"); notify(user);",
             "notify(user); compile_error!(\"no\");",
+            // A literal sharing the line is code, not a masked blank.
+            "compile_error!(\"no\"); \"old\"",
+            "compile_error!(\"no\"); 'x'",
         ] {
             assert_ne!(
                 classify_changed_line(line),

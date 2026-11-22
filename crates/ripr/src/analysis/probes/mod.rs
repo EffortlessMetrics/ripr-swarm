@@ -43,7 +43,8 @@ pub(crate) use ids::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };
 pub(crate) use lexical::{
-    inline_const_assertion_lines, is_compile_error_line, is_inline_const_assertion_line,
+    compile_error_lines, inline_const_assertion_lines, is_compile_error_line,
+    is_inline_const_assertion_line,
 };
 pub(crate) use macro_definition::{verus_region_line_spans, verus_region_lines};
 #[cfg(test)]
