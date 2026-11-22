@@ -3681,6 +3681,7 @@ fn measured_checkout_uses_the_pin_not_cached_worktree_inputs() -> Result<(), Str
     fs::create_dir_all(&source).map_err(|err| err.to_string())?;
     let git = |args: &[&str]| super::measure::git(Some(&source), args);
     git(&["init", "--quiet"])?;
+    git(&["config", "core.autocrlf", "false"])?;
     fs::write(source.join(".gitignore"), "ripr.toml\ntarget/\n").map_err(|err| err.to_string())?;
     fs::write(source.join("subject.rs"), "pinned\n").map_err(|err| err.to_string())?;
     git(&["add", "."])?;

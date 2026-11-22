@@ -920,13 +920,13 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
         if plain {
             out.push_str(&format!(
                 "  Limitation: {} during {}",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label(),
             ));
         } else {
             out.push_str(&format!(
                 "  Limitation: {} during {} ({} at {})",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label(),
                 limitation.kind.as_str(),
                 limitation.producer_stage.as_str()
@@ -1062,7 +1062,10 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
         {
             out.push_str(&format!(
                 "  - {}:{} {} (owner: {}, scope: {}, reason: {})\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 opt_out.owner,
@@ -1136,7 +1139,10 @@ fn render_suppression_policy_block(out: &mut String, output: &CheckOutput) {
         {
             out.push_str(&format!(
                 "  - {}:{} {} (selector: {})\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 entry.selector
@@ -1657,9 +1663,11 @@ fn nested_python_root_hint(
 }
 
 /// Copy-paste `[languages] enabled` line for a not-enabled preview advisory.
-/// Names Rust only when the analyzed root actually has Rust markers (#7648).
+/// Names Rust only when the analyzed root has Rust markers or a crate nested
+/// below it (#7648): a root with `backend/Cargo.toml` has its Rust files
+/// analyzed, and a list without `rust` would switch that off.
 fn preview_enablement_toml(output: &CheckOutput) -> String {
-    let rust_detected = crate::domain::rust_markers_at(&output.root);
+    let rust_detected = crate::domain::enablement_tip_keeps_rust(&output.root);
     // Keep the preview languages this diff shows are already on (their
     // advisories say so), then add every language still off, so one edit
     // enables them all (#15288). A preview language enabled in ripr.toml but
@@ -4228,8 +4236,15 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(findings));
 
+        // #15335: a removal-only run names why nothing is selected.
         assert!(
-            rendered.contains("State: no gap selected for repair"),
+            rendered.contains(
+                "  State: every finding left is on removed code, which is never an edit target\n"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("no gap selected for repair"),
             "{rendered}"
         );
         assert!(

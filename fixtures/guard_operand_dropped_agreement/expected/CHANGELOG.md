@@ -35,3 +35,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guard_operand_dropped_agreement (4)
+
+Reason:
+RIPR-SPEC-0197: #15272 the fixture already reads weakly_exposed; the infection stage now says why (every asserted input folds to the same value on both versions) instead of yes
+
+Command:
+`cargo xtask goldens bless guard_operand_dropped_agreement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -1,0 +1,10 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,6 +4,6 @@
+ 
+ impl Acc {
+     pub fn double(&self) -> u64 {
+-        self.base * 2
++        self.base * 3
+     }
+ }

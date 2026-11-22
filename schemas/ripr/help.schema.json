@@ -1,0 +1,1010 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/help.schema.json",
+  "title": "RIPR Command Discovery",
+  "description": "The document `ripr help --json` writes to stdout: every catalog command with its class, effects, flags and typed exit contract, and every workflow with its steps and result routes. It is built from the static catalog tables only; it runs nothing and inspects no repository, and its bytes are identical across checkouts, terminals and locales. `catalog_digest` covers the command rows, workflow rows and `catalog_contract_version`, never `product_version`. It is advisory discovery data: it does not prove any command's outcome.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "product_version",
+    "catalog_contract_version",
+    "commands",
+    "workflows",
+    "catalog_digest",
+    "limitations",
+    "non_claims"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "An integer, unlike most ripr documents.",
+      "const": 5
+    },
+    "product_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "catalog_contract_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commands": {
+      "description": "Sorted by `id`.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/command"
+      }
+    },
+    "workflows": {
+      "description": "Sorted by `id`.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/workflow"
+      }
+    },
+    "catalog_digest": {
+      "description": "Lowercase hex SHA-256 of the catalog surface.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "non_claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "$defs": {
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "class",
+        "discovery",
+        "relation",
+        "aliases",
+        "summary",
+        "task",
+        "workflows",
+        "operation",
+        "cost",
+        "effects",
+        "primary_inputs",
+        "outputs",
+        "state_target",
+        "accepts_json_flag",
+        "writes_json_artifacts",
+        "flags",
+        "flags_scope",
+        "example",
+        "next_routes",
+        "stop_states",
+        "exit",
+        "limitations",
+        "not_applicable_reason"
+      ],
+      "properties": {
+        "id": {
+          "description": "Stable command identity: `cmd:` then a dotted name. Canonical commands use their path with spaces as dots; a compatibility alias may carry its own namespace (`start-here` is `cmd:compat.start-here`).",
+          "type": "string",
+          "minLength": 5
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "class": {
+          "enum": [
+            "public",
+            "advanced",
+            "compatibility",
+            "internal"
+          ]
+        },
+        "discovery": {
+          "enum": [
+            "ordinary_public",
+            "advanced",
+            "compatibility_alias",
+            "hidden"
+          ]
+        },
+        "relation": {
+          "$ref": "#/$defs/relation"
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflows": {
+          "description": "Ids of the workflows that use this command.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "operation": {
+          "enum": [
+            "read-only",
+            "writes-artifacts",
+            "state-changing"
+          ]
+        },
+        "cost": {
+          "enum": [
+            "small",
+            "analysis",
+            "workspace"
+          ]
+        },
+        "effects": {
+          "$ref": "#/$defs/effects"
+        },
+        "primary_inputs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "outputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "default",
+            "optional"
+          ],
+          "properties": {
+            "default": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ]
+            },
+            "optional": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "state_target": {
+          "description": "What a state-changing command changes; null otherwise.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "accepts_json_flag": {
+          "description": "The exact spelling that makes the command print JSON on stdout, or null when it has none.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^--[a-z]"
+            }
+          ]
+        },
+        "writes_json_artifacts": {
+          "type": "boolean"
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/flag"
+          }
+        },
+        "flags_scope": {
+          "description": "`own_help_body`: the command's own help. `leaf_section`: one subcommand's section of a shared body. `shared_help_body`: the union for a group. `no_help_body`: no help body, so the empty `flags` list says nothing about what the command accepts.",
+          "enum": [
+            "own_help_body",
+            "leaf_section",
+            "shared_help_body",
+            "no_help_body"
+          ]
+        },
+        "example": {
+          "type": "string",
+          "minLength": 1
+        },
+        "next_routes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "stop_states": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "exit": {
+          "$ref": "#/$defs/exit"
+        },
+        "limitations": {
+          "type": "string",
+          "minLength": 1
+        },
+        "not_applicable_reason": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "description": "No help body, no parsed flags.",
+          "if": {
+            "properties": {
+              "flags_scope": {
+                "const": "no_help_body"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "flags": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "internal"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "discovery": {
+                "const": "hidden"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "relation": {
+                "properties": {
+                  "kind": {
+                    "const": "retired"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "discovery": {
+                "const": "hidden"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "enum": [
+                  "public",
+                  "advanced",
+                  "compatibility"
+                ]
+              },
+              "relation": {
+                "properties": {
+                  "kind": {
+                    "const": "alias_of"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "discovery": {
+                "const": "compatibility_alias"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "compatibility"
+              },
+              "relation": {
+                "properties": {
+                  "kind": {
+                    "enum": [
+                      "canonical",
+                      "alias_of"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "discovery": {
+                "const": "compatibility_alias"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "public"
+              },
+              "relation": {
+                "properties": {
+                  "kind": {
+                    "const": "canonical"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "discovery": {
+                "const": "ordinary_public"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "advanced"
+              },
+              "relation": {
+                "properties": {
+                  "kind": {
+                    "const": "canonical"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "discovery": {
+                "const": "advanced"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "relation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "const": "canonical"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "target"
+          ],
+          "properties": {
+            "kind": {
+              "const": "alias_of"
+            },
+            "target": {
+              "description": "The canonical command path this spelling resolves to.",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "replacement"
+          ],
+          "properties": {
+            "kind": {
+              "const": "retired"
+            },
+            "replacement": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "may_run_analysis",
+        "may_compile",
+        "may_run_tests",
+        "may_run_mutation",
+        "may_use_network",
+        "may_start_child_process"
+      ],
+      "properties": {
+        "may_run_analysis": {
+          "type": "boolean"
+        },
+        "may_compile": {
+          "type": "boolean"
+        },
+        "may_run_tests": {
+          "type": "boolean"
+        },
+        "may_run_mutation": {
+          "type": "boolean"
+        },
+        "may_use_network": {
+          "type": "boolean"
+        },
+        "may_start_child_process": {
+          "type": "boolean"
+        }
+      }
+    },
+    "flag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "takes_value",
+        "values",
+        "required",
+        "repeatable",
+        "env"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^--[a-z]"
+        },
+        "takes_value": {
+          "type": "boolean"
+        },
+        "values": {
+          "description": "The closed set of accepted values when a typed owner states one; empty otherwise.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "repeatable": {
+          "type": "boolean"
+        },
+        "env": {
+          "description": "The environment variable documented as the flag's twin.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "takes_value": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "values": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "exit": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "completed",
+            "could_not_complete"
+          ],
+          "properties": {
+            "kind": {
+              "const": "completed_or_failed"
+            },
+            "completed": {
+              "const": 0
+            },
+            "could_not_complete": {
+              "const": 2
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "completed",
+            "could_not_complete",
+            "findings_including_exposed",
+            "unsupported_input",
+            "partial_with_limitations"
+          ],
+          "properties": {
+            "kind": {
+              "const": "advisory_findings"
+            },
+            "completed": {
+              "const": 0
+            },
+            "could_not_complete": {
+              "const": 2
+            },
+            "findings_including_exposed": {
+              "const": 0
+            },
+            "unsupported_input": {
+              "const": 2
+            },
+            "partial_with_limitations": {
+              "const": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "completed",
+            "config_error",
+            "blocked"
+          ],
+          "properties": {
+            "kind": {
+              "const": "gate_evaluate"
+            },
+            "completed": {
+              "const": 0
+            },
+            "config_error": {
+              "const": 2
+            },
+            "blocked": {
+              "const": 3
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "completed",
+            "could_not_complete",
+            "decision_or_refusal",
+            "stdout_on_refusal"
+          ],
+          "properties": {
+            "kind": {
+              "const": "decision_or_refusal"
+            },
+            "completed": {
+              "const": 0
+            },
+            "could_not_complete": {
+              "const": 2
+            },
+            "decision_or_refusal": {
+              "const": 3
+            },
+            "stdout_on_refusal": {
+              "description": "What stdout carries on exit 3: nothing, the decision document, or JSON only when `--json` was given.",
+              "enum": [
+                "empty",
+                "document",
+                "json_optional"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "completed",
+            "could_not_complete",
+            "orphan_or_gap_mismatch"
+          ],
+          "properties": {
+            "kind": {
+              "const": "receipt_check"
+            },
+            "completed": {
+              "const": 0
+            },
+            "could_not_complete": {
+              "const": 2
+            },
+            "orphan_or_gap_mismatch": {
+              "const": 2
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "completed",
+            "could_not_complete",
+            "findings"
+          ],
+          "properties": {
+            "kind": {
+              "const": "doctor_findings"
+            },
+            "completed": {
+              "const": 0
+            },
+            "could_not_complete": {
+              "const": 2
+            },
+            "findings": {
+              "const": 3
+            }
+          }
+        }
+      ],
+      "description": "The command's typed process-exit contract (`docs/EXIT_CODES.md`): 0 completed, 2 could not complete, 3 a decision or refusal. It names the contract, not the status of any one invocation."
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "aliases",
+        "command_tag",
+        "purpose",
+        "applicability",
+        "prerequisites",
+        "first_command",
+        "steps",
+        "optional_steps",
+        "result_families",
+        "artifacts_read",
+        "artifacts_written",
+        "recovery",
+        "stop_conditions",
+        "advanced_alternatives",
+        "limitations"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "command_tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "applicability": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "first_command": {
+          "description": "The command id of the first step.",
+          "type": "string",
+          "minLength": 1
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/workflow_step"
+          }
+        },
+        "optional_steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflow_step"
+          }
+        },
+        "result_families": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/result_family"
+          }
+        },
+        "artifacts_read": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "artifacts_written": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "recovery": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "when",
+              "route"
+            ],
+            "properties": {
+              "when": {
+                "type": "string",
+                "minLength": 1
+              },
+              "route": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "stop_conditions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "advanced_alternatives": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limitations": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "workflow_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "role",
+        "cost",
+        "operation",
+        "effects",
+        "writes"
+      ],
+      "properties": {
+        "command": {
+          "description": "A command id (`cmd:...`).",
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cost": {
+          "enum": [
+            "small",
+            "analysis",
+            "workspace"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "read-only",
+            "writes-artifacts",
+            "state-changing"
+          ]
+        },
+        "effects": {
+          "$ref": "#/$defs/effects"
+        },
+        "writes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "result_family": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "family",
+        "next"
+      ],
+      "properties": {
+        "from": {
+          "description": "The command id whose result this family names.",
+          "type": "string",
+          "minLength": 1
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "next": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "command"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "command"
+                },
+                "command": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "statement"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "stop"
+                },
+                "statement": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "statement"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "limitation"
+                },
+                "statement": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

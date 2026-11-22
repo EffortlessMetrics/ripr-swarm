@@ -1,0 +1,95 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_membership_removed_member/input
+config: <cwd>/fixtures/python_membership_removed_member/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING truthy/convert.py:9
+  id: probe:truthy_convert.py:python_preview:9c9a08b5
+
+Changed
+  after:      if val in (True, "true", "t", "yes", "on", "1", 1):
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  python:truthy/convert.py::to_bool
+  gap id (for scripts): gap:python:truthy/convert.py:to_bool:predicate_boundary:predicate:val_in_true_true_t_yes_on_1_1
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 2 related Python test(s) found for owner `to_bool`
+  - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+  - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches unknown sink: if val in (True, "true", "t", "yes", "on", "1", 1): (line 9) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_convert.py:12 test_falsy uses strong exact value oracle: assert to_bool(val) == False
+  - related test tests/test_convert.py:7 test_truthy uses strong exact value oracle: assert to_bool(val) == True
+  - source function argument value val = "1" at line 8
+  - source function argument value val = "on" at line 8
+  - source function argument value val = "t" at line 8
+  - source function argument value val = "true" at line 8
+  - source function argument value val = "yes" at line 8
+  - source function argument value val = "0" at line 13
+  - source function argument value val = "f" at line 13
+  - source function argument value val = "false" at line 13
+  - source values (showing 8 of 11 read from related tests; full list in --format json)
+
+Weakness
+  - A strong Python oracle reaches `to_bool`, but static evidence does not place a related test input at the changed predicate boundary `val == "y"`. The edit changes `val in` for "y" only, and no strong related test call passes `val` such a value; observed val values: "1", "on", "t", "true", "yes", "0", "f", "false", "n", "no", "off". Add a test case that passes "y"
+
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `val == "y"`
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:truthy/convert.py:to_bool:predicate_boundary:predicate:val_in_true_true_t_yes_on_1_1
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: to_bool
+  changed behavior: predicate_boundary changed at truthy/convert.py:9: `if val in (True, "true", "t", "yes", "on", "1", 1):`
+  current test evidence: tests/test_convert.py:12 test_falsy currently has oracle_strength=strong, oracle_kind=exact_value: assert to_bool(val) == False
+  missing discriminator: val == "y"
+  recommended test shape: Strengthen the existing pytest boundary assertion for `val == "y"`.
+  suggested assertion: Assert the owner result or effect at the boundary `val == "y"`.
+  suggested file: tests/test_convert.py
+  suggested test: test_falsy
+  pytest node: tests/test_convert.py::test_falsy
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_membership_removed_member/input && python -m pytest tests/test_convert.py::test_falsy) (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_membership_removed_member/input --diff <cwd>/fixtures/python_membership_removed_member/diff.patch --mode fast probe:truthy_convert.py:python_preview:9c9a08b5
+  ripr context --root <cwd>/fixtures/python_membership_removed_member/input --diff <cwd>/fixtures/python_membership_removed_member/diff.patch --mode fast --at probe:truthy_convert.py:python_preview:9c9a08b5
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

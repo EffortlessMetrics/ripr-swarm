@@ -1088,8 +1088,36 @@ Mocks and spies: `vi.` or `jest.` with `mock`, `doMock`,
 `node:test`, are mocks at any depth. A non-string specifier counts as an
 owner-module mock (fail closed). `spyOn(x, "owner")` with
 `.mockReturnValue`, `.mockImplementation`, `.mockResolvedValue` or
-`.mockRejectedValue` removes the trusted relation and adds
+`.mockRejectedValue`, their `*Once` forms, `.mockReturnThis` or a Jasmine
+`.and.` strategy (`returnValue`, `returnValues`, `callFake`, `throwError`,
+`resolveTo`, `rejectWith`) removes the trusted relation and adds
 `typescript_spy_fabricated_observer`; a bare `spyOn` still relates.
+
+Replaced owner function (#15939): a function owner is not related through a
+test file that replaces it on its module object, wherever in the file the
+replacement sits (the test body, a hook, the top level, a sibling test). The
+replacements read are `stub(x, "owner")`, a three-argument
+`replace(x, "owner", fake)`, `replaceProperty` and `defineProperty` naming the
+owner, `mock.method(x, "owner", fake)` (or with two arguments when the file
+mentions `mockImplementation`), a `spyOn(x, "owner")` fabricated anywhere in
+the file, directly or through the variable it is bound to (with or without a
+type annotation), and a member assignment `x.owner = ...`. The target `x`
+counts when it is rooted at a local the file imports (a plain identifier, a
+dotted path, a cast), at a local the test body binds with
+`const x = await import(...)`, or is not rooted at an identifier at all (a call result such as `require("./m")`); a
+global or a body-local object (`console`, `Date`, a fixture) is not the
+owner's module. A whole-object stub `stub(x)` or a member name that is not a
+plain string literal replaces every member of `x`. A default-exported owner
+is also named by `"default"`. The finding carries
+`typescript_spy_fabricated_observer`. `spy(x, "owner")`, a two-argument
+`mock.method` with no `mockImplementation` in the file, a `mock.method` whose
+third argument is an options object literal (`{ times: 1 }`), a
+`defineProperty` whose descriptor literal supplies no `value`, `get` or `set`,
+a two-argument `replace` (`String.prototype.replace`), a replacement naming
+another member and a replacement on a line that is a comment still relate. Not read: `Object.assign(x, { owner: fake })`, a
+replacement made by a helper in another file, and a restore before a sibling
+test's call (that sibling loses its relation). The fact is text-level and can
+only withhold.
 
 **Rule 5. A default import anchors only a default-exported owner.** A bare
 call `local(` through `import local from "<owner module>"` has a declaration
@@ -2548,6 +2576,17 @@ keys); do not take the next number.
 
 ## Test Mapping
 
+- #15939 (replaced owner function):
+  `crates/ripr/tests/typescript_replaced_owner_function.rs` runs the binary over
+  each replacement call in the test body, in a hook and at the top level, the
+  hook-bound spy fabricated in the test, the named-import call beside a stubbed
+  namespace, the `require` binding, the `default` member, and the call-through,
+  other-member and other-target controls; `tests/function_replacement_tests.rs`
+  pins the recorded entry forms;
+  `fixtures/typescript_adversarial_stubbed_namespace_owner` and its control
+  `fixtures/typescript_namespace_owner_call_through_spy` pin the rendered
+  findings.
+
 - #15622 (Deno registrations and `@std/assert`):
   `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs` pins
   each registration shape, the ignored/spread/unreadable refusals, the
@@ -2760,6 +2799,44 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15306: a changed one-line `return <literal>` whose owner returns only
+  distinct scalar literals (a switch or if-chain lookup) is credited only when
+  some strong related assertion expects the arm's old or new literal (either
+  distinguishes the versions when the call takes the arm). When another arm
+  also returns the new literal, an exact assertion expecting it counts as that
+  arm's result only when its call's literal inputs provably leave the changed
+  arm closed (the #8569 condition reader) and the owner's module names it
+  once (no recursion or re-export); otherwise it keeps the verdict. The rule
+  applies only to a lone one-for-one line replacement in the file. The changed
+  line is located, and its selector read, from the owner text's own first
+  line (an arrow after `export const dir =` starts one line later), and the
+  text must hold the changed line there. Argument slots skip commas inside comments; an unterminated comment
+  or string leaves them unreadable. A `return undefined` with an `undefined`
+  binding in scope, and a BigInt literal (`5n !== 5`), are refused.
+  When every strong assertion on a direct owner call expects another arm's
+  readable literal, the change is not observed: the existing literal-return reading makes it
+  `infection_unknown`, with a line naming the unpinned arm result.
+  A duplicated old literal, any non-literal or multi-line return, a generator
+  or concise-arrow owner, a non-direct relation, and a snapshot, structural,
+  dynamic or table-row expected side on a direct owner call, and any strong
+  assertion whose expected text spells the old or new literal (alone or inside an
+  object, array or expression), keep the verdict.
+  `tests/literal_arm_return_tests.rs` pins the reader
+  (`a_switch_arm_literal_return_is_located_with_its_old_value` and its
+  refusals) and the production path:
+  `an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm`,
+  `an_assertion_expecting_the_arms_old_result_keeps_exposed`,
+  `an_assertion_expecting_the_arms_new_result_keeps_exposed`,
+  `a_shared_new_result_is_credited_only_on_the_selected_arm`,
+  `a_recursive_owner_keeps_a_shared_new_result`,
+  `a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result`,
+  `an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return`,
+  `an_arrow_on_the_next_line_locates_the_changed_return`,
+  `a_multiline_arrow_reads_the_changed_arms_own_selector`,
+  `a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused`,
+  `a_bigint_return_is_not_a_readable_scalar`,
+  `an_unreadable_expected_side_keeps_the_verdict` and
+  `a_lookup_that_is_not_all_distinct_literals_keeps_exposed`.
 - #15393: an edit that changes only one default parameter value of the owner
   (on a one-line signature or its own parameter line) is not observed when
   every call of every direct, aliased or barrel-followed related test passes
@@ -2912,6 +2989,10 @@ keys); do not take the next number.
   reads the enclosing conditions and evaluates literal call inputs;
   `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
   `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
+- #15306: `crates/ripr/src/analysis/language/typescript/literal_arm_return_guard.rs`
+  reads the owner's literal returns and the related assertions' expected
+  values; `classify_resolved_owner` in `classifier.rs` withholds
+  `observation_confirmed` when the changed arm is unpinned.
 - #15393: `crates/ripr/src/analysis/language/typescript/unused_default_guard.rs`
   locates the changed default and reads call arguments; `ts_unused_default`
   in `classifier.rs` applies it in `ts_apply_post_ladder_rules` and the

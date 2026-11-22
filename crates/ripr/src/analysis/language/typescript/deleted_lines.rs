@@ -32,41 +32,14 @@ pub(super) fn deleted_line_findings(
     findings: &[Finding],
     mut classify: impl FnMut(usize, &str, &TypeScriptOwner) -> Option<Finding>,
 ) -> Vec<Finding> {
+    let paired: BTreeSet<usize> = counterparts.values().map(|removed| removed.line).collect();
+    let runs = removed_runs(changed, new_source);
+    let headers = removed_owner_headers(&runs);
     let added_text: BTreeMap<usize, &str> = changed
         .added_lines
         .iter()
         .map(|added| (added.line, added.text.as_str()))
         .collect();
-    // A statement replaced by an empty statement (`queue.clear();` -> `;`,
-    // `; // no-op`) or a blank line is removed all the same, so that
-    // counterpart does not stand in for it and the line stays a base-side
-    // record (#15335). The pairing holds when the removed code still stands
-    // inside an added line: `const cap =` / `getCap();` reflowed to
-    // `const cap = getCap();` leaves a blank where `getCap();` was, but the
-    // call still runs. A bracket-only counterpart (`b);` -> `);`) still
-    // pairs: that is a reflowed call, not a removal.
-    let added_code: Vec<String> = changed
-        .added_lines
-        .iter()
-        .map(|added| code_only(&added.text))
-        .collect();
-    let paired: BTreeSet<usize> = counterparts
-        .iter()
-        .filter(|(added_line, removed)| {
-            let Some(text) = added_text.get(added_line) else {
-                return false;
-            };
-            if !is_empty_statement(&code_only(text)) {
-                return true;
-            }
-            let removed_code = code_only(&removed.text);
-            let removed_code = removed_code.trim();
-            !removed_code.is_empty() && added_code.iter().any(|code| code.contains(removed_code))
-        })
-        .map(|(_, removed)| removed.line)
-        .collect();
-    let runs = removed_runs(changed, new_source);
-    let headers = removed_owner_headers(&runs);
     // Removed headers an added header of the same name replaced: the owner
     // they open lives on. A header replaced by a differently named one is a
     // different owner, and its deleted body is not the new owner's. Added
@@ -145,13 +118,6 @@ pub(super) fn deleted_line_findings(
     out
 }
 
-/// An added line that runs nothing: blank, or only empty statements.
-fn is_empty_statement(text: &str) -> bool {
-    text.trim()
-        .chars()
-        .all(|ch| ch == ';' || ch.is_whitespace())
-}
-
 /// A removed line's code: the line with comments and string contents
 /// removed, read with the block-comment state the lines before it left.
 struct RemovedCode<'a> {
@@ -193,6 +159,41 @@ fn removed_runs<'a>(
         }
     }
     runs
+}
+
+/// New-side added lines that hold no code: blank, a lone bracket, or comment
+/// text, read with the block comment state the candidate file has where each
+/// added run starts, so the body rows of a block comment count whatever they
+/// start with. A statement after a closed comment (`/* note */ return
+/// value;`) is code, and so is every line of an unreadable candidate file
+/// (#15913).
+pub(super) fn added_lines_without_code(
+    changed: &ChangedFile,
+    new_source: Option<&str>,
+) -> BTreeSet<usize> {
+    let Some(comment_open) = new_source.map(comment_open_at_line_start) else {
+        return BTreeSet::new();
+    };
+    let mut by_line: Vec<&ChangedLine> = changed.added_lines.iter().collect();
+    by_line.sort_by_key(|line| line.line);
+    let mut without_code: BTreeSet<usize> = BTreeSet::new();
+    let mut previous: Option<usize> = None;
+    let mut in_comment = false;
+    for line in by_line {
+        if previous.and_then(|last| last.checked_add(1)) != Some(line.line) {
+            in_comment = line
+                .line
+                .checked_sub(1)
+                .and_then(|index| comment_open.get(index))
+                .copied()
+                .unwrap_or(false);
+        }
+        previous = Some(line.line);
+        if should_ignore_typescript_changed_line(&code_only_from(&line.text, &mut in_comment)) {
+            without_code.insert(line.line);
+        }
+    }
+    without_code
 }
 
 /// For each candidate line, whether a block comment is open where it starts.

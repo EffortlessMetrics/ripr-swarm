@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter, write::SimpleFileOptions};
+use zip::{CompressionMethod, DateTime, System, ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 use super::npm_native::{self, promote_pair, verify_notices, verify_qualification};
 use super::{hex_lower, payload, producer, sha256_file};
@@ -383,6 +383,10 @@ fn write_wheel(entries: &[Entry], path: &Path) -> Result<(), String> {
         let options = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .last_modified_time(DateTime::default())
+            // Pin the "version made by" host to Unix: the zip crate defaults
+            // to DOS on a Windows host, which drops the Unix mode from the
+            // external attributes and makes the wheel differ by build host.
+            .system(System::Unix)
             .unix_permissions(entry.mode);
         writer
             .start_file(entry.name.as_str(), options)

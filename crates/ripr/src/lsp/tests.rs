@@ -1,7 +1,4 @@
-use super::actions::{
-    SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
-    resolve_action,
-};
+use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
 use super::backend::{
     Backend, RefreshLogSummary, WatchedFileChanges, deadline_exceeded_log_message,
     refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
@@ -597,7 +594,7 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
             serde_json::json!({
                 "globPattern": {
                     "baseUri": root_uri.as_str(),
-                    "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                    "pattern": "**/*.{rs,py,pm,pl,t,psgi,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
                 },
                 "kind": 2,
             }),
@@ -8243,7 +8240,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
 
         for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
             let mut retained = actions.clone();
-            disable_retained_analysis_actions(
+            super::actions::disable_retained_analysis_actions(
                 &mut retained,
                 &AnalysisHealth {
                     state,
@@ -8296,7 +8293,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
         .to_string();
     for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
         let mut retained = stale.clone();
-        disable_retained_analysis_actions(
+        super::actions::disable_retained_analysis_actions(
             &mut retained,
             &AnalysisHealth {
                 state,
