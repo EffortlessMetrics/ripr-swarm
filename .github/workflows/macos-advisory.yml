@@ -122,7 +122,9 @@ jobs:
           echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/lib-build.status"
           # Cargo names the one executable it built for `--lib`:
           # `Executable unittests src/lib.rs (target/debug/deps/ripr-<hash>)`.
-          exe=$(sed -n 's/^ *Executable unittests src\/lib\.rs (\(.*\))$/\1/p' "$RUNNER_TEMP/macos-advisory/lib-build.log" | tail -n 1)
+          # The hosted log colors the word `Executable`, so the pattern does
+          # not anchor on the start of the line.
+          exe=$(sed -n 's/^.*Executable.* unittests src\/lib\.rs (\(.*\))$/\1/p' "$RUNNER_TEMP/macos-advisory/lib-build.log" | tail -n 1)
           if [ -n "$exe" ] && [ -f "$exe" ]; then
             cp "$exe" "$RUNNER_TEMP/macos-lib-binary/ripr-lib-tests"
           fi
