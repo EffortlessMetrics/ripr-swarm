@@ -432,7 +432,8 @@ fn declares_value_struct(masked: &str, name: &str) -> bool {
 /// could bind it: it is not the head of a call, literal, path, macro or
 /// generic (`Name(`, `Name {`, `Name::`, `Name!`, `Name<`), a field base
 /// (`Name.`) or a generic argument (`.., Name>`), and it follows `|`, `,`,
-/// `(`, `[`, `&`, `mut`, `ref`, `for` or `let`, or is followed by `@`. This
+/// `(`, `[`, `{`, `&`, `mut`, `ref`, `for` or `let`, is a braced `field: Name`
+/// before `}` or `,`, or is followed by `@`. This
 /// is a superset of the binder shapes a macro argument can hold (`|Name|`,
 /// `|a, Name: T|`, `Some(Name) =>`, `for Name in`, `(a, Name)`, `[Name, ..]`,
 /// `ref Name`, `mut Name`, `Name @ ..`); it also takes a bare value or type
@@ -450,12 +451,35 @@ fn binder_like_use(masked: &str, at: usize, name: &str) -> bool {
     }
     let before = masked[..at].strip_suffix("r#").unwrap_or(&masked[..at]);
     let before = before.trim_end();
-    before.ends_with(['|', ',', '(', '[', '&'])
+    before.ends_with(['|', ',', '(', '[', '&', '{'])
         || ["mut", "ref", "for", "let"].iter().any(|keyword| {
             before
                 .strip_suffix(keyword)
                 .is_some_and(|head| !head.bytes().last().is_some_and(is_ident_byte))
         })
+        || (before.ends_with(':')
+            && !before.ends_with("::")
+            && after.starts_with(['}', ','])
+            && innermost_open_bracket(before) == Some('{'))
+}
+
+/// The bracket still open at the end of `text`, if any. A `field: Name`
+/// inside braces may be a struct pattern's binder; inside parentheses or
+/// after a closure's `|` it is a type annotation.
+fn innermost_open_bracket(text: &str) -> Option<char> {
+    let mut depth = 0usize;
+    text.chars().rev().find(|ch| match ch {
+        ')' | ']' | '}' => {
+            depth += 1;
+            false
+        }
+        '(' | '[' | '{' if depth == 0 => true,
+        '(' | '[' | '{' => {
+            depth -= 1;
+            false
+        }
+        _ => false,
+    })
 }
 
 /// Keywords that bind `name` in the value namespace right before it: a `fn`,
@@ -1310,6 +1334,10 @@ mod tests {
             "check!(match m { [Key, ..] => 1, _ => 2 });",
             "check!(match m { Key @ _ => 1 });",
             "check!(|&Key| Key(1));",
+            "check!(let Wrap { maker: Key } = wrap);",
+            "check!(let Wrap { other, maker: Key, .. } = wrap);",
+            "check!(let Wrap { Key } = wrap);",
+            "check!(match m { Key => 1 });",
         ] {
             let source = format!("struct Key {{ v: i32 }}\nfn t() {{\n    {body}\n}}\n");
             assert!(
@@ -1327,6 +1355,8 @@ mod tests {
             "assert_eq!(make::<Key>().v, 1);",
             "assert_eq!(size_of::<Map<u8, Key>>(), 8);",
             "assert_eq!((|| -> Key { make() })().v, 1);",
+            "assert_eq!(apply(|a: Key, b: Key| a.v + b.v), 2);",
+            "assert_eq!({ let k: Key = make(); k.v }, 1);",
         ] {
             let source = format!("struct Key {{ v: i32 }}\nfn t() {{\n    {body}\n}}\n");
             assert!(!pattern_binds(&source, "Key"), "over-read: {body}");
