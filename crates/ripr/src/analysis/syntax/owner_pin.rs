@@ -1528,7 +1528,11 @@ fn macro_binding_sites_in_tree(
         if let Some(call) = ast::MacroCall::cast(node.clone())
             && item_position_include(&call)
         {
-            return all(line_of(node), MacroBindingKind::Included, false);
+            // A `macro_rules!` the included file defines stays in this crate;
+            // a `#[macro_export]` one reaches another crate only through an
+            // import there (its own site) or a glob, which cannot rebind a
+            // core prelude macro, so the site is crate-local.
+            return all(line_of(node), MacroBindingKind::Included, true);
         }
         if let Some(call) = ast::MacroCall::cast(node.clone())
             && let Some(path) = call.path()
