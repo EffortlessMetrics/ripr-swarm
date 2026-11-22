@@ -315,6 +315,7 @@ impl<'a> CompactGripContext<'a> {
         memo(&self.same_module_cache).clear();
         memo(&self.parsed_sources).clear();
         memo(&self.inherent_helper_reach).clear();
+        self.transitive_reach.clear_reaching_memo();
         memo(&self.shared_grips).release_unheld();
     }
 

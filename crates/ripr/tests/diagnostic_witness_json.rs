@@ -13,6 +13,7 @@ fn witness() -> DiagnosticWitness {
         probe_family: "predicate".into(),
         changed_expression: "amount >= threshold".into(),
         before: None,
+        before_condition: None,
         after: None,
         expected_sink: None,
         missing_discriminators: vec![MissingDiscriminatorFact {

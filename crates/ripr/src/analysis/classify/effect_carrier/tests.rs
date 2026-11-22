@@ -142,6 +142,7 @@ fn owner<'a>(index: &'a RustIndex, name: &str) -> &'a FunctionSummary {
 
 fn effect_probe(owner: &FunctionSummary, expression: &str) -> Probe {
     Probe {
+        before_condition: None,
         id: ProbeId("probe".to_string()),
         location: SourceLocation::new(owner.file.clone(), owner.start_line + 3, 1),
         owner: Some(SymbolId(owner.id.0.clone())),

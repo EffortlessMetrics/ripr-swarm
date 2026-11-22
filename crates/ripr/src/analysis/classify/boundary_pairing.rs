@@ -4143,6 +4143,7 @@ mod tests {
 
     fn predicate_probe(expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::gate".to_string())),

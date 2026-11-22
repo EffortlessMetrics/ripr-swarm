@@ -4288,6 +4288,7 @@ mod tests {
     /// confirmation rides solely on the producer-owned bare binding.
     fn owner_harness_context(index: &RustIndex, test: TestSummary) -> ClassifiedProbeEvidence {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:alpha:expect_response".to_string()),
             location: SourceLocation::new("crates/alpha/src/lib.rs", 10, 2),
             owner: Some(SymbolId(
@@ -4374,6 +4375,7 @@ mod tests {
                 .find(|test| test.name == "makes")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:returned-type-drop".to_string()),
                 location: SourceLocation::new("src/lib.rs", 11, 5),
                 owner: Some(owner.id.clone()),
@@ -4444,6 +4446,7 @@ mod tests {
                 .find(|test| test.name == "nearby")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:helper-behind-caller".to_string()),
                 location: SourceLocation::new("src/lib.rs", 6, 5),
                 owner: Some(owner.id.clone()),
@@ -4521,6 +4524,7 @@ mod tests {
                 .find(|test| test.name == "pins_second_row")
                 .ok_or("missing test")?;
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:returned-array-exit".to_string()),
                 location: SourceLocation::new("src/lib.rs", 6, 5),
                 owner: Some(owner.id.clone()),
@@ -4588,6 +4592,7 @@ mod tests {
             .find(|test| test.name == "makes")
             .ok_or("missing test")?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:local-drop-guard".to_string()),
             location: SourceLocation::new("src/lib.rs", 21, 5),
             owner: Some(owner.id.clone()),
@@ -4660,6 +4665,7 @@ mod tests {
                 "nonempty subject: the fixture must parse its assertions"
             );
             let probe = Probe {
+                before_condition: None,
                 id: ProbeId("probe:contradiction".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 5),
                 owner: Some(owner.id.clone()),
@@ -4770,6 +4776,7 @@ mod tests {
         ];
         assert_eq!(tests.len(), 3, "nonempty subject: all fixture tests parse");
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:composed-contradiction".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: Some(owner.id.clone()),
@@ -4846,6 +4853,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(tests.len(), 2, "nonempty subject: both fixture tests parse");
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:zero-arg-mixed".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: Some(owner.id.clone()),
@@ -4983,6 +4991,7 @@ mod tests {
     fn gather_retains_digest_valid_propagation_witness_for_internal_consumer() -> Result<(), String>
     {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:fixture:1".to_string()),
             location: SourceLocation::new("src/lib.rs", 10, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),
@@ -5034,6 +5043,7 @@ mod tests {
     #[test]
     fn corrupt_digest_is_retained_as_rejected_diagnostic_outcome() -> Result<(), String> {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:fixture:corrupt".to_string()),
             location: SourceLocation::new("src/lib.rs", 10, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),
@@ -5439,6 +5449,7 @@ mod tests {
         let chain = resolve_chain("record", &index, true, &[]);
         assert_eq!(chain.hops.len(), 1);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:selected-ledger-caller".into()),
             location: SourceLocation::new("src/lib.rs", 4, 1),
             owner: Some(owner.id.clone()),

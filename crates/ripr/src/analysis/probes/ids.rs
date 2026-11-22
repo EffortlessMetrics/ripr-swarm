@@ -348,6 +348,7 @@ mod tests {
         });
         let owner = SymbolId("src/lib.rs::discounted_total".to_string());
         let probe = crate::domain::Probe {
+            before_condition: None,
             id: diff_probe_id(
                 Path::new("src/lib.rs"),
                 &ProbeFamily::Predicate,

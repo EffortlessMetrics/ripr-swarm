@@ -8,6 +8,7 @@
 
 mod fallible_check;
 mod literal_json;
+mod scan_memo;
 use literal_json::{
     json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
     literal_json_tree, literal_json_uses,
@@ -711,8 +712,19 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
 /// it at that site, so the glob is not a foreign one. Only the top level of
 /// a file qualifies, read with 2018 path semantics; the scan has no edition, so
 /// a 2015-edition non-root file, where the same spelling names a crate-root
-/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`), grouped globs and the
-/// standard roots keep their dedicated rules.
+/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`) and grouped globs keep
+/// their dedicated rules.
+///
+/// A module the file declares under a standard crate's name qualifies like
+/// any other (`mod core; use core::*;`, #14116): an item declared in the
+/// module shadows the extern prelude, so the glob reads the local module and
+/// never the standard crate. The standard-root rule already declines such a
+/// file because the module takes the root's name, which left this glob
+/// foreign under both rules. Every other standard-root spelling (a longer
+/// path, a group, a leading `::`, a file that declares no such module) keeps
+/// the standard-root rule, and so does a declaration under `cfg` or
+/// `cfg_attr`: with the module compiled out the glob reads the standard
+/// crate's name, which a renamed dependency can hold.
 fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &str) -> bool {
     let whole_glob = import
         .use_tree()
@@ -726,9 +738,15 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
         return false;
     }
     let root = root.trim_start_matches("r#");
-    if root.is_empty() || matches!(root, "std" | "core" | "alloc") {
+    if root.is_empty() {
         return false;
     }
+    // A standard name always has a fallback: with the declaration compiled
+    // out, `core::*` reads the extern prelude's `core`, which Cargo can bind
+    // to a renamed dependency. Any other name fails to resolve there unless a
+    // dependency carries it. So a standard name needs a declaration no
+    // attribute can remove.
+    let standard = matches!(root, "std" | "core" | "alloc");
     let Some(parent) = import
         .syntax()
         .parent()
@@ -753,9 +771,10 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
             // tests. An out-of-line module's public imports are reported
             // workspace-wide at their own file.
             if module.item_list().is_some()
-                || module
-                    .attrs()
-                    .any(|attr| attr.syntax().text().to_string().contains("path"))
+                || module.attrs().any(|attr| {
+                    let text = attr.syntax().text().to_string();
+                    text.contains("path") || standard && text.contains("cfg")
+                })
             {
                 return false;
             }
@@ -2163,7 +2182,8 @@ const INERT_PASS_THROUGH_ATTRIBUTES: &[&str] = &[
 
 #[derive(Clone, Copy, Debug)]
 enum PassThroughCall {
-    /// `proptest::proptest!` or `serde_json::json!`, with or without `::`.
+    /// `proptest::proptest!`, `serde_json::json!` or `tokio::select!`, with
+    /// or without `::`.
     Qualified { krate: &'static str, external: bool },
     /// A bare `proptest!`, which must name the audited prelude's macro.
     BareProptest,
@@ -2226,6 +2246,13 @@ fn audited_pass_through_call(
     let wrapper = match unrooted.split_once("::") {
         Some(("proptest", name)) if proptest_wrapper(name) => PassThroughCall::Qualified {
             krate: "proptest",
+            external,
+        },
+        // tokio's `select!` places branch patterns, futures, preconditions
+        // and handlers in pattern, expression and block fragments; its
+        // locked version must be the audited one.
+        Some(("tokio", "select")) => PassThroughCall::Qualified {
+            krate: "tokio",
             external,
         },
         Some(("serde_json", "json")) => PassThroughCall::Qualified {
@@ -4236,6 +4263,7 @@ fn owner_pin_assertions_with_matches(
     };
     result.parsed = true;
     let _extern_crate_scan = ExternCrateScan::enter();
+    let _module_scan = scan_memo::ModuleScan::enter();
     result.file_binds_test = file_binds_test_name(parse.tree().syntax());
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
@@ -5346,9 +5374,9 @@ fn item_context_refusal(
         {
             return Some(AssertionContextRefusal::NestedItem);
         }
-        if let Some(attr) = node.children().filter_map(ast::Attr::cast).find(|attr| {
-            attribute_test_build_availability(&attr.syntax().text().to_string()) != Some(true)
-                && !default_enabled_gate(attr, default_features)
+        // #11738: within a scan the node's unsettled attributes are read once.
+        if let Some(attr) = scan_memo::first_refusing_attribute(&node, |attr| {
+            !default_enabled_gate(attr, default_features)
         }) {
             return Some(AssertionContextRefusal::GatedItem(
                 attr.syntax().text().to_string(),
@@ -5739,8 +5767,14 @@ fn builtin_test_attribute_holds(module: &SyntaxNode) -> bool {
 }
 
 /// Whether no import in `module` (or an enclosing module of this file reached
-/// by `use super::*`) rebinds the built-in attribute name `name`.
+/// by `use super::*`) rebinds the built-in attribute name `name`. Memoized
+/// within an owner-pin scan (#11738).
 fn builtin_name_holds(name: &str, module: &SyntaxNode) -> bool {
+    scan_memo::builtin_name_holds(name, module)
+}
+
+/// [`builtin_name_holds`] computed directly.
+fn builtin_name_holds_uncached(name: &str, module: &SyntaxNode) -> bool {
     !extern_crate_binds_name(module, name)
         && module_use_leaves(module)
             .iter()
