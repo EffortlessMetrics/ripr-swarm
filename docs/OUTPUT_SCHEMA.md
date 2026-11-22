@@ -18429,7 +18429,8 @@ Field contract:
   `--attempt` value), `manifest_path` (the durable attempt manifest the
   after phase consumes), `next_command` (the exact `ripr agent repair …
   --phase after` command to run after the focused test edit, including
-  the authorization placeholder suffix for trust-bound attempts), and
+  the authorization placeholder suffix for trust-bound attempts and
+  ` --test-result FILE` for an attempt that follows a new-test proposal), and
   `packet_path` (the root-resolved workflow packet path the document was
   rendered from, ending in `target/ripr/workflow/agent-packet.json`).
   `baseline_ambiguous` is an additive member present only when `true`
@@ -18443,6 +18444,10 @@ Field contract:
   before the after phase, while Vitest caches written after `continue` do not
   stale the receipt; it recommends recording native test results separately
   after successful continuation and does not claim a test was recorded in the receipt.
+  `focused_result_requirement` is an additive string present only for an
+  attempt that follows a new-test proposal (#16164): it states that the after
+  phase finishes only with a focused `--test-result FILE` and how to produce
+  FILE, in the finish gate's own words.
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
   baseline, the ambiguity warning and the clean-state restart route, with

@@ -38,6 +38,20 @@ pub(crate) fn human_after_phase_follow_up_for_display(
     persisted_next_command: &str,
     root_display: &str,
 ) -> String {
+    // #16164: a new-test proposal attempt's after command carries the
+    // required focused-result flag, which `ripr continue` cannot pass. Keep
+    // the advanced spelling with the flag, rooted at the display root.
+    if let Some(base) =
+        persisted_next_command.strip_suffix(crate::app::focused_run::PROPOSAL_FOCUSED_RESULT_FLAG)
+        && !after_phase_requires_advanced_spelling(base)
+        && let Some(attempt) = continue_from_agent_after_attempt(base)
+    {
+        return format!(
+            "ripr agent repair --root {} --attempt {attempt} --phase after{}",
+            crate::agent::loop_commands::shell_arg(root_display),
+            crate::app::focused_run::PROPOSAL_FOCUSED_RESULT_FLAG
+        );
+    }
     if after_phase_requires_advanced_spelling(persisted_next_command) {
         return persisted_next_command.to_string();
     }
@@ -72,6 +86,7 @@ fn after_phase_requires_advanced_spelling(command: &str) -> bool {
         || command.contains("--edit-authority")
         || command.contains("--verify-authorized")
         || command.contains("--store")
+        || command.contains("--test-result")
 }
 
 fn continue_from_agent_after(persisted: &str) -> Option<String> {
@@ -102,6 +117,19 @@ pub(crate) fn loop_commands_cwd_read_guard() -> impl Drop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #16164: a proposal attempt's follow-up keeps the required
+    /// `--test-result FILE`, which `ripr continue` cannot carry; the display
+    /// form re-roots it like the continue form.
+    #[test]
+    fn proposal_after_phase_follow_up_keeps_the_focused_result_flag() {
+        let persisted = "ripr agent repair --root /tmp/probe --attempt repair-attempt-de699662a4338840692e0700 --phase after --test-result FILE";
+        assert_eq!(human_after_phase_follow_up(persisted), persisted);
+        assert_eq!(
+            human_after_phase_follow_up_for_display(persisted, "."),
+            "ripr agent repair --root . --attempt repair-attempt-de699662a4338840692e0700 --phase after --test-result FILE"
+        );
+    }
 
     /// Ordinary after-phase follow-ups teach `ripr continue`; routes the
     /// façade cannot run keep the persisted advanced spelling (#7879).
