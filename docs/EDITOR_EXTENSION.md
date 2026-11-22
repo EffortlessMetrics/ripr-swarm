@@ -406,7 +406,8 @@ until a full refresh, so a gap finding has no start yet; the command then
 says to run **ripr: Refresh Full Analysis** instead of reporting that no
 gap is near the selection. Under the default `actionable` profile (or with
 spot diagnostics off) no repair spots are built at all, so the command names
-the setting instead: set `ripr.diagnosticProfile` to `full`, then run
+the setting instead: set `ripr.diagnosticProfile` to `full` (with
+`ripr.seamDiagnostics` on), then run
 **ripr: Refresh Full Analysis**. If only refresh/setup actions are available and the
 server names no reason, the command reports that no current bounded repair
 action is available.

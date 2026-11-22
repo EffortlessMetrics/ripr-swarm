@@ -333,9 +333,11 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   `preview_or_static_limitation`, `repair_route_not_ready`,
   `uncommitted_production_change`, `seam_evidence_deferred`,
   `seam_inventory_not_enabled`).
-  `tests.rs::deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh`
-  pins the deferred-seam start, its legacy omission, and its absence on a
-  full snapshot and on an `exposed` finding.
+  `tests.rs::snapshot_without_spot_inventory_lists_an_inert_start_naming_the_blocker`
+  pins the deferred-seam start and the settings-blocked
+  (`seam_inventory_not_enabled`) start, their legacy omission, and their
+  absence on a full snapshot whose configuration builds spots, on an
+  `exposed` finding, and beside a gap record.
   `tests.rs::seam_not_yet_repairable_names_route_not_ready_not_a_language_boundary`
   pins the truthful reason, and the repair-start tests build their seam
   diagnostics with the production producer (no injected fix-instruction).
@@ -539,14 +541,14 @@ client supports:
   (the default actionable profile, or spot diagnostics off), deferred or
   not, the same finding instead lists the start inert as
   `seam_inventory_not_enabled`, whose reason names the setting
-  (`ripr.diagnosticProfile` = `full` with `ripr.seamDiagnostics` on, or
-  `[lsp] diagnostic_profile = "full"` in `ripr.toml`) and then the full
-  refresh. An `exposed`, base-side, preview, non-Rust or static-limited
+  (`ripr.diagnosticProfile` = `full` and `ripr.seamDiagnostics` on, or
+  `[lsp] diagnostic_profile = "full"` and `seam_diagnostics = true` in
+  `ripr.toml` with Rust enabled) and then the full refresh. An `exposed`, base-side, preview, non-Rust or static-limited
   finding, a full snapshot whose configuration builds spots, a request that
-  also carries a gap record (which has its own start) and a legacy client
-  get no inert start. While analysis is queued or running, the retained
-  deferred start reads `analysis_not_current`; the settings reason is kept,
-  because a refresh does not change the setting. With no gap or seam diagnostic near the selection, "Start
+  also carries a gap record (which has its own repair-packet actions) and a
+  legacy client get no inert start. While analysis is queued or running,
+  either retained start reads `analysis_not_current` (a running refresh may
+  be the one a setting change started). With no gap or seam diagnostic near the selection, "Start
   Current Repair" asks the server about the nearest finding diagnostic and
   shows that reason before saying no repair gap is available (#13636).
   `ripr agent repair`

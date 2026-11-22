@@ -151,7 +151,7 @@ impl ActionDisabledReason {
                 "The last save ran a quick analysis that skips repair spots, so there is no repair start here yet; run \"ripr: Refresh Full Analysis\", then check this finding again."
             }
             Self::SeamInventoryNotEnabled => {
-                "Your ripr settings skip repair spots, so there is no repair start here; set ripr.diagnosticProfile to \"full\" with ripr.seamDiagnostics on (or diagnostic_profile = \"full\" under [lsp] in ripr.toml), then run \"ripr: Refresh Full Analysis\"."
+                "Your ripr settings skip repair spots, so there is no repair start here; set ripr.diagnosticProfile to \"full\" and ripr.seamDiagnostics to true (or diagnostic_profile = \"full\" and seam_diagnostics = true under [lsp] in ripr.toml, with \"rust\" enabled under [languages]), then run \"ripr: Refresh Full Analysis\"."
             }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",

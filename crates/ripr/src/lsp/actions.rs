@@ -89,7 +89,8 @@ pub(super) fn code_action_response(
         // built in this configuration) the finding has no seam-bound start.
         // A disabled-capable client sees the start inert with the blocker
         // and next step named; other clients keep the legacy omission. A
-        // gap record in the same request carries its own start instead.
+        // gap record in the same request carries its own repair-packet
+        // actions, so no inert finding start is added beside them.
         if client_features.code_action_disabled
             && !params.context.diagnostics.iter().any(is_gap_diagnostic)
             && let Some(action) = finding_start_blocked_action(diagnostic, snapshot)
@@ -325,7 +326,6 @@ pub(super) fn disable_retained_analysis_actions(
                         | "preview_or_static_limitation"
                         | "repair_route_not_ready"
                         | "uncommitted_production_change"
-                        | "seam_inventory_not_enabled"
                 )
             )
         {
