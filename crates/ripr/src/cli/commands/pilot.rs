@@ -201,7 +201,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                     // The loaded change selects both the generated-source view
                     // and later change-first ranking, inside the same deadline.
                     let load_started = Instant::now();
-                    let change = load_pilot_current_change(&input, git_timeout);
+                    let change = load_pilot_current_change(&input, &cfg, git_timeout);
                     let load_ms = elapsed_ms(load_started);
                     let inventory_started = Instant::now();
                     // #10727: the inventory already reports its phases through
@@ -236,7 +236,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         )?
     } else {
         let load_started = Instant::now();
-        let change = load_pilot_current_change(&input, git_timeout);
+        let change = load_pilot_current_change(&input, &config, git_timeout);
         PilotAnalysisResult::Complete((
             analysis::ClassifiedSeamsReport {
                 classified: Vec::new(),
@@ -500,18 +500,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
 
     let scan_started = Instant::now();
-    // #16082: when the change is check's last-commit rescope, the preview
-    // reads that range too, not the empty default one.
-    let python_input = match (&input.base, current_change.base()) {
-        (None, Some(base)) if base == app::diff_source::LAST_COMMIT_BASE => {
-            let mut rescoped = input.clone();
-            rescoped.base = Some(base.to_string());
-            std::borrow::Cow::Owned(rescoped)
-        }
-        _ => std::borrow::Cow::Borrowed(&input),
-    };
     let python_first_use =
-        collect_pilot_python_first_use(&python_input, &config, current_change.is_working_tree());
+        collect_pilot_python_first_use(&input, &config, current_change.is_working_tree());
     // #3906 / #7665: pilot ranks Rust seams only. Name the languages it did
     // not rank so an empty ranking is never read as a clean result for them;
     // when an enabled supported language is present, the headline names its
@@ -934,6 +924,7 @@ fn run_pilot_inventory(
 /// the ranking stays repo-wide.
 fn load_pilot_current_change(
     input: &CheckInput,
+    config: &RiprConfig,
     git_timeout: Option<std::time::Duration>,
 ) -> output::pilot::PilotCurrentChange {
     let mut from_working_tree = false;
@@ -977,6 +968,7 @@ fn load_pilot_current_change(
                             &input.root,
                             &loaded.text,
                             loaded.effective_base.as_deref(),
+                            config,
                             git_timeout,
                         )
                     {
@@ -1421,7 +1413,8 @@ mod tests {
             ..CheckInput::default()
         };
         let config = load_for_root(&root)?;
-        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        let change =
+            load_pilot_current_change(&input, &config, Some(std::time::Duration::from_secs(30)));
         assert!(
             change.is_working_tree(),
             "fixture must be read as a working-tree change: {change:?}"
@@ -1457,7 +1450,8 @@ mod tests {
             ..CheckInput::default()
         };
         let config = load_for_root(&root)?;
-        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        let change =
+            load_pilot_current_change(&input, &config, Some(std::time::Duration::from_secs(30)));
         assert!(
             matches!(change, output::pilot::PilotCurrentChange::NoChange { .. }),
             "restoring the base must leave an empty working-tree diff: {change:?}"

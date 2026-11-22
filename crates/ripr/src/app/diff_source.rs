@@ -116,25 +116,25 @@ pub(crate) fn last_commit_fallback_applies(
 
 /// The last commit's diff text, when a bare human `ripr check` that read
 /// the committed-history default range (`default_text`, against
-/// `default_base`) would analyze the last commit ([`LAST_COMMIT_BASE`])
-/// instead (#13644, #16082). For readers that need check's range without
+/// `default_base`) analyzes the last commit ([`LAST_COMMIT_BASE`]) instead
+/// (#13644, #16082). For readers that scope by the diff without otherwise
 /// running check (`ripr repair`'s change scoping, `ripr pilot`'s current
 /// change); the caller has already established that no `--base` was given
 /// and that the committed-history source was selected.
 ///
-/// It applies [`last_commit_fallback_applies`]'s guards at the diff level:
-/// the default range changes no file, no untracked or ignored routed source
-/// sits outside it, the default base names the checked-out branch with a
-/// parent, and the last commit changes a file. A guard that cannot be read
+/// Check stays the one authority on the rescope: once the cheap git guards
+/// hold (the default range is empty and its base names the checked-out
+/// branch with a parent), this runs the default check
+/// ([`super::gap_bound_repair::default_check_output`], which applies
+/// [`last_commit_fallback_applies`] and check's own retry acceptance) and
+/// reads its decision. Check's diff intake, size limits and exclusion of
+/// ripr's own artifacts therefore decide here too. Any step that cannot run
 /// keeps the default range, which is what these readers did before #16082.
-/// The diff level cannot see check's findings or its adapter-specific drop
-/// of never-analyzed untracked paths, so in those rare states it keeps the
-/// default range where check might still rescope; it never rescopes where
-/// check would not.
 pub(crate) fn last_commit_fallback_diff(
     root: &Path,
     default_text: &str,
     default_base: Option<&str>,
+    config: &crate::config::RiprConfig,
     git_timeout: Option<std::time::Duration>,
 ) -> Option<String> {
     if !crate::analysis::parse_unified_diff(default_text).is_empty() {
@@ -144,20 +144,18 @@ pub(crate) fn last_commit_fallback_diff(
     if !crate::analysis::base_is_checked_out_head_with_parent(root, base, git_timeout) {
         return None;
     }
-    let (untracked, ignored) =
-        crate::analysis::committed_source::untracked_and_ignored_routed_paths(root, git_timeout)
-            .ok()?;
-    if !untracked.is_empty() || !ignored.is_empty() {
+    let output = super::gap_bound_repair::default_check_output(root, None, config).ok()?;
+    if output.base.as_deref() != Some(LAST_COMMIT_BASE) {
         return None;
     }
-    let last = crate::analysis::load_diff_with_effective_base_core(
+    crate::analysis::load_diff_with_effective_base_core(
         root,
         Some(LAST_COMMIT_BASE),
         None,
         git_timeout,
     )
-    .ok()?;
-    (!crate::analysis::parse_unified_diff(&last.text).is_empty()).then_some(last.text)
+    .ok()
+    .map(|last| last.text)
 }
 
 #[cfg(test)]

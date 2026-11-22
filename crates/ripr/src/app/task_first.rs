@@ -3672,13 +3672,18 @@ fn live_check_diff_files(
             crate::analysis::load_diff_with_effective_base_core(root, base, None, None).ok()?;
         match base {
             Some(_) => loaded.text,
-            None => super::diff_source::last_commit_fallback_diff(
-                root,
-                &loaded.text,
-                loaded.effective_base.as_deref(),
-                None,
-            )
-            .unwrap_or(loaded.text),
+            None => crate::config::load_for_root(root)
+                .ok()
+                .and_then(|config| {
+                    super::diff_source::last_commit_fallback_diff(
+                        root,
+                        &loaded.text,
+                        loaded.effective_base.as_deref(),
+                        &config,
+                        None,
+                    )
+                })
+                .unwrap_or(loaded.text),
         }
     };
     Some(crate::analysis::parse_unified_diff(&text))

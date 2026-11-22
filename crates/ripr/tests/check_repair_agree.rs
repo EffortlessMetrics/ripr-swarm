@@ -120,9 +120,18 @@ impl Repo {
     }
 
     fn ripr_status(&self, args: &[&str]) -> Result<(Option<i32>, String), String> {
+        self.ripr_status_env(args, &[])
+    }
+
+    fn ripr_status_env(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<(Option<i32>, String), String> {
         let output: Output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .current_dir(&self.0)
             .args(args)
+            .envs(env.iter().copied())
             .output()
             .map_err(|e| e.to_string())?;
         Ok((
@@ -1185,6 +1194,51 @@ fn explicit_base_on_clean_default_branch_is_not_rescoped() -> Result<(), String>
     assert!(
         repair.contains("because nothing differs from `HEAD`"),
         "an explicit base must keep its own empty range:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #16082 controls: check stays the authority on the rescope. A last commit
+/// that check's own intake refuses (over the diff line limit) or does not
+/// count (only ripr's own reports) leaves check on its empty default range,
+/// and repair and pilot stay there too instead of scoping to the raw patch.
+#[test]
+fn last_commit_check_does_not_accept_keeps_repair_and_pilot_unscoped() -> Result<(), String> {
+    let over = Repo::create(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    over.write("README.md", &"line\n".repeat(20))?;
+    over.git(&["add", "README.md"])?;
+    over.git(&["commit", "-q", "--no-gpg-sign", "--amend", "--no-edit"])?;
+    let limit = [("RIPR_MAX_DIFF_CHANGED_LINES", "5")];
+    let (_, check) = over.ripr_status_env(&["check"], &limit)?;
+    assert!(
+        !check.contains("analyzed the last commit"),
+        "precondition, check's intake refuses the oversized last commit:\n{check}"
+    );
+    let (_, repair) = over.ripr_status_env(&["repair", "--root", "."], &limit)?;
+    assert!(
+        repair.contains("could not tell which lines you changed"),
+        "repair must stay on check's empty range:\n{repair}"
+    );
+
+    let reports = Repo::create_uncommitted(SUM_NEW, SUM_NEW, SUM_TEST)?;
+    std::fs::create_dir_all(reports.0.join("target/ripr/pilot")).map_err(|e| e.to_string())?;
+    reports.write("target/ripr/pilot/pilot-summary.md", "# report\n")?;
+    reports.git(&["add", "-f", "target/ripr/pilot/pilot-summary.md"])?;
+    reports.git(&["commit", "-q", "--no-gpg-sign", "-m", "reports"])?;
+    let check = reports.ripr(&["check"])?;
+    assert!(
+        !check.contains("analyzed the last commit"),
+        "precondition, check does not count ripr's own reports:\n{check}"
+    );
+    let repair = reports.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("could not tell which lines you changed"),
+        "repair must stay on check's empty range:\n{repair}"
+    );
+    let pilot = reports.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        !pilot.contains("HEAD~1"),
+        "pilot must not report the report-only commit as the change:\n{pilot}"
     );
     Ok(())
 }
