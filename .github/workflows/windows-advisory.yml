@@ -202,7 +202,6 @@ jobs:
             target/windows-integration-${{ matrix.part }}-run2.log
             target/windows-integration-${{ matrix.part }}-run2.status
           if-no-files-found: warn
-          retention-days: 14
 
   windows-advisory:
     name: windows-advisory

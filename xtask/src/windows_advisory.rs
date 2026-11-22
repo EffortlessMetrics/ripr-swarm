@@ -619,8 +619,8 @@ fn state_severity(state: RunState) -> u8 {
 /// The nightly splits `cargo test --workspace` across jobs by test target so
 /// each part fits its deadline. The parts are disjoint by construction, so a
 /// target that two parts both report is a broken split, not extra evidence:
-/// it is a provenance error and the sample is unusable. A single part is
-/// returned unchanged.
+/// it is a provenance error and the sample is unusable, and so is a part
+/// that started no target at all. A single part is returned unchanged.
 fn merge_parts(parts: Vec<(String, RunOutcome)>) -> RunOutcome {
     if parts.len() == 1 {
         return parts
@@ -639,6 +639,16 @@ fn merge_parts(parts: Vec<(String, RunOutcome)>) -> RunOutcome {
             merged
                 .provenance_errors
                 .push(format!("part {log} is {}", part.state.label()));
+        }
+        // A part that started no target handed over no test evidence: cargo
+        // did not start (status 127), or the part died in compile. Its state
+        // alone is a usable `compile_or_harness_failure`, and for doctests
+        // the build's executable list cannot show the gap, so the other
+        // parts must not carry the sample past it.
+        if part.state.is_usable() && part.targets.is_empty() {
+            merged
+                .provenance_errors
+                .push(format!("part {log} started no test target"));
         }
         // The largest status names the worst termination among the parts
         // (0 clean, 101 test or compile failure, 124 deadline, 127 not
@@ -3276,12 +3286,24 @@ mod tests {
         ]);
         assert_eq!(unknown.state, RunState::StatusMissing);
         assert_eq!(unknown.exit_status, None);
-        // A part that died in compile is not a product verdict for the sample.
-        let dead = merged(&[
-            ("1.log", &smoke_part("FAILED", ONE_FAIL), Some(101)),
-            ("a.log", "error: could not compile `xtask`\n", Some(101)),
-        ]);
-        assert_eq!(dead.state, RunState::CompileOrHarnessFailure);
+        // A part that died in compile, or whose cargo never started (the
+        // runner's status 127), started no target. The other parts cannot
+        // stand in for it: doctests are not in the build's executable list.
+        for (text, status) in [
+            ("error: could not compile `xtask`\n", 101),
+            ("windows-advisory-run: could not start cargo\n", 127),
+        ] {
+            let dead = merged(&[
+                ("1.log", &smoke_part("FAILED", ONE_FAIL), Some(101)),
+                ("doc.log", text, Some(status)),
+            ]);
+            assert_eq!(dead.state, RunState::IncompleteEvidence, "{text}");
+            assert_eq!(
+                dead.provenance_errors,
+                vec!["part doc.log started no test target".to_string()],
+                "{text}"
+            );
+        }
     }
 
     #[test]

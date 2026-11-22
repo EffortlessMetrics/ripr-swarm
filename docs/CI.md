@@ -831,11 +831,12 @@ normalization behavior surfaced only on a maintainer's local run.
   -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`, each in its
   own job (`macos-advisory-clippy`, `macos-advisory-lib-tests`) under the same
   40-minute limit: as steps of one job they were cancelled by it every night
-  from 2026-11-12, before the tests had finished compiling. Each check step
-  has a 34-minute deadline and the cache saves on failure, so a cold library
-  build that does not fit (about 45 minutes with its tests) fails that night
-  with its build cached, and the next run starts warm. The integration
-  suites are not part of this lane.
+  from 2026-11-12, before the tests had finished compiling. Clippy now
+  fits (25 to 30 minutes cold). The library tests do not yet: the `ripr` test
+  build alone takes about 30 minutes and its tests about 14, so that job
+  fails at its 34-minute step deadline as missing evidence until the build
+  and the run are separate jobs (#8391). The integration suites are not part
+  of this lane.
 - **Contract.** Clippy and test outcomes are advisory and appear in the job
   summary. A missing log or exit status, or a library run that executed zero
   tests, fails the job. It is not a required check.
