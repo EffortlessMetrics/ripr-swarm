@@ -23,7 +23,7 @@ sole string parameter, with unique string case labels and one numeric
 ripr check \
   --root fixtures/typescript_switch_return_weak_oracle/input \
   --diff fixtures/typescript_switch_return_weak_oracle/diff.patch \
-  --mode draft
+  --mode fast --json
 ```
 
 ## Then
