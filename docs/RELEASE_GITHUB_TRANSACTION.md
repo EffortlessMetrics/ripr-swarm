@@ -159,6 +159,7 @@ Everything else stops:
 
 | Observation | Stop |
 | --- | --- |
+| The inventory observed another repository or tag than the request names | `inventory_mismatch` |
 | Tag, releases or an asset's bytes could not be read | `remote_unavailable` |
 | Tag is lightweight, at another commit, or another tag object than the authorized one | `remote_conflict` |
 | Authorization profile, kind, request, commit, ref, tag object or subject set differs | `authorization_mismatch` |
