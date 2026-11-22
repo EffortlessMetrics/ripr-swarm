@@ -51,14 +51,12 @@ pub(super) fn typed_receiver_runs_trait_impl(
         return false;
     }
     let owner_trait = impl_trait_name_from_path(trait_path);
-    if a_standard_trait_names_the_method(owner.name.as_str(), owner_trait) {
+    if a_standard_trait_names_the_method(owner.name.as_str()) {
         return false;
     }
     if super::super::implicit_call::unindexed_impl_may_take_method_call(owner, owner_trait, index) {
         return false;
     }
-    // The rival scan reads workspace sources for renamings of a rival's self
-    // type, so it runs only for a test whose receiver the index has typed.
     inherent_receiver_call_resolves_with(
         test,
         owner.name.as_str(),
@@ -140,8 +138,7 @@ fn another_method_may_take_the_call(
         })
 }
 
-/// Whether a trait of the standard library other than the owner's own has a
-/// method of this name.
+/// Whether a trait of the standard library has a method of this name.
 ///
 /// The index lists workspace methods only. A standard trait reaches a
 /// workspace type through an impl or a blanket impl (`Into`, `IntoIterator`
@@ -149,13 +146,15 @@ fn another_method_may_take_the_call(
 /// are written nowhere in the workspace. Where one takes the receiver at an
 /// earlier probing step than the owner (`Iterator::count(self)` before a
 /// `fn count(&self)`), the call runs it. Reading that needs the type's whole
-/// impl set, so the name alone withholds the relation. A dependency's trait
-/// is not listed here and remains unread.
-fn a_standard_trait_names_the_method(name: &str, owner_trait: &str) -> bool {
+/// impl set, so the name alone withholds the relation. An owner that is the
+/// standard trait's own impl is withheld too: its trait is known here by its
+/// last path segment, which a workspace trait can share. A dependency's
+/// trait is not listed here and remains unread.
+fn a_standard_trait_names_the_method(name: &str) -> bool {
     let name = name.strip_prefix("r#").unwrap_or(name);
     STANDARD_TRAIT_METHODS
         .iter()
-        .any(|(standard_trait, methods)| *standard_trait != owner_trait && methods.contains(&name))
+        .any(|(_, methods)| methods.contains(&name))
 }
 
 /// Method names of standard library traits a workspace type commonly
@@ -387,25 +386,13 @@ const STANDARD_TRAIT_METHODS: &[(&str, &[&str])] = &[
 ];
 
 /// Whether a rival's self type is, or cannot be told from, `impl_type`. A
-/// rival under another name is the same type when that name is an alias or
-/// a renamed import (`type Tile = Square;`, `use crate::Square as Tile;`),
-/// so a source that writes either for the name is not told apart.
+/// rival under another name is another type only when the workspace declares
+/// a `struct`, `enum` or `union` of that name: an alias or a renamed import
+/// (`type Tile = Square;`, `use crate::Square as Tile;`) names the same type.
 fn on_the_same_type(self_ty: &str, impl_type: &str, index: &RustIndex) -> bool {
     compact_impl_type_name(self_ty).is_none_or(|rival| {
         rival == impl_type
-            || index.files().values().any(|facts| {
-                [format!("type {rival}"), format!("as {rival}")]
-                    .iter()
-                    .any(|renaming| {
-                        facts
-                            .source
-                            .match_indices(renaming.as_str())
-                            .any(|(at, _)| {
-                                !facts.source[at + renaming.len()..]
-                                    .starts_with(|ch: char| ch.is_alphanumeric() || ch == '_')
-                            })
-                    })
-            })
+            || !super::super::implicit_call::workspace_declares_type(&rival, index)
     })
 }
 

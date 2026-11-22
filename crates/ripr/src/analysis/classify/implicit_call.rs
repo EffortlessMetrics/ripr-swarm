@@ -1384,10 +1384,22 @@ pub(super) struct HiddenImpls {
     macro_definitions: std::collections::BTreeMap<String, Vec<MacroDefinition>>,
     /// Item-level invocations (macro name, words of the arguments).
     item_macro_invocations: Vec<(String, std::collections::BTreeSet<String>)>,
-    /// Macro calls in associated-item position (`impl Square { area!(); }`):
-    /// the impl's self type, the macro, the words of its arguments. A self
-    /// type that is not one plain name reads as "", which stands for any.
-    impl_macro_calls: Vec<(String, String, std::collections::BTreeSet<String>)>,
+    /// Macro calls in associated-item position of an impl or a trait
+    /// (`impl Square { area!(); }`): the impl's self type, the macro, the
+    /// words of its arguments. A trait body, and a self type that is not one
+    /// plain name, read as "", which stands for any type.
+    /// The second field is the trait the impl implements or the trait whose
+    /// body holds the call ("" for an inherent impl).
+    impl_macro_calls: Vec<(
+        String,
+        String,
+        String,
+        std::collections::BTreeSet<String>,
+    )>,
+    /// Names the workspace declares as a `struct`, `enum` or `union`. Any
+    /// other self-type name (an alias, a renamed import, a type a macro
+    /// declares) may stand for a declared type.
+    declared_types: std::collections::BTreeSet<String>,
 }
 
 /// What one macro definition's own text can put into its expansion.
@@ -1551,13 +1563,31 @@ impl HiddenImpls {
                 continue;
             };
             match &item {
-                ast::Item::Struct(it) => self.read_derives(it, it.name()),
-                ast::Item::Enum(it) => self.read_derives(it, it.name()),
-                ast::Item::Union(it) => self.read_derives(it, it.name()),
+                ast::Item::Struct(it) => {
+                    self.note_declared_type(it.name());
+                    self.read_derives(it, it.name());
+                }
+                ast::Item::Enum(it) => {
+                    self.note_declared_type(it.name());
+                    self.read_derives(it, it.name());
+                }
+                ast::Item::Union(it) => {
+                    self.note_declared_type(it.name());
+                    self.read_derives(it, it.name());
+                }
                 ast::Item::MacroRules(_) | ast::Item::MacroDef(_) => {
                     self.read_macro_definition(item.syntax());
                 }
-                ast::Item::Trait(it) => self.read_trait_defaults(it),
+                ast::Item::Trait(it) => {
+                    self.read_trait_defaults(it);
+                    // A macro can write a provided method any implementor
+                    // inherits, so it is read for every type.
+                    let trait_name = it
+                        .name()
+                        .map(|name| name.text().to_string())
+                        .unwrap_or_default();
+                    self.read_assoc_macro_calls(it.assoc_item_list(), String::new(), trait_name);
+                }
                 ast::Item::MacroCall(call) => {
                     // Expression and statement macros (`assert_eq!`) are not items.
                     let at_item_level = item.syntax().parent().is_some_and(|parent| {
@@ -1694,16 +1724,37 @@ impl HiddenImpls {
         }
     }
 
+    fn note_declared_type(&mut self, name: Option<ast::Name>) {
+        if let Some(name) = name {
+            let name = name.text().to_string();
+            self.declared_types
+                .insert(name.strip_prefix("r#").unwrap_or(&name).to_string());
+        }
+    }
+
     /// Macro calls that write associated items of an impl. The arguments need
     /// not name the type: the impl block supplies it.
     fn read_impl_macro_calls(&mut self, imp: &ast::Impl) {
-        let Some(items) = imp.assoc_item_list() else {
-            return;
-        };
         let self_type = imp
             .self_ty()
             .and_then(referent_type_name)
             .unwrap_or_default();
+        let trait_name = imp
+            .trait_()
+            .and_then(|t| referent_trait_name(&t))
+            .unwrap_or_default();
+        self.read_assoc_macro_calls(imp.assoc_item_list(), self_type, trait_name);
+    }
+
+    fn read_assoc_macro_calls(
+        &mut self,
+        items: Option<ast::AssocItemList>,
+        self_type: String,
+        trait_name: String,
+    ) {
+        let Some(items) = items else {
+            return;
+        };
         for item in items.assoc_items() {
             if let ast::AssocItem::MacroCall(call) = item {
                 let words = call
@@ -1713,6 +1764,7 @@ impl HiddenImpls {
                     .unwrap_or_default();
                 self.impl_macro_calls.push((
                     self_type.clone(),
+                    trait_name.clone(),
                     macro_call_name(&call).unwrap_or_default(),
                     words,
                 ));
@@ -1799,8 +1851,10 @@ impl HiddenImpls {
     ///   coherence keeps a blanket impl of that trait from covering a type
     ///   with its own impl.
     ///
-    /// A macro call in associated-item position of an impl for the type
-    /// counts by the same reading, whatever its arguments name.
+    /// A macro call in associated-item position counts by the same reading,
+    /// whatever its arguments name: in an impl for the type, in an impl whose
+    /// self type is not a declared type (it may be an alias of this one), and
+    /// in a trait body, whose provided methods any implementor inherits.
     ///
     /// Every other source answers as in [`Self::may_define`].
     fn may_define_method(&self, self_type: &str, name: &str, owner_trait: &str) -> bool {
@@ -1828,8 +1882,14 @@ impl HiddenImpls {
             || self
                 .impl_macro_calls
                 .iter()
-                .any(|(impl_type, macro_name, words)| {
-                    (impl_type.is_empty() || impl_type == self_type)
+                .any(|(impl_type, in_trait, macro_name, words)| {
+                    // The owner's trait has one impl per type and the owner
+                    // overrides its provided method, so its other impls and
+                    // its own body write nothing this receiver runs.
+                    (impl_type == self_type
+                        || (in_trait != owner_trait
+                            && (impl_type.is_empty()
+                                || !self.declared_types.contains(impl_type))))
                         && (words.contains(name)
                             || self.macro_may_write_fn(
                                 macro_name,
@@ -2045,6 +2105,17 @@ pub(super) fn unindexed_impl_may_take_method_call(
             owner.name.strip_prefix("r#").unwrap_or(&owner.name),
             owner_trait,
         )
+}
+
+/// Whether the workspace declares a `struct`, `enum` or `union` of this name.
+/// A self-type name it does not declare may be an alias or a renamed import
+/// of another type.
+pub(super) fn workspace_declares_type(name: &str, index: &RustIndex) -> bool {
+    index
+        .call_identity_memos
+        .hidden_impls(index)
+        .declared_types
+        .contains(name)
 }
 
 /// Whether the test body brings another item in under the impl type's name, by

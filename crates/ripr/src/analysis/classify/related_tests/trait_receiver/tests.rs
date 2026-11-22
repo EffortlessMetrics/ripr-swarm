@@ -156,6 +156,20 @@ fn another_method_of_the_name_on_the_type_withholds_the_relation() -> Result<(),
              impl BytesMut {\n    by_value!();\n}\n",
         ),
         (
+            "an alias written across lines, with a comment",
+            "pub type /* same type */\nBuffer = BytesMut;\nimpl Buffer {\n    pub fn advance_mut(self, _cnt: usize) {}\n}\n",
+        ),
+        (
+            "a macro call in an impl on an alias of the type",
+            "macro_rules! by_value {\n    () => {\n        pub fn advance_mut(self, _cnt: usize) {}\n    };\n}\n\
+             pub type Buffer = BytesMut;\nimpl Buffer {\n    by_value!();\n}\n",
+        ),
+        (
+            "a macro call in a trait body that writes a provided method",
+            "macro_rules! provided {\n    () => {\n        fn advance_mut(self, _cnt: usize) {}\n    };\n}\n\
+             pub trait Other: Sized {\n    provided!();\n}\nimpl Other for BytesMut {}\n",
+        ),
+        (
             "a second type of the same name",
             "pub mod other {\n    pub struct BytesMut;\n}\n",
         ),
@@ -314,8 +328,9 @@ fn a_macro_that_may_write_the_method_withholds_the_relation() -> Result<(), Stri
 
 /// A standard trait's provided method is written nowhere in the workspace,
 /// and `Iterator::count(self)` takes an owned `Shelf` before a workspace
-/// `fn count(&self)` does. The name alone withholds the relation; the same
-/// impl under another name, and the standard trait's own impl, keep it.
+/// `fn count(&self)` does. The name alone withholds the relation, also for
+/// an owner whose trait shares a standard trait's name; the same impl under
+/// another name keeps it.
 #[test]
 fn a_standard_trait_method_of_the_name_withholds_the_relation() -> Result<(), String> {
     let shelf = |method: &str| {
@@ -343,10 +358,14 @@ fn a_standard_trait_method_of_the_name_withholds_the_relation() -> Result<(), St
         "impl Stock for Shelf::on_hand",
         "let _ = Shelf::stocked(5).on_hand();"
     )?);
-    assert!(direct(
-        &shelf("on_hand"),
-        "impl Iterator for Shelf::next",
-        "let _ = Shelf::stocked(5).next();"
+    let local_into = "pub struct Shelf { left: usize }\n\
+        impl Shelf {\n    pub fn stocked(left: usize) -> Shelf { Shelf { left } }\n}\n\
+        pub trait Into {\n    fn into(&self) -> usize;\n}\n\
+        impl Into for Shelf {\n    fn into(&self) -> usize { self.left }\n}\n";
+    assert!(!direct(
+        local_into,
+        "impl Into for Shelf::into",
+        "let _: Shelf = Shelf::stocked(5).into();"
     )?);
     Ok(())
 }
