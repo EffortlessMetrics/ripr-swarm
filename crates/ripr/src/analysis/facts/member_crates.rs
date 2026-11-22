@@ -44,6 +44,16 @@ const TEST_DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "d
 /// and `[build-dependencies]` to the build script only (#11401).
 const LIBRARY_DEPENDENCY_TABLES: &[&str] = &["dependencies"];
 
+/// A package's manifest-declared `[lib] path` root (#14495), both paths
+/// relative to the analysis root.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CustomLibRoot {
+    /// The package directory, which other targets' paths are relative to.
+    pub(crate) package: PathBuf,
+    /// The library's crate root file.
+    pub(crate) crate_root: PathBuf,
+}
+
 /// Import names per (test file directory, owner crate root).
 type ImportNames = BTreeMap<(PathBuf, PathBuf), Vec<String>>;
 /// Foreign-export answers per (owner crate root, item name).
@@ -99,6 +109,9 @@ pub(crate) struct MemberCrates {
     /// Per root-relative file: [`Self::is_declared_test_only_entry`], so the
     /// related tests of one declared file read its manifest once per analysis.
     declared_test_only_entries: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
+    /// Per source directory: the custom `[lib] path` root of its nearest
+    /// package, read once per analysis (#14495).
+    custom_lib_roots: Arc<Mutex<BTreeMap<PathBuf, Option<CustomLibRoot>>>>,
 }
 
 impl MemberCrates {
@@ -112,6 +125,7 @@ impl MemberCrates {
             library_roots: Arc::default(),
             imported_macro_exports: Arc::default(),
             declared_test_only_entries: Arc::default(),
+            custom_lib_roots: Arc::default(),
         }
     }
 
@@ -371,6 +385,30 @@ impl MemberCrates {
             .get("lib")
             .is_some_and(|lib| lib.get("path").is_some())
             && is_library_root(&package, &crate_root)
+    }
+
+    /// The root-relative library root a manifest `[lib] path` names for the
+    /// package nearest `file`, when that path stays inside the package
+    /// (#14495). `None` for a default `src/lib.rs` library, an escaping or
+    /// non-string path, a virtual or unreadable manifest, or absent
+    /// manifest authority.
+    pub(crate) fn custom_lib_path_root_of(&self, file: &Path) -> Option<CustomLibRoot> {
+        let root = lexical(self.root.as_ref()?);
+        let file = lexical(&root.join(file));
+        let directory = file.parent()?.to_path_buf();
+        if let Some(known) = self
+            .custom_lib_roots
+            .lock()
+            .ok()
+            .and_then(|known| known.get(&directory).cloned())
+        {
+            return known;
+        }
+        let answer = custom_lib_path_root_in(&root, &directory);
+        if let Ok(mut known) = self.custom_lib_roots.lock() {
+            known.insert(directory, answer.clone());
+        }
+        answer
     }
 
     /// An established binary root cannot export macros to another crate,
@@ -1463,6 +1501,28 @@ fn import_name(
         None if normalized(key) == normalized(owner_name) => Some(library.to_string()),
         None => None,
     }
+}
+
+/// [`MemberCrates::custom_lib_path_root_of`] for a source directory, uncached.
+fn custom_lib_path_root_in(root: &Path, directory: &Path) -> Option<CustomLibRoot> {
+    // Read the manifest where the analyzed sources are read, so a dirty
+    // `[lib] path` cannot move a committed-source root.
+    let (package, _) = nearest_package_snapshot(root, directory, true)?;
+    let relative = lexical(Path::new(
+        package.manifest.get("lib")?.get("path")?.as_str()?,
+    ));
+    if !relative
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)))
+        || relative == Path::new("src").join("lib.rs")
+    {
+        return None;
+    }
+    let crate_root = package.directory.join(relative);
+    Some(CustomLibRoot {
+        package: package.directory.strip_prefix(root).ok()?.to_path_buf(),
+        crate_root: crate_root.strip_prefix(root).ok()?.to_path_buf(),
+    })
 }
 
 /// The nearest package manifest at or above `directory` inside `root`, plus

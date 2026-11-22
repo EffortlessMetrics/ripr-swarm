@@ -1,0 +1,3 @@
+crates/ripr/src/analysis/pipeline.rs|language `{}` is not available in this ripr binary; {}
+crates/ripr/src/analysis/pipeline.rs|worktree diff mode cannot be combined with --diff
+crates/ripr/src/analysis/pipeline.rs|{ADAPTER_PANIC_REASON_PREFIX}the {} adapter stopped on an internal error while analyzing this workspace; its f

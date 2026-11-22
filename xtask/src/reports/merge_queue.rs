@@ -79,6 +79,9 @@ struct CaptureSnapshot {
 }
 
 pub(crate) fn merge_queue(args: &[String]) -> Result<(), String> {
+    if args.first().is_some_and(|arg| arg == "conflict-notice") {
+        return conflicts::notice::run(&args[1..]);
+    }
     if args.first().is_some_and(|arg| arg == "conflicts") {
         return conflicts::run(&args[1..]);
     }
