@@ -3,20 +3,7 @@
 ## Pending — rust_bin_autobins_false_skipped (1)
 
 Reason:
-RIPR-SPEC-0356: skipped cargo test target honesty corpus rows and controls (#15012)
-
-Command:
-`cargo xtask goldens bless rust_bin_autobins_false_skipped --reason "RIPR-SPEC-0356: skipped cargo test target honesty corpus rows and controls (#15012)"`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — rust_bin_autobins_false_skipped (2)
-
-Reason:
-RIPR-SPEC-0356: refresh the skipped-target and runnable-control projections against current main (#15012)
+RIPR-SPEC-0356: an undeclared target under autobins/autolib = false yields no probe after target discovery #15892 (#15012)
 
 Command:
 `cargo xtask goldens bless rust_bin_autobins_false_skipped --reason "..."`
@@ -24,4 +11,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-- `expected/human-full.txt`

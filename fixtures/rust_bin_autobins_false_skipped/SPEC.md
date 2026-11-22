@@ -9,7 +9,8 @@ Issue: #15012
 ## Given
 
 `autobins = false` with no `[[bin]]` entry means `src/main.rs` is not a Cargo
-target, so its `#[cfg(test)]` unit tests never run under `cargo test`.
+target. Target discovery (#15892) drops it, so the changed file is seen but
+yields no probe.
 
 ## When
 
@@ -17,8 +18,11 @@ target, so its `#[cfg(test)]` unit tests never run under `cargo test`.
 
 ## Then
 
-The return-value finding stays `no_static_path` and must not promote.
+The report counts one changed Rust file and zero findings. Nothing promotes.
+The analysis outcome is incomplete and names the unreached file as a limitation,
+so the zero is not reported as a clean result.
 
 ## Must Not
 
 - Credit unit tests in an undiscovered `src/main.rs` under `autobins = false`.
+- Report a finding for a file that is not a Cargo target.

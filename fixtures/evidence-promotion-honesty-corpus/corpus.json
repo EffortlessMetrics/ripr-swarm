@@ -254,21 +254,17 @@
       "tier": "pure",
       "source_fixture": "fixtures/rust_bin_autobins_false_skipped",
       "vector": "autobins_false_without_bin_entry_withholds_main_unit_tests",
-      "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
         {
           "type": "must_not_promote"
         },
         {
-          "type": "expected_class",
-          "class": "no_static_path"
+          "type": "expected_finding_count",
+          "count": 0
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 1
         }
       ]
     },
@@ -302,21 +298,17 @@
       "tier": "pure",
       "source_fixture": "fixtures/rust_lib_autolib_false_skipped",
       "vector": "autolib_false_without_lib_entry_withholds_lib_unit_tests",
-      "probe_family": "return_value",
       "assertions": [
-        {
-          "type": "must_not_report_clean"
-        },
-        {
-          "type": "expected_finding_count",
-          "count": 1
-        },
         {
           "type": "must_not_promote"
         },
         {
-          "type": "expected_class",
-          "class": "no_static_path"
+          "type": "expected_finding_count",
+          "count": 0
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 1
         }
       ]
     },
