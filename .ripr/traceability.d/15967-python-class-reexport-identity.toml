@@ -1,0 +1,16 @@
+# RIPR-SPEC-0028: a method owner's class identity follows its package re-exports (#15967).
+[[extend]]
+id = "RIPR-SPEC-0028"
+tests = [
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_class_imported_from_its_module_or_reexporting_package_binds_the_receiver",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_same_named_class_from_another_module_is_not_the_owner_class",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_package_that_binds_another_class_under_the_name_does_not_identify_the_owner",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_class_name_the_module_defines_twice_is_not_followed_through_a_reexport",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_literal_instance_fixture_resolves_through_a_reexported_class",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_fixture_built_from_another_class_keeps_the_limit",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_scope_import_that_may_bring_a_fixture_keeps_the_limit",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_rival_project_package_of_the_same_name_does_not_identify_the_owner",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_package_name_taken_from_its_parent_is_not_a_class_receiver",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_fixture_read_off_a_parent_package_keeps_the_limit",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::only_standard_library_names_are_standard_library_modules",
+]
