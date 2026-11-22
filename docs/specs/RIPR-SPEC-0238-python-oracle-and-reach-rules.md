@@ -325,6 +325,27 @@ one changed raise only (#12952); the general class-only table row stays weak.
    with missing discriminator `class attribute <name> text "<new text>"`.
    A decorated or multi-line constant and a non-string value keep the
    existing verdict.
+   Recorded private container (#16010): when the changed line rewrites a
+   `self._name.<mutator>(..)` statement (`append`, `appendleft`, `extend`,
+   `extendleft`, `insert`, `add`, `update`) of an ordinary method, the edit
+   changes what the object holds, not what the method returns. It is
+   `weakly_exposed` with missing discriminator `a read of self.<name> after
+   <method> runs` when no oracle-eligible related test names the container or
+   a function that reads it. Readers are the functions and methods of the
+   same file whose body names the container as a whole word, closed over
+   same-file functions that name a reader. The existing verdict is kept when
+   the readers cannot be listed from the file: the name is public or a
+   dunder; the line is added without an old side; the method is decorated or
+   a dunder; the class has bases other than `object`, keywords or decorators;
+   the container is not seeded in `__init__` by a fresh empty collection
+   (`[]`, `{}`, `set()`, `list()`, `dict()`, `deque()`), or is named outside
+   a function body; the method names the container on another line, names
+   `self` other than as an attribute receiver, or is itself reached from a
+   reader; a dunder method is a reader; the file uses `getattr`, `setattr`,
+   `vars` or `__dict__`; or a related test uses a fixture, a setup receiver
+   or a value helper. A reader in another file is not seen, which is why only
+   single-underscore names are read. Module-level containers (`LOG.append`)
+   and public attributes keep the call-based reading of #9421.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns

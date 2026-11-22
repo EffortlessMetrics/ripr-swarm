@@ -5895,7 +5895,10 @@ mod tests {
         // strong assertions that carry no literal telling the old message
         // from the new; its weak card is one more direct-aligned card. The
         // multi-line conjunct control is `exposed` and carries none.
-        if (direct, no_strong, orthogonal, family_selection) != (26, 36, 49, 2) {
+        // #16010: `python_self_container_record_unread_no_exposed_credit`
+        // downgrades a recorded value no test reads back; its weak card
+        // names the read of `self._seen`, one more direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (27, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

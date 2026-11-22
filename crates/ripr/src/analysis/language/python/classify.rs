@@ -40,6 +40,7 @@ use super::related_tests::{
     verify_command_for_test,
 };
 use super::row_miss::{RowMissChange, annotate_row_misses};
+use super::self_container_reader;
 use super::sink_alignment::{
     AlignmentPrep, CreditedAssertion, SinkAlignment, classify_sink_alignment_prepared,
     enclosing_literal_pair,
@@ -1399,6 +1400,25 @@ fn classify_change_for_owner_inner<'a>(
             )
         })
         .flatten();
+    // Recorded-container reader gate (#16010): a rewritten
+    // `self._name.append(..)` is observed only by a test that reads the
+    // container or calls something that reads it. A pin on the method's own
+    // result reaches the owner without observing what it records. Shapes
+    // whose readers cannot be listed from this file fail open.
+    let self_container_gap = static_limit
+        .is_none()
+        .then(|| {
+            self_container_reader::python_self_container_reader_gap(
+                line_text,
+                old_line_text,
+                owner,
+                owners,
+                owner_source,
+                line,
+                &related_candidates,
+            )
+        })
+        .flatten();
     // #13622: an old-type exact assertion after a raised-type replacement is
     // recorded as advisory evidence only; it never changes the class here. The
     // gap-bound repair closure reads it (RIPR-SPEC-0310).
@@ -1419,6 +1439,7 @@ fn classify_change_for_owner_inner<'a>(
     };
     let mut message_pin_downgraded = false;
     let mut class_attr_downgraded = false;
+    let mut self_container_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
     // The same gate evaluates simple integer arithmetic per row so a 20xx
@@ -1687,6 +1708,7 @@ fn classify_change_for_owner_inner<'a>(
         && guarded_arm_gap.is_none()
         && message_pin_gap.is_none()
         && class_attr_gap.is_none()
+        && self_container_gap.is_none()
         && unvaried_table.is_none()
         && band_gap.is_none()
     {
@@ -1785,6 +1807,23 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![message],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(gap) = self_container_gap.as_ref()
+    {
+        // A strong oracle pins the method's result, but no related test
+        // reads the container the changed line records into (#16010).
+        self_container_downgraded = true;
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but {}. {}",
+                owner.name, gap.reason, gap.advice,
+            )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
@@ -2122,6 +2161,18 @@ fn classify_change_for_owner_inner<'a>(
             // input would need to satisfy, with the reason listing the values
             // the strong related calls actually bind.
             guarded_arm_gap
+                .as_ref()
+                .map(|gap| {
+                    MissingDiscriminatorFact::equality_spelled(
+                        gap.discriminator.clone(),
+                        gap.reason.clone(),
+                        flow_sink.clone(),
+                    )
+                })
+                .into_iter()
+                .collect()
+        } else if self_container_downgraded {
+            self_container_gap
                 .as_ref()
                 .map(|gap| {
                     MissingDiscriminatorFact::equality_spelled(

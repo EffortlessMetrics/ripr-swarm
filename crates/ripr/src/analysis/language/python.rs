@@ -437,6 +437,9 @@ mod row_discriminator_coverage;
 mod row_discriminator_coverage_tests;
 mod row_miss;
 mod row_reach;
+mod self_container_reader;
+#[cfg(test)]
+mod self_container_reader_tests;
 mod setup_receivers;
 mod sink_alignment;
 mod source_facts;

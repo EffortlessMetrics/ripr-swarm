@@ -1,0 +1,8 @@
+diff --git a/src/lib.py b/src/lib.py
+--- a/src/lib.py
++++ b/src/lib.py
+@@ -6,3 +6,3 @@
+     def tick(self, n):
+-        self._seen.append(n)
++        self._seen.append(n + 1)
+         return self.hours + n

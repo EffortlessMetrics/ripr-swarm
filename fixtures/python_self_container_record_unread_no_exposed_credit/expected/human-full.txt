@@ -1,0 +1,86 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_self_container_record_unread_no_exposed_credit/input
+config: <cwd>/fixtures/python_self_container_record_unread_no_exposed_credit/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/lib.py:7
+  id: probe:src_lib.py:python_preview:e45e6085
+
+Changed
+  after:          self._seen.append(n + 1)
+
+Change type
+  a side effect changed
+  family: side_effect
+  delta:  effect (changes a side effect)
+  owner:  python:src/lib.py::Clock.tick
+  gap id (for scripts): gap:python:src/lib.py:Clock.tick:call_or_output_effect:side_effect:self._seen.append_n+1
+
+Language
+  language: python
+  status: preview
+  owner kind: method
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `tick`
+  - infection yes: Changed Python call or output effect can alter observable side effects: `self._seen.append(n + 1)`
+  - propagation weak: Changed Python call/output behavior can propagate through side effects; runtime target resolution is not inferred
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches call effect: self._seen.append(n + 1) (line 7)
+  - related test tests/test_lib.py:4 test_tick uses strong exact value oracle: assert Clock(1).tick(2) == 3
+
+Weakness
+  - A strong Python oracle reaches `tick`, but no related test reads `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the tests pin the result of `tick` without observing what it records. Add an assertion on a function that reads `_seen` after calling `tick`
+  - missing discriminator a read of `self._seen` after `tick` runs: no related test reads `self._seen` or calls a function that reads it (it is read through `count`, `total`), so the tests pin the result of `tick` without observing what it records
+
+Next step
+  Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `a read of `self._seen` after `tick` runs`
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/lib.py:Clock.tick:call_or_output_effect:side_effect:self._seen.append_n+1
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: Clock.tick
+  changed behavior: call_or_output_effect changed at src/lib.py:7: `self._seen.append(n + 1)`
+  current test evidence: tests/test_lib.py:4 test_tick currently has oracle_strength=strong, oracle_kind=exact_value: assert Clock(1).tick(2) == 3
+  missing discriminator: a read of `self._seen` after `tick` runs
+  recommended test shape: Strengthen the existing pytest output/log/call-effect assertion for `a read of `self._seen` after `tick` runs`.
+  suggested assertion: Assert the changed output, log text, or call effect for `a read of `self._seen` after `tick` runs`.
+  suggested file: tests/test_lib.py
+  suggested test: test_tick
+  pytest node: tests/test_lib.py::test_tick
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_self_container_record_unread_no_exposed_credit/input && python -m pytest tests/test_lib.py::test_tick) (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_self_container_record_unread_no_exposed_credit/input --diff <cwd>/fixtures/python_self_container_record_unread_no_exposed_credit/diff.patch --mode fast probe:src_lib.py:python_preview:e45e6085
+  ripr context --root <cwd>/fixtures/python_self_container_record_unread_no_exposed_credit/input --diff <cwd>/fixtures/python_self_container_record_unread_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.py:python_preview:e45e6085
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
