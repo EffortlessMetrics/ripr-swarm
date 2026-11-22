@@ -143,27 +143,25 @@ mod tests {
         (end, count)
     }
 
-    /// #16091: a waiter parked before the mark and one that arrives after it
-    /// both resolve; before the mark neither does.
+    /// #16091: a waiter that is already parked when the mark arrives is
+    /// woken, and a waiter that arrives after it resolves at once. The parked
+    /// waiter is one future, polled to `Pending` before the mark and awaited
+    /// after it, so the wake-up is checked without relying on task scheduling.
     #[tokio::test]
     async fn session_ended_releases_waiters_parked_before_and_after_the_mark() -> Result<(), String>
     {
         let ended = SessionEnded::default();
-        let early = tokio::time::timeout(std::time::Duration::from_millis(50), ended.wait()).await;
+        let mut parked = Box::pin(ended.wait());
+        let early =
+            tokio::time::timeout(std::time::Duration::from_millis(50), parked.as_mut()).await;
         if early.is_ok() {
             return Err("a session that has not ended must not release waiters".to_string());
         }
-        let parked = {
-            let ended = ended.clone();
-            tokio::spawn(async move { ended.wait().await })
-        };
-        tokio::task::yield_now().await;
         ended.mark();
         ended.mark();
         tokio::time::timeout(std::time::Duration::from_secs(5), parked)
             .await
-            .map_err(|_elapsed| "the parked waiter was not released".to_string())?
-            .map_err(|err| err.to_string())?;
+            .map_err(|_elapsed| "the parked waiter was not released".to_string())?;
         tokio::time::timeout(std::time::Duration::from_secs(5), ended.wait())
             .await
             .map_err(|_elapsed| "a waiter after the mark was not released".to_string())
