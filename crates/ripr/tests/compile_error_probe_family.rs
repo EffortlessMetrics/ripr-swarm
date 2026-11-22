@@ -240,3 +240,28 @@ fn a_literal_sharing_the_line_keeps_its_runtime_family() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Review of #16134: the same holds when the invocation is split and the
+/// literal sits after its closing delimiter, for a string and for a char.
+#[test]
+fn a_literal_after_a_split_invocation_keeps_its_runtime_family() -> Result<(), String> {
+    for (ty, old, new) in [("&'static str", "\"old\"", "\"new\""), ("char", "'o'", "'n'")] {
+        let lib = format!(
+            "pub fn name() -> {ty} {{\n    #[cfg(any())]\n    compile_error!(\n        \"unsupported\"\n    ); {new}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn named() {{\n        assert_eq!(name(), {new});\n    }}\n}}\n"
+        );
+        let findings = findings_for(
+            &lib,
+            &format!(
+                "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,4 +3,4 @@\n     compile_error!(\n         \"unsupported\"\n-    ); {old}\n+    ); {new}\n }}\n"
+            ),
+        )?;
+        assert!(
+            families_on(&findings, 5)
+                .iter()
+                .any(|family| *family != ProbeFamily::StaticUnknown),
+            "{ty}: {}",
+            describe(&findings)
+        );
+    }
+    Ok(())
+}
