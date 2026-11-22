@@ -137,6 +137,7 @@ mod local_constant_tests;
 mod lookup_table_guard;
 mod loop_bound_guard;
 mod match_object_guard;
+mod method_replacement_guard;
 mod mock_payload_guard;
 mod module_entries;
 mod module_value_reads;
@@ -185,6 +186,7 @@ mod row_miss;
 mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
+mod setup_file_mocks;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
@@ -1128,6 +1130,15 @@ impl TypeScriptAdapter {
             alias_map_ref,
             is_test_file,
             &export_facts_by_file,
+        );
+
+        // A mock a runner setup file registers applies to every test the
+        // config governs, exactly like a mock in the test's own file.
+        setup_file_mocks::apply_setup_file_mocks(
+            &options.root,
+            &workspace_files,
+            &source_cache,
+            &mut all_tests,
         );
 
         // A named import of `export * as ns from` reads as the namespace import
