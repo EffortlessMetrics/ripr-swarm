@@ -3190,6 +3190,22 @@ pub(in crate::analysis) fn bare_owner_call_settles_on_owner(
     })
 }
 
+/// #15278: whether some call of the owner's name in `test` settles on the
+/// owner alone through the solo identity: a path spelled through a crate
+/// name the test's package imports the owner's library by
+/// (`wscore::discount(..)`), or a bare call bound by an import from it. A
+/// call spelled through another crate (`pricing::discount(..)`) or bound
+/// by an import from one settles elsewhere, and an unsettled reading does
+/// not count. Only a free owner has such an identity.
+pub(in crate::analysis) fn test_call_settles_on_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    shared_solo_owner_call_identity(index, owner)
+        .is_some_and(|identity| identity.resolve_test(test, index) == CallTarget::Owner)
+}
+
 /// Whether a bare call of the owner's name may supply a boundary input.
 /// With same-named rivals the call must settle on the owner; without rivals
 /// only a settled-away (`Other`) reading declines, while an unsettled

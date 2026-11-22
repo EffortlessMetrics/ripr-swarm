@@ -1467,6 +1467,12 @@ fn pilot_credits_a_direct_call_from_a_test_in_another_package() -> Result<(), St
             && !pilot.contains("no test is seen calling"),
         "pilot must not say no test reaches code check sees t1 reach:\n{pilot}"
     );
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2") && line.contains("tests only loosely check this")
+        }),
+        "pilot relates t1 to the comparison as a reaching test:\n{pilot}"
+    );
     Ok(())
 }
 
@@ -1500,6 +1506,105 @@ fn pilot_keeps_the_package_guard_when_the_function_name_is_shared() -> Result<()
                 && line.contains("ripr found no test that reaches this")
         }),
         "the shared name keeps wscore's comparison unreached:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// The same credit for a bare call bound by `use wscore::discount;`: the
+/// import names the owner's crate, so the call settles on the owner.
+#[test]
+fn pilot_credits_a_bare_call_imported_from_the_owners_crate() -> Result<(), String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            (
+                "app/tests/t.rs",
+                "use wscore::discount;\n\n#[test]\nfn t1() {\n    assert!(discount(5) > 0);\n}\n",
+            ),
+        ],
+        WS_NEW,
+        true,
+    )?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2") && line.contains("tests only loosely check this")
+        }),
+        "pilot relates the imported bare call to the comparison:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// `app` also depends on a registry crate `pricing`, and the test calls
+/// `pricing::discount`. That call names another crate, so it cannot reach
+/// `wscore::discount` and the package guard stands although the name is
+/// unique in the workspace.
+#[test]
+fn pilot_keeps_the_package_guard_for_a_call_through_another_crate() -> Result<(), String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_WITH_PRICING_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            (
+                "app/tests/t.rs",
+                "#[test]\nfn t1() {\n    assert!(pricing::discount(5) > 0);\n}\n",
+            ),
+        ],
+        WS_NEW,
+        true,
+    )?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert_comparison_unreached(&pilot)
+}
+
+/// `wscore::discount` is private, and the test imports `discount` from
+/// `pricing`. The bare call is bound by that import, so it cannot reach the
+/// private owner and the package guard stands.
+#[test]
+fn pilot_keeps_the_package_guard_for_a_bare_call_imported_from_another_crate() -> Result<(), String>
+{
+    let private_old = WS_OLD.replacen("pub fn discount", "fn discount", 1) + WS_TOTAL;
+    let private_new = WS_NEW.replacen("pub fn discount", "fn discount", 1) + WS_TOTAL;
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_WITH_PRICING_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", &private_old),
+            (
+                "app/tests/t.rs",
+                "use pricing::discount;\n\n#[test]\nfn t1() {\n    assert!(discount(5) > 0);\n}\n",
+            ),
+        ],
+        &private_new,
+        true,
+    )?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert_comparison_unreached(&pilot)
+}
+
+const WS_APP_WITH_PRICING_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\npricing = \"1\"\n";
+const WS_TOTAL: &str = "pub fn total(price: u32) -> u32 {\n    discount(price)\n}\n";
+
+fn assert_comparison_unreached(pilot: &str) -> Result<(), String> {
+    assert!(
+        pilot.contains("wscore/src/lib.rs:2"),
+        "precondition, pilot ranks the changed comparison:\n{pilot}"
+    );
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2")
+                && line.contains("ripr found no test that reaches this")
+        }),
+        "a call that names another crate leaves the comparison unreached:\n{pilot}"
     );
     Ok(())
 }
