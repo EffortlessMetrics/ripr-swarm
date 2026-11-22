@@ -6404,11 +6404,7 @@ fn loop_namespace_member_call(
 ) -> bool {
     !owner.exported_as_default
         && test.scope_bindings.iter().any(|binding| {
-            binding.name == owner.name
-                && binding
-                    .namespace_member_of
-                    .iter()
-                    .any(|namespace| *namespace == import.local)
+            binding.name == owner.name && binding.namespace_member_of.contains(&import.local)
         })
         && contains_call_name(&test.body_text, &owner.name)
         && !local_identifier_declared_in_test_body(&test.body_text, &owner.name)
