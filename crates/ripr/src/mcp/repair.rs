@@ -3425,9 +3425,10 @@ pub(super) mod tests {
             .display()
             .to_string();
         // Compare against serialized JSON in its escaped form: a Windows root
-        // (`D:\a\...`) serializes with doubled backslashes, so the raw
-        // spelling never occurs in the document text (#16105). On Windows
-        // that made the positive control fail and both leak checks vacuous.
+        // (drive letter, backslash separators) serializes with doubled
+        // backslashes, so the raw spelling never occurs in the document text
+        // (#16105). On Windows that made the positive control fail and both
+        // leak checks vacuous.
         let json_spelling = |text: &str| -> String {
             let quoted = Value::String(text.to_string()).to_string();
             quoted
@@ -3471,8 +3472,8 @@ pub(super) mod tests {
         let mut fixture_roots = vec![root_text.clone(), canonical_text.clone()];
         if cfg!(windows) {
             // The repair-attempt binding records the root with `/` separators
-            // (`D:/a/...`, the bound-root display rule, #4287), so the naive
-            // rewrite matches that spelling too (#16105).
+            // (the bound-root display rule, #4287), so the naive rewrite
+            // matches that spelling too (#16105).
             let forward: Vec<String> = fixture_roots
                 .iter()
                 .map(|spelling| spelling.replace('\\', "/"))

@@ -4700,9 +4700,10 @@ fn assert_already_complete_summary(
         }
     }
     // The printed root is the bound root, shell-quoted for this host: on
-    // Windows it renders with `/` separators (#4287), so `D:\a\b` prints as
-    // `D:/a/b` (#16105). Decode each command the way its shell would and
-    // compare the argument as a path, not as the bytes the test passed in.
+    // Windows it renders with `/` separators (#4287), so a backslash-separated
+    // drive root prints with forward slashes (#16105). Decode each command
+    // the way its shell would and compare the argument as a path, not as the
+    // bytes the test passed in.
     for (index, command) in [(4, "Next"), (5, "Full status")] {
         let printed = lines[index]
             .split('`')
