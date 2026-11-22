@@ -848,10 +848,11 @@ fn wait_for_linux_group_quiescence(group: u32, deadline: Instant) -> std::io::Re
 
 /// Whether this kernel answers a group signal with `EPERM` when every
 /// remaining member is a zombie. Darwin's `kill(2)` skips zombies while it
-/// walks the group and reports `EPERM`, not `ESRCH`, when it found no member
-/// to signal; Linux reports `ESRCH`. Our unreaped leader is exactly such a
-/// zombie once it has exited, so on Darwin an exited childless tree returns
-/// `EPERM` (#16104).
+/// walks the group and reports `EPERM` when it found no member to signal;
+/// Linux delivers the signal to the zombie and succeeds, and answers `ESRCH`
+/// only once the group is gone. Our unreaped leader is exactly such a zombie
+/// once it has exited, so on Darwin an exited childless tree returns `EPERM`
+/// (#16104).
 #[cfg(unix)]
 const ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM: bool = cfg!(target_vendor = "apple");
 

@@ -3586,13 +3586,17 @@ mod tests {
         Ok(())
     }
 
-    // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
-    // #16104), so the stimulus cannot exist on an Apple host.
-    #[cfg(all(unix, not(target_vendor = "apple")))]
+    #[cfg(unix)]
     #[test]
     fn project_root_keeps_exact_git_path_bytes() -> Result<(), String> {
         use std::os::unix::ffi::OsStringExt;
-        for name in [b" whitespace \n".to_vec(), b"non-utf8-\xff".to_vec()] {
+        let mut names = vec![b" whitespace \n".to_vec()];
+        // APFS and HFS+ refuse a file name that is not valid UTF-8 (EILSEQ,
+        // #16104), so that stimulus cannot exist on an Apple host.
+        if !cfg!(target_vendor = "apple") {
+            names.push(b"non-utf8-\xff".to_vec());
+        }
+        for name in names {
             let outer = outside_workspace_fixture("project-root-exact-bytes")?;
             let repo = outer.join(std::ffi::OsString::from_vec(name));
             let nested = repo.join("src");

@@ -25103,6 +25103,8 @@ async fn unanalyzed_hover_text(
             "user.name=ripr",
             "-c",
             "user.email=ripr@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
             "commit",
             "-q",
             "--allow-empty",
