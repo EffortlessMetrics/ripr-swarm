@@ -296,6 +296,15 @@ pub(crate) fn names_subject(stdout: &[u8], subject: &ExpectedSubject) -> bool {
     })
 }
 
+/// Create `directory`, failing if it exists, readable only by this user
+/// where the platform supports modes: a draft release's assets are private.
+fn private_dir(directory: &std::path::Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(directory)
+}
+
 /// `gh attestation verify` over the downloaded bytes, written to a private
 /// temporary directory under the subject's own name.
 pub(crate) struct GhAttestation;
@@ -313,20 +322,28 @@ impl ProvenanceCheck for GhAttestation {
             subject.sha256
         ));
         let file = directory.join(&subject.name);
-        let written = fs::create_dir(&directory).and_then(|()| fs::write(&file, bytes));
+        let cert_identity = format!(
+            "https://github.com/{}@{}",
+            request.provenance.signer_workflow, request.provenance.source_ref
+        );
+        let written = private_dir(&directory).and_then(|()| fs::write(&file, bytes));
         let output = written.and_then(|()| {
             Command::new("gh")
                 .args(["attestation", "verify"])
                 .arg(&file)
                 .args(["--hostname", "github.com", "--format", "json"])
                 .args(["--repo", &request.repository])
-                .args(["--signer-workflow", &request.provenance.signer_workflow])
+                // Exact certificate identity: `--signer-workflow` is matched
+                // as a regular-expression prefix, so a sibling workflow whose
+                // path starts the same way would also pass.
+                .args(["--cert-identity", &cert_identity])
                 .args(["--source-ref", &request.provenance.source_ref])
                 .args(["--source-digest", &request.candidate_sha])
                 .args(["--deny-self-hosted-runners"])
                 .output()
         });
-        // Best effort: a leftover file holds only bytes that are already public.
+        // Best effort. The directory is private to this user, and a draft
+        // release's bytes are not public yet.
         let _removed = fs::remove_dir_all(&directory);
         match output {
             Ok(output) if output.status.success() && names_subject(&output.stdout, subject) => {
@@ -360,6 +377,7 @@ pub(crate) fn observe(
         return RemoteInventory {
             repository: request.repository.clone(),
             tag_name: request.tag.clone(),
+            provenance: request.provenance.clone(),
             tag: TagObservation::Unavailable {
                 reason: reason.clone(),
             },
@@ -377,6 +395,7 @@ pub(crate) fn observe(
             return RemoteInventory {
                 repository: request.repository.clone(),
                 tag_name: request.tag.clone(),
+                provenance: request.provenance.clone(),
                 tag,
                 releases: ReleasesObservation::Unavailable { reason },
                 attestations: unchecked(),
@@ -403,6 +422,7 @@ pub(crate) fn observe(
     RemoteInventory {
         repository: request.repository.clone(),
         tag_name: request.tag.clone(),
+        provenance: request.provenance.clone(),
         tag,
         releases: ReleasesObservation::Listed { releases },
         attestations,

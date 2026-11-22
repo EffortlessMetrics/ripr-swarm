@@ -87,6 +87,7 @@ fn inventory(
     states: &[RegistryObservation],
 ) -> RegistryInventory {
     RegistryInventory {
+        request_id: request.request_id().unwrap_or_default(),
         packages: request
             .packages
             .iter()
@@ -251,6 +252,12 @@ fn a_public_version_with_other_bytes_or_yanked_stops_before_any_upload() -> Resu
             StopKind::ImmutableConflict,
             "{label}"
         );
+        // A conflicting version is public, so nothing_published would be false.
+        assert_eq!(
+            planned.aggregate,
+            AggregateState::PartialPublicationHold,
+            "{label}"
+        );
     }
     Ok(())
 }
@@ -323,6 +330,21 @@ fn the_attempt_record_is_matched_by_registry_name_and_bound_to_the_set() -> Resu
     assert_eq!(
         stop_of(&decide(&request, &auth, &facade).decision)?,
         StopKind::AttemptConsumed
+    );
+    // An inventory observed for another version of the same crates says
+    // nothing about this one: an absence there is not an absence here.
+    let mut other_version = split()?;
+    for package in &mut other_version.packages {
+        package.version = "0.11.1".to_string();
+    }
+    other_version.package_set_sha256 = package_set_sha256(&other_version.packages)?;
+    let elsewhere = inventory(
+        &other_version,
+        &[RegistryObservation::Absent, RegistryObservation::Absent],
+    );
+    assert_eq!(
+        stop_of(&decide(&request, &auth, &elsewhere).decision)?,
+        StopKind::InventoryRejected
     );
     // An attempt for a package outside the set rejects the inventory rather
     // than being ignored.

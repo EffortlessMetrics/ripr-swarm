@@ -89,8 +89,9 @@ Each call reads one fresh inventory and returns at most one step.
 | Present but bytes unreadable, unavailable, unobserved or observed twice | `hold_ambiguous` |
 
 ```text
-attempt record names a package
-  outside the set                    -> stop inventory_rejected
+inventory observed for another
+  request, or attempt record names
+  a package outside the set          -> stop inventory_rejected
 any package in conflict              -> stop immutable_conflict, before any upload
 any package ambiguous                -> stop registry_unavailable, before any upload
 every package exact                  -> complete (nothing uploaded)
@@ -115,8 +116,13 @@ the registry still does not show the package. The outcome of that upload is
 unknown, so a retry needs a successor authorization.
 
 The plan also reports an aggregate: `nothing_published`,
-`partial_publication_hold` when some packages are public and others are not,
-or `package_set_published_exact`.
+`partial_publication_hold` when some package is public, with the requested
+bytes or not, and the set is not exactly published, or
+`package_set_published_exact`.
+
+An inventory carries the `request_id` it was observed for. An absence carries
+no bytes, so without that binding an inventory read for one version could
+stand in for another.
 
 ## Proof
 

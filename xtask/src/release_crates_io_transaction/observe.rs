@@ -45,7 +45,9 @@ pub(crate) struct HttpsGet;
 impl RegistryRead for HttpsGet {
     fn get(&mut self, url: &str) -> Result<Response, String> {
         let output = Command::new("curl")
-            .args(["--silent", "--show-error", "--proto", "=https"])
+            // `--disable` must come first: it stops a per-user config file (for
+            // example `fail`) from turning a registry 404 into no answer.
+            .args(["--disable", "--silent", "--show-error", "--proto", "=https"])
             .args(["--max-time", "120", "--user-agent", USER_AGENT])
             .args(["--write-out", "%{http_code}", url])
             .output()
@@ -193,6 +195,9 @@ pub(crate) fn observe(
     request: &CratesIoTransactionRequest,
 ) -> RegistryInventory {
     RegistryInventory {
+        // An unserializable request has no id; the empty id never matches
+        // one, so the plan refuses this inventory.
+        request_id: request.request_id().unwrap_or_default(),
         packages: request
             .packages
             .iter()

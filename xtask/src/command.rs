@@ -2050,7 +2050,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         ),
         command_entry(
             "release-github-transaction-observe --request <request.json>",
-            "non_mutating_check",
+            "external_state_read",
             "stdout",
             false,
             false,
@@ -2066,7 +2066,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
         ),
         command_entry(
             "release-crates-io-transaction-observe --request <request.json>",
-            "non_mutating_check",
+            "external_state_read",
             "stdout",
             false,
             false,

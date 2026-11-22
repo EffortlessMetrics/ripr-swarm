@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- Add the read-only observer of the crates.io release transaction: `cargo xtask release-crates-io-transaction-observe` reads each requested package version from the registry API and the sparse index, downloads the archive of a present version and prints the inventory the plan command consumes. A version the two sources disagree on is reported unavailable, never absent. It uploads nothing and holds no credential ([ripr#1649](https://github.com/EffortlessMetrics/ripr/issues/1649)).

@@ -57,9 +57,12 @@ Without it a weak token would read an existing draft as absent.
 
 Provenance is checked with `gh attestation verify` over the downloaded bytes
 of a subject, and only when exactly one asset of that exact name downloaded
-with the subject's SHA-256. The command binds the repository, the request's
-`provenance.signer_workflow` and `provenance.source_ref`, the candidate commit
-as source digest, and refuses self-hosted runners. Its JSON output must also
+with the subject's SHA-256. The command binds the repository, the exact
+certificate identity `https://github.com/<signer_workflow>@<source_ref>`
+(`--cert-identity`; `--signer-workflow` would match a regular-expression
+prefix), the source ref, the candidate commit as source digest, and refuses
+self-hosted runners. The bytes are written to a temporary directory readable
+only by the current user, since a draft's assets are not public yet. Its JSON output must also
 name the subject with its digest. Anything else, including a subject that is
 not uploaded yet, is `unavailable`: `gh` does not separate "no attestation"
 from "could not check", so the observer never reports `missing`.
@@ -141,9 +144,11 @@ transport lands, the authorization must be built from a live verifier record
 
 Each call reads one fresh inventory and returns at most one step. The
 inventory records the repository and tag name it observed, even when nothing
-was found; an inventory for any other target stops with `inventory_mismatch`
-before classification, so an empty snapshot of another tag cannot read as
-"absent" for this one.
+was found, and the signer workflow and source ref its provenance was verified
+against. An inventory for any other target or provenance policy stops with
+`inventory_mismatch` before classification, so an empty snapshot of another
+tag cannot read as "absent" for this one, and a verdict under one signer
+cannot finalize a release that requires another.
 
 ```text
 tag absent, no release          -> create the tag
@@ -159,7 +164,7 @@ Everything else stops:
 
 | Observation | Stop |
 | --- | --- |
-| The inventory observed another repository or tag than the request names | `inventory_mismatch` |
+| The inventory observed another repository, tag or provenance policy than the request names | `inventory_mismatch` |
 | Tag, releases or an asset's bytes could not be read | `remote_unavailable` |
 | Tag is lightweight, at another commit, or another tag object than the authorized one | `remote_conflict` |
 | Authorization profile, kind, request, commit, ref, tag object or subject set differs | `authorization_mismatch` |
@@ -177,7 +182,7 @@ nothing is uploaded to a finalized release.
 
 ## Proof
 
-`cargo test -p xtask release_github_transaction` runs 24 tests. One sweeps all
+`cargo test -p xtask release_github_transaction` runs 25 tests. One sweeps all
 1,000 combinations of tag, release, asset and provenance state the model can
 observe and checks, against the classification alone, that a mutation is
 proposed only when the object it writes is absent and everything present is

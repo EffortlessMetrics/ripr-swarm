@@ -168,6 +168,10 @@ pub(crate) struct PackageObservation {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RegistryInventory {
+    /// `request_id` of the request this inventory was observed for. An
+    /// absence carries no bytes, so without this an inventory read for one
+    /// version could stand in for another.
+    pub(crate) request_id: String,
     pub(crate) packages: Vec<PackageObservation>,
     /// Packages for which an upload was already attempted under this
     /// authorization, whatever the reported outcome. Matched by registry
@@ -209,7 +213,8 @@ pub(crate) enum StopKind {
     RequestRejected,
     AuthorizationMismatch,
     NotAuthorized,
-    /// The inventory names an attempt for a package outside the request.
+    /// The inventory was observed for another request, or names an attempt
+    /// for a package outside the request.
     InventoryRejected,
     RegistryUnavailable,
     ImmutableConflict,
@@ -293,10 +298,16 @@ pub(crate) fn decide(
             .iter()
             .filter(|(_, state)| *state == PackageState::ExactExisting)
             .count();
+        // A conflicting version is public too, just not with these bytes.
+        let public = exact
+            + packages
+                .iter()
+                .filter(|(_, state)| *state == PackageState::ImmutableConflict)
+                .count();
         let aggregate = if !packages.is_empty() && exact == packages.len() {
             AggregateState::PackageSetPublishedExact
-        } else if exact > 0 {
-            // Some packages are public and others are not, whether or not
+        } else if public > 0 {
+            // Some packages are public and the set is not, whether or not
             // the next upload is admitted.
             AggregateState::PartialPublicationHold
         } else {
@@ -352,6 +363,16 @@ pub(crate) fn decide(
             stop(
                 StopKind::AuthorizationMismatch,
                 "the authorization names a different package set",
+            ),
+        );
+    }
+    if inventory.request_id != request_id {
+        return planned(
+            Some(request_id),
+            Vec::new(),
+            stop(
+                StopKind::InventoryRejected,
+                "the inventory was observed for another transaction request",
             ),
         );
     }
