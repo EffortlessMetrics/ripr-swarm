@@ -1267,6 +1267,11 @@ jobs:
           exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
+      # #16121: the producer peak is the single `ripr` lib rustc, not -j 2 overlap. It
+      # grew from 8.14 GB (15 Nov) past the 8 GiB Job cap (22 Nov). The two --config
+      # overrides on the build below drop line tables and split codegen finer for `ripr`
+      # only, so cached dependencies keep their fingerprints. Measured on Linux at -j 2:
+      # 6.99 -> 6.00 GiB peak, 182 -> 160 s. The replay needs neither; the cap stays 8 GiB.
       - name: Produce and replay exact-head selector recovery (advisory)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         shell: pwsh
@@ -1588,7 +1593,7 @@ jobs:
               require(alias.is_junction() and alias.resolve() == target, "cache target mapping drift")
               ownership["target"] = True
               receipt["owned_producer_target"] = {"path": str(target), "state": "RETAINED_FOR_CACHE", "owner_sha256": digest(owner_path)}
-              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--target-dir", str(target), "--message-format=json"],
+              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--config", "profile.dev.package.ripr.debug=0", "--config", "profile.dev.package.ripr.codegen-units=1024", "--target-dir", str(target), "--message-format=json"],
                                       root, seconds=600, memory=8 * 1024**3, output_cap=16 * 1024**2, active=0)
               require(status == 0, "exact-head CLI build failed")
               require(git_value("rev-parse", "HEAD") == actual_head and git_value("rev-parse", "HEAD^{tree}") == source_tree, "producer source moved")
