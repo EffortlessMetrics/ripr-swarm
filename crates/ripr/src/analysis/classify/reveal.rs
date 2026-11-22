@@ -98,6 +98,14 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// stands for its single immutable initializer (#12056).
     pub(in crate::analysis) assertion_pins_other_function:
         &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// #15476: whether the spelled function path, called in this assertion, is
+    /// a free function whose result is a pure function of its primitive
+    /// arguments (`TransitiveReachIndex::assertion_calls_closed_constant`).
+    /// An unconditional assertion that compares only such calls on literal
+    /// arguments computes a constant, so reveal drops it the way it drops a
+    /// literal-only assertion (#14968).
+    pub(in crate::analysis) closed_constant_call:
+        &'a dyn Fn(&TestSummary, &OracleFact, &str) -> bool,
     /// Names the changed owner's signature binds. A test can never hold
     /// the owner's parameter, so for a value probe a shared parameter name
     /// confirms observation only in an assertion that calls the owner
@@ -196,6 +204,17 @@ fn reveal_evidence(
     probe: &Probe,
     related_tests: &[(&TestSummary, RelationReason)],
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
+    reveal_evidence_closed_constant(probe, related_tests, &|_, _, _| false)
+}
+
+/// [`reveal_evidence`] with the #15476 closed-constant callee answer under
+/// the test's control.
+#[cfg(test)]
+fn reveal_evidence_closed_constant(
+    probe: &Probe,
+    related_tests: &[(&TestSummary, RelationReason)],
+    closed_constant_call: &dyn Fn(&TestSummary, &OracleFact, &str) -> bool,
+) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     let (observe, discriminate, related, _) = reveal_evidence_with_expression(
         probe,
         &probe.expression,
@@ -216,6 +235,7 @@ fn reveal_evidence(
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
             assertion_pins_other_function: &|_, _| false,
+            closed_constant_call,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -268,6 +288,7 @@ fn reveal_evidence_with_exit(
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
             assertion_pins_other_function: &|_, _| false,
+            closed_constant_call: &|_, _, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -340,6 +361,7 @@ fn reveal_evidence_proximity_reach_pinning(
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner,
             assertion_pins_other_function,
+            closed_constant_call: &|_, _, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -2714,19 +2736,44 @@ fn analyze_related_assertions(
         // for an assertion or observer that reads the owner's result, so it
         // neither hands that fallback to an unrelated sibling nor lowers a
         // reading of the owner the test has without it.
+        // #15476: an unconditional assertion that compares only calls of
+        // closed pure functions on literal arguments (`assert_eq!(label(0),
+        // "zero")`) computes a constant, so it reads nothing either. A
+        // predicate probe needs no token confirmation, so without this drop
+        // such an assertion credited observe and discriminate for any owner
+        // its test merely calls. The callee must keep its identity in this
+        // test: no same-name import, cross-package namesake or local shadow.
+        let closed_callee = |assertion: &OracleFact, path: &str| {
+            let name = path.rsplit("::").next().unwrap_or(path);
+            !same_name_import_defeats(test, name)
+                && !cross_package_name_defeats(test, name)
+                && (path != name || !test_body_shadows_owner(test, name))
+                && (return_admission.closed_constant_call)(test, assertion, path)
+        };
+        // Only a test tied to the owner by a call, helper chain or other
+        // reach relation drops a constant this way. A name-only or
+        // proximity-only test keeps its listed row as before, so a finding
+        // whose tests never reach the owner keeps saying so.
+        let constant_only_assertion = |assertion: &OracleFact| {
+            super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
+                || credits_oracle
+                    && !name_only(*reason)
+                    && !is_proximity_only(*reason)
+                    && super::literal_assertion::is_unconditional_closed_call_assertion(
+                        test,
+                        assertion,
+                        &|path| closed_callee(assertion, path),
+                    )
+        };
         let literal_only = test
             .assertions
             .iter()
-            .filter(|assertion| {
-                super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
-            })
+            .filter(|assertion| constant_only_assertion(assertion))
             .count();
         let assertions: Vec<_> = test
             .assertions
             .iter()
-            .filter(|assertion| {
-                !super::literal_assertion::is_unconditional_literal_only_assertion(test, assertion)
-            })
+            .filter(|assertion| !constant_only_assertion(assertion))
             .filter(|assertion| (return_admission.assertion_admitted)(test, assertion))
             .chain(claims_candidates.iter())
             .collect();
@@ -7034,6 +7081,7 @@ mod tests {
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
             assertion_pins_other_function: &|_, _| false,
+            closed_constant_call: &|_, _, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -8704,6 +8752,7 @@ mod tests {
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -8807,6 +8856,7 @@ mod tests {
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     assertion_pins_other_function: &|_, _| false,
+                    closed_constant_call: &|_, _, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -8997,6 +9047,7 @@ mod tests {
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     assertion_pins_other_function: &|_, _| false,
+                    closed_constant_call: &|_, _, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -9114,6 +9165,7 @@ mod tests {
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     assertion_pins_other_function: &|_, _| false,
+                    closed_constant_call: &|_, _, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -9547,6 +9599,7 @@ mod tests {
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -9646,6 +9699,7 @@ mod tests {
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11070,6 +11124,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11581,6 +11636,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11659,6 +11715,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11708,6 +11765,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11776,6 +11834,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11846,6 +11905,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -12096,6 +12156,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -12148,6 +12209,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -12631,6 +12693,7 @@ return Err(\"typed pin\".into());
                         // The observer sibling may reach the owner (#9167).
                         proximity_may_reach_owner: &|_| true,
                         assertion_pins_other_function: &|_, _| false,
+                        closed_constant_call: &|_, _, _| false,
                         owner_parameters: &[],
                         expected_reaches_owner: &|_, _| false,
                         effect_state_carried: &|_, _| true,
@@ -12719,6 +12782,7 @@ return Err(\"typed pin\".into());
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| true,
                     assertion_pins_other_function: &|_, _| false,
+                    closed_constant_call: &|_, _, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
@@ -12810,6 +12874,7 @@ return Err(\"typed pin\".into());
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
                     assertion_pins_other_function: &|_, _| false,
+                    closed_constant_call: &|_, _, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -13153,6 +13218,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -13266,6 +13332,7 @@ return Err(\"typed pin\".into());
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
                     assertion_pins_other_function: &|_, _| false,
+                    closed_constant_call: &|_, _, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -13322,6 +13389,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -13525,7 +13593,9 @@ return Err(\"typed pin\".into());
     // --- Predicate must NOT be affected; ErrorPath now requires token/variant confirmation ---
 
     /// Predicate probes do not require token confirmation and must not be
-    /// affected by the observation_unverified logic.
+    /// affected by the observation_unverified logic. The exemption covers
+    /// assertions that read a runtime value (`value` here); a constant of
+    /// another pure function is dropped before matching (#15476, next test).
     #[test]
     fn predicate_probe_family_match_only_keeps_discriminate_yes() {
         let probe = probe(ProbeFamily::Predicate, "x > 0");
@@ -13547,6 +13617,75 @@ return Err(\"typed pin\".into());
             "Predicate probe must not emit observation_unverified: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// #15476: the token-confirmation exemption above does not let a
+    /// constant credit a predicate. An unconditional assertion that compares
+    /// only a closed pure function's call on literal arguments
+    /// (`assert_eq!(label(0), "zero")`) is dropped like `assert!(true)`, so a
+    /// test that merely calls the owner observes nothing. The same assertion
+    /// keeps its credit when the callee is not vouched closed.
+    #[test]
+    fn predicate_probe_credits_no_constant_of_another_pure_function() {
+        let probe = probe(ProbeFamily::Predicate, "total > 200");
+        let test = test_with_body_assertions(
+            "smoke",
+            "fn smoke() {\n    let _ = discount(50);\n    assert_eq!(label(0), \"zero\");\n}",
+            vec![OracleFact {
+                line: 3,
+                ..oracle(
+                    "assert_eq!(label(0), \"zero\");",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )
+            }],
+        );
+        let related = [(&test, RelationReason::DirectOwnerCall)];
+        let (observe, discriminate, rows) =
+            reveal_evidence_closed_constant(&probe, &related, &|_, _, path| path == "label");
+        assert_eq!(observe.state, StageState::No, "{}", observe.summary);
+        assert_eq!(
+            discriminate.state,
+            StageState::No,
+            "{}",
+            discriminate.summary
+        );
+        assert_eq!(
+            rows.first().and_then(|row| row.miss),
+            Some(RelatedTestMiss::AssertionNotObserving)
+        );
+        let (observe, discriminate, _) =
+            reveal_evidence_closed_constant(&probe, &related, &|_, _, _| false);
+        assert_eq!(observe.state, StageState::Yes);
+        assert_eq!(discriminate.state, StageState::Yes);
+    }
+
+    /// #15476: only a test tied to the owner by a reach relation drops a
+    /// closed constant. The same test related only by file or module
+    /// proximity, or only by name, keeps its earlier reading even when the
+    /// callee is vouched closed.
+    #[test]
+    fn closed_constant_drop_needs_a_reach_relation() {
+        let probe = probe(ProbeFamily::Predicate, "total > 200");
+        let test = test_with_body_assertions(
+            "smoke",
+            "fn smoke() {\n    let _ = discount(50);\n    assert_eq!(label(0), \"zero\");\n}",
+            vec![OracleFact {
+                line: 3,
+                ..oracle(
+                    "assert_eq!(label(0), \"zero\");",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )
+            }],
+        );
+        for reason in [RelationReason::SameTestFile, RelationReason::SameModule] {
+            let (observe, _, _) =
+                reveal_evidence_closed_constant(&probe, &[(&test, reason)], &|_, _, path| {
+                    path == "label"
+                });
+            assert_eq!(observe.state, StageState::Yes, "{reason:?}");
+        }
     }
 
     // --- RIPR-SPEC-0107: ErrorPath now requires variant/token confirmation ---
@@ -13829,6 +13968,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -14384,6 +14524,7 @@ return Err(\"typed pin\".into());
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
                 assertion_pins_other_function: &|_, _| false,
+                closed_constant_call: &|_, _, _| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,
                 expected_operand_value: operand_value,

@@ -1112,6 +1112,90 @@ in `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs`,
 `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim` in
 `crates/ripr/tests/unindexed_guidance.rs`.
 
+## A constant of another pure function observes nothing (#15476)
+
+A predicate probe needs no token confirmation (Part A), so any exact
+assertion in a related test confirmed it, even one about another function:
+
+```rust
+fn smoke() {
+    let _ = discount(50);              // the changed owner, result discarded
+    assert_eq!(label(0), "zero");      // another function, constant arguments
+}
+```
+
+The finding read `observe: yes` and `discriminate: yes` (agent `stages=`, the
+JSON `ripr` object and `evidence_stages`), while the human card re-derived
+"assertion missing". `label(0)` is the same value on every run whatever
+`discount` does, so the assertion is a constant, like `assert!(true)`.
+
+Rule, for every family, beside the #14968 literal rule. In a related test that
+may supply the oracle and is tied to the owner by a reach relation (a direct
+or helper call, not a name-only or same-file/module proximity relation), an
+assertion that is an unconditional top-level statement of the test body (the
+same position test as #14968) is dropped from the assertions reveal credits
+when its compared operands (never its message arguments) are built only from
+literals, `!`, `-`, parentheses, binary operators, and at least one call of a
+plain function path (`label`, `crate::label`, `demo::label`, `super::label`,
+no turbofish, type qualifier or raw identifier) on arguments of the same
+grammar, where every called function
+(`TransitiveReachIndex::assertion_calls_closed_constant`):
+
+- is the only indexed function of its name, a free function, not the owner,
+  and has no name path to the owner;
+- is the function the assertion's call resolves to under the shared binding
+  authority (`assertion_names_candidate` for a bare call; the targeted path
+  reader and owner call identity for a qualified one), with no same-name
+  import, cross-package namesake or test-local shadow of a bare name;
+- has a body inside the closed primitive grammar of the opposite-kind check
+  (#11552): its primitive parameters, literals, operators, `if` and `match`
+  over them and closed enum values, with no call, binding, item, macro or
+  non-literal pattern;
+- returns a primitive or `&'static str` (with no item named `str` in its
+  file), so the comparison runs no user code.
+
+The dropped assertion counts toward the single-assertion fallback exactly as
+a dropped literal does, and the #14968 invariant holds: it never removes
+credit another assertion supplies (`assert_eq!(label(0), "zero");
+assert_eq!(discount(201), 191)` keeps `exposed`). A test whose only
+assertions are dropped constants is listed with `assertion_not_observing`;
+the issue's example now reads `reachable_unrevealed` with `observe: no` and
+`discriminate: no` on every surface, in agreement with the human card.
+
+Fail-closed toward the existing credit. A binding, field, method call,
+reference, nested macro or index in the operand, a helper that reads a
+`static` or calls anything, an ambiguous or unresolved callee, implicit
+dispatch toward the owner, or a nested position (an `if` the owner's value
+selects) leaves the assertion as it was.
+
+Known limits:
+
+- A test related only by name or by file/module proximity keeps its listed
+  oracle row, so a finding whose tests never reach the owner keeps its
+  "No test reaches the changed owner" reading.
+- A constant computed through a test-local binding (`let n = 0;
+  assert_eq!(label(n), "zero")`) keeps its earlier credit; the rule reads the
+  assertion's syntax, not the test's data flow.
+- An assertion on another function that is not provably constant (a helper
+  that reads global state, a method of a test-built value) keeps its earlier
+  credit. Telling it apart from an observation of the owner's effect needs
+  value flow the classifier does not have.
+- The #14968 reach-limit carry-over (`asserts_only_dropped_literals`) reads
+  only literal-only assertions; a proximity-only finding whose tests assert
+  only dropped constants does not keep the weak reading's limit.
+
+Static evidence only.
+
+Proof: `closed_call_assertions_are_constants_only_on_literal_arguments` in
+`crates/ripr/src/analysis/classify/literal_assertion.rs`, and
+`crates/ripr/tests/predicate_constant_assertion.rs` through `check_workspace`
+(the issue's constant rows, an owner assertion beside a constant, and the
+global-state helper and binding-argument controls). The fixture
+`fixtures/predicate_constant_of_other_function` is registered in the
+evidence-promotion honesty corpus as
+`rust_predicate_constant_of_other_function`, so re-blessing its golden back to
+`weakly_exposed` fails `cargo xtask check-evidence-promotion-honesty`.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.
@@ -1124,6 +1208,11 @@ in `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs`,
   `fixtures/match_arm_proximity_confirmation_not_credited` and its control
   `fixtures/match_arm_proximity_wrapper_confirms`, registered in the honesty
   corpus.
+- A predicate assertion that discards the owner call's value (#14206):
+  `fixtures/rust_predicate_owner_value_masked_is_some`,
+  `fixtures/rust_predicate_owner_value_masked_tuple_projection` and their
+  control `fixtures/rust_predicate_owner_value_observed_payload`, registered in
+  the honesty corpus (#14346).
 - 9 new golden fixtures (see traceability.toml for the full list).
 - `crates/ripr/src/analysis/classifier.rs` — 2 existing tests updated.
 

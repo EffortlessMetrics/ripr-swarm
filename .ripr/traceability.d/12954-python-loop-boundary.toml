@@ -34,4 +34,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_full_list_loop_keeps_identity_and_other_bodies",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_none_seeded_selector_is_infection_unknown",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_none_guard_needs_its_own_seed_and_shape",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_infinity_seeded_selector_is_infection_unknown",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_infinity_seed_needs_its_own_sign_and_shape",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_string_float_and_bool_pins_are_infection_unknown",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_non_literal_elements_or_pins_keep_prior_class",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_math_infinity_seeded_selector_is_infection_unknown",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_boundary_math_infinity_seed_needs_an_unrebound_stdlib_math",
 ]

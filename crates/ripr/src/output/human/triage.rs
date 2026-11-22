@@ -24,6 +24,8 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
+mod removal_action;
+
 /// A changed Python predicate that holds several relational comparisons, as
 /// the boundary analysis names it in the Missing check (`The changed predicate
 /// `rate < 0 or rate >= 1` holds 2 relational comparisons; ...`). #13790 only
@@ -379,6 +381,12 @@ pub(crate) fn render_human_triage(
         "  State: {}\n",
         if all_noticed {
             "no test gap found"
+        } else if triage.selected.is_none()
+            && triage.state == HumanTriageState::NoActionableGap
+            && removal_action::is_removal_only(&triage.omitted)
+        {
+            // #15335: name why nothing is selected for a removal-only run.
+            removal_action::REMOVAL_ONLY_STATE
         } else {
             triage.state.plain_label()
         }
@@ -892,7 +900,10 @@ pub(crate) fn render_human_triage(
             let mut row = String::new();
             row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
@@ -1119,7 +1130,7 @@ fn grouped_hidden_row(
     let label = if kinds.len() == 1 { "kind" } else { "kinds" };
     Some(format!(
         "    - {}:{} ({}{}); {} changed behaviors{}; {}: {}; reason: {}\n",
-        crate::analysis::finding_location_text(root, &first.probe.location.file),
+        crate::output::path::human_location_text(root, &first.probe.location.file),
         lines,
         first.class.plain_label_with_stage(),
         currentness,
@@ -1902,6 +1913,9 @@ fn no_selection_hidden_line(omitted: &[&Finding]) -> String {
 
 /// The safe-next-action line for a run where nothing was candidate-actionable.
 fn no_selection_safe_action_line(omitted: &[&Finding]) -> String {
+    if let Some(line) = removal_action::removal_only_safe_action_line(omitted) {
+        return line;
+    }
     match no_selection_mix(omitted) {
         NoSelectionMix::AllBaseSide => {
             "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n".to_string()
@@ -2790,7 +2804,7 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    fn test_finding(id: &str) -> Finding {
+    pub(super) fn test_finding(id: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
             confidence_basis: Vec::new(),

@@ -244,11 +244,14 @@ call's line and byte range and kept to its crate, and it no longer refuses a
 test elsewhere, when all of these hold:
 
 - The call is spelled `proptest::proptest!` or `serde_json::json!` (either
-  with a leading `::`), and the crate root passes the drop-in authority
+  with a leading `::`), or `proptest::` and one of the other `proptest`
+  wrappers above on its own, such as `proptest::prop_oneof!` building a
+  strategy in a helper outside `proptest!`, and the crate root passes the
+  drop-in authority
   (audited locked version and plain registry manifest, not shadowed by a
   workspace package, module or rename, and not taken over by a plain import
   of the root name unless the path is absolute); or it is a bare
-  `proptest!` whose module (the file, or the inline module holding the call)
+  `proptest!`, or a bare call of another of those wrappers, whose module (the file, or the inline module holding the call)
   has an admitted exact `proptest::prelude::*` glob.
 - For a bare `proptest!`: the file has no plain import and no `macro_rules!`
   or `macro` of any of the wrapper names above, no glob in a block or inline
@@ -259,10 +262,15 @@ test elsewhere, when all of these hold:
   one of the inert attribute names below, either directly or by a rename
   (`use helper as prop_assert;` makes `prop_assert!` a call of `helper`), and
   no rename binds `proptest`.
-- The arguments hold no `macro_rules`, `macro`, `mod`, `extern`, `include` or
-  `use` token, since a nested `#[macro_export]` definition, a module, pasted
-  file text or a renaming import inside the pasted body can leave a function
-  body or redirect a nested call.
+- The arguments hold no `macro_rules`, `macro`, `mod`, `extern` or `include`
+  token, since a nested `#[macro_export]` definition, a module or pasted file
+  text can leave a function body.
+- Every `use` item in the arguments ends in `;`, is not a glob or a rename,
+  and names no trusted assertion-context macro, wrapper above, `serde_json`
+  or inert attribute below anywhere in its path. Such an item (`use
+  std::os::unix::ffi::OsStrExt;`) binds a trait or item inside the generated
+  body only; a glob, a rename (`use helper as prop_assert;`) or an import of
+  a trusted name can redirect a nested call the confinement trusts by name.
 - Every attribute in the arguments is a single-segment built-in that runs no
   expander: `test`, `ignore`, `should_panic`, `allow`, `expect`, `warn`,
   `deny`, `forbid`, `doc`, `inline`, `cfg`, `must_use`, `track_caller`, or
@@ -270,13 +278,30 @@ test elsewhere, when all of these hold:
   attribute (`#[dep::define(..)]`) may invoke a procedural macro that emits
   an exported definition beside the item it decorates.
 - Every nested macro call in the arguments is a single-segment trusted
-  assertion-context name, a single-segment `prop_*` macro above, or one
-  whose own arguments mention no trusted name. A path such as
-  `dep::prop_assert!` names whatever `dep` exports. Any other nested call
-  could define a name from its arguments where the call's scope cannot bound
-  it. When a nested `prop_*` call is trusted by name under a qualified outer
-  call, the bare `proptest!` conditions above must also hold, so the name
-  reaches the audited prelude.
+  assertion-context name, one of the wrapper macros above spelled bare or
+  under the `proptest` root (`proptest::prop_oneof!`, `::proptest::prop_assert!`),
+  `serde_json::json!` or `::serde_json::json!` (the same expression-only
+  wrapper, needing the same drop-in proof of the `serde_json` root as an
+  outer call), or one whose own arguments mention no trusted name. A nested
+  call of that last kind is accepted on that ground alone, so it adds no
+  root that needs proof. Any other path, such as
+  `dep::prop_assert!` or `crate::prop_assert!`, names whatever that module
+  exports. Any other nested call could define a name from its arguments
+  where the call's scope cannot bound it. When a nested bare `prop_*` call is
+  trusted by name under a qualified outer call, the bare `proptest!`
+  conditions above must also hold, so the name reaches the audited prelude.
+  A nested call under the `proptest` root needs the same drop-in proof of
+  that root as a qualified outer call: audited locked version, not shadowed,
+  and, for a path without a leading `::`, no plain import of `proptest`.
+  Only `::` joins a path: a lone `:` before the call, such as a struct
+  field's (`Check { strategy: proptest::prop_oneof![..] }`), ends it, so the
+  call reads as bare or as rooted as it is spelled.
+
+A leading `::` is read as an extern-crate path, for the outer call and for a
+nested one, and does not consult the edition. In a 2015-edition crate
+`::proptest` names a crate-root item instead, so a root module of that name
+could supply a different `prop_*` macro. That is an accepted residual, as for
+the glob rule above; the scan has no edition input.
 
 A confined argument mention rebinds nothing outside the call, so it does not
 make the trusted calls nested in the arguments (`assert_eq!(v, vec![1])`)

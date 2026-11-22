@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0117"
+tests = [
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::attribute_macro_on_a_generated_test_takes_no_invocation_scopes",
+]
+code = [
+  "crates/ripr/src/analysis/facts/test_styles.rs",
+  "crates/ripr/src/analysis/facts/macro_generated_tests.rs",
+]

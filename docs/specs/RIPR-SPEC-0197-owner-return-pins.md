@@ -780,7 +780,14 @@ wrong credits.
      trait's method), except a pure `(**self).name(..)` / `(*self).name(..)`
      forward. A definition the parser did not index (a `macro_rules!` body)
      counts when its `fn name` text is visible. A definition in a
-     lexical-fallback file always counts.
+     lexical-fallback file always counts. For a method call, a definition
+     in an `impl` of a different declared named type does not count
+     (#15276): `impl Shape for Line` cannot take a call on a receiver typed
+     as the owner's `impl Shape for Square`. Both self types must be plain
+     non-generic names of a declared `struct`/`enum`/`union` that no
+     workspace `type` alias, `as` rename, or same-file `impl<..>` generic
+     parameter also binds; same-named types in different modules still
+     compete, as do trait default bodies.
    - An associated call `T::name(..)` (#6617) names only an associated
      function (no `self`) of an inherent `impl T` block, for a
      `return_value` (or bool-tail `predicate`) probe; a whole-value field
@@ -2890,7 +2897,13 @@ branch holding a statement, or code after the chain is outside the subset.
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
   together with the module whose tests then compile against it. An audited
   pass-through wrapper (`proptest!`, `serde_json::json!`) keeps the site but
-  confines it to the call's own text (RIPR-SPEC-0369, #14116). The other
+  confines it to the call's own text (RIPR-SPEC-0369, #14116). A trusted
+  name with a binding site makes that name's own calls opaque in turn, but
+  only where the site binds (#16053): a site scoped to a function body or
+  block makes calls inside that span opaque, not the name's calls elsewhere
+  in the file, except calls in a `macro_rules!` transcriber, which run
+  wherever the macro is invoked and so read every binding of the name. A
+  confined pass-through mention makes none opaque. The other
   exception is a call to a wrapper that cannot bind a name at all (#6648):
   an unqualified call to a `macro_rules!` this file defines exactly once,
   without an attribute and never names in a `use`. The definition sits at
@@ -3929,12 +3942,19 @@ release is added by re-reading `src/macros.rs` at that version and extending
 `AUDITED_JSON_RELEASES`; persisted classifications key on the analyzer build
 identity, so no cache generation bump is needed.
 The analysis root must declare this dependency directly or in its workspace
-package table. Offline locked Cargo metadata must resolve one canonical package
+dependency table, or (#14116) name a workspace member that declares it in its
+own normal or dev dependency table. Member entries are read as written: a
+relative path of plain `/`-separated components, optionally ending in one `*`
+component (`crates/*`); any other glob, a `.`, `..` or empty component, or an
+absolute path is not read, and more than 256 distinct member directories
+leaves the root ineligible. `workspace.exclude` is not applied here. This check only decides whether
+the metadata process runs. Offline locked Cargo metadata must resolve one canonical package
 and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
 conditional, path/git/alternate-registry and ambiguous edges refuse. This uses
 rule 7a's existing bounded metadata process and strict configuration snapshot;
 ambient registry and ancestor/nested source replacements refuse. Windows environment names are canonicalized before registry/home checks. Manifest/config/
-lock identity is rechecked and affects classified-cache reuse.
+lock identity is checked once per importing file per analysis and rechecked by
+the next analysis (#16038); it affects classified-cache reuse.
 
 Visible local, imported, cross-file namespace and workspace macro bindings
 remain subject to the shared fail-closed admission checks. An unavailable or
@@ -4052,6 +4072,52 @@ text of the owner, `w` and the related tests, other than on a single-line
 plain unaliased `use`: a `static TOTAL: fn(u32) -> u32 = w;` or a `const`
 could feed `w` an input the reading never sees, even on `w`'s own closing
 line. Like the rest of this section, this only downgrades.
+
+#### Receivers, tuple results and other changed syntax (#15272)
+
+Three shapes passed identically on both versions and still read `exposed`.
+`self.base * 2` changed to `self.base * 3` under
+`assert_eq!(Acc { base: 0 }.double(), 0)`: a method was never folded.
+`(a, a > 0)` changed to `(a, a >= 0)` under `assert_eq!(pair(5), (5, true))`:
+a tuple is not an integer. `if a > b { a } else { b }` with its arms swapped
+under `assert_eq!(largest(2, 2), 2)`: the probe is a `predicate`, which this
+section never read, and the predicate lens credits `2, 2` as an input on the
+`a > b` boundary.
+
+Two readings close them. Both only downgrade.
+
+- **The owner's result.** A method of a named self type that takes `self` or
+  `&self` and uses it only as the base of plain field reads (`self.base`) is
+  folded with each such field as an input. The test must call it as
+  `Type { field: literal, .. }.name(args)`: a record literal of that self
+  type, unqualified, each field the owner reads spelled with an integer
+  expression the fold evaluates. A binding, a constructor call, a field
+  shorthand, another type's literal, `&mut self`, `mut self`, a typed receiver
+  (`self: Box<Self>`), `self.0`, `self.method()` or a `self` among a macro's
+  tokens keeps today's reading. A tail that is a tuple of two or more
+  components under a declared tuple return type of the same arity is folded
+  one component at a time, each at its declared type. Condition 1's fold reads
+  both this way; a receiver field counts as a parameter of condition 4's grid.
+  Two tuples that differ are evidence that the versions differ somewhere and
+  never that an assertion separates them.
+- **Any one-line predicate or return-value change.** When the diff replaces
+  exactly the probe's line inside the owner, the base-side item the diff
+  establishes (the #14815 identity: same qualified path, unchanged first line
+  and signature, not `cfg`-gated) is the current owner with that line
+  restored, and no other definition can answer the owner's name, a credited
+  infection reads `weak` if every mention of the owner in every related test
+  is an asserted call at which the two versions fold to the same value while
+  the grid separates them. The expected operand must be a constant: an integer
+  expression, `true`/`false`, a plain string, or a tuple of those. The summary
+  names one such call. Conditions 2 and 5 apply unchanged. This reading does
+  not depend on what the changed text is, so it also covers a `return_value`
+  change whose `before` text condition 1 cannot place.
+
+A one-line owner (`fn double(&self) -> u64 { self.base * 3 }`) changes its
+own first line, so the second reading has no established base side for it;
+the first still reads a `return_value` probe there. An equivalent rewrite
+(`if x > 50 { 50 } else { x }` to `x >= 50`) keeps today's reading, as in
+condition 4.
 
 ### A partly changed struct literal confirms only through its changed fields (#10916)
 

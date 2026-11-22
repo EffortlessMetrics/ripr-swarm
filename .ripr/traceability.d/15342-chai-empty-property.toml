@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::chai_collection_observers_preserve_receiver_and_cardinality",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+]
