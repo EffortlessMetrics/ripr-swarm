@@ -306,8 +306,8 @@ fn collect_live_snapshot(repo: &str) -> Result<CaptureSnapshot, String> {
     let settings_path = Path::new(".github/swarm-settings.yml");
     let settings_text = std::fs::read_to_string(settings_path)
         .map_err(|err| format!("failed to read {}: {err}", settings_path.display()))?;
-    let settings_ref =
-        git_rev_parse("HEAD:.github/swarm-settings.yml").unwrap_or_else(|_| workspace_head_sha.clone());
+    let settings_ref = git_rev_parse("HEAD:.github/swarm-settings.yml")
+        .unwrap_or_else(|_| workspace_head_sha.clone());
     let workflow_files = read_workspace_workflows()?;
     let repo_path = format!("repos/{repo}");
     let mut endpoints = BTreeMap::new();
@@ -1742,7 +1742,9 @@ fn render_markdown(packet: &Value) -> Result<String, String> {
         ));
     }
     body.push_str("## Separate facts\n\n");
-    body.push_str("- Desired source: checked-in `.github/swarm-settings.yml` (not live read-back)\n");
+    body.push_str(
+        "- Desired source: checked-in `.github/swarm-settings.yml` (not live read-back)\n",
+    );
     body.push_str(&format!("- Live observation complete: `{}`\n", complete));
     body.push_str(&format!(
         "- Apply write probed: `{}`\n",
