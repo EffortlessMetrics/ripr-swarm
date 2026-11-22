@@ -1000,6 +1000,30 @@ Candidates come from the first non-empty tier:
    bare-call edges does not extend to its own `ModuleFunction` owner.
    Module-const (`ModuleFunction` value) reach stays same-module only: it
    does not continue across an import, and an exported value is not followed.
+   **Built values and function references (#15928).** Two more forms are
+   edges of the same graph, under the same hop bound and the same limits.
+   `new X(...)` is a read of a module-level `const X`: constructing an
+   instance binds nothing to the name. A `const` built by an immediately
+   invoked function with no arguments (`const X = (function () { class X
+   { ... } return X; })()`, or the arrow form; not `async`, not a generator)
+   also calls what that function's text bare-calls, methods of a class it
+   declares included, because the owner is the whole `const`: an exported
+   entry that constructs the class reaches the module functions the class's
+   code calls. When the building function declares the binding's own name,
+   mentions of the name inside it are the inner binding and are left out of
+   the module-wide scan; every mention outside it must still be an
+   allowlisted read. A top-level name the building function also declares as
+   a member (`compare(a, b) { ... }`) is no edge, and neither is a call
+   followed by `:` (a conditional arm reads like a return type). A function
+   passed by reference as the whole first argument of a synchronous array
+   callback method (`keys.sort(compare)`, `values.reduce(add, 0)`) is a call
+   of it; any other mention of the name in the enclosing function (stored,
+   an array element, a later argument, an argument of a bare call,
+   `setTimeout`, `then`, an event listener) leaves no edge. Limits: the
+   class is one node, so a method no entry calls is reached with the rest of
+   the class; a plain module-level `class` that an exported entry constructs
+   is not followed (its methods are separate owners); the receiver of the
+   array method is not typed.
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
    imported from module Y reaches the owner Y declares (or the owner Y's own
@@ -2622,6 +2646,14 @@ keys); do not take the next number.
   pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,
   assigned and module-mutated refusals, the unused and uncalled-reader controls
   (`no_static_path`), and the called-reader `static_unknown` reading.
+
+- #15928 (built values and function references): `tests/built_value_entry_tests.rs`
+  pins the constructing entry, the class's callees, the arrow form, the
+  parameter, local, passed-along and unconstructed refusals, module-level
+  writes outside the building function, the same-name member, the synchronous
+  callback methods against stored and deferred references, and the
+  `static_unknown` and `no_static_path` readings;
+  `fixtures/typescript_built_class_entry_reach` pins the rendered check.
 
 - #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
   pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias

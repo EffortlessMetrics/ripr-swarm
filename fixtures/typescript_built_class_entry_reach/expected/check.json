@@ -1,0 +1,433 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/typescript_built_class_entry_reach/input",
+  "config_path": "<cwd>/fixtures/typescript_built_class_entry_reach/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:35781e9143f4cfc1","base_revision":null,"input_identity":"sha256:1050bdd79a095f15d430a6a78fba5decb40ddce3f174737ae024236d6ae74edb","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":6,"candidate_line_count":3,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_serialize.ts:typescript_preview:beca786a",
+      "canonical_gap_id": "gap:typescript:typescript_preview:beca786a",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_serialize.ts:typescript_preview:beca786a",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/serialize.ts",
+        "line": 9,
+        "expression": "    return a < b ? -1 : 1;",
+        "owner": "typescript:src/serialize.ts::compareStrings"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `compareStrings`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027)."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"unknown","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `compareStrings`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator unknown: TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).", "related test tests/serialize.test.ts:5 serialize orders object keys uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: compareStrings", "typescript_oracle_observed: serialize({ b: 1, a: 2 })", "typescript_oracle_expected: '{a:2,b:1}'", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/serialize.test.ts:6", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/serialize.ts;line=9;kind=typescript_preview_probe;source_id=probe:src_serialize.ts:typescript_preview:beca786a;owner=compareStrings", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `compareStrings` only through same-module callers (`serialize`); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test checks the changed behavior is not established either way.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "serialize orders object keys",
+          "file": "tests/serialize.test.ts",
+          "line": 5,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "medium"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "predicate changed at src/serialize.ts:9: `return a < b ? -1 : 1;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "compareStrings",
+        "owner_kind": "function",
+        "probe_family": "predicate",
+        "related_test": {
+          "file": "tests/serialize.test.ts",
+          "line": 5,
+          "name": "serialize orders object keys"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/serialize.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 9,
+            "owner": "compareStrings",
+            "raw": "file=src/serialize.ts;line=9;kind=typescript_preview_probe;source_id=probe:src_serialize.ts:typescript_preview:beca786a;owner=compareStrings",
+            "sample": null,
+            "source_id": "probe:src_serialize.ts:typescript_preview:beca786a"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+      },
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.",
+      "suggested_next_action": "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_serialize.ts:typescript_preview:205006b1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:205006b1",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_serialize.ts:typescript_preview:205006b1",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/serialize.ts",
+        "line": 19,
+        "expression": "            const keys = Object.keys(record).sort(compareStrings);",
+        "owner": "typescript:src/serialize.ts::Serializer"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `Serializer`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027)."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"unknown","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `Serializer`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator unknown: TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).", "related test tests/serialize.test.ts:5 serialize orders object keys uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: Serializer", "probe_fact: ambiguous_fallback", "typescript_oracle_observed: serialize({ b: 1, a: 2 })", "typescript_oracle_expected: '{a:2,b:1}'", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/serialize.test.ts:6", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/serialize.ts;line=19;kind=typescript_preview_probe;source_id=probe:src_serialize.ts:typescript_preview:205006b1;owner=Serializer", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `Serializer` only through same-module callers (`serialize`); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test checks the changed behavior is not established either way.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "serialize orders object keys",
+          "file": "tests/serialize.test.ts",
+          "line": 5,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "medium"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/serialize.ts:19: `const keys = Object.keys(record).sort(compareStrings);`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "Serializer",
+        "owner_kind": "module_function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/serialize.test.ts",
+          "line": 5,
+          "name": "serialize orders object keys"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/serialize.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 19,
+            "owner": "Serializer",
+            "raw": "file=src/serialize.ts;line=19;kind=typescript_preview_probe;source_id=probe:src_serialize.ts:typescript_preview:205006b1;owner=Serializer",
+            "sample": null,
+            "source_id": "probe:src_serialize.ts:typescript_preview:205006b1"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
+      },
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.",
+      "suggested_next_action": "TypeScript preview advisory: the related test reaches the changed owner only through a same-module caller, so no new assertion is needed on that evidence; no repair packet is emitted.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "module_function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_serialize.ts:typescript_preview:13c8fb6b",
+      "canonical_gap_id": "gap:typescript:typescript_preview:13c8fb6b",
+      "classification": "no_static_path",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_serialize.ts:typescript_preview:13c8fb6b",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/serialize.ts",
+        "line": 27,
+        "expression": "    return a.length - b.length;",
+        "owner": "typescript:src/serialize.ts::compareLengths"
+       },
+      "ripr": {
+        "reach": {"state":"no","confidence":"low","summary":"0 related test(s) found for owner `compareLengths`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"no","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"no","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"low","basis":[{"code":"no_related_test","summary":"no related test reaches the changed owner"}]},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"low"},
+        {"stage":"discriminate","state":"no","confidence":"low"}
+      ],
+      "evidence_path": ["reach no: 0 related test(s) found for owner `compareLengths`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation no: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands.", "local flow reaches returned value: return a.length - b.length; (line 27)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return a.length - b.length;","line":27}
+      ],
+      "evidence": ["owner: compareLengths", "gap_state: unknown", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/serialize.ts;line=27;kind=typescript_preview_probe;source_id=probe:src_serialize.ts:typescript_preview:13c8fb6b;owner=compareLengths", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["No statically linked test call to `compareLengths(` was established; inspect existing test calls and their import/export paths.", "TypeScript preview actionability `unknown` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/serialize.ts:27: `return a.length - b.length;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "unknown",
+        "oracle_strength": "none",
+        "owner": "compareLengths",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": null,
+        "repair_packet_ready": false,
+        "repair_route": "add trusted related-test matching for this owner shape before emitting a repair packet",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_context",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "trusted related test or observer, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "related_test_or_observer",
+          "target_test_shape",
+          "verify_command",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/serialize.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 27,
+            "owner": "compareLengths",
+            "raw": "file=src/serialize.ts;line=27;kind=typescript_preview_probe;source_id=probe:src_serialize.ts:typescript_preview:13c8fb6b;owner=compareLengths",
+            "sample": null,
+            "source_id": "probe:src_serialize.ts:typescript_preview:13c8fb6b"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add trusted related-test matching for this owner shape before emitting a repair packet",
+        "unlock_condition": null,
+        "why_not_actionable": "no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "TypeScript preview advisory: no statically linked test calls `compareLengths(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "TypeScript preview advisory: no statically linked test calls `compareLengths(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/serialize.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/serialize.ts","digest":"sha256:535599ddcd7a2afd821a529033e455b4a1d17e5a20a8777f74c243495d0ccddb"}]}
+}

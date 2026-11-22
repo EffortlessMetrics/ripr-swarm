@@ -22676,6 +22676,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 mod async_matcher_completion_tests;
 mod ava_throws_message_tests;
 mod boolean_pin_tests;
+mod built_value_entry_tests;
 mod call_lexer_tests;
 mod catch_arm_tests;
 mod changed_field_scope_tests;

@@ -142,18 +142,30 @@ pub(super) fn never_mutated_in_module(
     masked: &str,
     name: &str,
     declaration: Option<usize>,
+    shadow: Option<&std::ops::Range<usize>>,
 ) -> bool {
-    // Masking must preserve offsets for the parsed declaration offset to apply.
-    let declaration = declaration.filter(|_| masked.len() == source.len());
-    let only_reads = masked
-        .match_indices(name)
-        .all(|(idx, _)| classify(masked, idx, name) != Mention::Other || declaration == Some(idx));
-    only_reads && no_write_shape(source, name, declaration)
+    // Masking must preserve offsets for the parsed offsets to apply.
+    let aligned = masked.len() == source.len();
+    let declaration = declaration.filter(|_| aligned);
+    // Inside the function that builds the value and declares the same name,
+    // the name is the inner binding (#15928).
+    let shadow = shadow.filter(|_| aligned);
+    let only_reads = masked.match_indices(name).all(|(idx, _)| {
+        classify(masked, idx, name) != Mention::Other
+            || declaration == Some(idx)
+            || shadow.is_some_and(|range| range.contains(&idx))
+    });
+    only_reads && no_write_shape(source, name, declaration, shadow)
 }
 
-fn no_write_shape(source: &str, name: &str, declaration: Option<usize>) -> bool {
+fn no_write_shape(
+    source: &str,
+    name: &str,
+    declaration: Option<usize>,
+    shadow: Option<&std::ops::Range<usize>>,
+) -> bool {
     source.match_indices(name).all(|(idx, _)| {
-        if !bounded(source, idx, name) {
+        if !bounded(source, idx, name) || shadow.is_some_and(|range| range.contains(&idx)) {
             return true;
         }
         let before = source[..idx].trim_end();
@@ -245,6 +257,7 @@ fn classify(text: &str, idx: usize, name: &str) -> Mention {
     }
     let after = &text[idx + name.len()..];
     if is_read_receiver(after)
+        || is_construction(before, after)
         || is_read_argument(before, after)
         || is_computed_key(raw_before, after)
     {
@@ -252,6 +265,18 @@ fn classify(text: &str, idx: usize, name: &str) -> Mention {
     } else {
         Mention::Other
     }
+}
+
+/// `new NAME(...)`: constructing an instance runs the value and binds nothing
+/// to the name. What is done with the instance is the instance's business.
+fn is_construction(before: &str, after: &str) -> bool {
+    after.starts_with('(')
+        && before.strip_suffix("new").is_some_and(|rest| {
+            !rest
+                .chars()
+                .next_back()
+                .is_some_and(is_javascript_identifier_char)
+        })
 }
 
 /// `NAME.member...` / `NAME[index]...` whose access chain is read-only.

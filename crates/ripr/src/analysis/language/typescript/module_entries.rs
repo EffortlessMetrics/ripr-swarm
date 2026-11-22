@@ -142,6 +142,28 @@ struct CallText<'s> {
     scope: &'s str,
 }
 
+/// Module-level non-function `const` bindings the graph may follow.
+#[derive(Default)]
+struct ModuleValues<'s> {
+    names: BTreeSet<&'s str>,
+    /// Parsed offset of each binding identifier.
+    decl_starts: BTreeMap<&'s str, usize>,
+    /// Values an immediately invoked function builds (#15928).
+    built: BTreeMap<&'s str, BuiltValue<'s>>,
+}
+
+/// `const X = (function () { ... })()`: the function that builds the value.
+struct BuiltValue<'s> {
+    /// The whole function text. Its bare calls are the value's calls: the
+    /// function runs when the module loads, and what it declares (the methods
+    /// of a class it returns) runs through the value.
+    text: &'s str,
+    /// The function's byte range when its body declares the binding's own
+    /// name (`class X {}` then `return X`): every mention of the name inside
+    /// is the inner binding, not the module-level one.
+    shadow: Option<std::ops::Range<usize>>,
+}
+
 /// Exported entries per top-level owner name, plus the imported bindings the
 /// entries' code bare-calls. `imports` are the file's ES/CommonJS import
 /// bindings (never re-export hops); only a named, non-namespace binding whose
@@ -162,20 +184,23 @@ pub(crate) fn module_entries_and_outbound<'a>(
     // borrows them instead of owning a String per node (#10087 follow-up).
     let mut nodes: BTreeMap<&'a str, ModuleNode<'a>> = BTreeMap::new();
     let mut exports: BTreeMap<String, BTreeSet<TypeScriptModuleEntry>> = BTreeMap::new();
-    let mut values: BTreeSet<&'a str> = BTreeSet::new();
+    let mut module_values = ModuleValues::default();
     let mut exported_values: BTreeSet<&'a str> = BTreeSet::new();
-    let mut decl_starts: BTreeMap<&'a str, usize> = BTreeMap::new();
     for statement in statements {
         collect_statement(
             statement,
             source,
             &mut nodes,
             &mut exports,
-            &mut values,
+            &mut module_values,
             &mut exported_values,
-            &mut decl_starts,
         );
     }
+    let ModuleValues {
+        names: mut values,
+        decl_starts,
+        built,
+    } = module_values;
     // A value is followable only while nothing in the file writes it; a name
     // that is also a function/factory node keeps its bare-call edges only.
     // Only values some node's code actually mentions are scanned (the mutation
@@ -196,7 +221,13 @@ pub(crate) fn module_entries_and_outbound<'a>(
     if !values.is_empty() {
         let masked_source = byte_preserving_mask(source, &ts_mask_literals_and_comments(source));
         values.retain(|name| {
-            never_mutated_in_module(source, &masked_source, name, decl_starts.get(name).copied())
+            never_mutated_in_module(
+                source,
+                &masked_source,
+                name,
+                decl_starts.get(name).copied(),
+                built.get(name).and_then(|value| value.shadow.as_ref()),
+            )
         });
     }
     // Imported bindings a node may bare-call: named, value, bound once, and
@@ -231,6 +262,28 @@ pub(crate) fn module_entries_and_outbound<'a>(
         if !imported.is_empty() {
             import_callees.insert(*name, imported);
         }
+    }
+    // A built value calls what its building function calls (#15928). A name
+    // the function also declares as a member (`compare(a, b) { ... }`) reads
+    // as a call in text, so it is no edge.
+    for (name, value) in &built {
+        if !values.contains(name) {
+            continue;
+        }
+        let node = ModuleNode {
+            call_texts: vec![CallText {
+                calls: std::borrow::Cow::Borrowed(value.text),
+                scope: value.text,
+            }],
+            ..ModuleNode::default()
+        };
+        let top_level: BTreeSet<&str> = node_callees(&node, &nodes, &names, &values)
+            .into_iter()
+            .filter(|callee| *callee != *name)
+            .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
+            .filter(|callee| !declares_member_named(value.text, callee))
+            .collect();
+        callees.insert(*name, top_level);
     }
     let mut entries: BTreeMap<String, Vec<TypeScriptModuleEntry>> = BTreeMap::new();
     // (import local) -> exports of this module that reach a call of it.
@@ -296,16 +349,15 @@ fn collect_statement<'a>(
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
     exports: &mut BTreeMap<String, BTreeSet<TypeScriptModuleEntry>>,
-    values: &mut BTreeSet<&'a str>,
+    values: &mut ModuleValues<'a>,
     exported_values: &mut BTreeSet<&'a str>,
-    decl_starts: &mut BTreeMap<&'a str, usize>,
 ) {
     match statement {
         Statement::FunctionDeclaration(func) => {
             collect_function(func, source, nodes);
         }
         Statement::VariableDeclaration(decl) => {
-            collect_variables(decl, source, nodes, values, decl_starts);
+            collect_variables(decl, source, nodes, values);
         }
         Statement::ExportNamedDeclaration(export) => {
             if export.export_kind == ImportOrExportKind::Type {
@@ -318,7 +370,7 @@ fn collect_statement<'a>(
                     }
                 }
                 Some(Declaration::VariableDeclaration(decl)) => {
-                    for name in collect_variables(decl, source, nodes, values, decl_starts) {
+                    for name in collect_variables(decl, source, nodes, values) {
                         record_export(exports, name, name);
                     }
                     // An exported value may be imported and mutated by another
@@ -502,8 +554,7 @@ fn collect_variables<'a>(
     decl: &'a VariableDeclaration<'a>,
     source: &'a str,
     nodes: &mut BTreeMap<&'a str, ModuleNode<'a>>,
-    values: &mut BTreeSet<&'a str>,
-    decl_starts: &mut BTreeMap<&'a str, usize>,
+    values: &mut ModuleValues<'a>,
 ) -> Vec<&'a str> {
     let mut names = Vec::new();
     let is_const = decl.kind == oxc_ast::ast::VariableDeclarationKind::Const;
@@ -520,10 +571,10 @@ fn collect_variables<'a>(
             BindingPattern::BindingIdentifier(identifier) => identifier.span.start as usize,
             _ => continue,
         };
-        let mut add_value = |values: &mut BTreeSet<&'a str>| {
+        let add_value = |values: &mut ModuleValues<'a>| {
             if is_const {
-                values.insert(name);
-                decl_starts.insert(name, start);
+                values.names.insert(name);
+                values.decl_starts.insert(name, start);
             }
         };
         match unwrap_type_wrappers(init) {
@@ -537,6 +588,9 @@ fn collect_variables<'a>(
             Expression::CallExpression(call) => {
                 let Expression::Identifier(callee) = unwrap_type_wrappers(&call.callee) else {
                     add_value(values);
+                    if is_const && let Some(value) = built_value(call, name, source) {
+                        values.built.insert(name, value);
+                    }
                     continue;
                 };
                 // `Symbol("x")` builds a value, not a factory product.
@@ -554,6 +608,77 @@ fn collect_variables<'a>(
         }
     }
     names
+}
+
+/// `(function () { ... })()` or `(() => { ... })()` with no arguments.
+fn built_value<'a>(
+    call: &'a oxc_ast::ast::CallExpression<'a>,
+    name: &str,
+    source: &'a str,
+) -> Option<BuiltValue<'a>> {
+    if !call.arguments.is_empty() || call.optional {
+        return None;
+    }
+    let (span, statements) = match unwrap_type_wrappers(&call.callee) {
+        Expression::FunctionExpression(func) if !func.generator && !func.r#async => {
+            (func.span, &func.body.as_ref()?.statements)
+        }
+        Expression::ArrowFunctionExpression(arrow) if !arrow.expression && !arrow.r#async => {
+            (arrow.span, &arrow.body.statements)
+        }
+        _ => return None,
+    };
+    let declares_name = statements.iter().any(|statement| match statement {
+        Statement::ClassDeclaration(class) => {
+            class.id.as_ref().is_some_and(|id| id.name.as_str() == name)
+        }
+        Statement::FunctionDeclaration(func) => {
+            func.id.as_ref().is_some_and(|id| id.name.as_str() == name)
+        }
+        Statement::VariableDeclaration(decl) => decl
+            .declarations
+            .iter()
+            .any(|declarator| binding_identifier_name(&declarator.id) == Some(name)),
+        _ => false,
+    });
+    Some(BuiltValue {
+        text: span_text(source, span),
+        shadow: declares_name.then_some(span.start as usize..span.end as usize),
+    })
+}
+
+/// `name(...) {` or `name(...): T {` in `text`: a method or shorthand member
+/// declaration of that name. Fail-closed for the caller: a call followed by
+/// `:` in a conditional expression also answers `true`.
+fn declares_member_named(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
+        let before = &text[..idx];
+        let after = &text[idx + name.len()..];
+        if before
+            .chars()
+            .next_back()
+            .is_some_and(is_javascript_identifier_char)
+            || before.trim_end().ends_with('.')
+            || !after.starts_with('(')
+        {
+            return false;
+        }
+        let mut depth = 0usize;
+        for (offset, ch) in after.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        let tail = after[offset + 1..].trim_start();
+                        return tail.starts_with('{') || tail.starts_with(':');
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
+    })
 }
 
 /// Spans of the function expressions the body returns from its own top-level
@@ -664,13 +789,35 @@ fn node_callees<'n, 'a>(
     callees
 }
 
-/// A bare call to `name` that the enclosing function cannot have rebound.
-/// Fail-closed: every mention of `name` in the scope must be a bare call. Any
-/// other mention (a parameter, including destructured and nested-callback
-/// parameters, an assignment, a `function name` declaration, a value passed
-/// along) may bind or alias it, so no edge is recorded.
+/// A bare call to `name` that the enclosing function cannot have rebound, or
+/// `name` handed by reference to a synchronous array callback method
+/// (`keys.sort(name)`, #15928), which calls it before returning.
+/// Fail-closed: every mention of `name` in the scope must be one of those two
+/// forms. Any other mention (a parameter, including destructured and
+/// nested-callback parameters, an assignment, a `function name` declaration, a
+/// value stored or passed to anything else, such as `setTimeout(name)` or
+/// `promise.then(name)`) may bind, alias or defer it, so no edge is recorded.
 fn text_calls_top_level(text: &CallText<'_>, name: &str) -> bool {
-    contains_call_name(&text.calls, name) && every_mention_is_a_bare_call(text.scope, name)
+    (contains_call_name(&text.calls, name) || runs_function_reference(&text.calls, name))
+        && every_mention_is_a_bare_call(text.scope, name)
+}
+
+fn runs_function_reference(calls: &str, name: &str) -> bool {
+    calls.match_indices(name).any(|(idx, _)| {
+        is_sync_callback_reference(&calls[..idx], &calls[idx + name.len()..])
+            && !line_prefix_looks_like_comment_or_string(calls, idx)
+            && !inside_block_comment(calls, idx)
+    })
+}
+
+/// `recv.sort(NAME)` / `recv.map(NAME, ...)`: the whole first argument of a
+/// synchronous array callback method.
+fn is_sync_callback_reference(before: &str, after: &str) -> bool {
+    let head = before.trim_end();
+    let rest = after.trim_start();
+    head.ends_with('(')
+        && (rest.starts_with(')') || rest.starts_with(','))
+        && callback_runs_synchronously(head)
 }
 
 fn every_mention_is_a_bare_call(scope: &str, name: &str) -> bool {
@@ -701,7 +848,7 @@ fn every_mention_is_a_bare_call(scope: &str, name: &str) -> bool {
         let rest = after.trim_start();
         let called = rest.starts_with('(') || rest.starts_with("?.(");
         // `x.name(...)` is a member call, which is another binding entirely.
-        member || (called && !declared)
+        member || (called && !declared) || is_sync_callback_reference(before, after)
     })
 }
 

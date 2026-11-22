@@ -507,7 +507,7 @@ fn sync_callback_first_method_reference(executed: &str, ref_start: usize, needle
 /// first in the argument list of a call to one of [`SYNC_CALLBACK_METHODS`] on a
 /// receiver; a later argument (`map`'s `thisArg`) is a stored value. An array element, a parenthesized operand, a stored callback and a
 /// deferred callee (`setTimeout`, `on`, `subscribe`, `then`) do not qualify.
-fn callback_runs_synchronously(head: &str) -> bool {
+pub(super) fn callback_runs_synchronously(head: &str) -> bool {
     let mut depth = 0usize;
     let mut open = None;
     for (index, ch) in head.char_indices().rev() {

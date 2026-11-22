@@ -1,0 +1,31 @@
+diff --git a/src/serialize.ts b/src/serialize.ts
+index d01ff64..5adb565 100644
+--- a/src/serialize.ts
++++ b/src/serialize.ts
+@@ -6,7 +6,7 @@ function compareStrings(a: string, b: string): number {
+     if (a === b) {
+         return 0;
+     }
+-    return a > b ? -1 : 1;
++    return a < b ? -1 : 1;
+ }
+ 
+ const Serializer = /*@__PURE__*/ (function () {
+@@ -16,7 +16,7 @@ const Serializer = /*@__PURE__*/ (function () {
+                 return String(value);
+             }
+             const record = value as Record<string, unknown>;
+-            const keys = Object.keys(record).sort();
++            const keys = Object.keys(record).sort(compareStrings);
+             return '{' + keys.map((key) => key + ':' + this.serialize(record[key])).join(',') + '}';
+         }
+     }
+@@ -24,7 +24,7 @@ const Serializer = /*@__PURE__*/ (function () {
+ })();
+ 
+ function compareLengths(a: string, b: string): number {
+-    return b.length - a.length;
++    return a.length - b.length;
+ }
+ 
+ export function later(keys: string[]): string[] {
