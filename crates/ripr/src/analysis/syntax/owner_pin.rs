@@ -2200,16 +2200,21 @@ fn audited_pass_through_call(
         .filter(|ch| !ch.is_whitespace())
         .collect();
     let external = path.starts_with("::");
-    let wrapper = match path.trim_start_matches("::") {
-        "proptest::proptest" => PassThroughCall::Qualified {
+    // Each `proptest` wrapper is an audited pass-through on its own too:
+    // `prop_oneof!` building a strategy in a helper outside `proptest!`
+    // pastes its arguments into the same kind of expression (#14116).
+    let proptest_wrapper = |name: &str| PASS_THROUGH_WRAPPERS.contains(&name);
+    let unrooted = path.trim_start_matches("::");
+    let wrapper = match unrooted.split_once("::") {
+        Some(("proptest", name)) if proptest_wrapper(name) => PassThroughCall::Qualified {
             krate: "proptest",
             external,
         },
-        "serde_json::json" => PassThroughCall::Qualified {
+        Some(("serde_json", "json")) => PassThroughCall::Qualified {
             krate: "serde_json",
             external,
         },
-        "proptest" if !external => PassThroughCall::BareProptest,
+        None if !external && proptest_wrapper(unrooted) => PassThroughCall::BareProptest,
         _ => return None,
     };
     if tokens

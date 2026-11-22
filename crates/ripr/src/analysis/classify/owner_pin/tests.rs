@@ -69,6 +69,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
 mod nested_json_pass_through;
 mod shared_macro_scan;
 mod shared_target_context;
+mod standalone_proptest_wrapper;
 mod standard_wrapper_disclosure;
 mod tuple_projection;
 #[test]

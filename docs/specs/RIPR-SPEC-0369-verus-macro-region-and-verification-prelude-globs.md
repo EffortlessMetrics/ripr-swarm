@@ -244,11 +244,14 @@ call's line and byte range and kept to its crate, and it no longer refuses a
 test elsewhere, when all of these hold:
 
 - The call is spelled `proptest::proptest!` or `serde_json::json!` (either
-  with a leading `::`), and the crate root passes the drop-in authority
+  with a leading `::`), or `proptest::` and one of the other `proptest`
+  wrappers above on its own, such as `proptest::prop_oneof!` building a
+  strategy in a helper outside `proptest!`, and the crate root passes the
+  drop-in authority
   (audited locked version and plain registry manifest, not shadowed by a
   workspace package, module or rename, and not taken over by a plain import
   of the root name unless the path is absolute); or it is a bare
-  `proptest!` whose module (the file, or the inline module holding the call)
+  `proptest!`, or a bare call of another of those wrappers, whose module (the file, or the inline module holding the call)
   has an admitted exact `proptest::prelude::*` glob.
 - For a bare `proptest!`: the file has no plain import and no `macro_rules!`
   or `macro` of any of the wrapper names above, no glob in a block or inline
