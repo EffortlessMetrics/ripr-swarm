@@ -711,8 +711,11 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
 /// it at that site, so the glob is not a foreign one. Only the top level of
 /// a file qualifies, read with 2018 path semantics; the scan has no edition, so
 /// a 2015-edition non-root file, where the same spelling names a crate-root
-/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`), grouped globs and the
-/// standard roots keep their dedicated rules.
+/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`)
+/// and grouped globs keep their dedicated rules. A module named `std`, `core`
+/// or `alloc` qualifies too (#16060), but only when no `cfg` can remove it:
+/// without the module the same spelling names the standard crate or a
+/// dependency renamed to it.
 fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &str) -> bool {
     let whole_glob = import
         .use_tree()
@@ -761,6 +764,16 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
                 || module
                     .attrs()
                     .any(|attr| attr.syntax().text().to_string().contains("path"))
+            {
+                return false;
+            }
+            // A conditional module named after a standard crate leaves the
+            // glob reading that crate, or a dependency renamed to it, when
+            // the module is configured out.
+            if matches!(root, "std" | "core" | "alloc")
+                && module
+                    .attrs()
+                    .any(|attr| attr.syntax().text().to_string().contains("cfg"))
             {
                 return false;
             }

@@ -191,7 +191,9 @@ shadowed by an `extern crate`, `use` or other item of the same name, written
 with a longer path, a group or a leading `::`, nested in a module, or reached
 next to an item-position macro. A module named `std`, `core` or `alloc` takes
 the same rule (#16060): a local item shadows the extern prelude without
-ambiguity, so `mod core; use core::*;` globs the local module. Without this a
+ambiguity, so `mod core; use core::*;` globs the local module. Such a
+module must carry no `cfg` attribute: configured out, it leaves the standard
+crate or a dependency renamed to it behind the same spelling. Without this a
 re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
 in the crate's tests macro-binding unestablished.
 

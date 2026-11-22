@@ -9842,6 +9842,16 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
         ("mod core;\nextern crate core;\nuse core::*;\n", false),
         ("mod core;\nuse dep as core;\nuse core::*;\n", false),
         ("#[path = \"x.rs\"]\nmod std;\nuse std::*;\n", false),
+        // Configured out, the module leaves the standard crate or a
+        // dependency renamed to it behind the same spelling.
+        (
+            "#[cfg(feature = \"local-alloc\")]\nmod alloc;\nuse alloc::*;\n",
+            false,
+        ),
+        (
+            "#[cfg_attr(test, allow(dead_code))]\nmod core;\nuse core::*;\n",
+            false,
+        ),
     ] {
         let sites = sites_in_widest_context(source, &["assert_eq"]);
         let candidates = stored_candidates(source)?;
