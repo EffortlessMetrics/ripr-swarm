@@ -3941,7 +3941,8 @@ and the importing package's unique package edge with matching normal/dev context
 conditional, path/git/alternate-registry and ambiguous edges refuse. This uses
 rule 7a's existing bounded metadata process and strict configuration snapshot;
 ambient registry and ancestor/nested source replacements refuse. Windows environment names are canonicalized before registry/home checks. Manifest/config/
-lock identity is rechecked and affects classified-cache reuse.
+lock identity is checked once per importing file per analysis and rechecked by
+the next analysis (#16038); it affects classified-cache reuse.
 
 Visible local, imported, cross-file namespace and workspace macro bindings
 remain subject to the shared fail-closed admission checks. An unavailable or
