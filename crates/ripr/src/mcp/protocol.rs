@@ -3962,10 +3962,12 @@ mod tests {
         // inside its unchanged ceiling; full 42,198, so only the opt-in
         // full budget moves, from 41,700 to 42,300.
         // #13096 worktree-leg budget decision: the full listing declares
-        // the closed `worktree_base_hint` object on the refresh document
-        // (measured 42,366 with it). The slim default is unchanged, so
-        // only the opt-in full budget moves, from 42,300 to 42,450.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 42_450)] {
+        // the closed `worktree_base_hint` object on the refresh document.
+        // Measured on the tree composed with #16071's `ripr_refresh`
+        // status answer (+100 bytes on that tool): full 42,466, so only
+        // the opt-in full budget moves, from 42,300 to 42,600. The slim
+        // default every session pays is unchanged.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 42_600)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?
