@@ -170,7 +170,7 @@ fn documented_and_rendered_merge_commands_bind_live_head_in_both_modes() -> Resu
         })
         .find(|path| path.exists())
         .ok_or("missing source-promotion CI contract spec")
-        .and_then(|path| fs::read_to_string(path).map_err(|_| "unreadable spec"))?;
+        .and_then(|path| fs::read_to_string(path).map_err(|_unreadable| "unreadable spec"))?;
     let documented = spec
         .split("```bash\n")
         .nth(1)
