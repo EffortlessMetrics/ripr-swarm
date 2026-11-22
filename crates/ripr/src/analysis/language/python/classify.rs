@@ -1385,7 +1385,9 @@ fn classify_change_for_owner_inner<'a>(
         .flatten();
     // Class-attribute text gate (#15294): a changed class-body string constant
     // is exposed only when a related assertion carries a literal that the old
-    // text accepts and the new text rejects. Other shapes fail open.
+    // text accepts and the new text rejects. A non-string value (#16009) is
+    // exposed only when a related test reads the name or calls a method that
+    // reads it. Other shapes fail open.
     let class_attr_gap = static_limit
         .is_none()
         .then(|| {
@@ -1397,6 +1399,19 @@ fn classify_change_for_owner_inner<'a>(
                 line,
                 &related_candidates,
             )
+            .or_else(|| {
+                // #16009: the same reading for a non-string class attribute
+                // value, through the class methods that read the name.
+                super::class_attr_reader::python_class_attr_reader_gap(
+                    line_text,
+                    old_line_text,
+                    owner,
+                    owner_source,
+                    line,
+                    &related_candidates,
+                    all_tests,
+                )
+            })
         })
         .flatten();
     // #13622: an old-type exact assertion after a raised-type replacement is
@@ -1799,8 +1814,8 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Yes,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but {}. Add an assertion (for example `pytest.raises(..., match=...)`) that the old text satisfies and the new text does not.",
-                owner.name, gap.reason,
+                "A strong Python oracle reaches `{}`, but {}. {}",
+                owner.name, gap.reason, gap.next_step,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
