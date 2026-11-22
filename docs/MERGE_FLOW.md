@@ -186,7 +186,9 @@ The first call disarms auto-merge so nothing re-enqueues the PR; the second
 removes the queue entry, because queue membership does not survive a
 conversion to Draft. Read back a `removed_from_merge_queue` event on the PR
 timeline and `"draft": true` on the PR before treating the landing as
-contained. A queue run that has already merged the PR cannot be withdrawn this
+contained. The removal event can trail the conversion by several minutes: on
+#16039 the conversion was recorded at 05:56Z on November 22, 2026 and the
+removal at 06:02Z. Until it appears, the withdrawal is not confirmed. A queue run that has already merged the PR cannot be withdrawn this
 way; check for a `merged` event first. Returning the PR to Ready does not
 re-enqueue it: after the repair, the review, qualification and enqueue
 conditions above apply again on the new head.
