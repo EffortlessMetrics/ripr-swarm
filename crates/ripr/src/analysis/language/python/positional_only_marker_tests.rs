@@ -2,8 +2,8 @@
 //! that only moves `/` is discriminated only by a call that passes a moved
 //! parameter by keyword.
 
-use super::positional_only_marker::positional_only_marker_params;
 use super::owners_tests::{extract_owners, extract_tests};
+use super::positional_only_marker::positional_only_marker_params;
 use super::*;
 
 const KEY_SOURCE: &str = "def key(self, /, *args, **kwargs):\n    return args\n";
