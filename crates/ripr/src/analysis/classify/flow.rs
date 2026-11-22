@@ -584,6 +584,13 @@ fn return_value_sink(
         {
             return flow_sink(FlowSinkKind::ReturnValue, tail.text, tail.line, owner);
         }
+        // #13037: a bare name the owner returns as its tail (`amount` in the
+        // `else` of the tail `if`, `out` ending a method) is the returned
+        // value itself, so the change reaches the return. Only the sink
+        // moves: whether a test pins that branch stays with the readers.
+        if let Some(tail) = bare_name_returned_tail(probe, owner_fn) {
+            return flow_sink(FlowSinkKind::ReturnValue, tail.text, tail.line, owner);
+        }
         return flow_sink(
             FlowSinkKind::Unknown,
             "unknown sink",
@@ -938,6 +945,130 @@ fn predicate_as_owner_tail(
     Some(LocalTextFact {
         line,
         text: expression,
+    })
+}
+
+/// #13037: the probe as a bare name in a position whose value the owner
+/// returns: the body's tail, or, recursively, the tail of a plain block or of
+/// either branch of an `if` in such a position. Fails closed unless the owner
+/// declares a non-unit return type, the probe (before and after the edit) is
+/// one identifier, and its line holds that identifier once, at a returned
+/// position. `self`, paths, generics, labelled or `async`/`unsafe` blocks,
+/// `match` arms, loops and closures add no sink here.
+fn bare_name_returned_tail(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+) -> Option<LocalTextFact> {
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasName},
+    };
+
+    fn returned_names(expr: ast::Expr, out: &mut Vec<ast::PathExpr>) {
+        match expr {
+            ast::Expr::PathExpr(path) => out.push(path),
+            ast::Expr::ParenExpr(paren) => {
+                if let Some(inner) = paren.expr() {
+                    returned_names(inner, out);
+                }
+            }
+            ast::Expr::BlockExpr(block) => {
+                if block.modifier().is_none()
+                    && let Some(tail) = block.tail_expr()
+                {
+                    returned_names(tail, out);
+                }
+            }
+            ast::Expr::IfExpr(if_expr) => {
+                if let Some(tail) = if_expr.then_branch().and_then(|block| block.tail_expr()) {
+                    returned_names(tail, out);
+                }
+                match if_expr.else_branch() {
+                    Some(ast::ElseBranch::Block(block)) => {
+                        returned_names(ast::Expr::BlockExpr(block), out);
+                    }
+                    Some(ast::ElseBranch::IfExpr(nested)) => {
+                        returned_names(ast::Expr::IfExpr(nested), out);
+                    }
+                    None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let owner = owner_fn?;
+    if probe.owner.as_ref() != Some(&owner.id) || !probe.location.file.ends_with(&owner.file) {
+        return None;
+    }
+    let code = |text: &str| {
+        crate::analysis::language::mask_rust_comments_and_strings(text)
+            .trim()
+            .trim_end_matches(',')
+            .trim()
+            .to_string()
+    };
+    let name = code(&probe.expression);
+    let is_identifier = name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        && name
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        && !matches!(name.as_str(), "_" | "self" | "Self" | "true" | "false");
+    if !is_identifier || probe.after.as_deref().map(code).as_deref() != Some(name.as_str()) {
+        return None;
+    }
+    let parse = parse_clean_source_file(&owner.body)?;
+    let tree = parse.tree();
+    let mut items = tree.syntax().children().filter_map(ast::Item::cast);
+    let Some(ast::Item::Fn(function)) = items.next() else {
+        return None;
+    };
+    if items.next().is_some()
+        || function.name()?.text() != owner.name
+        || code(&function.ret_type()?.ty()?.syntax().text().to_string()) == "()"
+    {
+        return None;
+    }
+    let line_of = |node: &ra_ap_syntax::SyntaxNode| {
+        let start = usize::from(node.text_range().start());
+        owner
+            .body
+            .get(..start)
+            .map(|before| owner.start_line + before.bytes().filter(|byte| *byte == b'\n').count())
+    };
+    let mut returned = Vec::new();
+    returned_names(function.body()?.tail_expr()?, &mut returned);
+    let mut at_probe = returned.iter().filter(|path| {
+        line_of(path.syntax()) == Some(probe.location.line)
+            && path.path().is_some_and(|path| {
+                path.qualifier().is_none()
+                    // The segment's whole text is the name: no generics.
+                    && path
+                        .segment()
+                        .is_some_and(|segment| segment.syntax().text() == name.as_str())
+            })
+    });
+    let found = at_probe.next()?;
+    if at_probe.next().is_some() {
+        return None;
+    }
+    let offset = probe.location.line.checked_sub(owner.start_line)?;
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let line = masked.lines().nth(offset)?;
+    if identifiers(line)
+        .filter(|(word, _, _)| *word == name)
+        .count()
+        != 1
+    {
+        return None;
+    }
+    Some(LocalTextFact {
+        line: line_of(found.syntax())?,
+        text: name,
     })
 }
 

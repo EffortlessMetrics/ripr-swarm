@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A changed return that is one bare parameter or local, such as `amount + 5` changed to `amount` in the `else` branch of the returned `if`, now reaches the return sink. A test that pins the call that takes that branch (`assert_eq!(discounted(100, false), 100)`) reads `exposed` instead of `propagation_unknown`. A pin that takes the other branch, or a far input, reads `weakly_exposed`, and a test local that only shares the returned name (`let amount = discounted(100, true)`) confirms nothing (#13037).

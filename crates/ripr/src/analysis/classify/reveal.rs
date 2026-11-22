@@ -2504,6 +2504,15 @@ fn analyze_related_assertions(
     } else {
         Vec::new()
     };
+    // #13037: a returned tail that is one owner parameter or local (`amount`)
+    // is spelled only by that name, so a test that names it names its own
+    // binding (`let amount = discounted(100, true)`), whichever branch the
+    // call took. Such a name confirms nothing even in an owner-bound
+    // assertion; the branch-reading pins (#14950) still can.
+    let bare_owner_name_tail = matches!(probe.family, ProbeFamily::ReturnValue)
+        && owner_scoped_tokens
+            .iter()
+            .any(|token| token == probe.expression.trim());
     // #12110: the error variant an `error_path` change replaced, when the
     // paired old text names a different one.
     let removed_variant = matches!(probe.family, ProbeFamily::ErrorPath)
@@ -2985,7 +2994,8 @@ fn analyze_related_assertions(
                     || is_inline_expect_snapshot(assertion));
             let wrapper_pinned = matches!(probe.family, ProbeFamily::ReturnValue)
                 && (return_admission.wrapper_return_pin)(test, assertion);
-            let owner_bound = !match_context.owner_scoped_tokens.is_empty()
+            let owner_bound = !bare_owner_name_tail
+                && !match_context.owner_scoped_tokens.is_empty()
                 && oracle_binds_sink_identity(
                     &assertion.text,
                     &test.body,

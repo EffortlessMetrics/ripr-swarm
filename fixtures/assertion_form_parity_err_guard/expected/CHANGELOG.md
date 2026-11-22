@@ -607,3 +607,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (47)
+
+Reason:
+RIPR-SPEC-0443: a bare parameter or local returned as the changed tail reaches the return sink (#13037)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -773,3 +773,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — multi_hunk_removed_line_wrong_target (46)
+
+Reason:
+RIPR-SPEC-0443: a bare parameter or local returned as the changed tail reaches the return sink (#13037)
+
+Command:
+`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
