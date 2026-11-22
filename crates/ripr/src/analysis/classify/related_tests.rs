@@ -849,7 +849,10 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<(String, Option<String>)> {
                         .map(|(position, _)| position)
                         .last()
                     {
-                        let name = &chain[name_start..name_end];
+                        // A leading `::` or a qualified-self call
+                        // (`<T as Tr>::f`) leaves leading colons; trim them so
+                        // the bare path still passes the first-character check.
+                        let name = chain[name_start..name_end].trim_start_matches(':');
                         if name
                             .chars()
                             .next()
@@ -910,8 +913,16 @@ fn call_qualifier_conflicts(text: &str, name: &str, wrapper_qualifier: Option<&s
                 .map(|(position, _)| position)
                 .last()
                 .map(|start| &prefix[start..]);
-            if qualifier.is_some_and(|qualifier| qualifier != wrapper_qualifier) {
-                return true;
+            if let Some(qualifier) = qualifier {
+                // A relative path keyword on either side does not name a
+                // specific module, so it cannot distinguish the wrapper from
+                // the call (#5335).
+                if matches!(qualifier, "Self" | "self" | "super" | "crate") {
+                    continue;
+                }
+                if qualifier != wrapper_qualifier {
+                    return true;
+                }
             }
         }
     }
@@ -17431,6 +17442,17 @@ let r = try_parse_summary();",
             (
                 "self::decode(raw).map_err(Into::into)",
                 "mymod::decode(raw)",
+            ),
+            // A child-module test spells the same module `super`; the
+            // wrapper's concrete `strict` must not conflict with it.
+            (
+                "crate::strict::decode(raw).map_err(Into::into)",
+                "super::decode(raw)",
+            ),
+            // A leading `::` path must still yield a callee name.
+            (
+                "::krate::decode(raw).map_err(Into::into)",
+                "::krate::decode(raw)",
             ),
         ] {
             let owner = function("src/lib.rs", "parse_summary");
