@@ -751,10 +751,14 @@ impl RepoSeam {
 }
 
 /// Repo-root-relative path normalization: Unix separators, no leading `./`.
-/// Used inside the ID hash so `src/x.rs`, `./src/x.rs`, and `src\x.rs`
-/// produce the same seam ID across platforms.
+/// Used inside the ID hash so `src/x.rs`, `./src/x.rs`, and a Windows
+/// checkout's `src\x.rs` produce the same seam ID across platforms. On Unix a
+/// backslash is a file-name byte, not a separator: `src/a\b.rs` stays one
+/// file, distinct from `src/a/b.rs`, and still opens under the root (#15908).
 fn normalize_path(p: &Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/");
+    let s = p.to_string_lossy();
+    #[cfg(not(unix))]
+    let s = s.replace('\\', "/");
     s.strip_prefix("./").unwrap_or(&s).to_string()
 }
 

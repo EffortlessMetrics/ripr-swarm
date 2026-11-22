@@ -715,22 +715,23 @@ mod tests {
     }
 
     /// #8638: the finding side mints from the producer's path and the seam
-    /// side from the seam's path after `stable_path_text`; both normalize
-    /// Windows-style separators, so the ids match byte-for-byte.
+    /// side from the seam's path after `stable_path_text`; both spell the file
+    /// the same way (`/` for a Windows separator, `%5C` for a literal Unix
+    /// backslash, #15908), so the ids match byte-for-byte.
     #[test]
     fn finding_and_seam_paths_agree_after_stable_path_text() -> Result<(), String> {
         let windows = PathBuf::from("src\\pricing.rs");
+        let seam_file = crate::analysis::stable_path_text(&windows);
         let gap = gap_for(
             &windows,
-            Some(owner("src/pricing.rs", "score")),
+            Some(owner(&seam_file, "score")),
             &ProbeFamily::Predicate,
             "if a >= b {",
         )?;
-        let seam_file = crate::analysis::stable_path_text(&windows);
         assert_eq!(
             rust_gap_id_for_seam_shape(
                 &seam_file,
-                "src/pricing.rs::score",
+                &format!("{seam_file}::score"),
                 SeamKind::PredicateBoundary,
                 "if a >= b {"
             )

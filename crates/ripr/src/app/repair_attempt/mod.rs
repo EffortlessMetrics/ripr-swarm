@@ -3342,7 +3342,7 @@ pub(crate) fn edit_cage_policy_from_packet(
             .map(|path| {
                 path.as_str()
                     .ok_or_else(|| format!("repair packet {name} contains a non-string path"))
-                    .and_then(packet_path)
+                    .and_then(|text| forbidden_packet_path_text(text, stable_paths))
                     .and_then(crate::edit_cage::CagePathRule::exact)
             })
             .collect()
@@ -3478,8 +3478,8 @@ pub(crate) fn edit_cage_policy_from_packet(
 /// `src/a%25b.rs`, a file that does not exist.
 ///
 /// A decoded backslash refuses: on Unix it is a literal file-name byte
-/// (`%5C`), and the cage normalizer would read it as a separator, so
-/// `tests/a%5Cb.rs` would become the rule for a different file,
+/// (`%5C`), and the test-surface classifier reads it as a separator, so
+/// `tests/a%5Cb.rs` would be admitted as if it were a different file,
 /// `tests/a/b.rs`.
 fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String> {
     if !stable_path_text {
@@ -3499,6 +3499,23 @@ fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String
         ));
     }
     Ok(decoded.to_string())
+}
+
+/// A forbidden packet path in its native spelling. Unlike an allowed path, a
+/// literal Unix backslash (`%5C`) is accepted here (#15908): the cage compares
+/// the rule with the path Git reports, byte for byte on Unix, so the rule for
+/// `src/a%5Cb.rs` forbids exactly `src/a\b.rs`. The refusal above stays for
+/// paths that may be edited, because the test-surface classifier still reads
+/// a backslash as a separator. A production file with such a name no longer
+/// refuses the whole attempt.
+fn forbidden_packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String> {
+    if !stable_path_text {
+        return Ok(text.to_string());
+    }
+    crate::analysis::decode_stable_path_text(text)
+        .to_str()
+        .map(str::to_string)
+        .ok_or_else(|| format!("repair packet path `{text}` does not name a UTF-8 path"))
 }
 
 /// A packet the gap decision ledger rendered. Its paths come from the
@@ -6497,6 +6514,33 @@ mod tests {
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
         if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
             return Err("a production recommended test constructed a cage policy".to_string());
+        }
+        Ok(())
+    }
+
+    /// A forbidden production file named `a\b.rs` on Unix no longer refuses
+    /// the whole policy: its rule is the path Git reports for that file. A
+    /// path that may be edited keeps refusing (#15908).
+    #[cfg(unix)]
+    #[test]
+    fn cage_policy_forbids_a_backslash_named_file_by_its_own_path() -> Result<(), String> {
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/pricing.rs"],
+            "forbidden_files": ["src/a%5Cb.rs"]
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        let forbidden = policy.forbidden_paths.first().map(|rule| rule.path());
+        if forbidden != Some("src/a\\b.rs") {
+            return Err(format!("forbidden rule names another file: {forbidden:?}"));
+        }
+        let rule = policy
+            .forbidden_paths
+            .first()
+            .ok_or_else(|| "no forbidden rule".to_string())?;
+        if !rule.matches("src/a\\b.rs") || rule.matches("src/a/b.rs") {
+            return Err("the rule must match its own file only".to_string());
         }
         Ok(())
     }

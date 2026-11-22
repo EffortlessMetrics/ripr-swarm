@@ -4268,7 +4268,7 @@ impl AssertionRefusal {
         // Evidence text is host-independent: use the stable slash spelling
         // so Windows and Unix emit identical bytes (#2337 family).
         let at = |path: &Path, line: usize| {
-            let text = crate::analysis::stable_path_text(path);
+            let text = crate::analysis::stable_display_path_text(path);
             if line == 0 {
                 text
             } else {
@@ -4372,7 +4372,7 @@ impl AssertionRefusal {
                     match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
-                            crate::analysis::stable_path_text(path)
+                            crate::analysis::stable_display_path_text(path)
                         ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
