@@ -76,7 +76,7 @@ pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status`, then 
 
 const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root discovery (ready or unavailable, with why), authority facts (source edit, verification, mutation and model provider are all none) and session state: attempt (no_snapshot, in_flight, completed, failed), last completed snapshot, last-known-good, freshness and config profile. `workspace_state: ready` means only that a root was found, not that analysis ran or found nothing. No gap evidence: call ripr_refresh to analyze. It never edits source, runs tests or mutation, or executes verification commands.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (retry later), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (poll status), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. Can take minutes; ripr_workspace_status still answers. After a timeout do not re-send: poll status. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
 
 const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set: counts, omitted identities with reasons, one summary per item. Same selection as the CLI and editor; never truncates silently, infers no business risk. Without class, already-gripped exposed items are omitted and counted in exposed_omitted. Filters narrow before paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
 
@@ -3171,7 +3171,7 @@ mod tests {
         // inventory's 580 bytes.
         let mut budgets = std::collections::BTreeMap::from([
             ("tool ripr_workspace_status", 555),
-            ("tool ripr_refresh", 1085),
+            ("tool ripr_refresh", 1185),
             ("tool ripr_list_gaps", 530),
             ("tool ripr_get_gap", 490),
             ("tool ripr_get_top_limitation", 440),
@@ -3260,7 +3260,7 @@ mod tests {
         // well as the ceilings. #14461: the instructions state each
         // route once and safety boundaries the annotations and instructions
         // already carry are not repeated per read tool.
-        assert_eq!(total, 10673);
+        assert_eq!(total, 10773);
         Ok(())
     }
 
@@ -3530,6 +3530,9 @@ mod tests {
                     "omitting `base` returns to the default branch",
                     "A `base` starting with `-` or naming no commit fails closed",
                     "never edits source, executes verification or mutation commands",
+                    // #15983: what an agent must know before a client-side
+                    // timeout: status answers, and a repeat is not the fix.
+                    "Can take minutes; ripr_workspace_status still answers. After a timeout do not re-send: poll status.",
                     "cancelled attempt still commits as a completed snapshot when it finishes",
                     "a superseded attempt is never committed",
                     "workspace_unavailable",
