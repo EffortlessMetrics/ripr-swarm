@@ -51,6 +51,14 @@ impl Fixture {
             .ok_or_else(|| format!("fixture produced no non-exposed {family} finding"))
     }
 
+    fn output(&self) -> Result<CheckOutput, String> {
+        crate::app::check_workspace(crate::app::CheckInput {
+            root: self.0.clone(),
+            diff_file: Some(self.0.join("change.patch")),
+            ..Default::default()
+        })
+    }
+
     fn explicit(&self, family: &str) -> Result<TestStubResolution, String> {
         let selector = TestStubSelector::parse_at("src/lib.rs:2")?.with_kind(family)?;
         resolve_test_stub(&self.0, &RiprConfig::default(), &selector)
@@ -166,6 +174,75 @@ fn predicate_route_retains_existing_weak_test_guidance() -> Result<(), String> {
     assert_eq!(
         explicit.weak_oracle_guidance.as_deref(),
         Some(guidance.as_str())
+    );
+    Ok(())
+}
+
+/// #15996: `ripr check` runs both route lookups under what is left of its
+/// time budget. With the lookup stopped, the stub's syntax still resolves
+/// and the existing-test lookup reads as "no weak test", so the route must be
+/// withheld, not printed as a stub `agent stub` would refuse; the repair
+/// route names the spent budget.
+#[test]
+fn routes_are_withheld_when_the_check_budget_stopped_their_lookup() -> Result<(), String> {
+    use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
+    use crate::app::navigation::{CheckRepairRoute, RepairRouteRefusal};
+    let fixture = Fixture::new(
+        BOUNDARY,
+        "    if qty >= 10 { price * 2 } else { price }",
+        "    if qty > 10 { price * 2 } else { price }",
+    )?;
+    fixture.write("tests/weak.rs", WEAK_TEST)?;
+    let output = fixture.output()?;
+    let config = RiprConfig::default();
+    let finding = fixture.finding("predicate")?;
+
+    let unstopped = check_stub_routes(&fixture.0, &config, &output, &mut None);
+    assert!(
+        matches!(
+            unstopped.as_slice(),
+            [StubRoute {
+                decision: StubRouteDecision::WeakOracle { .. },
+                ..
+            }]
+        ),
+        "{unstopped:?}"
+    );
+
+    // The budget runs out when the existing-test lookup starts, after the
+    // stub's syntax resolved. The hazard itself: the finding then reads as a
+    // plain stub, the command `agent stub` refuses for the weak test above.
+    DEADLINE_AT_INVENTORY_ENTRY_FACTS.with(|stop| stop.set(true));
+    let unguarded = with_token(&AnalysisCancellationToken::new(), || {
+        stub_route_for_finding(&fixture.0, &config, &finding, &mut None)
+    });
+    let stub_routes = with_token(&AnalysisCancellationToken::new(), || {
+        check_stub_routes(&fixture.0, &config, &output, &mut None)
+    });
+    DEADLINE_AT_INVENTORY_ENTRY_FACTS.with(|stop| stop.set(false));
+    assert!(
+        matches!(
+            unguarded,
+            Some(StubRoute {
+                decision: StubRouteDecision::Stub { .. },
+                ..
+            })
+        ),
+        "{unguarded:?}"
+    );
+    assert!(stub_routes.is_empty(), "{stub_routes:?}");
+
+    let stopped = AnalysisCancellationToken::new();
+    stopped.cancel(AnalysisAbortKind::DeadlineExceeded);
+    let repair_route = with_token(&stopped, || {
+        crate::app::task_first::check_repair_route(&fixture.0, &config, &output, &mut None)
+    });
+    assert!(
+        matches!(
+            repair_route,
+            CheckRepairRoute::Refused(RepairRouteRefusal::LookupBudgetSpent)
+        ),
+        "{repair_route:?}"
     );
     Ok(())
 }

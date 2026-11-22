@@ -182,6 +182,11 @@ pub(super) fn run_routes_within<T>(remaining: Option<Duration>, work: impl FnOnc
     let token = current_token().map_or_else(AnalysisCancellationToken::new, |caller| {
         caller.for_check_budget_worker()
     });
+    // Nothing left: stopped before the first checkpoint, not whenever the
+    // watchdog thread gets to run.
+    if remaining.is_zero() {
+        token.cancel(AnalysisAbortKind::DeadlineExceeded);
+    }
     let watchdog_token = token.clone();
     let (finished, wait) = mpsc::channel::<()>();
     std::thread::scope(|scope| {
@@ -292,21 +297,17 @@ mod tests {
         assert!(disabled);
     }
 
-    /// No budget left (the analysis used all of it) stops the lookup at its
-    /// first checkpoint instead of running it unbounded.
+    /// No budget left (the analysis used all of it): the lookup's first
+    /// checkpoint already refuses, with the deadline abort recorded.
     #[test]
     fn route_lookup_with_no_budget_left_stops_at_the_first_checkpoint() {
-        let started = std::time::Instant::now();
-        let stopped = run_routes_within(Some(Duration::ZERO), || {
-            while crate::analysis::cancellation::checkpoint().is_ok() {
-                if started.elapsed() > Duration::from_secs(30) {
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            true
+        let first = run_routes_within(Some(Duration::ZERO), || {
+            (
+                crate::analysis::cancellation::checkpoint().is_ok(),
+                crate::analysis::cancellation::current_abort_kind(),
+            )
         });
-        assert!(stopped);
+        assert_eq!(first, (false, Some(AnalysisAbortKind::DeadlineExceeded)));
     }
 
     #[cfg(unix)]

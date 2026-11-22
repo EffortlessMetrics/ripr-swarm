@@ -1175,11 +1175,20 @@ pub(crate) fn check_stub_routes(
             if !finding_text_is_on_disk(root, &file, line, &finding.probe.expression) {
                 return None;
             }
-            if selected {
+            let route = if selected {
                 stub_route_for_finding(root, &config, finding, seam_index)
             } else {
                 hidden_stub_ambiguity(root, &config, finding, seam_index)
+            };
+            // `ripr check` runs this lookup under what is left of its time
+            // budget. A stub's syntax can resolve while the existing-test
+            // lookup behind it (#10683) is stopped and reads as "no weak
+            // test", so a route finished under a stopped lookup is withheld:
+            // the command it names might be one `agent stub` refuses.
+            if crate::analysis::cancellation::current_abort_kind().is_some() {
+                return None;
             }
+            route
         })
         .collect()
 }
@@ -1621,6 +1630,9 @@ fn next_repair_for(
 #[cfg(test)]
 std::thread_local! {
     static INVENTORY_ENTRY_FACTS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// Test seam for #15996: the check budget running out exactly when the
+    /// existing-test lookup starts, after the stub's syntax has resolved.
+    static DEADLINE_AT_INVENTORY_ENTRY_FACTS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
@@ -1635,6 +1647,12 @@ fn inventory_entry_facts(
 ) -> Option<(SeamGripClass, Option<String>)> {
     #[cfg(test)]
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
+    #[cfg(test)]
+    if DEADLINE_AT_INVENTORY_ENTRY_FACTS.with(std::cell::Cell::get)
+        && let Some(token) = crate::analysis::cancellation::current_token()
+    {
+        token.cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
+    }
     let relative = scoped_file(root, file)?;
     // Only the selected seam receives evidence (#13884): its entry equals the
     // whole-file inventory's, and the file's other seams are not classified
