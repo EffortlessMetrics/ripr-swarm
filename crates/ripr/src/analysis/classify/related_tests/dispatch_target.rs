@@ -252,7 +252,9 @@ fn receiver_is_an_owned_value(
                     return true;
                 }
                 let initializer = initializer.trim().trim_end_matches(';').trim_end();
-                initializer == base || ends_in_owned_construction(initializer, base, index)
+                !initializer.starts_with('&')
+                    && (initializer == base
+                        || ends_in_owned_construction(initializer, base, index))
             });
     }
     ends_in_owned_construction(&text[..at - 1], base, index)
