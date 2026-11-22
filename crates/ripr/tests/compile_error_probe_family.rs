@@ -245,7 +245,10 @@ fn a_literal_sharing_the_line_keeps_its_runtime_family() -> Result<(), String> {
 /// literal sits after its closing delimiter, for a string and for a char.
 #[test]
 fn a_literal_after_a_split_invocation_keeps_its_runtime_family() -> Result<(), String> {
-    for (ty, old, new) in [("&'static str", "\"old\"", "\"new\""), ("char", "'o'", "'n'")] {
+    for (ty, old, new) in [
+        ("&'static str", "\"old\"", "\"new\""),
+        ("char", "'o'", "'n'"),
+    ] {
         let lib = format!(
             "pub fn name() -> {ty} {{\n    #[cfg(any())]\n    compile_error!(\n        \"unsupported\"\n    ); {new}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn named() {{\n        assert_eq!(name(), {new});\n    }}\n}}\n"
         );
