@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,7 +22,7 @@
+ }
+ impl Stock for Shelf {
+     fn count(&self) -> usize {
+-        self.left * 2
++        self.left + 1
+     }
+ }
+ impl Stock for Bin {

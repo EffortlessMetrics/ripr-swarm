@@ -387,8 +387,9 @@ const STANDARD_TRAIT_METHODS: &[(&str, &[&str])] = &[
 
 /// Whether a rival's self type is, or cannot be told from, `impl_type`. A
 /// rival under another name is another type only when the workspace declares
-/// a `struct`, `enum` or `union` of that name: an alias or a renamed import
-/// (`type Tile = Square;`, `use crate::Square as Tile;`) names the same type.
+/// a `struct`, `enum` or `union` of that name and no alias or renamed import
+/// of it: `type Tile = Square;` or `use crate::Square as Tile;` names the same
+/// type, also when some other module declares a `struct Tile`.
 fn on_the_same_type(self_ty: &str, impl_type: &str, index: &RustIndex) -> bool {
     compact_impl_type_name(self_ty).is_none_or(|rival| {
         rival == impl_type || !super::super::implicit_call::workspace_declares_type(&rival, index)

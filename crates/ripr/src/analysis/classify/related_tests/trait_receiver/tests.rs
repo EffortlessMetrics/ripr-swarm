@@ -160,6 +160,22 @@ fn another_method_of_the_name_on_the_type_withholds_the_relation() -> Result<(),
             "pub type /* same type */\nBuffer = BytesMut;\nimpl Buffer {\n    pub fn advance_mut(self, _cnt: usize) {}\n}\n",
         ),
         (
+            "an alias whose name another module declares as a struct",
+            "pub type Buffer = BytesMut;\nimpl Buffer {\n    pub fn advance_mut(self, _cnt: usize) {}\n}\n\
+             mod unrelated {\n    pub struct Buffer;\n}\n",
+        ),
+        (
+            "a renamed import whose name another module declares as a struct",
+            "pub mod view {\n    use super::BytesMut as Buffer;\n    impl Buffer {\n        pub fn advance_mut(self, _cnt: usize) {}\n    }\n}\n\
+             mod unrelated {\n    pub struct Buffer;\n}\n",
+        ),
+        (
+            "a macro call in an impl on an alias another module declares as a struct",
+            "macro_rules! by_value {\n    () => {\n        pub fn advance_mut(self, _cnt: usize) {}\n    };\n}\n\
+             pub type Buffer = BytesMut;\nimpl Buffer {\n    by_value!();\n}\n\
+             mod unrelated {\n    pub struct Buffer;\n}\n",
+        ),
+        (
             "a macro call in an impl on an alias of the type",
             "macro_rules! by_value {\n    () => {\n        pub fn advance_mut(self, _cnt: usize) {}\n    };\n}\n\
              pub type Buffer = BytesMut;\nimpl Buffer {\n    by_value!();\n}\n",
@@ -365,7 +381,7 @@ fn a_standard_trait_method_of_the_name_withholds_the_relation() -> Result<(), St
     assert!(!direct(
         local_into,
         "impl Into for Shelf::into",
-        "let _: Shelf = Shelf::stocked(5).into();"
+        "use std::convert::Into as StdInto; let _: Shelf = Shelf::stocked(5).into();"
     )?);
     Ok(())
 }

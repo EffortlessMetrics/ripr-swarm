@@ -263,6 +263,44 @@ fn a_constructor_is_owned_only_when_it_returns_self() -> Result<(), String> {
         TRAIT_AREA,
         "let s: Square = Square(4); assert_eq!(s.area(), 16);"
     )?);
+    // A qualified borrowed return names the type and is still a borrow, and
+    // an inherent `default` or `from` is read by its own declared return.
+    let bodies = |constructor: &str| {
+        [
+            format!("let s = Square::{constructor}; assert_eq!(s.area(), 16);"),
+            format!("assert_eq!(Square::{constructor}.area(), 16);"),
+        ]
+    };
+    for (written, call) in [
+        (
+            "pub fn new() -> &'static crate::Square { &Square(4) }",
+            "new()",
+        ),
+        (
+            "pub fn default() -> &'static Square { &Square(4) }",
+            "default()",
+        ),
+        (
+            "pub fn from(_: u32) -> &'static Square { &Square(4) }",
+            "from(4)",
+        ),
+    ] {
+        let production =
+            by_value_twin().replace("impl Square {", &format!("impl Square {{\n    {written}"));
+        for body in bodies(call) {
+            assert!(direct(&production, TRAIT_AREA, &body)?, "{written}: {body}");
+        }
+    }
+    let derived = format!(
+        "{}impl Default for Square {{\n    fn default() -> Self {{ Square(4) }}\n}}\n\
+         impl From<u32> for Square {{\n    fn from(side: u32) -> Self {{ Square(side) }}\n}}\n",
+        by_value_twin()
+    );
+    for call in ["default()", "from(4)"] {
+        for body in bodies(call) {
+            assert!(!direct(&derived, TRAIT_AREA, &body)?, "trait impl: {body}");
+        }
+    }
     Ok(())
 }
 

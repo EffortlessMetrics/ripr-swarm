@@ -12224,6 +12224,72 @@
       ]
     },
     {
+      "id": "rust_trait_impl_std_method_takes_receiver",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_impl_std_method_takes_receiver",
+      "vector": "trait_dispatch_identity_std_method_takes_receiver",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "shelf_count",
+          "file": "src/lib.rs",
+          "line": 37,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_impl_alias_macro_method",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_impl_alias_macro_method",
+      "vector": "trait_dispatch_identity_alias_macro_method",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "square_area",
+          "file": "src/lib.rs",
+          "line": 38,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
       "id": "rust_trait_impl_constructed_receiver",
       "language": "rust",
       "tier": "pure",

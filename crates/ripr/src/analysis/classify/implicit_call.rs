@@ -1395,6 +1395,10 @@ pub(super) struct HiddenImpls {
     /// other self-type name (an alias, a renamed import, a type a macro
     /// declares) may stand for a declared type.
     declared_types: std::collections::BTreeSet<String>,
+    /// Names a `type` alias or a `use .. as` rename declares anywhere. Names
+    /// are read without scope, so a self-type name found here may stand for
+    /// another type even when a `struct` of that name exists in some module.
+    renamed_types: std::collections::BTreeSet<String>,
 }
 
 /// What one macro definition's own text can put into its expansion.
@@ -1570,6 +1574,18 @@ impl HiddenImpls {
                     self.note_declared_type(it.name());
                     self.read_derives(it, it.name());
                 }
+                ast::Item::TypeAlias(it) => {
+                    if let Some(name) = it.name() {
+                        self.renamed_types.insert(plain_name(name.text()));
+                    }
+                }
+                ast::Item::Use(it) => {
+                    for rename in it.syntax().descendants().filter_map(ast::Rename::cast) {
+                        if let Some(name) = rename.name() {
+                            self.renamed_types.insert(plain_name(name.text()));
+                        }
+                    }
+                }
                 ast::Item::MacroRules(_) | ast::Item::MacroDef(_) => {
                     self.read_macro_definition(item.syntax());
                 }
@@ -1721,10 +1737,14 @@ impl HiddenImpls {
 
     fn note_declared_type(&mut self, name: Option<ast::Name>) {
         if let Some(name) = name {
-            let name = name.text().to_string();
-            self.declared_types
-                .insert(name.strip_prefix("r#").unwrap_or(&name).to_string());
+            self.declared_types.insert(plain_name(name.text()));
         }
+    }
+
+    /// Whether `name` is a declared `struct`, `enum` or `union` that no alias
+    /// or renamed import also uses as a name.
+    fn names_only_a_declared_type(&self, name: &str) -> bool {
+        self.declared_types.contains(name) && !self.renamed_types.contains(name)
     }
 
     /// Macro calls that write associated items of an impl. The arguments need
@@ -1883,7 +1903,8 @@ impl HiddenImpls {
                     // its own body write nothing this receiver runs.
                     (impl_type == self_type
                         || (in_trait != owner_trait
-                            && (impl_type.is_empty() || !self.declared_types.contains(impl_type))))
+                            && (impl_type.is_empty()
+                                || !self.names_only_a_declared_type(impl_type))))
                         && (words.contains(name)
                             || self.macro_may_write_fn(
                                 macro_name,
@@ -2101,15 +2122,19 @@ pub(super) fn unindexed_impl_may_take_method_call(
         )
 }
 
-/// Whether the workspace declares a `struct`, `enum` or `union` of this name.
-/// A self-type name it does not declare may be an alias or a renamed import
-/// of another type.
+/// Whether the workspace declares a `struct`, `enum` or `union` of this name
+/// and no alias or renamed import of this name. A self-type name that fails
+/// either half may stand for another type: names are read without scope.
 pub(super) fn workspace_declares_type(name: &str, index: &RustIndex) -> bool {
     index
         .call_identity_memos
         .hidden_impls(index)
-        .declared_types
-        .contains(name)
+        .names_only_a_declared_type(name)
+}
+
+/// An identifier without a raw `r#` prefix.
+fn plain_name(name: &str) -> String {
+    name.strip_prefix("r#").unwrap_or(name).to_string()
 }
 
 /// Whether the test body brings another item in under the impl type's name, by

@@ -295,9 +295,55 @@ fn ends_in_owned_construction(text: &str, base: &str, index: &RustIndex) -> bool
     if last == base {
         return true;
     }
-    open_byte == b'('
-        && segments.next() == Some(base)
-        && super::super::owner_pin::constructor_returns_self(base, last, false, index)
+    open_byte == b'(' && segments.next() == Some(base) && returns_the_type_owned(base, last, index)
+}
+
+/// Whether `base::constructor(..)` evaluates to an owned `base`. Every
+/// indexed associated function of that name on the type, inherent or
+/// written in a trait impl, has to declare `Self` or the type as its return,
+/// with nothing in front of the path: `&'static crate::Square` names the
+/// type and is a borrow. More than one inherent definition is not read.
+/// With none indexed, only `default` and `from` are read, as the derive or
+/// impl of the standard trait whose signature returns `Self`.
+fn returns_the_type_owned(base: &str, constructor: &str, index: &RustIndex) -> bool {
+    let mut inherent = 0usize;
+    let mut found = false;
+    for function in index.functions() {
+        if function.name != constructor || function.item.has_self_param {
+            continue;
+        }
+        let (self_ty, is_inherent) = match &function.item.container {
+            FunctionContainer::Inherent { self_ty } => (self_ty, true),
+            FunctionContainer::TraitImpl { self_ty, .. } => (self_ty, false),
+            _ => continue,
+        };
+        if compact_impl_type_name(self_ty).as_deref() != Some(base) {
+            continue;
+        }
+        found = true;
+        inherent += usize::from(is_inherent);
+        let owned = super::super::owner_pin::declared_return_type(&function.body)
+            .is_some_and(|returned| returned == "Self" || owned_path_names(&returned, base));
+        if !owned {
+            return false;
+        }
+    }
+    if found {
+        inherent <= 1
+    } else {
+        matches!(constructor, "default" | "from")
+    }
+}
+
+/// Whether `returned` is a plain path whose last segment is `base`, with
+/// only generic arguments after it.
+fn owned_path_names(returned: &str, base: &str) -> bool {
+    let path = returned.split('<').next().unwrap_or(returned).trim();
+    !path.is_empty()
+        && path
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == ':')
+        && path.rsplit("::").next() == Some(base)
 }
 
 /// Whether a function or its `impl` block carries a `cfg`-family attribute,
