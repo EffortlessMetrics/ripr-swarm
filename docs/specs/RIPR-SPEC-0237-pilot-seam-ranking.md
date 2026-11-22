@@ -192,7 +192,7 @@ One seam per owner per round (cap 1).
    order.
 4. The terminal shows the first seam only (`top_actionable_seams` with
    N = 1). When more than one actionable seam exists, the terminal
-   gap-count line (`N gaps to fix; showing the top 1 (...)`) also
+   gap-count line (`N gaps to fix in the whole repo (...); showing the top 1 (...)`) also
    discloses the actionable total and points to the written Markdown
    brief for more ranked gaps (up to `--max-seams`), naming `--max-seams` as the control
    that lengthens that list (the terminal itself always shows 1). The

@@ -1498,9 +1498,77 @@ impl OwnerReach<'_, '_> {
                 ast::Expr::MatchExpr(expression) => {
                     expression.expr().is_none_or(|expr| !primitive(&expr))
                 }
+                // #15476: the condition and both branches are read as
+                // expressions of their own; an `if let` is a `LetExpr`,
+                // which stays refused.
+                ast::Expr::IfExpr(expression) => {
+                    expression.condition().is_none_or(|expr| !primitive(&expr))
+                }
                 _ => true,
             }
         })
+    }
+
+    /// #15476: whether `path` (`label`, `crate::label`), called in
+    /// `assertion`, is a free function
+    /// whose result is a pure function of its primitive arguments, so a call
+    /// of it on constant arguments is a constant that observes nothing the
+    /// owner does. The function must be the only indexed one of that name,
+    /// the assertion's call of it must resolve to it under the shared binding
+    /// authority, it must not be or reach the owner, its body must pass the
+    /// closed primitive grammar (no calls, bindings, items or macros; only
+    /// its primitive parameters, literals and closed enum values), and it
+    /// must return a primitive or `&'static str`, so comparing the result
+    /// runs no user code. Fail closed when the owner may be reached
+    /// implicitly.
+    pub(in crate::analysis) fn assertion_calls_closed_constant(
+        &self,
+        owner: &FunctionSummary,
+        test: &TestFact,
+        assertion: &OracleFact,
+        path: &str,
+    ) -> bool {
+        let mut segments: Vec<String> = path.split("::").map(str::to_string).collect();
+        let Some(name) = segments.pop() else {
+            return false;
+        };
+        let name = name.as_str();
+        if self.implicit_dispatch || name == self.owner_name || self.reaching.contains(name) {
+            return false;
+        }
+        let Some([candidate]) = self.graph.by_name.get(name).map(Vec::as_slice) else {
+            return false;
+        };
+        let closure = self
+            .unbounded_reaching
+            .get_or_init(|| self.graph.names_reaching_unbounded(&self.owner_name));
+        candidate.id != owner.id
+            && candidate.item.container == FunctionContainer::Free
+            && !self
+                .graph
+                .function_may_run_owner(name, &self.owner_name, closure)
+            && if segments.is_empty() {
+                self.assertion_names_candidate(test, assertion, candidate)
+            } else {
+                // A qualified call resolves through the same targeted path
+                // binding and call identity the owner-pin readers use.
+                // The targeted path reader takes the qualifier without its
+                // trailing separator (`crate`, `demo`, `super::util`).
+                let prefix = segments.join("::");
+                super::owner_pin::targeted_free_call_reaches_owner(
+                    test,
+                    candidate,
+                    Some(&prefix),
+                    self.index,
+                    &self.index.call_identity_memos.receiver_pin_syntax,
+                ) && shared_owner_call_identity(self.index, candidate).is_none_or(|identity| {
+                    identity.resolve_call(test, self.index, &segments)
+                        == super::call_identity::CallTarget::Owner
+                })
+            }
+            && !self.opposite_kind_function_may_run_owner(candidate)
+            && (super::operand_pin::declared_return_is_primitive(candidate, self.index)
+                || returns_static_str(candidate, self.index))
     }
 
     fn opposite_kind_enum_path_is_closed(
@@ -1630,6 +1698,64 @@ impl OwnerReach<'_, '_> {
                         && name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')))
         })
     }
+}
+
+/// #15476: the function declares `-> &'static str`, and its file declares no
+/// item named `str` that could stand for another type.
+fn returns_static_str(function: &FunctionSummary, index: &RustIndex) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(parse) = index.source_syntax.parse_fragment(&function.body) else {
+        return false;
+    };
+    let Some(returned) = parse
+        .tree()
+        .syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|definition| definition.ret_type())
+        .and_then(|returned| returned.ty())
+    else {
+        return false;
+    };
+    let squashed: String = returned
+        .syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect();
+    if squashed != "&'staticstr" {
+        return false;
+    }
+    let snapshot = index.source_syntax.get(index, &function.file);
+    snapshot
+        .as_ref()
+        .and_then(|snapshot| snapshot.tree())
+        .is_some_and(|tree| {
+            !tree
+                .syntax()
+                .descendants()
+                .filter_map(ast::Item::cast)
+                .any(|item| {
+                    let name = match &item {
+                        ast::Item::Struct(item) => item.name(),
+                        ast::Item::Enum(item) => item.name(),
+                        ast::Item::Union(item) => item.name(),
+                        ast::Item::TypeAlias(item) => item.name(),
+                        ast::Item::Trait(item) => item.name(),
+                        ast::Item::Module(item) => item.name(),
+                        ast::Item::Use(item) => {
+                            return item
+                                .syntax()
+                                .text()
+                                .to_string()
+                                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                                .any(|word| word == "str");
+                        }
+                        _ => None,
+                    };
+                    name.is_some_and(|name| name.text() == "str")
+                })
+        })
 }
 
 /// A small value grammar, not a type or value-flow resolver. Every name is an

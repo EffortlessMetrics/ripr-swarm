@@ -12363,6 +12363,166 @@ fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
     })
 }
 
+/// #15312 through the framed server and real Git inputs: a push client that
+/// holds findings gets the withdrawal marker when the base stops resolving,
+/// and gets the findings back when the base resolves again. The marker and
+/// its retraction are delivered, not only computable.
+#[test]
+#[serial]
+fn framed_lsp_push_client_gets_withdrawal_marker_for_unresolvable_base_and_findings_back()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = untested_rust_edit_fixture("framed-base-withdrawal")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let lib_path = root.path().join("src/lib.rs");
+        let lib_uri = file_uri_for_path(&lib_path)?;
+        let lib_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read lib.rs failed: {err}"))?;
+        let (client_io, server_io) = tokio::io::duplex(1024 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let outcome = async {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": root_uri.as_str(),
+                        "capabilities": {},
+                        "initializationOptions": {"baseRef": "HEAD", "checkMode": "instant"}
+                    }
+                }),
+            )
+            .await?;
+            read_lsp_response(&mut client_read, 1).await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {"textDocument": {
+                        "uri": lib_uri.as_str(),
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": lib_text
+                    }}
+                }),
+            )
+            .await?;
+            // The next publish for lib.rs whose payload matches `wanted`.
+            async fn publish_matching(
+                client_read: &mut (impl tokio::io::AsyncRead + Unpin),
+                lib_uri: &str,
+                what: &str,
+                wanted: impl Fn(&serde_json::Value) -> bool,
+            ) -> Result<serde_json::Value, String> {
+                let mut last = serde_json::Value::Null;
+                loop {
+                    let message = tokio::time::timeout(
+                        std::time::Duration::from_mins(1),
+                        read_lsp_message(client_read),
+                    )
+                    .await
+                    .map_err(|elapsed| {
+                        format!("no publish with {what} arrived ({elapsed}); last: {last}")
+                    })??;
+                    if message["method"] != "textDocument/publishDiagnostics"
+                        || message["params"]["uri"] != lib_uri
+                    {
+                        continue;
+                    }
+                    let items = message["params"]["diagnostics"].clone();
+                    if wanted(&items) {
+                        return Ok(items);
+                    }
+                    last = items;
+                }
+            }
+            // Committed rows: a non-empty payload with no pending, withdrawal
+            // or other delivery-limitation marker in it.
+            let has_finding = |items: &serde_json::Value| {
+                items.as_array().is_some_and(|items| {
+                    !items.is_empty()
+                        && items
+                            .iter()
+                            .all(|item| item["data"]["kind"] != "delivery_limitation")
+                })
+            };
+            let is_withdrawal = |items: &serde_json::Value| {
+                items.as_array().is_some_and(|items| {
+                    items.len() == 1
+                        && items[0]["data"]["state"] == "withdrawn_analysis_failure"
+                        && items[0]["data"]["failure_kind"] == "base_unresolvable"
+                })
+            };
+            let findings =
+                publish_matching(&mut client_read, lib_uri.as_str(), "a finding", has_finding)
+                    .await?;
+
+            let set_base = |base: &str| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeConfiguration",
+                    "params": {"settings": {"ripr": {"baseRef": base}}}
+                })
+            };
+            write_lsp_message(&mut client_write, set_base("no-such-ref")).await?;
+            let marker = publish_matching(
+                &mut client_read,
+                lib_uri.as_str(),
+                "the withdrawal marker",
+                is_withdrawal,
+            )
+            .await?;
+            let message = marker[0]["message"].as_str().unwrap_or_default();
+            if !message.contains("previously reported findings are withdrawn")
+                || !message.contains("no-such-ref")
+            {
+                return Err(format!(
+                    "the marker must name the withdrawal and the base: {message}"
+                ));
+            }
+
+            write_lsp_message(&mut client_write, set_base("HEAD")).await?;
+            let restored = publish_matching(
+                &mut client_read,
+                lib_uri.as_str(),
+                "the restored finding",
+                has_finding,
+            )
+            .await?;
+            if restored != findings {
+                return Err(format!(
+                    "the restored payload must equal the original: {restored} vs {findings}"
+                ));
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        server_task.abort();
+        outcome
+    })
+}
+
 /// #15312: a pulled `ripr` section with rejected values was disclosed only
 /// in `ripr/analysisStatus`, which a generic editor does not render, so the
 /// settings looked accepted. The rejection must reach the log and the screen,
