@@ -1,0 +1,17 @@
+# Registers the repair-start controls for a library root outside src/ and symlinked src layouts (#16045) under RIPR-SPEC-0153.
+[[extend]]
+id = "RIPR-SPEC-0153"
+tests = [
+  "crates/ripr/tests/lib_root_outside_src_repair_start.rs::a_root_outside_src_gets_the_repair_start_its_src_layout_gets",
+  "crates/ripr/tests/lib_root_outside_src_repair_start.rs::an_undeclared_twin_of_the_library_gets_no_start",
+  "crates/ripr/tests/lib_root_outside_src_repair_start.rs::a_symlinked_src_directory_gets_the_repair_start",
+  "crates/ripr/tests/lib_root_outside_src_repair_start.rs::a_symlinked_crate_root_gets_the_repair_start",
+  "crates/ripr/tests/lib_root_outside_src_repair_start.rs::a_link_that_leaves_the_repository_gets_no_start",
+]
+
+# The library-only module beside a binary root in a symlinked src (#16068) under RIPR-SPEC-0172.
+[[extend]]
+id = "RIPR-SPEC-0172"
+tests = [
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_module_only_the_linked_library_declares_stays_the_librarys",
+]

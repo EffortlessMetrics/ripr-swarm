@@ -1,0 +1,13 @@
+# An audited tokio::select! confines its branches (#14116).
+[[extend]]
+id = "RIPR-SPEC-0369"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/tokio_select_pass_through.rs::an_audited_tokio_select_keeps_its_branches_confined",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/tokio_select_pass_through.rs::a_select_without_the_audited_tokio_root_stays_workspace_wide",
+  "crates/ripr/src/analysis/facts/drop_in.rs::tests::tokio_is_verified_only_at_an_audited_locked_version",
+  "crates/ripr/src/analysis/facts/drop_in.rs::tests::spec_wrapper_version_table_matches_the_code_authority",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/facts/drop_in.rs",
+]

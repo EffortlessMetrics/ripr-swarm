@@ -132,6 +132,7 @@ impl FindingSpec {
                 normalized_discriminator: self.discriminator.to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing".to_string()),
                 location: SourceLocation::new("src/pricing.rs", self.line, 5),
                 owner: Some(SymbolId(self.owner.to_string())),

@@ -701,6 +701,7 @@ name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::parallel_compact_classification_matches_the_serial_projection",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::memoized_names_reaching_matches_the_graph_walk",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_shares_facts_and_complete_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity",
@@ -5567,6 +5568,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_dry_run_prints_config_and_workflow_without_writing",
   "crates/ripr/tests/cli_smoke.rs::init_ci_github_writes_non_blocking_report_workflow",
   "crates/ripr/src/cli/commands/init.rs::tests::generated_workflow_installs_the_checksummed_release_binary",
+  "crates/ripr/tests/generated_review_workflow/main.rs::ci_packet_child_report_cannot_issue_workflow_commands",
+  "crates/ripr/tests/generated_review_workflow/main.rs::ci_packet_replays_child_stderr_inside_a_stop_commands_window",
   "crates/ripr/tests/generated_review_workflow/main.rs::generated_install_failure_explanation_is_consistent_on_every_host",
   "crates/ripr/tests/generated_review_workflow/main.rs::generated_workflow_replay_prints_only_runnable_next_steps",
   "crates/ripr/src/output/ci_summary/tests.rs::complete_artifacts_render_every_section_in_order",
@@ -5602,6 +5605,7 @@ fixtures = [
 code = [
   ".github/actions/ripr-check/action.yml",
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/ci_packet.rs",
   "crates/ripr/src/cli/commands/init_workflow.rs",
   "crates/ripr/src/output/ci_summary.rs",
   "crates/ripr/tests/cli_smoke.rs",
@@ -8387,6 +8391,8 @@ id = "RIPR-SPEC-0082"
 name = "preview-language disclosure"
 spec = "docs/specs/RIPR-SPEC-0082-preview-language-disclosure.md"
 tests = [
+  "crates/ripr/tests/check_not_analyzed_note_pointer.rs::the_snippet_starts_from_an_explicit_language_list",
+  "crates/ripr/tests/check_not_analyzed_note_pointer.rs::a_candidate_tree_snippet_starts_from_the_candidate_list",
   "crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs::python_partial_preview_claims_follow_selected_files",
   "crates/ripr/tests/cli_smoke/partial_preview_disclosure.rs::typescript_partial_preview_claims_follow_selected_files",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::missing_changed_python_source_is_incomplete_and_restorable",
@@ -11604,6 +11610,9 @@ tests = [
   "crates/ripr/src/output/human/triage/removal_action.rs::tests::removed_lines_name_their_static_evidence",
   "crates/ripr/src/output/human/triage/removal_action.rs::tests::a_moved_line_keeps_the_earlier_wording",
   "crates/ripr/src/output/human/triage/removal_action.rs::tests::unresolved_or_empty_sets_keep_the_earlier_wording",
+  "crates/ripr/src/output/human/triage/removal_action.rs::tests::removed_rows_name_the_code_and_what_tests_show",
+  "crates/ripr/src/output/human/triage/removal_action.rs::tests::removed_rows_are_bounded_and_drop_repeats",
+  "crates/ripr/src/output/human/triage/removal_action.rs::tests::rows_are_withheld_from_every_mix_that_is_not_removal_only",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context",
   "crates/ripr/src/output/human/agent_tests.rs::explain_agent_keeps_context_pointer_when_the_packet_holds_more",
@@ -12917,6 +12926,8 @@ tests = [
   "crates/ripr/src/lsp/watched_source_drift.rs::tests::rewritten_script_source_without_diagnostics_drifts",
   "crates/ripr/src/lsp/watched_source_drift.rs::tests::script_sources_in_dependency_and_build_directories_do_not_drift",
   "crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_clean_source_refreshes_in_every_language",
+  "crates/ripr/src/lsp/watched_source_drift.rs::tests::declared_handwritten_and_excluded_script_paths_follow_configuration",
+  "crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_declared_handwritten_source_refreshes",
 ]
 fixtures = []
 code = [
@@ -13392,6 +13403,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::zero_indented_line_inside_a_bracket_does_not_decide_nesting",
   "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::pure_deletion_is_base_side_evidence_on_its_owner",
   "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::even_block_leaves_no_base_side_record",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::statement_replaced_by_an_empty_statement_is_base_side_evidence",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::empty_statement_counterpart_needs_a_removed_behavior_line",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::code_replaced_by_a_comment_is_base_side_evidence_naming_the_code",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::code_replaced_by_a_comment_and_an_import_is_base_side_evidence",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::hash_line_inside_a_multi_line_string_keeps_its_pairing",
@@ -14908,6 +14921,7 @@ spec = "docs/specs/RIPR-SPEC-0186-same-test-boundary-oracle-pairing.md"
 tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::a_constant_row_table_feeds_one_input_row_per_table_row",
   "crates/ripr/tests/owner_pin_execution.rs::constant_row_table_pairs_each_row_with_its_boundary_input",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/predicate_boundary_pairing.rs::only_an_exact_boundary_result_closes_the_predicate_gap",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::split_tests_do_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_call_assert_eq_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::same_test_split_calls_do_not_pair",
@@ -21230,6 +21244,8 @@ spec = "docs/specs/RIPR-SPEC-0259-next-step-oracle-shape.md"
 tests = [
   "crates/ripr/src/analysis/classify/decision.rs::tests::exact_related_oracle_names_the_missing_input_for_error_path",
   "crates/ripr/src/analysis/classify/decision.rs::tests::exact_related_oracle_names_the_missing_input_for_return_value",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::exact_related_oracle_replaces_the_strengthen_template",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::self_comparison_keeps_the_strengthen_template",
   "crates/ripr/src/analysis/classify/decision.rs::tests::non_exact_oracle_keeps_the_family_template",
   "crates/ripr/src/analysis/classify/decision.rs::tests::missing_input_row_keeps_the_exact_oracle_step",
   "crates/ripr/src/analysis/classify/decision.rs::tests::downgraded_exact_strength_keeps_the_family_template",
@@ -22416,12 +22432,13 @@ tests = [
   "crates/ripr/tests/lib_test_false_credit.rs::an_example_included_into_the_library_test_tree_keeps_credit",
   "crates/ripr/tests/lib_test_false_credit.rs::an_example_included_into_an_integration_test_keeps_credit",
   "crates/ripr/tests/lib_test_false_credit.rs::bench_unit_tests_are_not_a_discriminator_unless_the_bench_is_tested",
+  "crates/ripr/tests/lib_test_false_credit.rs::bare_bench_requires_a_runnable_target",
   "crates/ripr/tests/lib_test_false_credit.rs::a_bench_included_into_an_integration_test_keeps_credit",
   "crates/ripr/src/analysis/facts/role_composition.rs::tests::mount_operand_doubt_needs_a_dynamic_mount_operand",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::crate_root_unit_test_skip_follows_metadata_test_flags",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::reuse_reviving_cargo_test_skipped_tests_matches_fresh",
 ]
-fixtures = []
+fixtures = ["fixtures/rust_bench_rejected_workspace"]
 code = [
   "crates/ripr/src/analysis/facts/stray_files.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs",

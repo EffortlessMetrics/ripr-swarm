@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_probe_facts/input
 config: <cwd>/fixtures/typescript_probe_facts/input/ripr.toml
 
-Summary: 10 changed behaviors checked: 0 appear noticed by tests, 10 partly noticed, 0 reached but not noticed, 0 no test path. 10 found, 0 suppressed by your settings
+Summary: 10 changed behaviors checked: 0 appear noticed by tests, 10 partly noticed (10 through a test link ripr could not confirm), 0 reached but not noticed, 0 no test path. 10 found, 0 suppressed by your settings
 
 Changed file(s) by language: javascript = 2, typescript = 5
 

@@ -109,6 +109,7 @@ pub(crate) fn measurement_witness() -> DiagnosticWitness {
         probe_family: "predicate_boundary".to_string(),
         changed_expression: "amount >= discount_threshold".to_string(),
         before: Some("amount - 10".to_string()),
+        before_condition: None,
         after: Some("amount - 20".to_string()),
         expected_sink: Some("return_value".to_string()),
         missing_discriminators: vec![MissingDiscriminatorFact {

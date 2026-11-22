@@ -425,7 +425,7 @@ fn validate_write_options(opts: &ReceiptWriteOptions) -> Result<(), String> {
         {
             return Err(format!(
                 "receipt --current-head {current_head} does not match the actual git HEAD at {} ({actual_head}); \
-                 the receipt must bind to the real commit, not a caller-provided value (#1941); pass the output of `git rev-parse HEAD`",
+                 the receipt must bind to the real commit, not a caller-provided value; pass the output of `git rev-parse HEAD`",
                 root.display()
             ));
         }
@@ -1849,6 +1849,9 @@ mod tests {
 
     const LEGACY_NESTED_GAP: &str = "gap:rust:src/lib.rs:total:predicate:n==0..10";
 
+    // Used only by the Unix tests below; unconfigured elsewhere so the
+    // Windows test build has no dead code under `-D warnings`.
+    #[cfg(unix)]
     fn legacy_nested_base(label: &str) -> Result<PathBuf, String> {
         let base = std::env::temp_dir().join(format!(
             "ripr-receipt-legacy-nested-{label}-{}",
@@ -2156,7 +2159,7 @@ mod tests {
     #[test]
     fn head_binding_rejects_mismatched_head() -> Result<(), String> {
         // #2329: when --current-head does not match the actual git HEAD at
-        // --root, validation fails with a #1941 message.
+        // --root, validation fails with a head-mismatch message.
         let (root, _real_head) = temp_git_repo()?;
         let fake_head = "0".repeat(40);
         let opts = ReceiptWriteOptions {
@@ -2176,8 +2179,8 @@ mod tests {
             Err(e) => e,
         };
         assert!(
-            err.contains("#1941") && err.contains("does not match"),
-            "error must reference #1941 and explain the mismatch: {err}"
+            err.contains("does not match"),
+            "error must explain the mismatch: {err}"
         );
         Ok(())
     }

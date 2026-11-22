@@ -414,6 +414,10 @@ pub(crate) fn render_human_triage(
             // currentness distinction — `unresolved_subject` is the
             // explicit unknown, not base-side evidence.
             out.push_str(&no_selection_safe_action_line(&triage.omitted));
+            // #15617: a removal-only run also lists what was removed.
+            if let Some(rows) = removal_action::removal_only_rows(&output.root, &triage.omitted) {
+                out.push_str(&rows);
+            }
         }
         NextActionCheckCase::SuppressedByPolicy => {
             // #13819: a run whose findings an owner opt-out withheld names
@@ -2811,6 +2815,7 @@ mod tests {
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation::new("src/lib.rs", 1, 1),
                 owner: None,
@@ -3589,8 +3594,9 @@ mod tests {
         backslash_root.root = PathBuf::from(["C:", "tmp", "probe win space"].join(r"\"));
         let raw = backslash_root.root.display().to_string();
         // Independent slash-stable contract: forward-slash join of the
-        // same components, not `display_path` output.
-        let expected = ["C:", "tmp", "probe win space"].join("/");
+        // same components, not `display_path` output. On Unix the backslash
+        // is a file-name byte, spelled `%5C` (#15908).
+        let expected = ["C:", "tmp", "probe win space"].join(if cfg!(unix) { "%5C" } else { "/" });
         if raw == expected {
             return Err(format!(
                 "fixture lost its discriminator: raw display {raw:?} already matches {expected:?}"
@@ -3626,15 +3632,15 @@ mod tests {
 
         // Verbatim Windows prefix: never `\\?\` in JSON identity (#5996). On
         // Windows it folds to the plain drive spelling, as every printed path
-        // does (#9660); on Unix `\` is a filename byte, so the text only
-        // slash-unifies.
+        // does (#9660); on Unix `\` is a filename byte, spelled `%5C`
+        // (#15908).
         let mut verbatim = test_output(Vec::new());
         verbatim.root = PathBuf::from(["\\\\?", "C:", "tmp", "probe"].join(r"\"));
         let verbatim_raw = verbatim.root.display().to_string();
         let verbatim_expected = if cfg!(windows) {
             ["C:", "tmp", "probe"].join("/")
         } else {
-            ["//?", "C:", "tmp", "probe"].join("/")
+            ["%5C%5C?", "C:", "tmp", "probe"].join("%5C")
         };
         if verbatim_raw == verbatim_expected {
             return Err(format!(

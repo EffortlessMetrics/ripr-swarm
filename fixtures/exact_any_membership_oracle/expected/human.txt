@@ -15,9 +15,12 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:audit_line:call_deletion:call_deletion:format!lit61756469746564207b7d_amount*8
   Changed behavior: format!("audited {}", amount * 8)
-  Missing check: No strong assertion was detected
+  Missing check: No assertion was tied to the changed value
   Related test: tests/audit.rs:4 audit_logs_the_scaled_amount (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: Strengthen the related assertion so it discriminates the changed behavior
+  Next step: The related test `audit_logs_the_scaled_amount` already asserts an exact value; the gap
+    is not the assertion shape. Check whether the value that test asserts depends on the changed
+    call. If it does, the assertion may already notice this change, which ripr could not confirm
+    from the source. If it does not, assert the effect the call produces
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

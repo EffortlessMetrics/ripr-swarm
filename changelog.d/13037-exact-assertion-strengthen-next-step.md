@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A weak `call_deletion`, `match_arm` or `field_construction` finding whose related test already has an exact assertion no longer says "Strengthen the related assertion", which nobody could follow. The next step names the test and the link ripr could not establish, and the default "Missing check" line reads "No assertion was tied to the changed value". The static class is unchanged (#13037).

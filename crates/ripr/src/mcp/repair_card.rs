@@ -1167,7 +1167,7 @@ mod tests {
         let mut finding = super::super::gaps::test_finding()?;
         finding.probe.location.file = root.join("pricing_%FF.rs");
         let item = GapItem::from_finding(&finding, &root)?;
-        if item.file != "./pricing_%25FF.rs" {
+        if item.file != "pricing_%25FF.rs" {
             return Err(format!("wire spelling must stay encoded: {}", item.file));
         }
         let changed = inventory_changed_files(&root, std::slice::from_ref(&finding));

@@ -259,6 +259,7 @@ mod preview_row_selection_tests {
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:discount".to_string()),
                 location: SourceLocation::new("src/discount.ts", 4, 5),
                 owner: None,

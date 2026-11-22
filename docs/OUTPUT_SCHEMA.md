@@ -181,6 +181,8 @@ records that distinction.
 | `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
+| `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document is not covered yet |
+| `schemas/ripr/agent-seam-packets.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the repository-wide packet document (`ripr check --format agent-seam-packets-json`), sharing the packet definitions of `agent-packet.schema.json` |
 | `schemas/ripr/agent-packet-refusal.schema.json` | `0.5` | `crates/ripr/src/app.rs`; the refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet, keyed with the packet's version |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
@@ -716,6 +718,17 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
   Human output prints the same strings. Serving a strongly_gripped seam as
   a scaffold remains `state: ready` / exit 0; the warning is disclosure,
   not a refusal.
+  When the live diff touches a `strongly_gripped` seam, the stub asks the
+  same default `ripr check` what it reads for the changed code there
+  (#15278). If check reads a gap or a limit, `classification` carries
+  check's class (for example `weakly_exposed`) while `grip_class` stays
+  `strongly_gripped`, and the warning becomes `seam <id> is
+  strongly_gripped when ripr reads the whole spot, but `ripr check` reads
+  your changed code there as weak (weakly_exposed): existing tests do not
+  clearly notice the change, so this stub is for that gap`. If check could
+  not run, `classification` is `null` and the warning says ripr could not
+  confirm that existing tests notice the changed code. When check reads the
+  change as exposed, or the diff does not touch the seam, nothing changes.
 - `already_present` — `true` when the placement already holds the identical
   test function ripr would write (a second run for the same seam recomputes
   byte-identical text). A repeated `--write` then reports the stub as already
@@ -1392,6 +1405,10 @@ header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
+When every finding is on removed code, the block also prints a
+`Removed code` list of up to three rows (current-file location, removed code,
+probe kind and what the class says about the old line), then an
+`N more: rerun with --format human-full` row for the rest.
 Each listed hidden finding includes its probe kind and bounded explanatory
 reason alongside location, exposure class, and any currentness label. When
 `--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
@@ -5361,6 +5378,28 @@ rejected. Unknown witness properties are accepted and ignored by the typed
 reader, so typed reserialization does not preserve those properties. Consumers
 that need to forward unknown properties must retain the complete JSON value.
 `witness.confidence.value` is rendered at the contract's two-decimal precision, matching SARIF `properties.confidence` and the finding `confidence` (#10717).
+`witness.before_condition` (#15420, additive, optional) is the old line's
+`if`/`while` condition for a Rust predicate whose `before` is the whole old
+line while `after` is only the new condition. That pairing happens when the
+same line also changed outside the condition
+(`if total >= 100 { total - 10 } else { total }` to
+`if total > 200 { total - 25 } else { total }`): `before` stays the whole old
+line, `before_condition` is `total >= 100` and `after` is `total > 200`. It is
+display evidence at the granularity of `after`; `before` is unchanged. The
+probe producer reads it from the old and new lines together, and renderers
+only carry it. The field is absent for every other language, when `before` is
+already the old condition, and when the pairing is not established: a second
+`if`/`while` head anywhere on either line (also one nested in a call
+argument), an `if let` or `while let`, a match guard, a block expression
+inside the condition, a comparison or boolean operator elsewhere on the line,
+a changed predicate that is not the new line's head condition (a comparison
+the branch body gained while the guard stayed), an old condition equal to
+`after` (only the branch bodies changed), or an old condition that does not
+start with the identifier `after` starts with. MCP `ripr_get_gap` and `ripr_prepare_repair` carry the same
+value as `changed_behavior.before_condition` (present only when read), and
+the MCP gap brief's `changed:` line pairs it with `after`. The editor hover
+prints it as `old condition`, and human `ripr explain` prints an
+`old condition:` row under `before:`.
 Renderers must not infer evidence from paths, lines, classes, or prose.
 `probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr
@@ -17713,6 +17752,31 @@ the drafted assertion. Both members are additive, so `schema_version` stays
 `agent-seam-packets-json` envelope filtered to one visible seam. It does not
 dump the full repo packet set. Missing seam IDs, non-actionable seam classes,
 and seams whose configured severity is `off` return an actionable error.
+
+The `--seam-id` document is published as
+[`schemas/ripr/agent-packet.schema.json`](../schemas/ripr/agent-packet.schema.json).
+It holds at most one packet, whose `task` is `write_targeted_test` or
+`inspect_static_limitation`; only a `write_targeted_test` packet carries a
+suggested test command, a non-empty edit surface and the top-level `next`
+block. `crates/ripr/tests/agent_packet_json_schema.rs` validates the real
+command's bytes for every seam of a fixture crate and pins the documents the
+schema rejects. The `--gap-ledger` document below has a different packet shape
+(`source`, `status`, `inputs`, `source_currentness`) and is not covered by this
+schema yet (#3920).
+
+The `ripr check --format agent-seam-packets-json` document is published as
+[`schemas/ripr/agent-seam-packets.schema.json`](../schemas/ripr/agent-seam-packets.schema.json),
+which shares every packet definition with the `--seam-id` schema; a test holds
+the two equal apart from the canonical-delta fields (`delta_attribution`,
+`base_state`, `head_state`, `attribution_basis`, `comparison_confidence`) a
+check-format packet carries when a canonical delta artifact is present. Its
+`next` block has no `analysis_outcome_command`, and `receipt_after_verify` is
+a command only when the document holds exactly one packet, because a receipt
+names one seam; otherwise it is `null`. `analysis_outcome_status` is
+`not_applicable` without a diff selector and `missing` (with an
+`analysis_outcome_error`) when `--base` or `--diff` is passed. A run refused
+before analysis writes `run_status: "refused"` with one `limitations[]` entry
+and no packets.
 
 `ripr agent packet --root . --gap-ledger <path> --gap-id <id> --json` emits
 the same packet envelope from one explicit `GapRecord`, matched by `gap_id` or

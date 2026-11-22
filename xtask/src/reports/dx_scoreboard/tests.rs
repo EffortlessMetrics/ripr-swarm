@@ -1478,6 +1478,188 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 }
 
 #[test]
+fn strict_recall_of_missed_is_informational_and_flagged_carries_the_target() -> Result<(), String> {
+    // The 0.8 bar belongs only to flagged-or-unknown recall; strict ungripped
+    // recall is informational (target 0, regression floor only), so its
+    // ~11% checked-in value is never reported as below target (#12900).
+    let config = load_config(&committed_config())?;
+    let metric = |id: &str| {
+        config
+            .metric
+            .iter()
+            .find(|metric| metric.id == id)
+            .ok_or_else(|| format!("{id} missing from scoreboards.toml"))
+    };
+    let strict = metric("trust.mutation_recall_of_missed")?;
+    assert!(
+        strict.target.abs() < f64::EPSILON,
+        "strict recall must carry no target bar, got {}",
+        strict.target
+    );
+    assert!(
+        strict.title.contains("informational"),
+        "strict recall title must note it is informational: {}",
+        strict.title
+    );
+    assert!((strict.regression_floor - 0.05).abs() < 1e-9);
+    let flagged = metric("trust.mutation_recall_flagged_or_unknown")?;
+    assert!((flagged.target - 0.8).abs() < 1e-9);
+    assert!((flagged.regression_floor - 0.05).abs() < 1e-9);
+    Ok(())
+}
+
+#[test]
+fn mutation_spot_check_receipt_generates_recall_and_no_seam_rows() -> Result<(), String> {
+    // Small fixture mirroring the checked-in receipt's shape (#12900): the
+    // rows must be computed from counts, so removing or miscomputing the
+    // generation changes these exact values and fails.
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+        "recall_of_missed": {
+            "missed_total": 322,
+            "ungripped_missed": 34,
+            "ungripped_share_of_missed": 0.106,
+            "flagged_or_unknown_missed": 189,
+            "flagged_or_unknown_share_of_missed": 0.587,
+        },
+        "seam_coverage": {
+            "mutants_total": 1745,
+            "no_containing_seam": 843,
+            "no_containing_seam_share": 0.483,
+        },
+    });
+    let input = mutation_spot_check_to_input(&receipt)?;
+    let value = |id: &str| {
+        input["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == Some(id)))
+            .and_then(|row| row["value"].as_f64())
+    };
+    assert!(
+        value("trust.mutation_recall_of_missed").is_some_and(|v| (v - 34.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_recall_flagged_or_unknown")
+            .is_some_and(|v| (v - 189.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_no_seam_share").is_some_and(|v| (v - 843.0 / 1745.0).abs() < 1e-9),
+        "{input}"
+    );
+    let evidence_of = |id: &str| {
+        input["metrics"].as_array().and_then(|rows| {
+            rows.iter()
+                .find(|row| row["id"].as_str() == Some(id))
+                .and_then(|row| row["evidence"].as_str().map(str::to_string))
+        })
+    };
+    assert!(
+        evidence_of("trust.mutation_recall_of_missed")
+            .is_some_and(|e| e.contains("34 of 322 runtime-missed mutants flagged ungripped")),
+        "{input}"
+    );
+    assert!(
+        evidence_of("trust.mutation_no_seam_share")
+            .is_some_and(|e| e.contains("843 of 1745 mutants have no containing static seam")),
+        "{input}"
+    );
+
+    // The generated rows must be declared metrics: ingest admits them.
+    let config = load_config(&committed_config())?;
+    let samples = parse_ingest(&receipt, &config)?;
+    assert_eq!(samples.len(), 6, "{samples:?}");
+    for id in [
+        "trust.mutation_recall_of_missed",
+        "trust.mutation_recall_flagged_or_unknown",
+        "trust.mutation_no_seam_share",
+    ] {
+        assert!(samples.iter().any(|s| s.metric == id), "{id}: {samples:?}");
+    }
+
+    // A stored share that disagrees with the counts is hand-derived drift.
+    let mut drifted = receipt.clone();
+    drifted["recall_of_missed"]["ungripped_share_of_missed"] = json!(0.5);
+    assert!(
+        mutation_spot_check_to_input(&drifted).is_err_and(|err| err.contains("disagrees with"))
+    );
+    let mut drifted = receipt.clone();
+    drifted["seam_coverage"]["no_containing_seam"] = json!(2000);
+    assert!(
+        mutation_spot_check_to_input(&drifted)
+            .is_err_and(|err| err.contains("counts 2000 of only 1745"))
+    );
+    let mut missing = receipt.clone();
+    missing["recall_of_missed"]
+        .as_object_mut()
+        .map(|map| map.remove("ungripped_missed"));
+    assert!(
+        mutation_spot_check_to_input(&missing)
+            .is_err_and(|err| err.contains("needs ungripped_missed"))
+    );
+
+    // Older receipts without the sections simply omit the rows.
+    let mut older = receipt.clone();
+    older
+        .as_object_mut()
+        .map(|map| map.remove("recall_of_missed"));
+    older.as_object_mut().map(|map| map.remove("seam_coverage"));
+    let rows = mutation_spot_check_to_input(&older)?;
+    assert!(rows["metrics"].as_array().is_some_and(|rows| {
+        rows.iter().all(|row| {
+            !matches!(
+                row["id"].as_str(),
+                Some(
+                    "trust.mutation_recall_of_missed"
+                        | "trust.mutation_recall_flagged_or_unknown"
+                        | "trust.mutation_no_seam_share"
+                )
+            )
+        })
+    }));
+    // A zero denominator claims no figure.
+    let mut empty = receipt.clone();
+    empty["recall_of_missed"]["missed_total"] = json!(0);
+    empty["recall_of_missed"]["ungripped_missed"] = json!(0);
+    empty["recall_of_missed"]["flagged_or_unknown_missed"] = json!(0);
+    empty["recall_of_missed"]["ungripped_share_of_missed"] = json!(null);
+    empty["recall_of_missed"]["flagged_or_unknown_share_of_missed"] = json!(null);
+    let rows = mutation_spot_check_to_input(&empty)?;
+    assert!(rows["metrics"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .all(|row| row["id"] != "trust.mutation_recall_of_missed")
+    }));
+    // A positive numerator over a zero denominator is impossible, not a
+    // figure to omit: 0/0 above is omitted, 1/0 must fail ingest.
+    let mut impossible = receipt.clone();
+    impossible["recall_of_missed"]["missed_total"] = json!(0);
+    impossible["recall_of_missed"]["ungripped_missed"] = json!(1);
+    assert!(
+        mutation_spot_check_to_input(&impossible)
+            .is_err_and(|err| err.contains("counts 1 of only 0"))
+    );
+    let mut impossible = receipt.clone();
+    impossible["seam_coverage"]["mutants_total"] = json!(0);
+    impossible["seam_coverage"]["no_containing_seam"] = json!(1);
+    assert!(
+        mutation_spot_check_to_input(&impossible)
+            .is_err_and(|err| err.contains("counts 1 of only 0"))
+    );
+    Ok(())
+}
+
+#[test]
 fn genre_keys_do_not_change_mutation_spot_check_ingest() -> Result<(), String> {
     // Additive-v2 genre retention: a v2 receipt with genre cross-tabs ingests
     // to exactly the same input (and samples) as the same receipt without them.
@@ -1523,6 +1705,135 @@ fn genre_keys_do_not_change_mutation_spot_check_ingest() -> Result<(), String> {
         assert_eq!(a.metric, b.metric);
         assert_eq!(a.detail, b.detail);
     }
+    Ok(())
+}
+
+#[test]
+fn a_receipt_counting_more_ungripped_than_flagged_or_unknown_fails_ingest() {
+    // The producer's flagged-or-unknown class includes ungripped, so this
+    // receipt is contradictory even though each ratio is internally
+    // consistent (#12900).
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+        "recall_of_missed": {
+            "missed_total": 10,
+            "ungripped_missed": 2,
+            "ungripped_share_of_missed": 0.2,
+            "flagged_or_unknown_missed": 1,
+            "flagged_or_unknown_share_of_missed": 0.1,
+        },
+        "seam_coverage": {
+            "mutants_total": 1745,
+            "no_containing_seam": 843,
+            "no_containing_seam_share": 0.483,
+        },
+    });
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|error| error.contains("counts 2 ungripped of 1 flagged-or-unknown"))
+    );
+}
+
+#[test]
+fn a_non_object_spot_check_section_fails_with_its_name() {
+    // A present-but-malformed section must name itself. Indexing a string
+    // yields Null, which would otherwise report a missing integer key and
+    // hide that the section itself is the problem.
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+        "recall_of_missed": "n/a",
+    });
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|err| err.contains("`recall_of_missed` must be a JSON object")),
+        "a non-object section must name itself"
+    );
+}
+
+#[test]
+fn mutation_spot_check_checked_in_receipt_generates_issue_12900_values() -> Result<(), String> {
+    // Pin the generation against the real checked-in receipt: 34/322 strict
+    // recall (~11%), 189/322 flagged-or-unknown, 843/1745 no-seam (~48%).
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../metrics/public-proof/mutation-spot-check.json");
+    let text = fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let receipt: Value =
+        serde_json::from_str(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    let input = mutation_spot_check_to_input(&receipt)?;
+    let value = |id: &str| {
+        input["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == Some(id)))
+            .and_then(|row| row["value"].as_f64())
+    };
+    assert!(
+        value("trust.mutation_recall_of_missed").is_some_and(|v| (v - 34.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_recall_flagged_or_unknown")
+            .is_some_and(|v| (v - 189.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_no_seam_share").is_some_and(|v| (v - 843.0 / 1745.0).abs() < 1e-9),
+        "{input}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_config_without_the_generated_rows_still_loads_the_checked_in_receipt() -> Result<(), String> {
+    // #12900 added three trust rows. A `--config` written before them never
+    // declared them, and ingest rejects an undeclared metric, so the
+    // projection must drop exactly those three and keep every other row
+    // strict: an undeclared pre-#12900 metric still fails.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../metrics/public-proof/mutation-spot-check.json");
+    let text = fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let receipt: Value =
+        serde_json::from_str(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    let mut config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    config
+        .metric
+        .retain(|metric| !GENERATED_RECALL_ROWS.contains(&metric.id.as_str()));
+    let samples = parse_ingest(&receipt, &config)?;
+    let ids: Vec<&str> = samples
+        .iter()
+        .map(|sample| sample.metric.as_str())
+        .collect();
+    for id in GENERATED_RECALL_ROWS {
+        assert!(
+            !ids.contains(&id),
+            "{id} persisted through a config that never declared it: {ids:?}"
+        );
+    }
+    assert!(
+        ids.contains(&"trust.discriminator_claim_agreement"),
+        "the pre-#12900 rows must still load: {ids:?}"
+    );
     Ok(())
 }
 

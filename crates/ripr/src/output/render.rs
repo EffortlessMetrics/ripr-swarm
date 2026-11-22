@@ -2813,6 +2813,7 @@ fn happy_path_passes() {
             id: "probe:src_lib_rs:42:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:42:error_path".to_string()),
                 family: ProbeFamily::ErrorPath,
                 location: SourceLocation::new(file, line, 1),

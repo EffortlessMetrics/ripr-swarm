@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A file that declares its own module under a standard crate's name and globs it (`mod core; use core::*;`) no longer has every plain `assert_eq!` in its tests "not credited" for a foreign glob. The declared module shadows the standard crate there, so the glob reads the file's own module, whose macro definitions and imports ripr already reports at their own file. A declaration under `cfg`, an inline module, a `#[path]` mount, a second binding of the name, a longer path, a group or a leading `::` keep the old reading (#14116).

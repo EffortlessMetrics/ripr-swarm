@@ -84,6 +84,7 @@ impl<'a> ClaimsPayloadPin<'a> {
         // A private input to the existing owner-pin authority, as
         // `BooleanBoundaryPin` builds one; not a diff claim.
         let probe = Probe {
+            before_condition: None,
             id: ProbeId(format!("repo-claims-payload:{}", seam.id().as_str())),
             location: SourceLocation::new(seam.file().to_path_buf(), seam.display_line(), 1),
             owner: Some(owner.id.clone()),

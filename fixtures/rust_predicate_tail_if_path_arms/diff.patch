@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,5 +5,5 @@
+ }
+ 
+ pub fn level(n: u32) -> Level {
+-    if n > 10 { Level::High } else { Level::Low }
++    if n >= 10 { Level::High } else { Level::Low }
+ }

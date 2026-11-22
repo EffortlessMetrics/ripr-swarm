@@ -264,3 +264,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_module_value_use (23)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless typescript_module_value_use --reason "..."`
+
+Updated:
+- `expected/human.txt`

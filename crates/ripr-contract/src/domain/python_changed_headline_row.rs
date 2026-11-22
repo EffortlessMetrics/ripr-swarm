@@ -101,6 +101,7 @@ mod tests {
             id: "finding:headline".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:headline".to_string()),
                 location: SourceLocation::new("svc/core.py", 3, 5),
                 owner: None,
@@ -175,6 +176,7 @@ mod tests {
             id: "finding:py".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:py".to_string()),
                 location: SourceLocation::new("src/app.py", 3, 1),
                 owner: None,

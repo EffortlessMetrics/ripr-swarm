@@ -1048,6 +1048,60 @@ Candidates come from the first non-empty tier:
    it reaches once, so per-line classification does not rescan them. The importer's calls ride in the per-file export facts
    (file-fact schema 8), so resolution never re-parses an importer, and run
    only for owners of changed files.
+   **Closure continuation (#13592).** The same-module graph also records
+   closure edges: a reference to another top-level declaration that is not a
+   recorded bare call, read from the AST of the declaration's code (a
+   function with its nested callbacks, or the whole initializer of a
+   call-built constant, callee included). As for calls, a function's directly
+   returned functions are not its own code: calling a factory does not run
+   them, so only a value the factory builds reaches what they reference. This covers a function passed as
+   a value (`JSON.parse(text, reviver)`, `keys.sort(compare)`), a call-built
+   constant passed or referenced as a value (`parse(input, Grammar)`), the
+   callbacks of such a constant (`const Rule = match(re, (s) => upper(s))`)
+   and the combinator that built it (`match`). A name the referencing code
+   binds anywhere (parameter, local, inner function, nested callback
+   parameter, catch binding), a name the module ever assigns or updates, and
+   a reference in a type position add no edge. An owner reached from an
+   export only along paths that take at least one closure edge gets a
+   closure entry: at most 3 bare-call edges before the first closure edge
+   and at most 8 edges in total (`MODULE_CLOSURE_MAX_HOPS`), and only when
+   no bare-call path within its own bound reaches the owner from that export.
+   A call-built constant owner (`ModuleFunction`) that is a graph node (a
+   factory product, not a B2 value such as `Symbol(...)`, a literal or
+   `new X()`) reads every entry as a closure entry, a bare call of it
+   (`Rule(s)`) included, because what runs is the callback it was built from.
+   A B2 value keeps its reader entries as B2 reads them. A test that names
+   the constant itself keeps the `module_value_use` relation (#8568) and its
+   closure entries are not consulted, so a direct value use never reads worse
+   than it did before #13592's closure continuation. An
+   owner with more than 32 closure entries
+   (`MAX_CLOSURE_ENTRIES_PER_OWNER`) keeps none of them and reads as it did
+   before closure reach (possibly `no_static_path`); the cap is not yet
+   disclosed. A reassignment is a bare identifier target (`x = ...`, `x++`,
+   `[x] = ...`, `({ x } = ...)`); a member write (`obj.x = ...`) rebinds
+   nothing. A factory the module reassigns lends its product no returned
+   references, and a named function expression's own name
+   (`const label = function helper() { ... }`) binds inside its body, so it is
+   never an edge to a top-level `helper`. A module value (B2) continues across
+   importers only on its closure entries. A reference that
+   invokes nothing (`typeof helper === "function"`, an identity comparison)
+   still adds an edge; that can only turn a `no_static_path` into
+   `static_unknown`, never credit a test. When some related tests reach the
+   owner through plain same-module calls and others through closure entries,
+   the same-module rule decides the class and the text says "same-module or
+   callback callers".
+   Closure entries continue across importers like call entries, within the
+   closure bound, and a call chain is preferred over a closure chain for the
+   same importer export. Reach whose every entry is cross-module or closure
+   reads `static_unknown` whatever the oracle, is never `exposed` or
+   `weakly_exposed`, and starts no repair; the missing-evidence line says
+   "only through callback or value-passing callers". When or whether the
+   value runs is not modeled: a callback stored and never invoked, or run
+   only at import, still counts as reach. On the eight-package unjs Stryker
+   corpus (`benchmarks/mutation_spot_check/corpus-typescript.json`), this
+   moves 296 caught mutants and 49 missed ones from `no_static_path` to
+   `static_unknown` against main with #13719, and changes no other verdict.
+   File-fact schema 13 carries the `closure` flag.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -1092,6 +1146,45 @@ owner-module mock (fail closed). `spyOn(x, "owner")` with
 `.and.` strategy (`returnValue`, `returnValues`, `callFake`, `throwError`,
 `resolveTo`, `rejectWith`) removes the trusted relation and adds
 `typescript_spy_fabricated_observer`; a bare `spyOn` still relates.
+
+Setup-file mocks (#15949): a mock registered by a runner setup file counts
+for every test file under the config's directory, exactly like a mock
+written in the test file. Configs read: `vitest.config.*`, `vite.config.*`,
+`vitest.workspace.*`, `jest.config.*`, and, in every directory from a test
+file up to the root, `jest.config.json` and the `jest` key of `package.json`.
+Keys read, at any depth: `setupFiles`,
+`setupFilesAfterEnv` and the legacy `setupTestFrameworkScriptFile`
+(`globalSetup` runs in another process and registers no mock for a test).
+Every string literal inside the value is an entry, read against the config's
+directory and a literal `rootDir` or `root` beside it; `<rootDir>` is
+stripped. An absolute path inside the analysis root is read as that file, and
+one outside it names nothing. A relative mock specifier resolves from the file that holds the
+mock call, not from the test. Files a setup file loads through relative
+static imports, value re-exports and bare `require('./x')` statements are
+read too, 2 hops and 32 files per config at most; `import type` and
+`export type` load nothing. An entry
+that names no workspace file (a package, a variable), a setup file that does
+not parse, `automock` and automatic `__mocks__` are not modelled. A nearer
+config of another project is not told apart from the one that governs:
+applying both can only withhold a relation.
+
+Replaced methods (#15950, #6980): an instance method (not a getter, which
+has the wider #13726 rule, and not a constructor) or a static method has no
+tier-1 relation when the test file may replace the member. That is: the
+member's name is among the file-wide replacement names (an argument token of
+a `spyOn`, `stub`, `replace`, `mock`, `doMock`, `stubGlobal`,
+`mockImplementation` or `mockReturnValue` call, or a `.name =` target,
+hooks included); or the test body assigns the member (`c.apply =`, `c['apply'] =`), names it in a
+`defineProperty` or a prototype `delete`, or calls `spyOn`, `stub`,
+`replace`, `replaceGetter`, `replaceSetter`, `method` or `replaceProperty`
+with the literal name as second argument. A call-through spy is withheld as
+well. The file's any-name marker alone does not withhold an ordinary method
+(a `.mock.calls` read or an index assignment sets it); the body is read
+directly because that marker hides the file's names, so a hook-level
+replacement in such a file is not seen. A receiver the body declares with
+`new Class(...)` and assigns again (`c = new Other()`, `c ??= x`) is not a
+receiver; a block-scoped redeclaration of the name is a shadow and leaves the
+first binding a receiver.
 
 Replaced owner function (#15939): a function owner is not related through a
 test file that replaces it on its module object, wherever in the file the
@@ -1849,6 +1942,29 @@ case requires the same two distinct names in the same positions and a bare
 zero-argument owner call. An expression that could write to `verbose` while
 building the object remains outside this rule.
 
+**Rule 25. A read of an unchanged child of a changed field is not witnessed
+(#14858).** When a changed field's new value is an object literal of simple
+`key: value` members whose values are plain literals (a number, a string,
+`true`, `false`, `null`, `undefined`) and none of which is `__proto__`, the
+children the change moves are those whose value differs from the old literal's
+same key, plus any key the change drops. A member with an effect
+(`n: (counter = 5)`) or a prototype entry keeps the existing credit, since it can
+move a child whose text is unchanged. When
+the old value is a number or boolean literal, every new child is moved, and so
+is every member the old primitive answered through its prototype (`toFixed`,
+`valueOf`); any other old value (a string, an array, `null`, an expression)
+keeps the existing credit, since its members (`.length`) or behavior (a throw)
+are not modeled. A strong assertion whose path is
+`<owner call>.<changed field>.<child>`, with the changed field read directly off
+the owner's result, and names a child the
+change does not move (`f().retries.other` while `retries: 3` becomes
+`retries: { n: 5 }`) observes a value the change never alters: the finding
+drops to `weakly_exposed`, not `exposed`. A read of a moved child
+(`f().retries.n`), the whole field and a changed value
+that is not an object literal keep the existing credit. The alias
+form of the sibling rule (`const cfg = f(); expect(cfg.verbose)`, #14856) reads
+`weakly_exposed` and its changed-field control (`cfg.retries`) stays `exposed`.
+
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
 from a module that the owner file imports (`TypeScriptOwner.imports`),
@@ -1856,9 +1972,10 @@ and every test file holding an assertion that credits `exposed` mocks that
 module, a ladder result of `exposed` reads `static_unknown` instead. A
 module mock applies to its whole test file and to no other, so it is read
 per file: when one crediting assertion sits in a file with no such mock,
-`exposed` stands, with the limit as advisory below. ripr reads only mock
-calls written in the test file; config-level mocks (`setupFiles`,
-`automock`, automatic `__mocks__`) are not modelled. The result then is: reach Yes, observe and
+`exposed` stands, with the limit as advisory below. ripr reads mock
+calls written in the test file and in the runner setup files that govern it
+(#15949, see Reach); `automock` and automatic `__mocks__` are not modelled.
+The result then is: reach Yes, observe and
 discriminate Unknown, `static_limit_kind: mocked_module`,
 `gap_state: static_limitation` and `typescript_mock_only_observer`. The
 mock specifier resolves from the test file and the import source from the
@@ -2964,6 +3081,18 @@ keys); do not take the next number.
   the receiver-call stand-in that tier 2 checks, and
   `tests/class_entry_tests.rs` pins the credited chains against each shape
   that records no edge.
+- #13592 (closure continuation): `module_entries.rs` records closure edges
+  (`References`, `reassigned_names`) and closure entries
+  (`reachable_through_closures`, `MODULE_CLOSURE_MAX_HOPS`), `owners.rs` gives
+  call-built constants their closure entries, `related_tests.rs`
+  `ReExportIndex::cross_module_entries` continues them across importers, and
+  `classifier.rs` reads opaque-only reach (`module_entry_reach_is_opaque_only`)
+  as `static_unknown`. `tests/closure_entry_tests.rs` pins the credited shapes
+  (a passed reviver and comparator, a combinator-built constant, its callback
+  and its combinator, a function both called and passed, an importer chain)
+  against each refusal (a parameter, local, inner function, nested callback
+  parameter, reassignment and type-position reference; the hop bounds; a test
+  of an export that reaches nothing; a mocked module).
 - #13592: `module_entries.rs` (`module_entries_and_outbound`) records, from the
   same module graph as the entries, the imported bindings each export's code
   bare-calls (`OutboundImportCall`, persisted in `ModuleExportFacts`);

@@ -77,6 +77,8 @@ mod discarded_matches;
 mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
+#[path = "cli_smoke/error_next_steps.rs"]
+mod error_next_steps;
 #[path = "cli_smoke/explicit_input_refusals.rs"]
 mod explicit_input_refusals;
 #[path = "cli_smoke/findings_byte_budget.rs"]
@@ -20056,8 +20058,10 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     );
     std::fs::write(root.join("src/lib.rs"), lib)?;
     // Keep the expanded inventory in the baseline so an inventory cap cannot
-    // be erased by current-change supplementation (#6943).
-    commit_repair_fixture(&root, &["-qam", "expanded pilot fixture"])?;
+    // be erased by current-change supplementation (#6943). Amend the root
+    // commit: with a parent, pilot on this clean default branch would follow
+    // check's last-commit rescope (#16082) and supplement the new seams.
+    commit_repair_fixture(&root, &["-q", "--amend", "-am", "expanded pilot fixture"])?;
 
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
@@ -20550,7 +20554,10 @@ assert_eq!(c(11),1); }
 "#;
     std::fs::write(root.join("src/lib.rs"), source)?;
     run_git(&root, &["rm", "tests/pricing.rs"])?;
-    commit_repair_fixture(&root, &["-qam", "strongly gripped fixture"])?;
+    // Amend the root commit so pilot reads no current change: with a parent,
+    // it would follow check's last-commit rescope (#16082) and fold the
+    // changed seams in past the caps.
+    commit_repair_fixture(&root, &["-q", "--amend", "-am", "strongly gripped fixture"])?;
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
