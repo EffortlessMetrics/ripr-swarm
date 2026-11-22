@@ -246,6 +246,10 @@ arguments only into generated function bodies, closures and expressions:
   `prop_oneof!` (the same crate): expressions over the caller's tokens.
 - `serde_json::json!` (the audited literal `json!` identity): an expression
   over the caller's tokens.
+- The standard `pin!` (`std::pin::pin!`, the same macro as
+  `core::pin::pin!`): it places its argument in an expression,
+  `Pin { __pointer: &mut { $value } }`. It ships with the toolchain, so it
+  needs no locked-version audit.
 - `tokio::select!` (tokio 1.54.1 `src/macros/select.rs`): branch patterns,
   futures, `if` preconditions, handlers and the `else` arm are captured as
   `pat`, `expr` and `block` fragments and placed in a `match`, a tuple and
@@ -277,6 +281,18 @@ test elsewhere, when all of these hold:
   of the root name unless the path is absolute); or it is a bare
   `proptest!`, or a bare call of another of those wrappers, whose module (the file, or the inline module holding the call)
   has an admitted exact `proptest::prelude::*` glob.
+- Or it is the standard `pin!`, spelled `std::pin::pin!` or
+  `core::pin::pin!` (either with a leading `::`) with that root not bound
+  to another package by any manifest, not shadowed by a workspace package,
+  module or rename, and not taken over by a plain import of the root name
+  unless the path is absolute. Or it is a bare
+  `pin!` whose module holds exactly one import binding `pin` anywhere in the
+  file: a plain `use std::pin::pin;` or `use core::pin::pin;` (the root
+  under the same shadowing conditions), with no rename. The file must have
+  no `macro_rules!` or `macro` named `pin`, no glob in a block or inline
+  module between the call and its module, and no item-position macro call
+  there. A pasting `pin` definition anywhere reports its own wrapper
+  redefinition site, since textual scope outranks the import.
 - For a bare `proptest!`: the file has no plain import and no `macro_rules!`
   or `macro` of any of the wrapper names above, no glob in a block or inline
   module between the call and its module (an inner glob would shadow the
@@ -334,12 +350,19 @@ every one of its calls, inside the confined call too, a workspace-wide site
 for what its arguments mention.
 
 A `macro_rules!` or `macro` definition that takes one of the wrapper names
-and whose transcriber pastes caller tokens (any `$`) is itself a binding site
+and whose transcriber pastes caller tokens that may carry an item or
+statement is itself a binding site
 for every trusted name in its crate
 (`WrapperRedefinition`): through textual scope it may replace the audited
 macro for calls below it, including in child modules declared in other files,
-which the calling file cannot see. A definition whose transcribers paste
-nothing adds nothing a call's arguments can bind and reports no such site.
+which the calling file cannot see. A transcriber pastes such tokens when it
+names a metavariable that its arm's matcher does not declare as `expr`,
+`expr_2021`, `ty`, `pat`, `pat_param`, `literal`, `lifetime` or `block`
+(`$crate` and a repetition's `$(` excepted); rustc pastes those fragments as
+one node, so a definition inside one stays scoped to it. A definition whose
+transcribers paste nothing, or only those fragments, adds nothing a call's
+arguments can bind and reports no such site. A `macro` item's body is read
+whole, so any `$` in it counts.
 
 Any other spelling, version, source, argument shape or local redefinition
 keeps the workspace-wide argument site. A test inside the call keeps the
