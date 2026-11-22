@@ -70,7 +70,9 @@ fn empty_root_refusals_preserve_the_supplied_string() -> Result<(), String> {
         (
             DIFF_REFUSAL_SCHEMA,
             &["diff", "--json", "--base", "ripr-unresolved-ref"],
-            "analysis_failed",
+            // The empty root is refused before the base is resolved, so the
+            // typed identity is the root refusal, not the base failure.
+            "repository_root_unusable",
         ),
         (
             RERUN_REFUSAL_SCHEMA,
