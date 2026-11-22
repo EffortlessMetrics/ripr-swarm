@@ -47,10 +47,12 @@ impl ScalarExits {
             .get(&changed_value)
             .map_or(&[][..], Vec::as_slice);
         // Only the changed line may produce this literal; a second `return`
-        // of it elsewhere is a second source.
-        same.iter()
-            .all(|&(offset, value_end)| spans_changed_line(offset, value_end))
-            && same.len() == 1
+        // of it elsewhere is a second source. The line check is pure, so
+        // asking it only for a lone exit gives the loop's answer.
+        let [(offset, value_end)] = same else {
+            return false;
+        };
+        spans_changed_line(*offset, *value_end)
             && self
                 .tail
                 .as_ref()

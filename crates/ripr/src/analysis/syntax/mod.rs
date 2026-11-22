@@ -32,8 +32,6 @@ pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::module_declaration_unestablished_gate;
-#[cfg(test)]
-pub(crate) use owner_pin::returns_leave_reads;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
@@ -51,6 +49,8 @@ pub(crate) use owner_pin::{
     ClaimsMacroKind, claims_macro_names, claims_payload_variant, decimal_u8,
     is_test_scoped_trusted_macro, literal_check_syntax, literal_owner_syntax,
 };
+#[cfg(test)]
+pub(crate) use owner_pin::{returns_leave_reads, returns_leave_the_function_uncached};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 

@@ -3915,7 +3915,7 @@ pub(crate) fn returns_leave_reads() -> usize {
 }
 
 /// [`returns_leave_the_function`] without the run memo.
-fn returns_leave_the_function_uncached(item: &str) -> bool {
+pub(crate) fn returns_leave_the_function_uncached(item: &str) -> bool {
     #[cfg(test)]
     RETURNS_LEAVE_READS.with(|reads| reads.set(reads.get() + 1));
     parse_clean_source_file(item).is_some_and(|parse| {

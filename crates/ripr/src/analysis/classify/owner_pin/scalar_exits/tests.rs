@@ -9,9 +9,11 @@ use super::super::{
 };
 use super::SCALAR_EXIT_READS;
 use crate::analysis::classify::boundary_pairing::{is_whole_decimal_literal, same_scalar_literal};
-use crate::analysis::syntax::{returns_leave_reads, returns_leave_the_function, run_memo};
+use crate::analysis::syntax::{returns_leave_reads, returns_leave_the_function_uncached, run_memo};
 
-/// `scalar_early_return_gate` as it was before #11738, verbatim.
+/// `scalar_early_return_gate` as it was before #11738, verbatim except that
+/// it parses the owner directly, so no memoized reading is shared with the
+/// gate under test.
 fn reference_gate(
     body: &str,
     inner: &str,
@@ -22,7 +24,7 @@ fn reference_gate(
     if !is_whole_decimal_literal(changed)
         || evaluates_conditionally(&mask_comments_and_strings(changed))
         || inner.contains('?')
-        || !returns_leave_the_function(body)
+        || !returns_leave_the_function_uncached(body)
     {
         return None;
     }
