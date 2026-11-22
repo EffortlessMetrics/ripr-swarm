@@ -726,10 +726,10 @@ impl ModuleDeclarations {
         let macro_definition = (source.contains("macro_rules")
             || word_offsets(source, "macro").next().is_some())
             && (source.contains("mod") || source.contains("include") || source.contains("path"));
-        // A macro named `concat` shadows the built-in an `include!` path
-        // may be spelled with (#15035 round-7 review).
-        let concat_definition = has_word(source, "concat")
-            && (source.contains("macro_rules") || word_offsets(source, "macro").next().is_some());
+        // A macro or import named `concat` shadows the built-in an
+        // `include!` path may be spelled with (#15035 round-7 review); a
+        // `#[macro_use] extern crate` is admitted by its `extern`.
+        let concat_definition = has_word(source, "concat");
         gated_use || include || macro_definition || concat_definition || has_word(source, "extern")
     }
 
@@ -1557,11 +1557,50 @@ fn trailing_literal_path(arguments: &[ra_ap_syntax::SyntaxElement]) -> Option<(S
     (rest.is_empty() || joined.contains('/')).then_some((joined, bare))
 }
 
-/// Whether some `macro_rules! concat` or `macro concat` (an item, or macro
-/// tokens spelling one) that `select` keeps defines a macro named `concat`,
-/// which shadows the built-in `concat!` where it is in scope (#15035
-/// round-7 review).
+/// Whether something `select` keeps may bind a macro named `concat`, which
+/// shadows the built-in `concat!` where it is in scope (#15035 round-7
+/// review): a `macro_rules! concat` or `macro concat`, a rename `as concat`
+/// (an item, or macro tokens spelling one), a `use` leaf binding `concat`
+/// (`use crate::paths::concat;`, `use a::{concat};`), or any `#[macro_use]
+/// extern crate`, whose exported macros are not read.
 fn defines_concat_macro(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool) -> bool {
+    let imported = root.descendants().any(|node| {
+        if let Some(item) = ast::Use::cast(node.clone()) {
+            select(&node)
+                && item
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::UseTree::cast)
+                    .filter(|tree| tree.use_tree_list().is_none() && tree.star_token().is_none())
+                    .any(|leaf| {
+                        if leaf.rename().is_some() {
+                            // `as concat` is read from the tokens below.
+                            return false;
+                        }
+                        let mut path = use_leaf_path(&leaf);
+                        if path.last().is_some_and(|segment| segment == "self") {
+                            path.pop();
+                        }
+                        path.last().is_some_and(|segment| segment == "concat")
+                    })
+        } else if let Some(item) = ast::ExternCrate::cast(node.clone()) {
+            select(&node)
+                && ast::HasAttrs::attrs(&item).any(|attr| {
+                    attr.syntax()
+                        .descendants_with_tokens()
+                        .filter_map(|element| element.into_token())
+                        .any(|token| token.text() == "macro_use")
+                })
+        } else {
+            false
+        }
+    });
+    imported || defines_concat_by_tokens(root, select)
+}
+
+/// The token half of [`defines_concat_macro`]: a `concat` after `macro`,
+/// `macro_rules !` or `as`.
+fn defines_concat_by_tokens(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool) -> bool {
     let tokens: Vec<_> = root
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
@@ -1577,7 +1616,7 @@ fn defines_concat_macro(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool
                 .and_then(|at| tokens.get(at))
                 .map(|token| token.text())
         };
-        let defined = before(1) == Some("macro")
+        let defined = matches!(before(1), Some("macro" | "as"))
             || (before(1) == Some("!") && before(2) == Some("macro_rules"));
         defined && token.parent().is_none_or(|parent| select(&parent))
     })
@@ -3162,6 +3201,9 @@ mod tests {
             "mod imp {\n    include!(env!(\"GENERATED\"));\n}\n",
             "#[cfg(unix)]\ninclude /* c */ !(\"real.rs\");\n",
             "macro_rules! concat {\n    ($n:literal) => {\n        \"\"\n    };\n}\n",
+            "use crate::src_path as concat;\n",
+            "pub(crate) use crate::paths::{concat};\n",
+            "#[macro_use]\nextern crate paths;\n",
             "const C: &core::ffi::CStr = cr\"\\\";\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
             "const C: &core::ffi::CStr = cr#\"say \"hi\"\"#;\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
         ] {

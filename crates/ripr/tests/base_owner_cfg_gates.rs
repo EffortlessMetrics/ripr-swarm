@@ -1676,8 +1676,13 @@ fn concat_include(concat: &'static str) -> Vec<(&'static str, String)> {
 /// argument.
 const SHADOWING_CONCAT: &str = "macro_rules! concat {\n    ($n:literal) => {\n        ::core::concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\")\n    };\n}\nmod real;\npub use real::ready;\npub mod imp;\n";
 
+/// An exported `src_path` macro expanding to the owner file whatever its
+/// argument, which an import may rename to `concat`.
+const SRC_PATH_MACRO: &str = "mod real;\n#[macro_export]\nmacro_rules! src_path {\n    ($name:literal) => {\n        ::core::concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\")\n    };\n}\npub use real::ready;\npub mod imp;\n";
+
 /// #15035 round-7 review: a bare `concat!` in an `include!` is the built-in
-/// only when no workspace macro named `concat` shadows it, and a
+/// only when no workspace macro or import named `concat` shadows it
+/// (`use crate::src_path as concat;`), and a
 /// `core::concat!` only when no crate is renamed to `core`. Each gap's
 /// `include!` may expand to the owner file, so it gates every owner.
 /// Controls: the same `include!` without the shadowing macro or rename
@@ -1696,6 +1701,23 @@ fn a_shadowed_concat_include_path_is_opaque() -> Result<(), String> {
             import: GLOB,
             extra: |_| concat_include("concat"),
             control_items: OWNER_AND_IMP,
+            control_import: GLOB,
+            control_extra: |_| concat_include("concat"),
+            control: CREDITED,
+        },
+        GapCase {
+            name: "bare concat shadowed by an import renamed to concat",
+            owner: "src/real.rs",
+            items: SRC_PATH_MACRO,
+            import: GLOB,
+            extra: |_| {
+                let mut files = concat_include("concat");
+                if let Some((_, imp)) = files.first_mut() {
+                    imp.insert_str(0, "use crate::src_path as concat;\n");
+                }
+                files
+            },
+            control_items: SRC_PATH_MACRO,
             control_import: GLOB,
             control_extra: |_| concat_include("concat"),
             control: CREDITED,

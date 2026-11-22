@@ -318,12 +318,14 @@ changed body. The identity reports a gate when any of these holds:
   macro call (`include!(src_file!("unused.rs"))`, which may expand to any
   path), when `concat!`'s arguments do not end in a literal, a literal has
   escapes, or the run follows another argument and spells no `/` (#15035).
-  A bare `concat!` is trusted only while no workspace file defines a macro
-  named `concat` (`macro_rules! concat`, `macro concat`, or macro tokens
-  spelling one), and a `core::`/`std::` qualified one only while no crate
-  is renamed to a sysroot name; otherwise the `include!` gates every owner.
-  The `include!` is found however it is spelled, a comment between
-  `include` and `!` included;
+  A bare `concat!` is trusted only while no workspace file may bind a
+  macro named `concat`: a `macro_rules! concat` or `macro concat`, a rename
+  `as concat` (an item, or macro tokens spelling one), a `use` leaf named
+  `concat`, or any `#[macro_use] extern crate`; a `core::`/`std::`
+  qualified one only while no crate is renamed to a sysroot name.
+  Otherwise the `include!` gates every owner (a glob import that brings in
+  a macro named `concat` is not read). The `include!` is found however it
+  is spelled, a comment between `include` and `!` included;
 - a `macro_rules!` or `macro` body that may emit an out-of-line module (`mod`
   followed by a name and no `{` body), an `include!` or a `#[path]`
   (`path =`), and the owner file is not a crate root of the package that
