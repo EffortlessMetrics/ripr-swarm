@@ -1,6 +1,3 @@
 crates/ripr/src/analysis/language/rust/mod.rs|diff_scope_oversized: {} admitted open Rust files exceed the \              {DIFF_INDEX_FILE_LIMIT_ENV} limit
 crates/ripr/src/analysis/language/rust/mod.rs|open Rust source tracking probe failed: {error}
 crates/ripr/src/analysis/language/rust/mod.rs|partial_budget_invalid: {err}
-crates/ripr/src/analysis/language/rust/mod.rs|{env_name} must be a positive integer
-crates/ripr/src/analysis/language/rust/mod.rs|{env_name} must be a positive integer: {err}
-crates/ripr/src/analysis/language/rust/mod.rs|{env_name} must be valid UTF-8

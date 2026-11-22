@@ -1728,7 +1728,9 @@ fn seam_cache_store_limit_from_env(
     match value {
         Ok(value) => parse_positive_seam_cache_store_limit(&value, env_name),
         Err(std::env::VarError::NotPresent) => Ok(default_limit),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{env_name} must be valid UTF-8")),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be valid UTF-8; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 
@@ -1736,9 +1738,11 @@ fn parse_positive_seam_cache_store_limit(value: &str, env_name: &str) -> Result<
     let trimmed = value.trim();
     let parsed = trimmed
         .parse::<usize>()
-        .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+        .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default"))?;
     if parsed == 0 {
-        return Err(format!("{env_name} must be a positive integer"));
+        return Err(format!(
+            "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+        ));
     }
     Ok(parsed)
 }

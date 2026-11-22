@@ -3725,7 +3725,7 @@ mod tests {
                     "x"
                 )))
             ),
-            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8; set it to a whole number of seconds (0 disables the deadline), or unset it to use the default".to_string())
         );
         Ok(())
     }

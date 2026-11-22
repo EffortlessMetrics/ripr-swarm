@@ -1,1 +1,0 @@
-crates/ripr/src/app.rs|RIPR_GIT_TIMEOUT must be valid UTF-8

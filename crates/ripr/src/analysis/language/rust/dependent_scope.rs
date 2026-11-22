@@ -150,15 +150,15 @@ impl DependentScopeMode {
     fn from_env_value(value: Result<String, std::env::VarError>) -> Result<Self, String> {
         match value {
             Err(std::env::VarError::NotPresent) => Ok(Self::Auto),
-            Err(std::env::VarError::NotUnicode(_)) => {
-                Err(format!("{DEPENDENT_SCOPE_ENV} must be valid UTF-8"))
-            }
+            Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+                "{DEPENDENT_SCOPE_ENV} must be valid UTF-8; set it to `auto`, `named` or `full`, or unset it to use `auto`"
+            )),
             Ok(raw) => match raw.trim() {
                 "" | "auto" => Ok(Self::Auto),
                 "named" => Ok(Self::NameAdmitted),
                 "full" => Ok(Self::Full),
                 other => Err(format!(
-                    "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `{other}`"
+                    "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `{other}`; set one of those, or unset it to use `auto`"
                 )),
             },
         }
@@ -2222,7 +2222,7 @@ mod tests {
         assert_eq!(
             DependentScopeMode::from_env_value(Ok("all".to_string())),
             Err(format!(
-                "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`"
+                "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`; set one of those, or unset it to use `auto`"
             ))
         );
     }

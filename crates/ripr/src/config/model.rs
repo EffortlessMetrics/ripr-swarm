@@ -370,7 +370,7 @@ impl LspDiagnosticProfile {
             "actionable" => Ok(Self::Actionable),
             "full" => Ok(Self::Full),
             other => Err(format!(
-                "invalid lsp.diagnostic_profile {other:?}; expected \"actionable\" or \"full\""
+                "invalid lsp.diagnostic_profile {other:?}; set it to \"actionable\" or \"full\""
             )),
         }
     }

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Refusals for a bad environment variable or `ripr.toml` value now say how to fix it. `RIPR_DIFF_DEPENDENT_SCOPE`, `RIPR_REVIEW_EVIDENCE_WINDOW_SIZE`, `RIPR_GIT_TIMEOUT` and the Rust index and seam-cache size limits say which values to set or that unsetting the variable restores the default. `lsp.diagnostic_profile` says to set `actionable` or `full`, and an empty or NUL `[[overrides]] crate` says to give a Cargo package name or use `path` instead (#16019).

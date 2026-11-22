@@ -6561,7 +6561,7 @@ fn check_rejects_an_invalid_dependent_scope_without_dependents() -> sample_outpu
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(
-            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`"
+            "RIPR_DIFF_DEPENDENT_SCOPE must be `auto`, `named` or `full`, got `everything`; set one of those, or unset it to use `auto`"
         ),
         "stderr should name the invalid override: {stderr}"
     );

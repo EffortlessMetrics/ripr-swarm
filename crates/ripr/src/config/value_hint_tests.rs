@@ -35,11 +35,11 @@ fn near_miss_values_name_the_accepted_value() -> Result<(), String> {
         ),
         (
             "[lsp]\ndiagnostic_profile = \"Full\"\n",
-            "invalid lsp.diagnostic_profile \"Full\"; expected \"actionable\" or \"full\" in [lsp] (did you mean `full`?)",
+            "invalid lsp.diagnostic_profile \"Full\"; set it to \"actionable\" or \"full\" in [lsp] (did you mean `full`?)",
         ),
         (
             "[lsp]\ndiagnostic_profile = \"actionabel\"\n",
-            "invalid lsp.diagnostic_profile \"actionabel\"; expected \"actionable\" or \"full\" in [lsp] (did you mean `actionable`?)",
+            "invalid lsp.diagnostic_profile \"actionabel\"; set it to \"actionable\" or \"full\" in [lsp] (did you mean `actionable`?)",
         ),
         (
             "[perl]\nproducer = \"perl_ripr_facts\"\n",
