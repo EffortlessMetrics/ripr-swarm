@@ -57,13 +57,15 @@ CI job that cannot edit argv had no way to turn it on.
    exist. A run with withheld findings names how many were withheld.
 6. With diagnostics off, none of these lines is formatted or printed.
 7. The verdict line spells `<file>` with the shared human path rule
-   (`output::path::human_path_text`): forward slashes, and a Windows verbatim
-   root folded to its plain form (`//?/<drive>:/..` prints `<drive>:/..`,
-   `//?/UNC/server/share/..` prints `//server/share/..`). The printed
-   `<file>:<line>` selects the same finding through `ripr explain`: the
-   locator matcher folds the same verbatim roots on both operands, so a plain
-   UNC location selects a finding stored under the verbatim UNC spelling
-   (#15921). Other `//?/` forms keep their spelling and match byte for byte.
+   (`output::path::human_path_text`) applied to the stable path text. On
+   Windows that rule prints forward slashes and folds a verbatim root to its
+   plain form (`//?/<drive>:/..` prints `<drive>:/..`,
+   `//?/UNC/server/share/..` prints `//server/share/..`). On Unix the stable
+   path text prints unchanged. On every host, the printed `<file>:<line>`
+   selects the same finding through `ripr explain`: the locator matcher folds
+   the same verbatim roots on both operands, so a plain UNC location selects a
+   finding stored under the verbatim UNC spelling (#15921). Other `//?/` forms
+   keep their spelling and match byte for byte.
 
 ## Required Evidence
 
@@ -71,7 +73,9 @@ CI job that cannot edit argv had no way to turn it on.
   overflow line, hostile and long reasons; verdict-line path spelling
   (forward slashes, verbatim-root fold) and a printed location selecting its
   finding through the real `explain` matcher, including a plain UNC location
-  against a verbatim UNC stored path; phase-timing line wording,
+  against a verbatim UNC stored path (the separator and verbatim-fold
+  verdict-line tests are `cfg(windows)` and run on the Windows lane only; the
+  selection and matcher tests run on every host); phase-timing line wording,
   terminal total and clock underflow; the `RIPR_VERBOSE` switch parse.
 - Built-binary tests: `RIPR_VERBOSE=1` keeps `check --format json` stdout
   byte-identical to a plain run while stderr gains timing and verdict lines
