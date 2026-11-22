@@ -40,8 +40,12 @@ impl ConsumedInputHashes {
             }
         })?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
-        let text = crate::bounded_input::decode_artifact_text(&bytes)
-            .map_err(|err| format!("read {} failed: {err}", display_path(display)))?;
+        let text = crate::bounded_input::decode_artifact_text(&bytes).map_err(|err| {
+            format!(
+                "read {} failed: {err}; save the file as UTF-8, then rerun",
+                display_path(display)
+            )
+        })?;
         let value = serde_json::from_str(&text)
             .map_err(|err| format!("parse {} failed: {err}; fix the JSON, or regenerate the input if a command wrote it (never regenerate a reviewed baseline), then rerun", display_path(display)))?;
         Ok((value, digest))
