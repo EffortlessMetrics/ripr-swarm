@@ -674,6 +674,24 @@ impl ClassifiedProbeEvidence {
             }
             _ => infect,
         };
+        // #15272: a credited infection does not survive related tests that
+        // assert the owner only where it and its base side return the same
+        // value. Withholding only.
+        let infect = match (context.owner_fn, context.owner_baseline.as_deref()) {
+            (Some(owner), Some(baseline))
+                if matches!(infect.state, StageState::Yes) && !assertion_macros_rebound =>
+            {
+                crate::analysis::classify::agreeing_inputs_infection(
+                    owner,
+                    baseline,
+                    &test_summaries,
+                    owner_has_other_callers,
+                    context.index,
+                )
+                .unwrap_or(infect)
+            }
+            _ => infect,
+        };
         // #15770: every related call must skip this exact edit. Confirm that
         // replacing the expression did not also move the guard.
         let infect = if infect.state == StageState::Yes
