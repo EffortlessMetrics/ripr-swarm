@@ -279,6 +279,11 @@ fn a_scope_import_that_may_bring_a_fixture_keeps_the_limit() -> Result<(), Strin
             "from vendor.plugin import *\n",
         ),
         (
+            "workspace module that imports a module outside the workspace",
+            "from pkg import Manager\nfrom support.autouse import primed",
+            "from vendor.plugin import primed\n",
+        ),
+        (
             "relative import",
             "from pkg import Manager\nfrom .autouse import primed",
             "",

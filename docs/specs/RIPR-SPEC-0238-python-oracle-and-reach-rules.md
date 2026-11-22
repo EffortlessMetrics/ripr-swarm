@@ -750,10 +750,11 @@ This order is the existing behavior and is normative:
   fixture (#15967): an absolute, non-star import of a standard-library
   module, or of a workspace module whose import closure (at most 256
   modules) defines no fixture, has no star import or other opaque
-  construct, and names neither pytest nor a conftest. A relative import, a
-  module that resolves to no workspace file and is not standard library,
-  and a workspace file that shadows a standard-library name through a
-  hazard of its own keep the limit; and no file
+  construct, and imports only workspace or standard-library modules
+  (never pytest or a conftest). A relative import, a module anywhere in
+  the closure that resolves to no workspace file and is not standard
+  library, and a standard-library name a workspace file also answers to
+  whose closure has one of these hazards keep the limit; and no file
   star-imports, declares `pytest_plugins` or `pytestmark`, defines a
   `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
   `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.

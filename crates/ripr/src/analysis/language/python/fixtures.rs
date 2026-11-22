@@ -846,10 +846,9 @@ const MAX_FIXTURE_FREE_MODULES: usize = 256;
 /// closure without one hands the conftest plain objects only. A
 /// standard-library module no workspace file shadows brings none either.
 /// Fails closed for a relative import, any other module outside the
-/// workspace, and a closure larger than [`MAX_FIXTURE_FREE_MODULES`]; modules
-/// outside the workspace
-/// that the closure imports are not visible to this read, as in
-/// [`imported_modules_may_touch_fixture`].
+/// workspace (named by the scope import or anywhere in the closure, since a
+/// third-party module can hand a fixture on), and a closure larger than
+/// [`MAX_FIXTURE_FREE_MODULES`].
 fn import_brings_no_fixture(
     import: &PythonImport,
     defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
@@ -872,11 +871,14 @@ fn import_brings_no_fixture(
             })
             .collect()
     };
+    // A standard-library name no workspace file answers to is the standard
+    // library's module, which defines no pytest fixture.
+    let unshadowed_stdlib = |module: &str| {
+        let head = module.split('.').next().unwrap_or(module);
+        is_stdlib_module(head) && files_of(head).is_empty() && files_of(module).is_empty()
+    };
     if files_of(root).is_empty() {
-        // No workspace file answers to the name, so a standard-library name
-        // is the standard library's module, which defines no pytest fixture.
-        let head = root.split('.').next().unwrap_or(root);
-        return is_stdlib_module(head);
+        return unshadowed_stdlib(root);
     }
     let submodule = format!("{root}.{}", import.imported);
     let mut pending: Vec<&str> = vec![root, submodule.as_str()];
@@ -894,7 +896,19 @@ fn import_brings_no_fixture(
         if head.starts_with("pytest") || head.starts_with("_pytest") || head == "conftest" {
             return false;
         }
-        for file in files_of(module) {
+        let files = files_of(module);
+        if files.is_empty() {
+            // `M.name` for a name `M` binds is read with `M`. Any other
+            // module is outside the workspace: only the standard library is
+            // known to hand over no fixture.
+            let parent_in_workspace = module
+                .rsplit_once('.')
+                .is_some_and(|(parent, _)| !files_of(parent).is_empty());
+            if !parent_in_workspace && !unshadowed_stdlib(module) {
+                return false;
+            }
+        }
+        for file in files {
             if !seen_files.insert(file) {
                 continue;
             }
