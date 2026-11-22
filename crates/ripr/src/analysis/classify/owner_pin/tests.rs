@@ -15787,3 +15787,15 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
     assert_eq!(refusal_under(&alloc_dependency, "use std::vec;")?, None);
     Ok(())
 }
+
+#[test]
+fn the_include_pair_stays_unbounded_in_owner_code() {
+    // The owner-side return scan reads spellings without a binding check
+    // (#14116), so a rebound `include_str!` there could hide a `return`.
+    assert!(!has_unbounded_macro("let n = env!(\"N\"); n.len()"));
+    assert!(has_unbounded_macro("let n = include_str!(\"n\"); n.len()"));
+    assert!(has_unbounded_macro(
+        "let n = include_bytes!(\"n\"); n.len()"
+    ));
+    assert!(assertion_context_macros().contains(&"include_str"));
+}
