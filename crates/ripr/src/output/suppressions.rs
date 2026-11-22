@@ -734,8 +734,8 @@ pub(crate) fn read_root_manifest(
 ///
 /// Production reads the repository-controlled policy through the confined
 /// wrapper in `suppressions_confined.rs`; this unconfined form is kept for
-/// the audit controls that pin `read_root_manifest`'s refusal messages.
-#[allow(dead_code)]
+/// the unix audit control that pins `read_root_manifest`'s refusal messages.
+#[cfg(all(test, unix))]
 pub fn load_suppressions_for_root_at(
     root: &Path,
     relative_path: &Path,
