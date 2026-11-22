@@ -4699,10 +4699,22 @@ fn assert_already_complete_summary(
             ));
         }
     }
+    // The printed root is shell-quoted for this host (a Windows root prints in
+    // the console double-quote form, #16105), so decode each command the way
+    // its shell would and compare the argument, not the printed bytes.
     for (index, command) in [(4, "Next"), (5, "Full status")] {
-        if !lines[index].contains(&format!("--root {root_arg}`")) {
+        let printed = lines[index]
+            .split('`')
+            .nth(1)
+            .ok_or_else(|| format!("the {command} line must carry a command:\n{summary}"))?;
+        let words = printed_words::printed_words(printed)?;
+        let selected = words
+            .windows(2)
+            .find(|pair| pair[0] == "--root")
+            .map(|pair| pair[1].as_str());
+        if selected != Some(root_arg) || words.last().map(String::as_str) != selected {
             return Err(format!(
-                "the {command} command must name the selected root `{root_arg}`:\n{summary}"
+                "the {command} command must end by naming the selected root `{root_arg}`:\n{summary}"
             ));
         }
     }
