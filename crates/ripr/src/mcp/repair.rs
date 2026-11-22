@@ -3469,6 +3469,23 @@ pub(super) mod tests {
         // on Windows `<root>\` since `root.join` adds a backslash, with
         // nothing, then a remaining bare `<root>` with `.`).
         let mut fixture_roots = vec![root_text.clone(), canonical_text.clone()];
+        if cfg!(windows) {
+            // The repair-attempt binding records the root with `/` separators
+            // (`D:/a/...`, the bound-root display rule, #4287), so the naive
+            // rewrite matches that spelling too (#16105).
+            let forward: Vec<String> = fixture_roots
+                .iter()
+                .map(|spelling| spelling.replace('\\', "/"))
+                .collect();
+            for spelling in &forward {
+                assert!(
+                    !document.to_string().contains(spelling.as_str()),
+                    "{} MCP receipt status leaked the forward-slash root {spelling}",
+                    case.label,
+                );
+            }
+            fixture_roots.extend(forward);
+        }
         fixture_roots.sort_by_key(|spelling| std::cmp::Reverse(spelling.len()));
         fixture_roots.dedup();
         let naive = |text: &str| -> String {
