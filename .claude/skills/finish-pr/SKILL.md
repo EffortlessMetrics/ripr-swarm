@@ -134,7 +134,11 @@ acceptance actually satisfied by the landed result.
 A new material finding withdraws readiness even on an unchanged head. If auto-merge
 is armed, disarm it through the available authorized GitHub operation and verify the
 readback before resolving the blocking thread. An unavailable or failed disarm is
-an integration-control blocker; do not claim the merge is contained. After repair,
+an integration-control blocker; do not claim the merge is contained. If the PR is
+already in the merge queue and the session has no native dequeue, follow the
+[enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface) withdrawal:
+delete the auto-merge request, then convert the PR to Draft, and read back the
+queue removal. After repair,
 affected proof and cumulative rereview must restore `REVIEW_READY` before the final merge judgment.
 Old green, an unrelated later comment, or a completed agent run cannot restore it.
 
