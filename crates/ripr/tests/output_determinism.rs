@@ -369,10 +369,9 @@ fn findings_artifact(
     stamp: Option<&str>,
 ) -> Result<std::process::Output, String> {
     write_tree(root, files, false)?;
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
-    command
-        .current_dir(root)
-        .args([
+    stamped_ripr(
+        root,
+        &[
             "check",
             "--root",
             ".",
@@ -380,14 +379,9 @@ fn findings_artifact(
             "change.diff",
             "--format",
             "check-findings-json",
-        ])
-        .env_remove("RIPR_LOG")
-        .env_remove("RIPR_CACHE_DIR");
-    match stamp {
-        Some(stamp) => command.env("RIPR_GENERATED_AT", stamp),
-        None => command.env_remove("RIPR_GENERATED_AT"),
-    };
-    command.output().map_err(|err| format!("spawn ripr: {err}"))
+        ],
+        stamp,
+    )
 }
 
 /// The value of the artifact's `generated_at` member.
