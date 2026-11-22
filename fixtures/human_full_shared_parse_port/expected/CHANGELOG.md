@@ -421,3 +421,4 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+- `expected/library-human-lines.json` (hand-edited: not covered by goldens bless; the two match_arm next-step lines)
