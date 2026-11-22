@@ -561,10 +561,11 @@ impl OwnedProcess {
                     match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
                         Ok(()) => Ok(()),
                         Err(error) => {
-                            // Re-observe after the refusal: the leader may
-                            // have exited between the first observation and
-                            // the signal.
-                            let leader_exited = self.observe_owned_exit()?;
+                            // Re-observe only for EPERM: the leader may have
+                            // exited between the first observation and the
+                            // signal. Other answers keep their old meaning.
+                            let leader_exited =
+                                error == rustix::io::Errno::PERM && self.observe_owned_exit()?;
                             group_signal_outcome(
                                 error,
                                 leader_exited,
@@ -860,9 +861,15 @@ const ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM: bool = cfg!(target_vendor = "apple");
 /// same answer on a kernel that reports a zombie-only group that way, but
 /// only when the owned leader is observed exited: a live leader is always
 /// signallable by its owner, so `EPERM` with a live leader is a real
-/// refusal and stays an error. A surviving member this owner may not
-/// signal would draw the same Darwin answer; no signal from this owner
-/// could stop it either. Every other error is returned unchanged.
+/// refusal and stays an error. Every other error is returned unchanged.
+///
+/// Limitation: Darwin gives the same `EPERM` when the leader has exited and
+/// every live member left is one this owner may not signal, which needs a
+/// descendant that changed its real and saved user id (a setuid program
+/// alone keeps the caller's real id and stays signallable). That group is
+/// reported settled while such a member may still run. The two cases cannot
+/// be told apart without enumerating the group, which this crate does not
+/// do on Darwin, and no signal from this owner could stop that member.
 #[cfg(unix)]
 fn group_signal_outcome(
     error: rustix::io::Errno,
