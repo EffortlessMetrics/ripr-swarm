@@ -986,6 +986,12 @@ general combinator, callback or mutation adequacy.
    binds the root name itself (`use other::std;`) takes the root over, so
    `use std::env;` then refuses; any other import, definition or
    macro-argument mention of the name still refuses.
+   `include_str!` and `include_bytes!` join them on the same terms: each
+   expands to a literal read from a file at build time, so its arguments
+   are a path expression and a mention of `env` there
+   (`include_str!(concat!(env!("CARGO_MANIFEST_DIR"), ..))`) defines
+   nothing. A local definition or non-standard import of either name still
+   refuses.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
    also refuse it; nested expansion is not interpreted, except that a bare,
    unqualified nested `matches!`, `format!` or `vec!` expands to one call

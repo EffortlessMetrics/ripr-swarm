@@ -545,6 +545,12 @@ pub(crate) const TRUSTED_MACRO_NAMES: &[&str] = &[
     "file",
     "format",
     "format_args",
+    // `include_bytes!` and `include_str!` expand to a literal read from a
+    // file at build time (#14116), like `env!`: their arguments are a path
+    // expression, never code, so neither can return, skip a later assertion
+    // or define a name its arguments mention.
+    "include_bytes",
+    "include_str",
     "line",
     "matches",
     "module_path",
@@ -2090,8 +2096,9 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
         // `use std::env;` names the module and, in the macro namespace, the
-        // standard `env!` itself.
-        "env" | "option_env" => STANDARD_ROOTS,
+        // standard `env!` itself; `use std::include_str;` is the standard
+        // macro as well.
+        "env" | "option_env" | "include_bytes" | "include_str" => STANDARD_ROOTS,
         _ => &[],
     }
 }
@@ -7200,8 +7207,26 @@ fn opaque_macro_operand_with_json(
 /// `match`, call or vector over its own operands (RIPR-SPEC-0197 literal
 /// `matches!`, rendered scalar pins and single-element indexes), which the
 /// token scan above already reads for exits; its binding is checked with the
-/// invoking macros'.
-const NESTED_EXPANSIONS: &[&str] = &["matches", "format", "vec"];
+/// invoking macros'. The compile-time built-ins after them expand to a
+/// literal (#14116), so `include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
+/// ".."))` nests only literals: rustc rejects any operand they cannot fold
+/// at compile time, an exit among them included.
+const NESTED_EXPANSIONS: &[&str] = &[
+    "matches",
+    "format",
+    "vec",
+    "cfg",
+    "column",
+    "concat",
+    "env",
+    "file",
+    "include_bytes",
+    "include_str",
+    "line",
+    "module_path",
+    "option_env",
+    "stringify",
+];
 
 /// Pure comparison macros of `float_cmp` and `approx` (#10389). They expand
 /// to a boolean over their operands, but ripr does not expand third-party
