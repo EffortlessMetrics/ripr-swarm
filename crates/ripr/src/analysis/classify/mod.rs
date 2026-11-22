@@ -52,6 +52,7 @@ mod mask_pin;
 mod match_transfer;
 mod operand_pin;
 mod out_parameter;
+mod owner_baseline;
 mod owner_pin;
 mod owner_prelude;
 mod owner_shape;
@@ -102,7 +103,8 @@ pub(in crate::analysis) use binding_return_flow::{
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, assertion_is_discriminating, has_same_test_boundary_oracle_pairing,
     helper_argument_is_boundary_call, observed_owner_call_rows_on_line,
-    same_test_pairing_missing_summary, test_helper_call_arguments, wrapper_return_boundary_pinned,
+    same_test_pairing_missing_summary, test_helper_call_arguments, unpaired_return_gate,
+    wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
     constructor_starts_empty, function_returns_value, getter_plainly_reads,
@@ -191,6 +193,7 @@ pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names
 pub(in crate::analysis) use out_parameter::{
     assertion_out_parameter, expression_writes_parameter, file_shadows_buffer_types,
 };
+pub(in crate::analysis) use owner_baseline::{agreeing_inputs_infection, sole_line_owner_baseline};
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::SCAN_LOG;
 pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
@@ -249,9 +252,10 @@ pub(in crate::analysis) use related_tests::{
     find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
     inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
-    owner_call_is_direct, owner_call_selects_generic_sibling, owner_call_text,
-    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
-    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
+    own_crate_qualified_owner_path, owner_call_is_direct, owner_call_selects_generic_sibling,
+    owner_call_text, owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name,
+    package_prefix, requires_inherent_receiver_identity, resolves_method_in_prefix,
+    test_calls_free_function,
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;

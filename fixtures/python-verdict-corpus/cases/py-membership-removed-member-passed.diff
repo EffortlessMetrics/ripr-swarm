@@ -1,0 +1,11 @@
+diff --git a/truthy/convert.py b/truthy/convert.py
+--- a/truthy/convert.py
++++ b/truthy/convert.py
+@@ -8,6 +8,6 @@
+ 
+     if val in (True, "true", "t", "yes", "y", "on", "1", 1):
+         return True
+-    if val in (False, "false", "f", "no", "n", "off", "0", 0):
++    if val in (False, "false", "f", "no", "off", "0", 0):
+         return False
+ 

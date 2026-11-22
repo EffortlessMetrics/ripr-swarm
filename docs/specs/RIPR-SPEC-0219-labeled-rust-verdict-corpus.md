@@ -200,6 +200,12 @@ a reaching row ranked below the window goes uncounted.
   directory, found by name, and fails if any drifts or a corpus directory
   has no `corpus.json`. Reports for languages other than Rust nest under
   `target/ripr/reports/verdict-corpus/<language>/`.
+- `check-affected` is a local check over supplied changed paths. It reports
+  the selected languages and identifies omitted corpora as unrun. A change
+  to the shared scorer, fixture preparation, process runner or xtask
+  entrypoint selects every discovered corpus. For example, removing
+  `lang-perl` from the Rust fixture builder affects the Perl corpus. The
+  protected Rust gate continues to run `check-all`.
 - `bless` runs the whole corpus and replaces `expected/` with one row file
   per case.
 - `split` moves a one-file `corpus.json`'s subjects and cases into record
@@ -741,6 +747,11 @@ reported but never gated. `validate` does not run the grid.
 ## Test Mapping
 
 Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
+
+- `check_affected_classification_matrix` maps fixture and process-runner
+  changes to every corpus and checks ordinary language-specific paths.
+- `check_affected_selection_and_output_lines` covers combined selections and
+  the disclosure of unrun languages.
 
 - `score_follows_the_truth_table_in_both_error_directions`
 - `finding_verdict_mirrors_triage_classes_and_named_limits`

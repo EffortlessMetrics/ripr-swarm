@@ -1,0 +1,2 @@
+crates/ripr/src/edit_cage/inline_test_region/attempt.rs|it has no inline `#[cfg(test)]` module
+crates/ripr/src/edit_cage/inline_test_region/attempt.rs|the file does not parse cleanly, so its test-module region cannot be established

@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_inventory.ts:typescript_preview:72e603c8|probe:src_inventory.ts:typescript_preview:72e603c8|src/inventory.ts"
+            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_inventory.ts:typescript_preview:72e603c8|probe:src_inventory.ts:typescript_preview:72e603c8|fixtures/ts_cross_package_test/input/src/inventory.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/inventory.ts"
+                  "uri": "fixtures/ts_cross_package_test/input/src/inventory.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "no_static_path static exposure for predicate probe:     if (quantity >= minimum) {. Next step: TypeScript preview advisory: no statically linked test calls `checkStock(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_inventory.ts:typescript_preview:72e603c8|probe:src_inventory.ts:typescript_preview:72e603c8|src/inventory.ts"
+            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_inventory.ts:typescript_preview:72e603c8|probe:src_inventory.ts:typescript_preview:72e603c8|fixtures/ts_cross_package_test/input/src/inventory.ts"
           },
           "properties": {
             "changed_expression": "    if (quantity >= minimum) {",

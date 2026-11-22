@@ -1,0 +1,8 @@
+crates/ripr/src/app/repair_card_handoff.rs|agent card attempt content failed: {error}
+crates/ripr/src/app/repair_card_handoff.rs|agent card could not probe the working-tree state: git status output was truncated
+crates/ripr/src/app/repair_card_handoff.rs|agent card could not probe the working-tree state: {error}
+crates/ripr/src/app/repair_card_handoff.rs|agent card could not run the witness analysis: {error}
+crates/ripr/src/app/repair_card_handoff.rs|agent card done-when content failed: {error}
+crates/ripr/src/app/repair_card_handoff.rs|agent card limitation content failed: {error}
+crates/ripr/src/app/repair_card_handoff.rs|agent card related-test content failed: {error}
+crates/ripr/src/app/repair_card_handoff.rs|agent card witness content failed: {error}
