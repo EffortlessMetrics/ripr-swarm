@@ -18,6 +18,12 @@
 //! definitions. Its runs cover the many-packet and one-packet documents, the
 //! diff-selector projection, the canonical-delta fields, and the format's own
 //! refusal shape.
+//!
+//! `schemas/ripr/agent-gap-packet.schema.json` describes
+//! `ripr agent packet --gap-ledger <path> --gap-id <id> --json`. A gap ledger
+//! is built from a real repo-exposure run of the same fixture, and its runs
+//! cover the advisory packet, the canonical-delta fields, and the blocked
+//! document for a `not_evaluated` records ledger and a `stale` dirty checkout.
 
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -143,10 +149,16 @@ fn fixture_repo_with(root: &Path, lib: &str, tests: &str) -> Result<(), String> 
     Ok(())
 }
 
-fn ripr(args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
+fn ripr_command(args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
         .args(args)
-        .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+        .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT");
+    command
+}
+
+fn ripr(args: &[&str]) -> Result<Output, String> {
+    ripr_command(args)
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
@@ -932,6 +944,475 @@ fn published_seam_packets_schema_rejects_documents_it_forbids() -> Result<(), St
             Ok(()) => {
                 return Err(format!(
                     "the published seam-packets schema accepted a document the producer never writes: {label}"
+                ));
+            }
+            Err(error) => {
+                let at_field = error
+                    .split(": ")
+                    .next()
+                    .is_some_and(|path| path.ends_with(location));
+                if !at_field || !error.contains(reason) {
+                    return Err(format!(
+                        "{label}: rejected for another reason; expected `{reason}` at `{location}`, got: {error}"
+                    ));
+                }
+                println!("rejected as expected ({label}): {error}");
+            }
+        }
+    }
+    Ok(())
+}
+
+const GAP_PACKET_SCHEMA: &str = "schemas/ripr/agent-gap-packet.schema.json";
+const PACKET_REFUSAL_SCHEMA: &str = "schemas/ripr/agent-packet-refusal.schema.json";
+
+/// Run ripr from `root`, so the ledger's Markdown sidecar lands in the
+/// fixture rather than in the crate directory.
+fn ripr_in(root: &Path, args: &[&str]) -> Result<Output, String> {
+    ripr_command(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("spawn ripr {args:?}: {error}"))
+}
+
+fn ripr_ok(root: &Path, args: &[&str]) -> Result<Output, String> {
+    let output = ripr_in(root, args)?;
+    if output.status.code() != Some(0) {
+        return Err(format!(
+            "ripr {args:?} exited {:?}: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output)
+}
+
+/// `ripr agent packet --gap-ledger <ledger> --gap-id <id> --json`, with its
+/// exit code and stdout document.
+fn gap_packet(root: &Path, ledger: &Path, gap_id: &str) -> Result<(Option<i32>, Value), String> {
+    let root_arg = root.display().to_string();
+    let ledger_arg = ledger.display().to_string();
+    let args = [
+        "agent",
+        "packet",
+        "--root",
+        root_arg.as_str(),
+        "--gap-ledger",
+        ledger_arg.as_str(),
+        "--gap-id",
+        gap_id,
+        "--json",
+    ];
+    let output = ripr_in(root, &args)?;
+    Ok((output.status.code(), parse(&args, &output)?))
+}
+
+/// The five documents a gap-ledger packet run reaches over one fixture: an
+/// advisory packet from a live-current repo-exposure ledger, the same with a
+/// canonical delta artifact present, a ledger built from bare records (no
+/// live snapshot authority, so `not_evaluated`), the refusal for a record
+/// that is not agent-packet eligible, and the advisory ledger read against a
+/// dirty checkout (`stale`).
+fn gap_packet_documents() -> Result<[(&'static str, Value); 5], String> {
+    let root = unique("gap-ledger");
+    fixture_repo(&root)?;
+    let root_arg = root.display().to_string();
+    let exposure = ripr_ok(
+        &root,
+        &[
+            "check",
+            "--root",
+            root_arg.as_str(),
+            "--mode",
+            "draft",
+            "--format",
+            "repo-exposure-json",
+        ],
+    )?;
+    let work = root.join("target");
+    std::fs::create_dir_all(&work).map_err(|error| format!("create target: {error}"))?;
+    let exposure_path = work.join("repo-exposure.json");
+    std::fs::write(&exposure_path, &exposure.stdout)
+        .map_err(|error| format!("write repo-exposure: {error}"))?;
+    let ledger = work.join("gap-ledger.json");
+    let exposure_arg = exposure_path.display().to_string();
+    let ledger_arg = ledger.display().to_string();
+    ripr_ok(
+        &root,
+        &[
+            "reports",
+            "gap-ledger",
+            "--root",
+            root_arg.as_str(),
+            "--repo-exposure",
+            exposure_arg.as_str(),
+            "--out",
+            ledger_arg.as_str(),
+        ],
+    )?;
+    let ledger_document: Value = serde_json::from_str(
+        &std::fs::read_to_string(&ledger).map_err(|error| format!("read ledger: {error}"))?,
+    )
+    .map_err(|error| format!("parse ledger: {error}"))?;
+    let records = ledger_document["records"]
+        .as_array()
+        .ok_or("the gap ledger has no records")?;
+    let eligible = |want: bool| {
+        records
+            .iter()
+            .find(|record| record["projection_eligibility"]["agent_packet"]["eligible"] == want)
+            .and_then(|record| record["gap_id"].as_str())
+            .map(str::to_string)
+            .ok_or(format!("no record with agent_packet eligibility {want}"))
+    };
+    let (repairable, ineligible) = (eligible(true)?, eligible(false)?);
+
+    let (code, advisory) = gap_packet(&root, &ledger, &repairable)?;
+    if code != Some(0) {
+        return Err(format!("advisory gap packet exited {code:?}"));
+    }
+
+    let canonical_gap_id = advisory["packets"][0]["canonical_gap_id"]
+        .as_str()
+        .ok_or("the advisory packet has no canonical gap id")?
+        .to_string();
+    let state = json!({
+        "canonical_owner": "src/lib.rs::discounted_total",
+        "behavior_identity": "amount >= threshold",
+        "discriminator_identity": "boundary",
+        "gap_state": "actionable",
+        "oracle_strength": "Weak",
+    });
+    let delta = json!({
+        "schema_version": "0.1",
+        "coverage": {"base_items": 1, "head_items": 1, "matched_items": 1, "ambiguous_items": 0, "unknown_items": 0},
+        "deltas": [{
+            "canonical_gap_id": canonical_gap_id,
+            "delta_attribution": "weakened_by_change",
+            "base_state": state,
+            "head_state": state,
+            "attribution_basis": ["same_canonical_owner", "oracle_strength_decreased"],
+            "comparison_confidence": "fixture_backed",
+        }],
+    });
+    let delta_dir = work.join("ripr/pr");
+    std::fs::create_dir_all(&delta_dir).map_err(|error| format!("create pr dir: {error}"))?;
+    let delta_path = delta_dir.join("canonical-delta.json");
+    write(&delta_path, &delta.to_string())?;
+    let (code, causal) = gap_packet(&root, &ledger, &repairable)?;
+    std::fs::remove_file(&delta_path).map_err(|error| format!("remove delta: {error}"))?;
+    if code != Some(0) {
+        return Err(format!("gap packet with a canonical delta exited {code:?}"));
+    }
+
+    let records_path = work.join("records.json");
+    write(&records_path, &json!({"records": records}).to_string())?;
+    let records_ledger = work.join("records-ledger.json");
+    let records_arg = records_path.display().to_string();
+    let records_ledger_arg = records_ledger.display().to_string();
+    ripr_ok(
+        &root,
+        &[
+            "reports",
+            "gap-ledger",
+            "--root",
+            root_arg.as_str(),
+            "--records",
+            records_arg.as_str(),
+            "--out",
+            records_ledger_arg.as_str(),
+        ],
+    )?;
+    let (code, not_evaluated) = gap_packet(&root, &records_ledger, &repairable)?;
+    if code != Some(0) {
+        return Err(format!("records-ledger gap packet exited {code:?}"));
+    }
+
+    let (code, refused) = gap_packet(&root, &ledger, &ineligible)?;
+    if code != Some(2) {
+        return Err(format!("ineligible gap packet exited {code:?}"));
+    }
+
+    let lib = root.join("src/lib.rs");
+    let mut source = std::fs::read_to_string(&lib).map_err(|error| format!("read lib: {error}"))?;
+    source.push_str("// an uncommitted edit\n");
+    write(&lib, &source)?;
+    let (code, stale) = gap_packet(&root, &ledger, &repairable)?;
+    if code != Some(0) {
+        return Err(format!("dirty-checkout gap packet exited {code:?}"));
+    }
+    // Every early return above keeps the fixture for inspection; the
+    // documents are returned by value, so the inputs go once all runs passed.
+    let _ = std::fs::remove_dir_all(&root);
+    Ok([
+        ("advisory", advisory),
+        ("canonical delta", causal),
+        ("not evaluated", not_evaluated),
+        ("refused", refused),
+        ("stale", stale),
+    ])
+}
+
+/// Each gap-ledger document conforms and is the variant it claims to be; the
+/// ineligible record's refusal is the shared agent-packet refusal envelope.
+#[test]
+fn agent_gap_packet_json_conforms_for_each_document_variant() -> Result<(), String> {
+    let schema = published_schema::read(GAP_PACKET_SCHEMA)?;
+    let refusal_schema = published_schema::read(PACKET_REFUSAL_SCHEMA)?;
+    let [advisory, causal, not_evaluated, refused, stale] = gap_packet_documents()?;
+    for (label, document) in [&advisory, &causal, &not_evaluated, &stale] {
+        conforms(document, &schema, label)?;
+    }
+    published_schema::check(&refused.1, &refusal_schema, &refusal_schema, "refused")?;
+    let blocked_agrees = |document: &Value| {
+        let candidate = &document["blocked_candidate"];
+        let currentness = &document["source_currentness"];
+        candidate["staleness_status"] == currentness["status"]
+            && candidate["queue_state"] == currentness["queue_state"]
+            && candidate["staleness_reason"] == currentness["reason"]
+            && candidate["refresh_commands"] == currentness["refresh_commands"]
+    };
+    let checks = [
+        (
+            "the advisory document carries one live-current packet",
+            advisory.1["status"] == "advisory"
+                && advisory.1["packets_total"] == 1
+                && advisory.1["packets"][0]["source_currentness"]
+                    == advisory.1["source_currentness"]
+                && advisory.1["source_currentness"]["refresh_replayable"] == true
+                && advisory.1.get("causal_comparison").is_none(),
+        ),
+        (
+            "a canonical delta projects the comparison and the packet's delta",
+            causal.1["causal_comparison"]["available"] == true
+                && causal.1["packets"][0]["delta_attribution"] == "weakened_by_change",
+        ),
+        (
+            "a records ledger is blocked as not evaluated",
+            not_evaluated.1["status"] == "blocked"
+                && not_evaluated.1["source_currentness"]["status"] == "not_evaluated"
+                && not_evaluated.1["source_currentness"]["refresh_replayable"] == false
+                && blocked_agrees(&not_evaluated.1),
+        ),
+        (
+            "a dirty checkout is blocked as stale",
+            stale.1["status"] == "blocked"
+                && stale.1["source_currentness"]["status"] == "stale"
+                && blocked_agrees(&stale.1),
+        ),
+        (
+            "an ineligible record is refused, not packeted",
+            refused.1["run_limitations"][0]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("not agent-packet eligible")),
+        ),
+    ];
+    for (claim, held) in checks {
+        if !held {
+            return Err(format!("{claim}: not so in this run"));
+        }
+    }
+    Ok(())
+}
+
+/// The gap-packet schema copies its command and canonical-delta definitions
+/// from the check-format schema, so the two cannot drift apart unnoticed.
+#[test]
+fn the_gap_packet_schema_shares_the_seam_packet_definitions() -> Result<(), String> {
+    let gap = published_schema::read(GAP_PACKET_SCHEMA)?;
+    let family = published_schema::read(SEAM_PACKETS_SCHEMA)?;
+    for name in [
+        "command_spec",
+        "delta_attribution",
+        "nullable_causal_evidence_state",
+        "causal_evidence_state",
+        "attribution_basis",
+        "comparison_confidence",
+        "causal_comparison",
+    ] {
+        if gap["$defs"][name].is_null() || gap["$defs"][name] != family["$defs"][name] {
+            return Err(format!(
+                "$defs/{name} differs between the gap-packet and seam-packets schemas"
+            ));
+        }
+    }
+    for field in [
+        "delta_attribution",
+        "base_state",
+        "head_state",
+        "attribution_basis",
+        "comparison_confidence",
+    ] {
+        let ours = &gap["$defs"]["packet"]["properties"][field];
+        if ours.is_null() || *ours != family["$defs"]["packet"]["properties"][field] {
+            return Err(format!(
+                "packet field `{field}` differs between the two schemas"
+            ));
+        }
+    }
+    if gap["properties"]["schema_version"] != family["properties"]["schema_version"] {
+        return Err("the two schemas key different versions".to_string());
+    }
+    Ok(())
+}
+
+/// The gap-packet schema refuses documents the producer never writes, each
+/// at the field it changes and for the constraint it breaks.
+#[test]
+fn published_gap_packet_schema_rejects_documents_it_forbids() -> Result<(), String> {
+    let schema = published_schema::read(GAP_PACKET_SCHEMA)?;
+    let [advisory, _, not_evaluated, _, stale] = gap_packet_documents()?;
+    let cases: [(&str, (&str, &str), Value, Mutation); 16] = [
+        (
+            "an advisory document that counts no packet",
+            (".packets_total", "expected const 1"),
+            advisory.1.clone(),
+            |doc, _| doc["packets_total"] = json!(0),
+        ),
+        (
+            "a blocked document with a packet",
+            (".packets", "above maxItems 0"),
+            stale.1.clone(),
+            |doc, advisory| {
+                doc["packets_total"] = json!(1);
+                doc["packets"] = advisory["packets"].clone();
+            },
+        ),
+        (
+            "an advisory document with a blocked candidate",
+            (
+                "packet[an advisory document with a blocked candidate]",
+                "matched a `not` schema",
+            ),
+            advisory.1.clone(),
+            |doc, _| doc["blocked_candidate"] = json!({}),
+        ),
+        (
+            "a blocked document with no must-not-infer list",
+            (
+                "packet[a blocked document with no must-not-infer list]",
+                "missing required field `must_not_infer`",
+            ),
+            stale.1.clone(),
+            |doc, _| {
+                if let Some(object) = doc.as_object_mut() {
+                    object.remove("must_not_infer");
+                }
+            },
+        ),
+        (
+            "a blocked document with an analysis outcome status",
+            (
+                "packet[a blocked document with an analysis outcome status]",
+                "matched a `not` schema",
+            ),
+            not_evaluated.1.clone(),
+            |doc, _| doc["analysis_outcome_status"] = json!("not_applicable"),
+        ),
+        (
+            "an advisory document from a stale source",
+            (".source_currentness.status", "expected const"),
+            advisory.1.clone(),
+            |doc, _| {
+                doc["source_currentness"]["status"] = json!("stale");
+                doc["source_currentness"]["queue_state"] = json!("blocked_stale");
+            },
+        ),
+        (
+            "a current source that is not queued",
+            (".source_currentness", "matched none of 3 anyOf branches"),
+            advisory.1.clone(),
+            |doc, _| doc["source_currentness"]["queue_state"] = json!("blocked_stale"),
+        ),
+        (
+            "an unassignable packet",
+            (".assignment.eligible", "expected const true"),
+            advisory.1.clone(),
+            |doc, _| doc["packets"][0]["assignment"]["eligible"] = json!(false),
+        ),
+        (
+            "a packet without its verify command",
+            (".packets[0]", "missing required field `verify_command`"),
+            advisory.1.clone(),
+            |doc, _| {
+                if let Some(packet) = doc["packets"][0].as_object_mut() {
+                    packet.remove("verify_command");
+                }
+            },
+        ),
+        (
+            "an empty edit surface",
+            (".allowed_edit_surface", "below minItems 1"),
+            advisory.1.clone(),
+            |doc, _| doc["packets"][0]["allowed_edit_surface"] = json!([]),
+        ),
+        (
+            "a stale recovery on a missing discriminator",
+            (
+                ".discriminator_guidance",
+                "matched none of 5 anyOf branches",
+            ),
+            advisory.1.clone(),
+            |doc, _| {
+                doc["packets"][0]["discriminator_guidance"]["recovery"] = json!("refresh_analysis")
+            },
+        ),
+        (
+            "a receipt route in the verify list",
+            (".role", "expected const"),
+            advisory.1.clone(),
+            |doc, _| {
+                doc["packets"][0]["command_specs"]["verify"] =
+                    doc["packets"][0]["command_specs"]["receipt"].clone()
+            },
+        ),
+        (
+            "a null repair-route field",
+            (".repair_route.target_file", "is not of type string"),
+            advisory.1.clone(),
+            |doc, _| doc["packets"][0]["repair_route"]["target_file"] = Value::Null,
+        ),
+        (
+            "a blocked candidate whose states disagree",
+            (".blocked_candidate", "matched none of 2 anyOf branches"),
+            stale.1.clone(),
+            |doc, _| {
+                // The envelope agrees with the candidate's status, so only the
+                // candidate's own queue-state pairing is broken.
+                doc["blocked_candidate"]["staleness_status"] = json!("not_evaluated");
+                doc["source_currentness"]["status"] = json!("not_evaluated");
+                doc["source_currentness"]["queue_state"] = json!("blocked_not_evaluated");
+            },
+        ),
+        (
+            "a blocked candidate that disagrees with its envelope",
+            (
+                "packet[a blocked candidate that disagrees with its envelope]",
+                "matched none of 2 anyOf branches",
+            ),
+            stale.1.clone(),
+            |doc, _| {
+                doc["source_currentness"]["status"] = json!("not_evaluated");
+                doc["source_currentness"]["queue_state"] = json!("blocked_not_evaluated");
+            },
+        ),
+        (
+            "a partial canonical delta on a packet",
+            (".packets[0]", "missing required field `base_state`"),
+            advisory.1.clone(),
+            |doc, _| doc["packets"][0]["delta_attribution"] = json!("introduced_by_change"),
+        ),
+    ];
+    for (label, (location, reason), base, mutate) in cases {
+        let mut mutated = base.clone();
+        mutate(&mut mutated, &advisory.1);
+        if mutated == base {
+            return Err(format!("{label}: the mutation changed nothing"));
+        }
+        match conforms(&mutated, &schema, label) {
+            Ok(()) => {
+                return Err(format!(
+                    "the published gap-packet schema accepted a document the producer never writes: {label}"
                 ));
             }
             Err(error) => {
