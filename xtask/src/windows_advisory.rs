@@ -2649,6 +2649,62 @@ mod tests {
         );
     }
 
+    /// #16036: the Rust-only (`--no-default-features`) tests are split into
+    /// parts across jobs, and the feature-combination summary joins them. A
+    /// part that runs but is not read, or is read but never produced, would
+    /// let the joined `nofeatures-test` row claim a pass over tests it never
+    /// saw. Bind the summary's part list to the integration matrix and to the
+    /// status files the steps actually write.
+    #[test]
+    fn the_rust_only_test_parts_are_each_produced_and_joined() {
+        let workflow = include_str!("../../.github/workflows/windows-advisory.yml");
+        let matrix_parts: Vec<&str> = workflow
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| line.strip_prefix("- part: "))
+            .collect();
+        assert_eq!(
+            matrix_parts,
+            ["a-c", "d-o", "rest"],
+            "the integration matrix is the split this test binds"
+        );
+
+        let joined = workflow
+            .lines()
+            .map(str::trim)
+            .find_map(|line| line.strip_prefix("for part in "))
+            .and_then(|rest| rest.strip_suffix("; do"))
+            .map(|parts| parts.split_whitespace().collect::<Vec<_>>());
+        let mut expected = vec!["unit", "doc"];
+        expected.extend(&matrix_parts);
+        assert_eq!(
+            joined,
+            Some(expected),
+            "the summary must join the unit, doctest and every integration part"
+        );
+
+        for status in [
+            "--status target/nofeatures-test-unit.status",
+            "--status target/nofeatures-test-doc.status",
+            r#"--status "target/nofeatures-test-$PART.status""#,
+            "target/nofeatures-test-${{ matrix.part }}.status",
+            r#"file="target/integration/nofeatures-test-$part.status""#,
+        ] {
+            assert!(
+                workflow.contains(status),
+                "missing producer, upload or reader `{status}`"
+            );
+        }
+        assert!(
+            !workflow.contains("target/nofeatures-test.status"),
+            "the unsplit step's status would be read as a row no step writes"
+        );
+        assert!(
+            workflow.contains("124) echo \"incomplete\""),
+            "a part cut at its deadline is incomplete evidence, not a failure"
+        );
+    }
+
     fn control(test: &'static str) -> SeamControl {
         SeamControl {
             seam: "process",
