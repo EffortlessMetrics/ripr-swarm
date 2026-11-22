@@ -289,7 +289,7 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         schema_path: "schemas/ripr/agent-seam-packets.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
-            "narrower authority: agent_seam_packets_json_conforms_for_each_document_variant in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for a many-packet run, a one-packet run, a run with a diff selector and a refused run, the_two_packet_schemas_share_their_definitions holds the packet definitions equal to agent-packet.schema.json apart from the canonical-delta fields, and published_seam_packets_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root in its redirects, so the committed fixture is a portable capture kept as an edge fixture",
+            "narrower authority: agent_seam_packets_json_conforms_for_each_document_variant in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for a many-packet run, a one-packet run, a run with a diff selector, a refused run and a run with a canonical delta artifact, the_two_packet_schemas_share_their_definitions holds the packet definitions equal to agent-packet.schema.json apart from the canonical-delta fields, and published_seam_packets_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root in its redirects, so the committed fixture is a portable capture kept as an edge fixture",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/agent-seam-packets.valid.json"],
         // Same version and envelope, other command: these are `--seam-id`

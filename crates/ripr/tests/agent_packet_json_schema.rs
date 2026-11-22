@@ -16,7 +16,8 @@
 //! `schemas/ripr/agent-seam-packets.schema.json` describes the repository-wide
 //! `ripr check --format agent-seam-packets-json` document over the same packet
 //! definitions. Its runs cover the many-packet and one-packet documents, the
-//! diff-selector projection, and the format's own refusal shape.
+//! diff-selector projection, the canonical-delta fields, and the format's own
+//! refusal shape.
 
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -575,8 +576,25 @@ fn far_above() { assert_eq!(discounted_total(10_000, 100), 9_990); }
 /// `ripr check --format agent-seam-packets-json` over a fresh fixture, with
 /// any extra arguments, and its exit code.
 fn seam_packets(lib: &str, tests: &str, extra: &[&str]) -> Result<(Option<i32>, Value), String> {
+    seam_packets_with_delta(lib, tests, extra, None)
+}
+
+/// As [`seam_packets`], with an optional canonical delta artifact written to
+/// `target/ripr/pr/canonical-delta.json` before the run.
+fn seam_packets_with_delta(
+    lib: &str,
+    tests: &str,
+    extra: &[&str],
+    delta: Option<&Value>,
+) -> Result<(Option<i32>, Value), String> {
     let root = unique("check-format");
     fixture_repo_with(&root, lib, tests)?;
+    if let Some(delta) = delta {
+        let dir = root.join("target/ripr/pr");
+        std::fs::create_dir_all(&dir)
+            .map_err(|error| format!("create {}: {error}", dir.display()))?;
+        write(&dir.join("canonical-delta.json"), &delta.to_string())?;
+    }
     let root_arg = root.display().to_string();
     let mut args = vec![
         "check",
@@ -592,12 +610,48 @@ fn seam_packets(lib: &str, tests: &str, extra: &[&str]) -> Result<(Option<i32>, 
     Ok((output.status.code(), document))
 }
 
-/// The four `agent-seam-packets-json` documents a fixture run reaches: many
-/// packets, one packet, a diff selector with no AnalysisOutcome, and a refusal.
-fn seam_packet_documents() -> Result<[(&'static str, Value); 4], String> {
+/// The five `agent-seam-packets-json` documents a fixture run reaches: many
+/// packets, one packet, a diff selector with no AnalysisOutcome, a refusal,
+/// and many packets with a canonical delta artifact present.
+fn seam_packet_documents() -> Result<[(&'static str, Value); 5], String> {
     let (code, many) = seam_packets(LIB, TESTS, &[])?;
     if code != Some(0) {
         return Err(format!("check-format run exited {code:?}"));
+    }
+    let gap_id = many["packets"]
+        .as_array()
+        .ok_or("the many-packet document has no packets")?
+        .iter()
+        .find(|packet| packet["task"] == "write_targeted_test")
+        .and_then(|packet| packet["evidence_record"]["canonical_item"]["canonical_gap_id"].as_str())
+        .ok_or("no write packet with a canonical gap id")?
+        .to_string();
+    let state = json!({
+        "canonical_owner": "src/lib.rs::discounted_total",
+        "behavior_identity": "amount >= threshold",
+        "discriminator_identity": "boundary",
+        "gap_state": "actionable",
+        // The artifact reader takes the domain enum's own spelling; the
+        // packet writes it back in lowercase.
+        "oracle_strength": "Weak",
+    });
+    let delta = json!({
+        "schema_version": "0.1",
+        "coverage": {"base_items": 1, "head_items": 1, "matched_items": 1, "ambiguous_items": 0, "unknown_items": 0},
+        "deltas": [{
+            "canonical_gap_id": gap_id,
+            "delta_attribution": "weakened_by_change",
+            "base_state": state,
+            "head_state": state,
+            "attribution_basis": ["same_canonical_owner", "oracle_strength_decreased"],
+            "comparison_confidence": "fixture_backed",
+        }],
+    });
+    let (code, causal) = seam_packets_with_delta(LIB, TESTS, &[], Some(&delta))?;
+    if code != Some(0) {
+        return Err(format!(
+            "check-format run with a canonical delta exited {code:?}"
+        ));
     }
     let (code, one) = seam_packets(SINGLE_LIB, SINGLE_TESTS, &[])?;
     if code != Some(0) {
@@ -629,6 +683,7 @@ fn seam_packet_documents() -> Result<[(&'static str, Value); 4], String> {
         ("one packet", one),
         ("diff selector", diff),
         ("refused", refused),
+        ("canonical delta", causal),
     ])
 }
 
@@ -636,10 +691,16 @@ fn seam_packet_documents() -> Result<[(&'static str, Value); 4], String> {
 #[test]
 fn agent_seam_packets_json_conforms_for_each_document_variant() -> Result<(), String> {
     let schema = published_schema::read(SEAM_PACKETS_SCHEMA)?;
-    let [many, one, diff, refused] = seam_packet_documents()?;
-    for (label, document) in [&many, &one, &diff, &refused] {
+    let [many, one, diff, refused, causal] = seam_packet_documents()?;
+    for (label, document) in [&many, &one, &diff, &refused, &causal] {
         conforms(document, &schema, label)?;
     }
+    let delta_packets = causal.1["packets"]
+        .as_array()
+        .ok_or("the canonical-delta document has no packets")?
+        .iter()
+        .filter(|packet| packet.get("delta_attribution").is_some())
+        .count();
     let tasks: BTreeSet<&str> = many.1["packets"]
         .as_array()
         .ok_or("the many-packet document has no packets")?
@@ -667,6 +728,12 @@ fn agent_seam_packets_json_conforms_for_each_document_variant() -> Result<(), St
             "a diff selector reports the missing AnalysisOutcome",
             diff.1["analysis_outcome_status"] == "missing"
                 && diff.1["analysis_outcome_error"].is_string(),
+        ),
+        (
+            "a canonical delta projects the comparison and one packet's delta",
+            causal.1["causal_comparison"]["available"] == true
+                && delta_packets == 1
+                && many.1.get("causal_comparison").is_none(),
         ),
         (
             "the refusal is the format's own shape",
@@ -741,7 +808,7 @@ fn the_two_packet_schemas_share_their_definitions() -> Result<(), String> {
 #[test]
 fn published_seam_packets_schema_rejects_documents_it_forbids() -> Result<(), String> {
     let schema = published_schema::read(SEAM_PACKETS_SCHEMA)?;
-    let [many, one, diff, refused] = seam_packet_documents()?;
+    let [many, one, diff, refused, _] = seam_packet_documents()?;
     let inspect_only = {
         let mut document = many.1.clone();
         let inspections: Vec<Value> = document["packets"]
