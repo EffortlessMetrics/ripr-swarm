@@ -2,16 +2,18 @@
 //!
 //! Every read is a GET. Only an HTTP 404 from a repository this token can
 //! write to is "absent"; any other answer, or no answer, is "unavailable".
-//! An asset is reported by the SHA-256 of the bytes actually downloaded.
+//! An asset is reported by the SHA-256 of the bytes actually downloaded, and
+//! its provenance is verified over those same bytes.
 
 use super::inventory::{
     AttestationObservation, AttestationState, BytesObservation, ReleasesObservation, RemoteAsset,
     RemoteInventory, RemoteRelease, TagObservation,
 };
-use super::model::{GitHubReleaseTransactionRequest, normalized_name};
+use super::model::{ExpectedSubject, GitHubReleaseTransactionRequest, normalized_name};
 use crate::blind_journey::sha256_hex;
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::fs;
 use std::process::Command;
 
 const JSON: &str = "application/vnd.github+json";
@@ -166,7 +168,7 @@ fn observe_asset(
     repository: &str,
     asset: &Value,
     expected: &BTreeSet<String>,
-) -> Result<RemoteAsset, String> {
+) -> Result<(RemoteAsset, Option<Vec<u8>>), String> {
     let (Some(id), Some(name), Some(size)) = (
         asset["id"].as_u64(),
         asset["name"].as_str(),
@@ -175,6 +177,7 @@ fn observe_asset(
         return Err("a release asset has no id, name or size".to_string());
     };
     let unavailable = |reason: String| BytesObservation::Unavailable { reason };
+    let mut downloaded = None;
     let bytes = if !expected.contains(&normalized_name(name)) {
         // Unexpected assets are a conflict by name alone.
         unavailable("not an expected subject; not downloaded".to_string())
@@ -191,23 +194,32 @@ fn observe_asset(
                 "GET {path} answered {} bytes, listed size {size}",
                 response.body.len()
             )),
-            Ok(response) => BytesObservation::Downloaded {
-                sha256: sha256_hex(&response.body),
-            },
+            Ok(response) => {
+                let sha256 = sha256_hex(&response.body);
+                downloaded = Some(response.body);
+                BytesObservation::Downloaded { sha256 }
+            }
         }
     };
-    Ok(RemoteAsset {
+    let asset = RemoteAsset {
         id,
         name: name.to_string(),
         size,
         bytes,
-    })
+    };
+    Ok((asset, downloaded))
+}
+
+struct ObservedReleases {
+    releases: Vec<RemoteRelease>,
+    /// `(asset name, bytes)` of every expected asset that downloaded.
+    downloads: Vec<(String, Vec<u8>)>,
 }
 
 fn observe_releases(
     api: &mut dyn GitHubRead,
     request: &GitHubReleaseTransactionRequest,
-) -> Result<Vec<RemoteRelease>, String> {
+) -> Result<ObservedReleases, String> {
     let repository = &request.repository;
     let expected: BTreeSet<String> = request
         .subjects
@@ -215,6 +227,7 @@ fn observe_releases(
         .map(|subject| normalized_name(&subject.name))
         .collect();
     let mut bound = Vec::new();
+    let mut downloads = Vec::new();
     for release in list(api, &format!("repos/{repository}/releases"))? {
         let (Some(id), Some(tag), Some(draft), Some(prerelease)) = (
             release["id"].as_u64(),
@@ -231,7 +244,11 @@ fn observe_releases(
         // The embedded asset list is not relied on; the asset endpoint is paged.
         let mut assets = Vec::new();
         for asset in list(api, &format!("repos/{repository}/releases/{id}/assets"))? {
-            assets.push(observe_asset(api, repository, &asset, &expected)?);
+            let (asset, downloaded) = observe_asset(api, repository, &asset, &expected)?;
+            if let Some(bytes) = downloaded {
+                downloads.push((asset.name.clone(), bytes));
+            }
+            assets.push(asset);
         }
         bound.push(RemoteRelease {
             id,
@@ -243,41 +260,145 @@ fn observe_releases(
             assets,
         });
     }
-    Ok(bound)
+    Ok(ObservedReleases {
+        releases: bound,
+        downloads,
+    })
 }
 
-/// One fresh read of everything `decide` needs except provenance, which this
-/// slice does not check: every subject is reported `unavailable`, so a plan
-/// built on this inventory can never reach finalization or completion.
+pub(crate) trait ProvenanceCheck {
+    /// Whether `bytes` carry a source provenance attestation for this
+    /// subject under the request's repository, workflow, ref and candidate.
+    fn verify(
+        &mut self,
+        request: &GitHubReleaseTransactionRequest,
+        subject: &ExpectedSubject,
+        bytes: &[u8],
+    ) -> AttestationState;
+}
+
+/// Whether `gh attestation verify --format json` output names this subject
+/// with this digest in a verified statement. The command's own flags bind
+/// repository, workflow, ref and candidate; this binds the subject's name.
+pub(crate) fn names_subject(stdout: &[u8], subject: &ExpectedSubject) -> bool {
+    let Ok(Value::Array(verified)) = serde_json::from_slice::<Value>(stdout) else {
+        return false;
+    };
+    verified.iter().any(|attestation| {
+        attestation["verificationResult"]["statement"]["subject"]
+            .as_array()
+            .is_some_and(|subjects| {
+                subjects.iter().any(|named| {
+                    named["name"].as_str() == Some(&subject.name)
+                        && named["digest"]["sha256"].as_str() == Some(&subject.sha256)
+                })
+            })
+    })
+}
+
+/// `gh attestation verify` over the downloaded bytes, written to a private
+/// temporary directory under the subject's own name.
+pub(crate) struct GhAttestation;
+
+impl ProvenanceCheck for GhAttestation {
+    fn verify(
+        &mut self,
+        request: &GitHubReleaseTransactionRequest,
+        subject: &ExpectedSubject,
+        bytes: &[u8],
+    ) -> AttestationState {
+        let directory = std::env::temp_dir().join(format!(
+            "ripr-release-provenance-{}-{}",
+            std::process::id(),
+            subject.sha256
+        ));
+        let file = directory.join(&subject.name);
+        let written = fs::create_dir(&directory).and_then(|()| fs::write(&file, bytes));
+        let output = written.and_then(|()| {
+            Command::new("gh")
+                .args(["attestation", "verify"])
+                .arg(&file)
+                .args(["--hostname", "github.com", "--format", "json"])
+                .args(["--repo", &request.repository])
+                .args(["--signer-workflow", &request.provenance.signer_workflow])
+                .args(["--source-ref", &request.provenance.source_ref])
+                .args(["--source-digest", &request.candidate_sha])
+                .args(["--deny-self-hosted-runners"])
+                .output()
+        });
+        // Best effort: a leftover file holds only bytes that are already public.
+        let _removed = fs::remove_dir_all(&directory);
+        match output {
+            Ok(output) if output.status.success() && names_subject(&output.stdout, subject) => {
+                AttestationState::Verified
+            }
+            // gh does not separate "no attestation" from "could not check".
+            _ => AttestationState::Unavailable,
+        }
+    }
+}
+
+/// One fresh read of everything `decide` needs. Provenance is checked only
+/// for a subject whose exact bytes were downloaded from exactly one asset of
+/// that exact name; every other subject is `unavailable`.
 pub(crate) fn observe(
     api: &mut dyn GitHubRead,
+    provenance: &mut dyn ProvenanceCheck,
     request: &GitHubReleaseTransactionRequest,
 ) -> RemoteInventory {
-    let attestations = request
-        .subjects
-        .iter()
-        .map(|subject| AttestationObservation {
-            subject: subject.name.clone(),
-            state: AttestationState::Unavailable,
-        })
-        .collect();
+    let unchecked = || {
+        request
+            .subjects
+            .iter()
+            .map(|subject| AttestationObservation {
+                subject: subject.name.clone(),
+                state: AttestationState::Unavailable,
+            })
+            .collect::<Vec<_>>()
+    };
     if let Err(reason) = require_write_visibility(api, &request.repository) {
         return RemoteInventory {
             tag: TagObservation::Unavailable {
                 reason: reason.clone(),
             },
             releases: ReleasesObservation::Unavailable { reason },
-            attestations,
+            attestations: unchecked(),
         };
     }
     let tag = observe_tag(api, request);
-    let releases = match observe_releases(api, request) {
-        Ok(releases) => ReleasesObservation::Listed { releases },
-        Err(reason) => ReleasesObservation::Unavailable { reason },
+    let ObservedReleases {
+        releases,
+        downloads,
+    } = match observe_releases(api, request) {
+        Ok(observed) => observed,
+        Err(reason) => {
+            return RemoteInventory {
+                tag,
+                releases: ReleasesObservation::Unavailable { reason },
+                attestations: unchecked(),
+            };
+        }
     };
+    let attestations = request
+        .subjects
+        .iter()
+        .map(|subject| {
+            let mut exact = downloads.iter().filter(|(name, bytes)| {
+                *name == subject.name && sha256_hex(bytes) == subject.sha256
+            });
+            let state = match (exact.next(), exact.next()) {
+                (Some((_, bytes)), None) => provenance.verify(request, subject, bytes),
+                _ => AttestationState::Unavailable,
+            };
+            AttestationObservation {
+                subject: subject.name.clone(),
+                state,
+            }
+        })
+        .collect();
     RemoteInventory {
         tag,
-        releases,
+        releases: ReleasesObservation::Listed { releases },
         attestations,
     }
 }

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The GitHub release transaction request now names the signer workflow and source ref of its provenance, and `cargo xtask release-github-transaction-observe` verifies each downloaded subject with `gh attestation verify` against the repository, that workflow and ref, and the candidate commit. A subject that cannot be verified is reported unavailable ([ripr#1644](https://github.com/EffortlessMetrics/ripr/issues/1644)).

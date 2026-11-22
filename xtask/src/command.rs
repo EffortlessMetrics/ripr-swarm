@@ -2049,7 +2049,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "stdout",
             false,
             false,
-            "Reads the request's GitHub tag, releases and expected asset bytes with GET requests only and prints the remote inventory; it writes nothing and does not check provenance (ripr#1644).",
+            "Reads the request's GitHub tag, releases and expected asset bytes with GET requests only and prints the remote inventory, verifying provenance of downloaded subjects with gh attestation verify; it writes nothing remote (ripr#1644).",
         ),
         command_entry(
             "release-crates-io-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>",

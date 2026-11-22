@@ -3,10 +3,12 @@ use super::inventory::{
     TagObservation, TagState, classify,
 };
 use super::model::{
-    ExpectedSubject, GitHubReleaseTransactionRequest, Mode, REQUEST_SCHEMA, WithheldChannels,
-    subject_inventory_sha256,
+    ExpectedSubject, GitHubReleaseTransactionRequest, Mode, Provenance, REQUEST_SCHEMA,
+    WithheldChannels, subject_inventory_sha256,
 };
-use super::observe::{GitHubRead, Response, observe, parse_included};
+use super::observe::{
+    GitHubRead, ProvenanceCheck, Response, names_subject, observe, parse_included,
+};
 use super::plan::{AuthorizedSubject, Decision, Step, StopKind, VerifiedAuthorization, decide};
 use crate::blind_journey::sha256_hex;
 use serde_json::{Value, json};
@@ -50,6 +52,33 @@ impl GitHubRead for Scripted {
     }
 }
 
+/// Answers every check with one verdict and records which subjects were checked.
+struct Attested {
+    verdict: AttestationState,
+    checked: Vec<(String, Vec<u8>)>,
+}
+
+impl Attested {
+    fn all() -> Self {
+        Self {
+            verdict: AttestationState::Verified,
+            checked: Vec::new(),
+        }
+    }
+}
+
+impl ProvenanceCheck for Attested {
+    fn verify(
+        &mut self,
+        _request: &GitHubReleaseTransactionRequest,
+        subject: &ExpectedSubject,
+        bytes: &[u8],
+    ) -> AttestationState {
+        self.checked.push((subject.name.clone(), bytes.to_vec()));
+        self.verdict
+    }
+}
+
 fn hex64(seed: char) -> String {
     std::iter::repeat_n(seed, 64).collect()
 }
@@ -80,6 +109,10 @@ fn request() -> Result<GitHubReleaseTransactionRequest, String> {
         stable_decision_sha256: None,
         subject_inventory_sha256: subject_inventory_sha256(&subjects)?,
         subjects,
+        provenance: Provenance {
+            signer_workflow: "EffortlessMetrics/ripr/.github/workflows/release.yml".to_string(),
+            source_ref: "refs/heads/main".to_string(),
+        },
         withheld_channels: WithheldChannels::default(),
     };
     match request.violations().as_slice() {
@@ -224,7 +257,7 @@ fn gh_include_output_splits_into_status_and_exact_body() {
 fn a_writable_repository_with_nothing_published_reads_as_absent() -> Result<(), String> {
     let request = request()?;
     let mut api = empty_remote();
-    let inventory = observe(&mut api, &request);
+    let inventory = observe(&mut api, &mut Attested::all(), &request);
     assert_eq!(inventory.tag, TagObservation::Absent);
     assert_eq!(
         inventory.releases,
@@ -263,7 +296,7 @@ fn not_found_is_absent_only_where_this_token_could_see_the_object() -> Result<()
     for (name, status, body) in cases {
         let mut api = empty_remote();
         api.json(REPO_PATH, status, body);
-        let inventory = observe(&mut api, &request);
+        let inventory = observe(&mut api, &mut Attested::all(), &request);
         assert!(tag_unavailable(&inventory), "{name}: tag");
         assert!(releases_unavailable(&inventory), "{name}: releases");
         // The tag and release 404s were never consulted.
@@ -280,7 +313,14 @@ fn not_found_is_absent_only_where_this_token_could_see_the_object() -> Result<()
 #[test]
 fn a_tag_is_exact_only_as_an_annotated_tag_of_the_candidate() -> Result<(), String> {
     let request = request()?;
-    let state = |api: &mut Scripted| classify(&request, TAG_OBJECT, &observe(api, &request)).tag;
+    let state = |api: &mut Scripted| {
+        classify(
+            &request,
+            TAG_OBJECT,
+            &observe(api, &mut Attested::all(), &request),
+        )
+        .tag
+    };
 
     let mut api = empty_remote();
     annotated_tag(&mut api);
@@ -320,7 +360,7 @@ fn a_tag_is_exact_only_as_an_annotated_tag_of_the_candidate() -> Result<(), Stri
         200,
         json!({"object": {"type": "commit", "sha": CANDIDATE}}),
     );
-    let observed = observe(&mut foreign, &request).tag;
+    let observed = observe(&mut foreign, &mut Attested::all(), &request).tag;
     assert_eq!(
         observed,
         TagObservation::Present {
@@ -364,8 +404,14 @@ fn a_tag_is_exact_only_as_an_annotated_tag_of_the_candidate() -> Result<(), Stri
 #[test]
 fn an_asset_is_exact_only_by_its_downloaded_bytes() -> Result<(), String> {
     let request = request()?;
-    let assets =
-        |api: &mut Scripted| classify(&request, TAG_OBJECT, &observe(api, &request)).assets;
+    let assets = |api: &mut Scripted| {
+        classify(
+            &request,
+            TAG_OBJECT,
+            &observe(api, &mut Attested::all(), &request),
+        )
+        .assets
+    };
     let vsix = |state: AssetState| ("ripr-0.11.0.vsix".to_string(), state);
     let manifest = (
         "ripr-server-manifest.json".to_string(),
@@ -373,26 +419,57 @@ fn an_asset_is_exact_only_by_its_downloaded_bytes() -> Result<(), String> {
     );
 
     let mut exact = complete_draft();
-    let inventory = observe(&mut exact, &request);
+    let inventory = observe(&mut exact, &mut Attested::all(), &request);
     let classified = classify(&request, TAG_OBJECT, &inventory);
     assert_eq!(classified.release, ReleaseState::ExactDraft);
     assert_eq!(
         classified.assets,
         vec![vsix(AssetState::ExactPublicBytes), manifest.clone()]
     );
-    // Provenance is not checked here, so the plan cannot finalize.
-    assert!(
-        inventory
-            .attestations
-            .iter()
-            .all(|observation| observation.state == AttestationState::Unavailable)
+    // Provenance was checked over the downloaded bytes of both subjects.
+    let mut attested = Attested::all();
+    let inventory = observe(&mut complete_draft(), &mut attested, &request);
+    assert_eq!(
+        attested.checked,
+        vec![
+            ("ripr-0.11.0.vsix".to_string(), VSIX.to_vec()),
+            ("ripr-server-manifest.json".to_string(), MANIFEST.to_vec()),
+        ]
     );
-    assert_eq!(inventory.attestations.len(), request.subjects.len());
+    let planned = decide(&request, &authorization(&request)?, &inventory);
+    assert_eq!(
+        planned.decision,
+        Decision::Proceed {
+            step: Step::FinalizeRelease { release_id: 7 }
+        }
+    );
+    // A check that does not verify stops the plan before finalization.
+    let mut unverified = Attested::all();
+    unverified.verdict = AttestationState::Unavailable;
+    let inventory = observe(&mut complete_draft(), &mut unverified, &request);
     let planned = decide(&request, &authorization(&request)?, &inventory);
     assert_eq!(
         stop_kind(&planned.decision),
         Some(StopKind::AttestationNotVerified)
     );
+
+    // Bytes that are not the subject's are never offered for verification,
+    // even to a check that would accept anything.
+    let mut attested = Attested::all();
+    let mut wrong = complete_draft();
+    wrong.bytes(VSIX_BYTES_PATH, 200, b"VSIX BYTES");
+    let inventory = observe(&mut wrong, &mut attested, &request);
+    let checked: Vec<&str> = attested
+        .checked
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect();
+    assert_eq!(checked, vec!["ripr-server-manifest.json"]);
+    assert_eq!(
+        inventory.attestations[0].state,
+        AttestationState::Unavailable
+    );
+    assert_eq!(inventory.attestations[1].state, AttestationState::Verified);
 
     // Same name and listed size, other bytes.
     let mut other_bytes = complete_draft();
@@ -446,7 +523,11 @@ fn unexpected_and_case_variant_objects_are_reported_not_hidden() -> Result<(), S
             asset_json(73, "notes.txt", 5),
         ]),
     );
-    let classified = classify(&request, TAG_OBJECT, &observe(&mut extra, &request));
+    let classified = classify(
+        &request,
+        TAG_OBJECT,
+        &observe(&mut extra, &mut Attested::all(), &request),
+    );
     assert_eq!(classified.unexpected_assets, vec!["notes.txt".to_string()]);
     assert!(!extra.asked.iter().any(|path| path.ends_with("/assets/73")));
 
@@ -459,7 +540,11 @@ fn unexpected_and_case_variant_objects_are_reported_not_hidden() -> Result<(), S
         json!([release_json("v0.10.0", 5), release_json("V0.11.0-RC.1", 7)]),
     );
     variant.json(ASSETS_PAGE_1, 200, json!([]));
-    let classified = classify(&request, TAG_OBJECT, &observe(&mut variant, &request));
+    let classified = classify(
+        &request,
+        TAG_OBJECT,
+        &observe(&mut variant, &mut Attested::all(), &request),
+    );
     assert_eq!(classified.release, ReleaseState::ConflictingTagTarget);
     assert!(
         !variant
@@ -480,7 +565,11 @@ fn unexpected_and_case_variant_objects_are_reported_not_hidden() -> Result<(), S
         200,
         json!([]),
     );
-    let classified = classify(&request, TAG_OBJECT, &observe(&mut duplicate, &request));
+    let classified = classify(
+        &request,
+        TAG_OBJECT,
+        &observe(&mut duplicate, &mut Attested::all(), &request),
+    );
     assert_eq!(classified.release, ReleaseState::DuplicateOrAmbiguous);
     Ok(())
 }
@@ -497,7 +586,11 @@ fn an_incomplete_release_listing_is_unavailable_never_a_shorter_list() -> Result
     second_page.json(RELEASES_PAGE_1, 200, Value::Array(full_page.clone()));
     second_page.json(RELEASES_PAGE_2, 200, json!([release_json(TAG, 7)]));
     second_page.json(ASSETS_PAGE_1, 200, json!([]));
-    let classified = classify(&request, TAG_OBJECT, &observe(&mut second_page, &request));
+    let classified = classify(
+        &request,
+        TAG_OBJECT,
+        &observe(&mut second_page, &mut Attested::all(), &request),
+    );
     assert_eq!(classified.release, ReleaseState::ExactDraft);
 
     let mut unreadable: Vec<(&str, Scripted)> = Vec::new();
@@ -533,7 +626,7 @@ fn an_incomplete_release_listing_is_unavailable_never_a_shorter_list() -> Result
     );
     unreadable.push(("asset without size", asset_without_size));
     for (name, mut api) in unreadable {
-        let inventory = observe(&mut api, &request);
+        let inventory = observe(&mut api, &mut Attested::all(), &request);
         assert!(releases_unavailable(&inventory), "{name}");
         let planned = decide(&request, &authorization(&request)?, &inventory);
         assert_eq!(
@@ -542,5 +635,98 @@ fn an_incomplete_release_listing_is_unavailable_never_a_shorter_list() -> Result
             "{name}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_verified_statement_must_name_the_subject_and_its_digest() -> Result<(), String> {
+    let request = request()?;
+    let subject = &request.subjects[0];
+    let statement = |name: &str, sha256: &str| {
+        json!([{"verificationResult": {"statement": {"subject": [
+            {"name": "other.txt", "digest": {"sha256": hex64('9')}},
+            {"name": name, "digest": {"sha256": sha256}},
+        ]}}}])
+        .to_string()
+    };
+    assert!(names_subject(
+        statement(&subject.name, &subject.sha256).as_bytes(),
+        subject
+    ));
+    let refused = [
+        statement("RIPR-0.11.0.VSIX", &subject.sha256),
+        statement(&subject.name, &hex64('9')),
+        "[]".to_string(),
+        "{}".to_string(),
+        String::new(),
+        json!([{"verificationResult": {"statement": {}}}]).to_string(),
+    ];
+    for output in refused {
+        assert!(!names_subject(output.as_bytes(), subject), "{output}");
+    }
+    Ok(())
+}
+
+#[test]
+fn the_request_names_one_workflow_in_its_repository_and_one_full_ref() -> Result<(), String> {
+    let workflow = "provenance.signer_workflow must be <repository>/.github/workflows/<file>.yml";
+    let source_ref = "provenance.source_ref must be refs/heads/<name> or refs/tags/<name>";
+    let cases = [
+        (
+            "OtherOrg/ripr/.github/workflows/release.yml",
+            "refs/heads/main",
+            workflow,
+        ),
+        (
+            "EffortlessMetrics/ripr/.github/workflows/release.yml@refs/heads/main",
+            "refs/heads/main",
+            workflow,
+        ),
+        (
+            "EffortlessMetrics/ripr/.github/workflows/../release.yml",
+            "refs/heads/main",
+            workflow,
+        ),
+        (
+            "EffortlessMetrics/ripr/.github/workflows/release.sh",
+            "refs/heads/main",
+            workflow,
+        ),
+        (
+            "EffortlessMetrics/ripr/.github/workflows/release.yml",
+            "main",
+            source_ref,
+        ),
+        (
+            "EffortlessMetrics/ripr/.github/workflows/release.yml",
+            "refs/pull/1/merge",
+            source_ref,
+        ),
+        (
+            "EffortlessMetrics/ripr/.github/workflows/release.yml",
+            "refs/heads/",
+            source_ref,
+        ),
+        (
+            "EffortlessMetrics/ripr/.github/workflows/release.yml",
+            "refs/heads/a//b",
+            source_ref,
+        ),
+    ];
+    for (signer_workflow, named_ref, expected) in cases {
+        let mut request = request()?;
+        request.provenance.signer_workflow = signer_workflow.to_string();
+        request.provenance.source_ref = named_ref.to_string();
+        assert_eq!(
+            request.violations(),
+            vec![expected.to_string()],
+            "{signer_workflow} {named_ref}"
+        );
+    }
+    let mut tagged = request()?;
+    tagged.provenance.source_ref = "refs/tags/v0.11.0-rc.1".to_string();
+    tagged.provenance.signer_workflow =
+        "EffortlessMetrics/ripr/.github/workflows/publish-server.yaml".to_string();
+    assert_eq!(tagged.violations(), Vec::<String>::new());
     Ok(())
 }

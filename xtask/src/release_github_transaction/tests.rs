@@ -4,8 +4,8 @@ use super::inventory::{
     classify,
 };
 use super::model::{
-    ExpectedSubject, GitHubReleaseTransactionRequest, Mode, REQUEST_SCHEMA, WithheldChannels,
-    subject_inventory_sha256,
+    ExpectedSubject, GitHubReleaseTransactionRequest, Mode, Provenance, REQUEST_SCHEMA,
+    WithheldChannels, subject_inventory_sha256,
 };
 use super::plan::{AuthorizedSubject, Decision, Step, StopKind, VerifiedAuthorization, decide};
 use std::collections::BTreeSet;
@@ -55,6 +55,10 @@ fn rc_request() -> Result<GitHubReleaseTransactionRequest, String> {
         stable_decision_sha256: None,
         subject_inventory_sha256: subject_inventory_sha256(&subjects)?,
         subjects,
+        provenance: Provenance {
+            signer_workflow: "EffortlessMetrics/ripr/.github/workflows/release.yml".to_string(),
+            source_ref: "refs/heads/main".to_string(),
+        },
         withheld_channels: WithheldChannels::default(),
     })
 }

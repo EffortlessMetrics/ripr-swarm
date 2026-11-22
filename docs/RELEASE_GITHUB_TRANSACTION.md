@@ -26,15 +26,15 @@ and prints the decision as JSON with
 `schema: ripr.release.github_transaction.decision.v1`. It exits nonzero for a
 stop.
 
-Not built yet: provenance verification, the transport that performs a step,
+Not built yet: the transport that performs a step,
 the loop that drives steps to completion with a receipt, and the retirement of
 `release-upload-assets`, which still creates a release on any failed view and
 uploads with `--clobber`. Do not use that command for a release.
 
 ## Observation
 
-The observer runs `gh api --hostname github.com --method GET` and nothing
-else. It refuses a request with violations before any read.
+The observer runs `gh api --hostname github.com --method GET` and, for
+provenance, `gh attestation verify`. Neither writes to GitHub. It refuses a request with violations before any read.
 
 | Read | Reported as |
 | --- | --- |
@@ -55,11 +55,14 @@ The write-permission check exists because GitHub answers 404 for a repository
 a token cannot read and omits draft releases for a token that cannot write.
 Without it a weak token would read an existing draft as absent.
 
-Provenance is not checked in this slice. The observer reports every subject's
-provenance as `unavailable`, so a plan built on its output can propose the
-tag, the draft and uploads but stops at `attestation_not_verified` before
-finalization or completion. The request does not yet carry the signer
-workflow and source ref a verification would need.
+Provenance is checked with `gh attestation verify` over the downloaded bytes
+of a subject, and only when exactly one asset of that exact name downloaded
+with the subject's SHA-256. The command binds the repository, the request's
+`provenance.signer_workflow` and `provenance.source_ref`, the candidate commit
+as source digest, and refuses self-hosted runners. Its JSON output must also
+name the subject with its digest. Anything else, including a subject that is
+not uploaded yet, is `unavailable`: `gh` does not separate "no attestation"
+from "could not check", so the observer never reports `missing`.
 
 ## Request
 
@@ -77,6 +80,9 @@ the ordered expected subjects with size and SHA-256.
   subject's `kind` is one of the GitHub asset classes a GitHub authorization
   packet may carry: `server_archive`, `server_manifest`, `checksums`, `vsix`,
   `attestation_bundle`.
+- `provenance.signer_workflow` is `<repository>/.github/workflows/<file>.yml`
+  and `provenance.source_ref` is `refs/heads/<name>` or `refs/tags/<name>`.
+  The signing run's commit must be the candidate.
 - `candidate_tree` is format-checked and bound into the request ID. No
   observation is compared with it: the tag names the commit, and the commit
   names its tree.
@@ -180,7 +186,8 @@ fails the "foreign annotated tag object at the candidate" case.
 
 The decision tests use stand-in inventories. The observer tests use scripted
 HTTP answers and check each row of the observation table, including that a
-failed or partial read is never reported as absent or as a shorter list.
+failed or partial read is never reported as absent or as a shorter list, and
+that bytes other than the subject's are never offered for verification.
 
 Observed against GitHub on 2026-11-22 with gh 2.89.0, read-only: the
 `--include` output shape the parser expects, a 404 for a missing tag ref, and
@@ -188,6 +195,9 @@ an asset download whose SHA-256 matched the digest GitHub lists for it. The
 command was also run end to end against an existing draft release with no
 tag: it reported the tag absent, listed the one draft with its 13 assets, and
 downloaded and hashed only the two the request expected. Not observed: an
-annotated tag, since the repository read had none, and whether
-GitHub returns a release body byte-for-byte as submitted, which `body_sha256`
-depends on.
+annotated tag, since the repository read had none; whether GitHub returns a
+release body byte-for-byte as submitted, which `body_sha256` depends on; and a
+successful provenance verification. From the machine these checks ran on
+`gh attestation verify` could not initialize a Sigstore verifier, so only its
+refusal path ran, and the JSON shape `names_subject` reads is taken from gh's
+documentation rather than a real verification.
