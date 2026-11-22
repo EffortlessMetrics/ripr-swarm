@@ -18,7 +18,6 @@ WARNING ./src/lib.rs:10
 Changed
   before: if decisions.iter().filter(|d| d.decision == "blocking").count() == 0 { "none".to_string() } else { decisions.iter().find(|d| d.decision == "blocking").map(|d| d.gate_rea
           son.clone()).unwrap_or_else(|| fallback.to_string()) }
-          old condition: decisions.iter().filter(|d| d.decision == "blocking").count() == 0
   after:  decisions.iter().filter(|d| d.decision == "blocking").count() == 1
           (condition only; before is the whole old line; open ./src/lib.rs:10 to read the new line)
 
