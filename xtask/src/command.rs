@@ -3130,14 +3130,6 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Installs the packaged candidate once, then drives the production journey with three dishonest states (invalid base, empty diff, tampered binary); each control passes only on its typed refusal and the run exits nonzero otherwise.",
         ),
         command_entry(
-            "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path> [--nofeatures-log <path> --nofeatures-status <path>]",
-            "report_only",
-            "stdout only",
-            false,
-            true,
-            "Turns two `cargo test --workspace --no-fail-fast` logs plus their captured cargo exit statuses into a Markdown verdict on stdout. Classifies each failing test from a three-state observation per run (failed / observed pass / not observed) into repeated_failure, unstable, or masked_unknown, so a test absent from one run is never counted as having passed there. Derives run state from the real exit status rather than log prose. When both workspace runs are unusable, an optional earlier no-default-features log pair renders a single-sample partial observation naming stuck tests without deriving a stability verdict. Exits non-zero when a log or status file is missing, because the lane's test outcomes are advisory but its evidence is not. Reads only the supplied files and writes none.",
-        ),
-        command_entry(
             "orchestration-scorecard",
             "report_only",
             "target/ripr/reports/orchestration-scorecard.{md,json}",
