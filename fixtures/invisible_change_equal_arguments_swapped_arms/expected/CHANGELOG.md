@@ -22,3 +22,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — invisible_change_equal_arguments_swapped_arms (3)
+
+Reason:
+RIPR-SPEC-0122: the composed renderer prints the old condition row for a whole old line (#15420), after #16007 re-blessed this fixture without it
+
+Command:
+`cargo xtask goldens bless invisible_change_equal_arguments_swapped_arms --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
