@@ -374,7 +374,9 @@ mod tests {
     #[test]
     fn render_invalid_utf8_is_an_explicit_error() -> Result<(), String> {
         let dir = unique_temp_dir("utf8")?;
-        std::fs::write(dir.join("comments.json"), [0xff, 0xfe, 0x00, 0x01])
+        // A lone 0xFF is not UTF-8, and without its 0xFE partner it is not a
+        // UTF-16 byte-order mark either (#15936 decodes marked UTF-16).
+        std::fs::write(dir.join("comments.json"), [0xff, 0x00, 0x01])
             .map_err(|err| format!("write comments.json: {err}"))?;
         match render_annotations(&dir, &options()) {
             Err(msg) if msg.contains("failed to read") => Ok(()),

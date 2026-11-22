@@ -5768,8 +5768,9 @@ language = "rust"
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         let before = dir.join("before.json");
         let after = dir.join("after.json");
-        std::fs::write(&before, [0xff, 0xfe])
-            .map_err(|err| format!("write invalid before: {err}"))?;
+        // Not UTF-8, and no UTF-16 mark: an empty marked UTF-16 file now decodes
+        // (#15936), so the read-error fixture must be undecodable outright.
+        std::fs::write(&before, [0xff]).map_err(|err| format!("write invalid before: {err}"))?;
         std::fs::write(&after, outcome_after_json())
             .map_err(|err| format!("write after snapshot: {err}"))?;
 

@@ -99,13 +99,16 @@ const BOUNDARY_TEST: &str = "use pricing::discounted_total;\n\n#[test]\nfn far_a
 /// A committed one-function package whose test misses the `>=` boundary,
 /// with its repo-exposure snapshot and the gap ledger derived from it, all
 /// written by ripr as UTF-8.
-fn fixture() -> Result<PathBuf, String> {
+/// The guard owns the root from before the first write, so a failed setup
+/// is cleaned up too.
+fn fixture() -> Result<FixtureGuard, String> {
     let call = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
         "ripr-json-encoding-commands-{}-{call}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
+    let guard = FixtureGuard { root: root.clone() };
     for dir in ["src", "tests", ARTIFACTS] {
         fs::create_dir_all(root.join(dir)).map_err(|error| format!("mkdir {dir}: {error}"))?;
     }
@@ -156,7 +159,7 @@ fn fixture() -> Result<PathBuf, String> {
             &format!("{ARTIFACTS}/ledger.md"),
         ],
     )?;
-    Ok(root)
+    Ok(guard)
 }
 
 /// The first gap the fixture's ledger records.
@@ -450,8 +453,8 @@ fn finish(failures: Vec<String>) -> Result<(), String> {
 
 #[test]
 fn gap_ledger_readers_accept_powershell_encodings() -> Result<(), String> {
-    let root = fixture()?;
-    let _guard = FixtureGuard { root: root.clone() };
+    let guard = fixture()?;
+    let root = guard.root.clone();
     let gap = first_gap(&root)?;
     ripr_ok(
         &root,
@@ -589,8 +592,8 @@ fn gap_ledger_readers_accept_powershell_encodings() -> Result<(), String> {
 /// not a spelling these readers can accept; see the snapshot test.)
 #[test]
 fn a_ledger_from_a_reencoded_snapshot_assigns_like_the_utf8_one() -> Result<(), String> {
-    let root = fixture()?;
-    let _guard = FixtureGuard { root: root.clone() };
+    let guard = fixture()?;
+    let root = guard.root.clone();
     let gap = first_gap(&root)?;
     let text = read_text(&root.join(ARTIFACTS).join("before.json"))?;
     let consumers: [Vec<String>; 2] = [
@@ -673,8 +676,8 @@ fn a_ledger_from_a_reencoded_snapshot_assigns_like_the_utf8_one() -> Result<(), 
 
 #[test]
 fn snapshot_readers_accept_powershell_encodings() -> Result<(), String> {
-    let root = fixture()?;
-    let _guard = FixtureGuard { root: root.clone() };
+    let guard = fixture()?;
+    let root = guard.root.clone();
     let summary = ripr_ok(
         &root,
         &[
@@ -847,8 +850,8 @@ fn snapshot_readers_accept_powershell_encodings() -> Result<(), String> {
 
 #[test]
 fn report_and_record_readers_accept_powershell_encodings() -> Result<(), String> {
-    let root = fixture()?;
-    let _guard = FixtureGuard { root: root.clone() };
+    let guard = fixture()?;
+    let root = guard.root.clone();
     let gap = first_gap(&root)?;
     ripr_ok(
         &root,
