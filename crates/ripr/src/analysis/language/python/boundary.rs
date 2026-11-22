@@ -212,10 +212,13 @@ pub(super) fn python_boundary_evidence(
     // "musl"` -> `tag[:3] != "mus"`): a call is a witness only when the old
     // and the new comparison give it different results. An input that
     // satisfies both, or neither, passes either way (#15287).
-    let changed_comparison = old_equality_operands
-        .as_ref()
-        .zip(operands.as_ref())
-        .is_some_and(|(old, new)| old != new);
+    let changed_comparison = match (&old_equality_operands, &operands) {
+        (Some(old), Some(new)) => old != new,
+        // An old `!=` comparison the reader cannot take apart: no call can
+        // be shown to split it from the new one.
+        (None, Some(_)) => negated,
+        _ => false,
+    };
     // When the two comparisons share no operand (a slice bound and its
     // literal moved together), one input can satisfy both, so the equality
     // alone is not the discriminator: the two results must differ.

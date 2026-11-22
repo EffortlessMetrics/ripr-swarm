@@ -3673,6 +3673,9 @@ fn slice_comparison_change_fails_closed_on_unread_shapes() -> Result<(), String>
             "    if tag[:3:1] != \"mus\":",
         ),
         ("    if tag[:n] != \"musl\":", "    if tag[:m] != \"mus\":"),
+        // Only the old comparison is unread: placing the new equality does
+        // not show the two versions differ.
+        ("    if tag[:n] != \"musl\":", "    if tag[:3] != \"mus\":"),
     ] {
         let source = MUSL_SOURCE.replace("    if tag[:3] != \"mus\":", after);
         let finding = classify_replaced_case(&source, tests, 2, before, after)?;
