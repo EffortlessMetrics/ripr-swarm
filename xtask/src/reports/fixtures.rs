@@ -5751,8 +5751,7 @@ mod tests {
                 .unwrap_or(0)
         ));
         fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
-        fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
-            .map_err(|error| error.to_string())?;
+        fs::write(root.join("src/lib.rs"), "pub fn f() {}\n").map_err(|error| error.to_string())?;
         {
             let _guard = StandaloneFixtureRoot::ensure(&root)?;
             if !root.join(".git").exists() {

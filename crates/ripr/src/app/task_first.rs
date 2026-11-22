@@ -8079,8 +8079,13 @@ pub(crate) mod tests {
         // Control: the same subject at the top-level is not refused by the
         // root gate (the seam-inventory shortcut still admits it).
         let top = RepairStartGate::real(&root);
-        if top.check("gap:typescript:typescript_preview:abc123").is_some() {
-            return Err("a gap-bound start at the top-level must not hit the root gate".to_string());
+        if top
+            .check("gap:typescript:typescript_preview:abc123")
+            .is_some()
+        {
+            return Err(
+                "a gap-bound start at the top-level must not hit the root gate".to_string(),
+            );
         }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
