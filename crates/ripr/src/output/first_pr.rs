@@ -429,8 +429,10 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             .is_some();
         let ledger_path = string_path(&packet, &["inputs", "gap_ledger"])
             .ok_or("first-pr --check: no-action source ledger is unavailable; run `ripr first-pr` again with the packet's original inputs, then rerun --check")?;
+        // Recomposing alone does not rebuild a standalone `--gap-ledger`
+        // input, so the advice names the ledger and how each route restores it.
         let (ledger, ledger_digest) = read_json_with_digest(&resolve_path(&root, &ledger_path)).map_err(|_ledger_error| {
-            "first-pr --check: no-action source ledger is missing or malformed; run `ripr first-pr` again with the packet's original inputs, then rerun --check".to_string()
+            format!("first-pr --check: no-action source ledger is missing or malformed (`{ledger_path}`); regenerate or restore that file, then rerun --check. Rerunning `ripr first-pr` with the packet's original --check-output rebuilds it; a ledger passed with --gap-ledger comes from `ripr reports gap-ledger` with its original inputs")
         })?;
         let recorded_digest = string_path(&packet, &["inputs", "gap_ledger_sha256"]).ok_or(
             "first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose it: run `ripr first-pr` again with the packet's original inputs, then rerun --check",

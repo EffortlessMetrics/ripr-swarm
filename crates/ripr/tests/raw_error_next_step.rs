@@ -349,7 +349,7 @@ fn outcome_snapshot_shape_refusals_name_the_snapshot_to_pass() -> Result<(), Str
             "--after",
             "art/file.json",
         ],
-        "static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array; pass a snapshot written by `ripr check --format repo-exposure-json` or `ripr check --json`",
+        "static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format",
     );
     let partial_seam = fs::write(dir.join("art/seam.json"), "{\"seams\":[{\"seam_id\":\"x\"}]}\n")
         .map_err(|error| format!("write seam: {error}"))
@@ -366,6 +366,21 @@ fn outcome_snapshot_shape_refusals_name_the_snapshot_to_pass() -> Result<(), Str
                 "repo exposure seam is missing string field `kind`; regenerate the snapshot with `ripr check --format repo-exposure-json`",
             )
         });
+    let malformed = fs::write(dir.join("art/broken.json"), "{\n")
+        .map_err(|error| format!("write broken: {error}"))
+        .and_then(|()| {
+            assert_refusal(
+                &dir,
+                &[
+                    "outcome",
+                    "--before",
+                    "art/broken.json",
+                    "--after",
+                    "art/broken.json",
+                ],
+                "failed to parse repo exposure JSON: EOF while parsing an object at line 2 column 0; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format",
+            )
+        });
     let _ = fs::remove_dir_all(&dir);
-    seamless.and(partial_seam)
+    seamless.and(partial_seam).and(malformed)
 }

@@ -555,7 +555,7 @@ fn repo_exposure_seam_owners(seams: &[Value]) -> BTreeMap<String, String> {
 
 fn parse_repo_exposure_static_snapshot(json: &str) -> Result<StaticSnapshot, String> {
     let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse repo exposure JSON: {err}; pass a snapshot written by `ripr check --format repo-exposure-json` or `ripr check --json`"))?;
+        .map_err(|err| format!("failed to parse repo exposure JSON: {err}; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format"))?;
     if let Some(seams) = value.get("seams").and_then(Value::as_array) {
         // #12108: a pilot file whose seams[] the byte budget cut lists only
         // some seams, so a seam missing from it would read as removed or
@@ -601,7 +601,7 @@ fn parse_repo_exposure_static_snapshot(json: &str) -> Result<StaticSnapshot, Str
         });
     }
 
-    Err("static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array; pass a snapshot written by `ripr check --format repo-exposure-json` or `ripr check --json`".to_string())
+    Err("static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format".to_string())
 }
 
 fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, String> {

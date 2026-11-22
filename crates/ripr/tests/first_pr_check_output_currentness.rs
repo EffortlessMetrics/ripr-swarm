@@ -765,6 +765,16 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
             "{}",
             String::from_utf8_lossy(&checked.stderr)
         );
+        if kind != "unclassifiable" {
+            // Recomposing alone cannot rebuild a standalone ledger, so the
+            // refusal names both routes that restore it.
+            let stderr = String::from_utf8_lossy(&checked.stderr);
+            assert!(
+                stderr.contains("regenerate or restore that file, then rerun --check")
+                    && stderr.contains("`ripr reports gap-ledger`"),
+                "{stderr}"
+            );
+        }
     }
     fs::write(&direct_ledger, retained_ledger).map_err(|e| e.to_string())?;
     // A ledger-to-ledger projection must carry the original check producer's
