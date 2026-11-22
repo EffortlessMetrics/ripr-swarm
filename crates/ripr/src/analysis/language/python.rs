@@ -363,6 +363,7 @@ mod boundary;
 mod call_chain;
 mod caplog_text;
 mod class_attr_pin;
+mod class_attr_reader;
 mod classify;
 mod coarse_projection;
 mod conditional_defs;
@@ -426,6 +427,7 @@ mod package_aliases;
 mod param_fixtures;
 mod parametrize;
 mod parse_budget;
+mod positional_only_marker;
 mod probe_shape;
 mod property_read;
 mod reexports;
@@ -663,6 +665,14 @@ struct PythonOwner {
     /// Dotted package paths whose `__init__.py` re-exports this owner under
     /// its own name (`reexports.rs`). Empty until the workspace pass fills it.
     reexport_modules: Vec<String>,
+    /// For a method owner whose class is defined at module top level: dotted
+    /// package paths whose `__init__.py` re-exports that class under its own
+    /// name (`reexports.rs`). With the owner's own module paths these are the
+    /// only modules a `from M import Class` may name and still mean the
+    /// owner's class. Empty for other owners and until the workspace pass
+    /// fills it.
+    #[serde(default)]
+    class_reexport_modules: Vec<String>,
     /// Whether a `from <owner module> import *` binds this owner: the name is
     /// public and the module's `__all__` is absent or lists it. `false` until
     /// the workspace pass fills it, and when the module source is unavailable
@@ -2675,6 +2685,8 @@ mod source_facts_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;
+#[cfg(test)]
+mod positional_only_marker_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
@@ -2774,6 +2786,8 @@ mod new_declaration_tests;
 #[cfg(test)]
 mod python_tests;
 
+#[cfg(test)]
+mod class_identity_tests;
 #[cfg(test)]
 mod layout_tests;
 #[cfg(test)]

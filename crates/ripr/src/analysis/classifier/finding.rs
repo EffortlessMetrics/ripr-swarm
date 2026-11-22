@@ -1894,6 +1894,7 @@ mod tests {
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 12, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),

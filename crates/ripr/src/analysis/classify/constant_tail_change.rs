@@ -934,6 +934,7 @@ mod tests {
             return Err("fixture premise: diff adds nothing".into());
         }
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:tail".into()),
             location: SourceLocation::new(path, line, 5),
             owner: Some(function.id.clone()),
@@ -1486,6 +1487,7 @@ mod tests {
             )),
         );
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:guard".into()),
             location: SourceLocation::new(path, line, 5),
             owner: Some(function.id.clone()),

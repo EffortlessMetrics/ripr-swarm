@@ -49,6 +49,8 @@ pub(crate) use owner_pin::{
     ClaimsMacroKind, claims_macro_names, claims_payload_variant, decimal_u8,
     is_test_scoped_trusted_macro, literal_check_syntax, literal_owner_syntax,
 };
+#[cfg(test)]
+pub(crate) use owner_pin::{returns_leave_reads, returns_leave_the_function_uncached};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 

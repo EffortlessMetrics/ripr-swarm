@@ -102,7 +102,8 @@ pub(in crate::analysis) use binding_return_flow::{
 };
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, assertion_is_discriminating, has_same_test_boundary_oracle_pairing,
-    observed_owner_call_rows_on_line, same_test_pairing_missing_summary, unpaired_return_gate,
+    helper_argument_is_boundary_call, observed_owner_call_rows_on_line,
+    same_test_pairing_missing_summary, test_helper_call_arguments, unpaired_return_gate,
     wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
@@ -113,8 +114,8 @@ pub(in crate::analysis) use builder_override::{
 pub(in crate::analysis) use call_identity::{
     CallIdentityMemos, CallTarget, OwnerCallIdentity, bare_owner_call_settles_on_owner,
     bound_free_owner_calls, qualified_owner_calls_resolve, shared_owner_call_identity,
-    test_calls_only_a_local_value_item, test_calls_only_through_local_rival_module,
-    text_calls_owner,
+    test_call_settles_on_owner, test_calls_only_a_local_value_item,
+    test_calls_only_through_local_rival_module, text_calls_owner,
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use compile_time_guard::constrained_by_compile_time_assertion;

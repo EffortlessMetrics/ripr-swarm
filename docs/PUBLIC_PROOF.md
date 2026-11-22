@@ -51,8 +51,8 @@ By board, so the weak areas show before the full table:
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
 | Trust | Wrong verdicts on hand-checked changes from real repositories | 0.0% | <= 5.0% | meets the bar | first receipt (verdict corpus, upstream cases only; all 871 cases: 0.0%) |
 | Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **11.0%** | <= 5.0% | below the bar | no earlier measurement (observed at 2af3f38) |
-| Trust | Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for) | **37.1%** | <= 24.0% | below the bar | no earlier measurement (observed at 2af3f38) |
-| Trust | Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain | **35.9%** | <= 20.0% | below the bar | no earlier measurement |
+| Trust | Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for) | **37.1%** | <= 32.0% | below the bar | no earlier measurement (observed at 2af3f38) |
+| Trust | Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain | **35.9%** | <= 28.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **1.2%** | <= 0.0% | below the bar | no earlier measurement (observed at 2af3f38) |
 | Trust | In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites | 100.0% | >= 100.0% | meets the bar | no earlier measurement |
@@ -235,14 +235,14 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `cell-0231-log-targeted-record-captured` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `checkout-announce-stdout-sink` | authored | not_discriminated | gap | limited | propagation_unknown | abstained | none |
 | `checkout-bulk-custom-assert-macro` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `checkout-daily-limit-imported-const` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `checkout-daily-limit-imported-const` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `checkout-deposit-cap-happy-path-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-fee-assert-under-false-flag` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `checkout-fee-cfg-disabled-test` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `checkout-fee-closure-never-called` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `checkout-fee-err-return-guard` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `checkout-fee-unpolled-async-assert` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
-| `checkout-minimum-same-file-const` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
+| `checkout-minimum-same-file-const` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `checkout-persist-swallowed-ok` | authored | discriminated | credited | limited | propagation_unknown | abstained | none |
 | `checkout-rate-same-method-other-type` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `checkout-record-discarded-result` | authored | discriminated | credited | limited | static_unknown | abstained | none |
@@ -1028,7 +1028,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `trap-round-other-module` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-row-at-expected-panic-control` | authored | partially_discriminated | gap | limited | static_unknown | abstained | none |
 | `trap-row-of-unrelated-panic` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
-| `trap-scale-message-only` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
+| `trap-scale-message-only` | authored | not_discriminated | gap | gap | reachable_unrevealed | ideal | none |
 | `trap-score-tautology` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `trap-shine-debug-exact-control` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `trap-short-circuit-skipped-operand` | authored | partially_discriminated | gap | gap | propagation_unknown, weakly_exposed | ideal | none |

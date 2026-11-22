@@ -706,12 +706,16 @@ fn rerun_gap(
     // typed `gap_ledger_unusable` so a `--json` refusal names the family
     // instead of the honest fallback (#7331); the message stays the stderr
     // diagnostic verbatim.
-    let contents = crate::bounded_input::read_to_string(&gap_ledger).map_err(|err| {
-        crate::core_error::CoreError::gap_ledger_unusable(format!(
-            "read gap ledger {} failed: {err}",
-            gap_ledger.display()
-        ))
-    })?;
+    // The selector hash covers the ledger as written; the parse reads the
+    // same bytes decoded, so a PowerShell 5.1 spelling (UTF-16 or a UTF-8
+    // mark) parses as the UTF-8 file (#15936).
+    let (ledger_bytes, contents) = crate::bounded_input::read_artifact_bytes_and_text(&gap_ledger)
+        .map_err(|err| {
+            crate::core_error::CoreError::gap_ledger_unusable(format!(
+                "read gap ledger {} failed: {err}",
+                gap_ledger.display()
+            ))
+        })?;
     let source = parse_gap_record_source_json(&contents).map_err(|err| {
         crate::core_error::CoreError::gap_ledger_unusable(format!(
             "parse gap ledger {} failed: {err}",
@@ -994,7 +998,7 @@ fn rerun_gap(
     );
     report.cache.input_fingerprint = input_fingerprint;
     if let Some(fingerprint) = report.cache.input_fingerprint.as_mut() {
-        fingerprint.selector_ledger_hash = stable_input_hash(contents.as_bytes());
+        fingerprint.selector_ledger_hash = stable_input_hash(&ledger_bytes);
     }
     report.parity_scope = Some(ResolvedRerunScope {
         canonical_gap_id: Some(canonical_gap_id.to_string()),
@@ -1670,7 +1674,7 @@ fn apply_before(report: &mut TargetedRerunReport, before: &Path) {
     if report.state == "limited" {
         return;
     }
-    let before_text = match crate::bounded_input::read_to_string(before) {
+    let before_text = match crate::bounded_input::read_artifact_text(before) {
         Ok(text) => text,
         Err(err) => {
             set_before_limitation(

@@ -201,6 +201,10 @@ pub(super) struct Backend {
     /// (#15461 review).
     pending_pull_marker_served_recovery: Mutex<Option<String>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
+    /// Findings whose gap became `exposed` between the previous committed
+    /// snapshot and `latest_analysis` (#13636). Written with the snapshot
+    /// commit and cleared whenever the snapshot is dropped.
+    resolved_findings: Mutex<Vec<super::resolved_findings::ResolvedFinding>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
     pull_diagnostics: Mutex<bool>,
@@ -285,6 +289,9 @@ pub(super) struct Backend {
     /// would pin a handler task forever and leave the sidecar alive but
     /// silent. Expiry fails the one request through its ordinary error arm.
     client_request_timeout: Duration,
+    /// Set when the session ends (#16091), so a handler waiting on the
+    /// client stops waiting for an answer that can no longer arrive.
+    session_ended: super::session_end::SessionEnded,
     #[cfg(test)]
     consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
     #[cfg(test)]
@@ -389,6 +396,7 @@ impl Backend {
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
             pending_pull_marker_served_recovery: Mutex::new(None),
             latest_analysis: Mutex::new(None),
+            resolved_findings: Mutex::new(Vec::new()),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
             pull_diagnostics: Mutex::new(false),
@@ -414,6 +422,7 @@ impl Backend {
             #[cfg(test)]
             last_requested_workspace_revision: AtomicU64::new(0),
             client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+            session_ended: super::session_end::SessionEnded::default(),
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
             #[cfg(test)]
@@ -441,16 +450,26 @@ impl Backend {
         &self,
         request: impl std::future::Future<Output = tower_lsp_server::jsonrpc::Result<T>>,
     ) -> tower_lsp_server::jsonrpc::Result<T> {
-        match tokio::time::timeout(self.client_request_timeout, request).await {
-            Ok(result) => result,
-            Err(_) => Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::InternalError,
-                message: std::borrow::Cow::Owned(format!(
+        let failed = |message: String| tower_lsp_server::jsonrpc::Error {
+            code: tower_lsp_server::jsonrpc::ErrorCode::InternalError,
+            message: std::borrow::Cow::Owned(message),
+            data: None,
+        };
+        tokio::select! {
+            // An answer that already arrived wins over a simultaneous end.
+            biased;
+            bounded = tokio::time::timeout(self.client_request_timeout, request) => match bounded {
+                Ok(result) => result,
+                Err(_) => Err(failed(format!(
                     "ripr server-to-client request exceeded its {}s liveness bound; treating the unanswered client as failed (#5278)",
                     self.client_request_timeout.as_secs()
-                )),
-                data: None,
-            }),
+                ))),
+            },
+            // #16091: after `exit` or the end of input the answer can never
+            // arrive; waiting out the bound only keeps the process alive.
+            () = self.session_ended.wait() => Err(failed(
+                "ripr session ended before the client answered a server-to-client request; the request is abandoned (#16091)".to_string(),
+            )),
         }
     }
 
@@ -1500,6 +1519,9 @@ impl Backend {
         let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
             return None;
         };
+        let Ok(mut resolved_findings) = self.resolved_findings.lock() else {
+            return None;
+        };
         let Ok(mut documents) = self.quarantine.documents.lock() else {
             return None;
         };
@@ -1530,6 +1552,12 @@ impl Backend {
             cleared,
         );
         *last_diagnostic_uris = plan.current_uris.clone();
+        // #13636: name the gaps a saved test now appears to expose, so the
+        // editor does not just go quiet when their diagnostics stop.
+        *resolved_findings = latest_analysis
+            .as_deref()
+            .map(|previous| super::resolved_findings::resolved_since(previous, &snapshot))
+            .unwrap_or_default();
         *latest_analysis = Some(snapshot);
         *stored_result_ids = Some(diagnostic_result_ids);
         Some(transitions)
@@ -1612,6 +1640,11 @@ impl Backend {
                 .unwrap_or(false);
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
+            // Cleared under the snapshot guard (commit lock order), so a
+            // status read never pairs no snapshot with stale rows.
+            if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
+                resolved_findings.clear();
+            }
         }
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
@@ -1813,10 +1846,15 @@ impl Backend {
 
     /// Cancels every active and pending refresh when the session ends
     /// (`exit` or end of input), without the terminal diagnostics clear that
-    /// `shutdown` performs (#11439).
+    /// `shutdown` performs (#11439), and releases handlers waiting on a
+    /// server-to-client answer that can no longer arrive (#16091).
     pub(super) fn session_end_hook(&self) -> super::session_end::SessionEndHook {
         let scheduler = Arc::clone(&self.refresh_scheduler);
-        Arc::new(move || scheduler.stop())
+        let session_ended = self.session_ended.clone();
+        Arc::new(move || {
+            scheduler.stop();
+            session_ended.mark();
+        })
     }
 
     #[cfg(test)]
@@ -2302,6 +2340,9 @@ impl Backend {
     pub(super) fn clear_latest_analysis_for_test(&self) {
         if let Ok(mut latest) = self.latest_analysis.lock() {
             *latest = None;
+            if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
+                resolved_findings.clear();
+            }
         }
     }
 
@@ -2975,20 +3016,34 @@ impl Backend {
                     value.analysis_outcome.clone(),
                     withheld_findings_summary(value),
                     value.partial_scope.clone(),
+                    // Read under the snapshot guard (the commit's lock order:
+                    // `latest_analysis`, then `resolved_findings`), so the
+                    // rows always belong to the snapshot read here.
+                    self.resolved_findings
+                        .lock()
+                        .map(|rows| rows.clone())
+                        .unwrap_or_default(),
                 )
             })
         });
-        let (snapshot_identity, components, analysis_outcome, withheld_summary, partial_scope) =
-            match snapshot_state {
-                Some((identity, components, analysis_outcome, withheld, partial_scope)) => (
-                    identity,
-                    components,
-                    analysis_outcome,
-                    withheld,
-                    partial_scope,
-                ),
-                None => (None, Vec::new(), None, None, None),
-            };
+        let (
+            snapshot_identity,
+            components,
+            analysis_outcome,
+            withheld_summary,
+            partial_scope,
+            resolved_findings,
+        ) = match snapshot_state {
+            Some((identity, components, analysis_outcome, withheld, partial_scope, resolved)) => (
+                identity,
+                components,
+                analysis_outcome,
+                withheld,
+                partial_scope,
+                resolved,
+            ),
+            None => (None, Vec::new(), None, None, None, Vec::new()),
+        };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
             health.current_input_identity.as_deref(),
@@ -3113,6 +3168,10 @@ impl Backend {
             // and the `diagnostic_profile = "full"` recovery route, so
             // `finding_count` and the served listings reconcile on the wire.
             "withheld_findings": withheld_findings_status_payload(withheld_summary),
+            // Gaps the committed snapshot now finds `exposed` that the
+            // previous one listed as gaps (#13636): clients render these so a
+            // vanished diagnostic reads as progress, not a silent failure.
+            "resolved_findings": super::resolved_findings::resolved_findings_status(&resolved_findings),
             // Typed bounded per-component outcomes for the committed snapshot
             // (#1997, RIPR-SPEC-0141): the single typed authority for
             // optional-component degradation. Empty until a snapshot commits.
@@ -3965,6 +4024,13 @@ impl Backend {
         else {
             return false;
         };
+        // The current configuration, not the snapshot's: a configuration
+        // change schedules its own refresh.
+        let analysis_config = self.analysis_config();
+        let default_languages = crate::config::LanguagesConfig::default();
+        let languages = analysis_config
+            .as_ref()
+            .map_or(&default_languages, |config| &config.repo_config().languages);
         let committed = super::watched_source_drift::CommittedSources {
             root: &snapshot.root,
             consumed: &snapshot.rust_consumed_sources,
@@ -3977,6 +4043,7 @@ impl Backend {
                     .flat_map(|finding| finding.related_tests.iter())
                     .map(|test| test.file.as_path()),
             ),
+            languages,
         };
         super::watched_source_drift::events_drift_committed_sources(&committed, changes, &|uri| {
             self.quarantine
@@ -10555,6 +10622,7 @@ mod top_limitation_selection_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -12507,6 +12575,7 @@ mod delivery_selection_parity_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -13742,6 +13811,7 @@ mod list_actionable_items_tests {
             diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -14469,6 +14539,36 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
+    /// #13636: an `exposed` preview finding is not withheld: there is no gap
+    /// to repair, so it must not read as a preview finding "not shown in the
+    /// editor". The same finding as `weakly_exposed` is still disclosed.
+    #[test]
+    fn exposed_preview_findings_are_not_disclosed_as_withheld() -> Result<(), String> {
+        for (language, file) in [
+            (crate::domain::LanguageId::Python, "src/click/core.py"),
+            (crate::domain::LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+            let mut finding = preview_finding(language, file);
+            finding.class = crate::domain::ExposureClass::Exposed;
+            snapshot.findings = vec![finding];
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+            assert_eq!(super::withheld_preview_summary(&snapshot).0, 0, "{file}");
+            let disclosure = super::profile_withholding_pull_disclosure(&snapshot);
+            assert!(
+                !disclosure
+                    .as_deref()
+                    .is_some_and(|text| text.contains("preview-language")),
+                "{file}: {disclosure:?}"
+            );
+
+            // Discriminator: the same finding as a gap is still disclosed.
+            snapshot.findings[0].class = crate::domain::ExposureClass::WeaklyExposed;
+            assert_eq!(super::withheld_preview_summary(&snapshot).0, 1, "{file}");
+        }
+        Ok(())
+    }
+
     /// #11798: a withheld non-preview (Rust) gap-class finding is counted as
     /// a static-gap withholding, never as a preview one, and the pull
     /// disclosure names the count, static vocabulary and the `full` route. A
@@ -15012,6 +15112,7 @@ mod pull_disclosure_dedup_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

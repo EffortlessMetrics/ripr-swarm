@@ -5485,13 +5485,13 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs", "src/lib.rs"]),
+        &diff(&["build.rs", "xtask/src/main.rs", "src/lib.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
         (
-            PathBuf::from("lib/odd.rs"),
-            DiffOnlySource::DeclaredOutsideSrc,
+            PathBuf::from("xtask/src/main.rs"),
+            DiffOnlySource::RepoAutomation,
         ),
     ])
     .with_seams_counted(&[], None);
@@ -5504,13 +5504,13 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let only_several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs"]),
+        &diff(&["build.rs", "xtask/src/main.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
         (
-            PathBuf::from("lib/odd.rs"),
-            DiffOnlySource::DeclaredOutsideSrc,
+            PathBuf::from("xtask/src/main.rs"),
+            DiffOnlySource::RepoAutomation,
         ),
     ])
     .with_seams_counted(&[], None);

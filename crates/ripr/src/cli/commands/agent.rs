@@ -1092,7 +1092,14 @@ fn render_agent_packet_with_context(
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
     let report = complete_agent_seam_inventory(&options.root, &config, "agent packet")
         .map_err(CoreError::from)?;
-    render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
+    render_agent_packet_for_seam_with_report(
+        &options.root,
+        seam_id,
+        &config,
+        &report,
+        context,
+        "agent packet seam_id",
+    )
 }
 
 /// The `--seam-id` packet route over one caller-supplied inventory (#5301
@@ -1106,6 +1113,9 @@ fn render_agent_packet_for_seam_with_report(
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
     context: output::agent_seam_packets::PacketCommandContext<'_>,
+    // The command the user ran, so a refusal names it: the before phase of
+    // `agent repair` shares this renderer but is not `agent packet` (#15257).
+    surface: &str,
 ) -> Result<String, CoreError> {
     let entry = report
         .classified
@@ -1117,14 +1127,14 @@ fn render_agent_packet_for_seam_with_report(
             // listing that cannot show it: say the inventory was cut.
             if let Some(info) = report.limit_info.as_ref().filter(|info| info.is_truncated()) {
                 return CoreError::seam_id_unknown(format!(
-                    "agent packet seam_id {seam_id} was not found in the truncated seam inventory ({} of {} seams analyzed); {}",
+                    "{surface} {seam_id} was not found in the truncated seam inventory ({} of {} seams analyzed); {}",
                     info.analyzed,
                     info.total,
                     crate::app::task_first::WIDEN_SEAM_BUDGET
                 ));
             }
             CoreError::seam_id_unknown(format!(
-                "agent packet seam_id {seam_id} was not found. {}",
+                "{surface} {seam_id} was not found. {}",
                 unknown_seam_id_hint(root, seam_id)
             ))
         })?;
@@ -1132,7 +1142,7 @@ fn render_agent_packet_for_seam_with_report(
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class, Some(entry.seam.file())) {
         return Err(CoreError::seam_policy_omitted(format!(
-            "agent packet seam_id {seam_id} {reason}. {}",
+            "{surface} {seam_id} {reason}. {}",
             policy_omitted_seam_hint(root, seam_id)
         )));
     }
@@ -1387,12 +1397,17 @@ fn run_agent_receipt_for_attempt(
     ensure_command_root(&options.root, "agent receipt")?;
 
     let verify_path = validate_agent_receipt_verify_path(&options.root, &options.verify_json)?;
-    let verify_json = crate::bounded_input::read_to_string(&verify_path).map_err(|err| {
-        format!(
-            "read agent receipt verify JSON {} failed: {err}",
-            output::outcome::display_path(&verify_path)
-        )
-    })?;
+    // Keep the bytes as written: the receipt's provenance hashes the file,
+    // and the focused-finish custody check compares against those bytes.
+    // Only the parse reads them decoded, so a PowerShell 5.1 redirect
+    // (UTF-16 or a UTF-8 mark) parses as the UTF-8 file (#15936).
+    let (verify_bytes, verify_json) =
+        crate::bounded_input::read_artifact_bytes_and_text(&verify_path).map_err(|err| {
+            format!(
+                "read agent receipt verify JSON {} failed: {err}",
+                output::outcome::display_path(&verify_path)
+            )
+        })?;
     let validated =
         app::agent_receipt::validate_agent_receipt_verify_json(&options.root, &verify_json)?;
     // #9103 (RIPR-SPEC-0311): a receipt for a gap is issued only over a verify
@@ -1509,7 +1524,7 @@ fn run_agent_receipt_for_attempt(
             &expected.attempt_id,
             expected,
             rendered.as_bytes(),
-            verify_json.as_bytes(),
+            &verify_bytes,
             custody,
         )?;
     }
@@ -2764,6 +2779,7 @@ fn run_agent_repair_phase(
                         .as_ref()
                         .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
                 },
+                "agent repair --seam-id",
             )
             .map_err(|error| {
                 // #10712 residual: a seam the inventory has but agent policy

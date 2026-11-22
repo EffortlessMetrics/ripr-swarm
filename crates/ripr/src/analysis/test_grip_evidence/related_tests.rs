@@ -396,6 +396,17 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
+    // #15278: a direct call from a test in another package is credited when
+    // the owner is a free function, the only function of its name in the
+    // index, and the test's call settles on it through a crate name the
+    // test's package imports the owner's library by (`wscore::fee(..)`, or
+    // `fee(..)` under `use wscore::fee;`). A call spelled through another
+    // crate (`pricing::fee(..)`) or bound by an import from one does not
+    // settle on the owner and keeps the package guard, as does every weaker
+    // relation.
+    let cross_package_owner = owner
+        .function
+        .filter(|_| owner.free_function && owner.same_name_count == 1);
     for (position, test_index) in indices.iter().enumerate() {
         if position.is_multiple_of(32) && cancellation::checkpoint().is_err() {
             return;
@@ -449,10 +460,23 @@ pub(super) fn match_direct_owner_call(
         }) {
             continue;
         }
+        let test_prefix = match (prefix, cross_package_owner) {
+            (Some(guard), Some(function))
+                if !indexed.path_normalized.starts_with(guard)
+                    && crate::analysis::classify::test_call_settles_on_owner(
+                        context.index,
+                        function,
+                        indexed.test,
+                    ) =>
+            {
+                None
+            }
+            _ => prefix,
+        };
         insert_related_candidate(
             candidates,
             context,
-            prefix,
+            test_prefix,
             *test_index,
             RelationReason::DirectOwnerCall,
         );

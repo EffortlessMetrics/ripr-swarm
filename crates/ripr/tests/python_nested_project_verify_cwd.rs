@@ -8,7 +8,9 @@
 //! every surface carries that one decision. A root-level project is the
 //! control: no cwd, root-relative command, unchanged.
 
-#![cfg(feature = "lang-python")]
+// Every test here is `not(windows)`; the whole target is unconfigured on
+// Windows so its helpers are not dead code there under `-D warnings`.
+#![cfg(all(feature = "lang-python", not(windows)))]
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

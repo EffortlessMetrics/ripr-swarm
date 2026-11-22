@@ -40,7 +40,13 @@ impl ConsumedInputHashes {
             }
         })?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
-        let value = serde_json::from_slice(&bytes)
+        let text = crate::bounded_input::decode_artifact_text(&bytes).map_err(|err| {
+            format!(
+                "read {} failed: {err}; save the file as UTF-8, then rerun",
+                display_path(display)
+            )
+        })?;
+        let value = serde_json::from_str(&text)
             .map_err(|err| format!("parse {} failed: {err}; fix the JSON, or regenerate the input if a command wrote it (never regenerate a reviewed baseline), then rerun", display_path(display)))?;
         Ok((value, digest))
     }
@@ -133,11 +139,11 @@ pub(super) fn read_gap_ledger_impl(
     };
     let consumed_hash = format!("sha256:{:x}", Sha256::digest(&bytes));
     consumed.gap_ledger = Some(consumed_hash);
-    let text = match String::from_utf8(bytes) {
+    let text = match crate::bounded_input::decode_artifact_text(&bytes) {
         Ok(text) => text,
         Err(error) => {
             config_errors.push(format!(
-                "required gap decision ledger input {} is invalid: not valid UTF-8: {error}",
+                "required gap decision ledger input {} is invalid: {error}",
                 display_path(path)
             ));
             return Some(Vec::new());

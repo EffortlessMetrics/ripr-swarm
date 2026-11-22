@@ -3771,6 +3771,7 @@ weakly_gripped = "note"
             normalized_discriminator: "return_value".to_string(),
         });
         finding.probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
             location: SourceLocation::new("lib/My/App.pm", 8, 5),
             owner: Some(SymbolId(
@@ -3930,6 +3931,7 @@ weakly_gripped = "note"
             id: "finding:discount".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src/pricing.rs:88:predicate".to_string()),
                 location: SourceLocation::new("src/pricing.rs", 88, 9),
                 owner: Some(SymbolId("pricing::discounted_total".to_string())),

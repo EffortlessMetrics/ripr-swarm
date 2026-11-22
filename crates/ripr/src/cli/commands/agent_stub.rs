@@ -308,7 +308,7 @@ fn stub_detail_lines(stub: &crate::analysis::test_stub::RustTestStub) -> Vec<Str
     let mut lines = Vec::new();
     if !stub.derived_inputs.is_empty() {
         lines.push(format!(
-            "Inputs from the changed comparison: {}",
+            "Inputs from the changed code: {}",
             single_line(&stub.derived_inputs.join(", "))
         ));
     }
@@ -582,7 +582,7 @@ mod tests {
         assert_eq!(
             lines,
             vec![
-                "Inputs from the changed comparison: x = \"a\\u{202e}b\"".to_string(),
+                "Inputs from the changed code: x = \"a\\u{202e}b\"".to_string(),
                 "Receiver: subject = Bucket::new(\"\\u{1b}]0;owned\\u{07}\"), as in the existing test `t`"
                     .to_string(),
                 "Fill in: expected \\u{1b}[2J value".to_string(),

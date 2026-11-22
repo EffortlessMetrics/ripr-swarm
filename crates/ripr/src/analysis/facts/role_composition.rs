@@ -303,6 +303,14 @@ fn files_in_skipped_unit_test_targets(
         if context.roots.is_empty() {
             continue;
         }
+        // With no workspace membership the analyzed package cannot run its
+        // bench targets. Keep other execution roots on their ordinary path.
+        if context.roots.iter().all(|root| root.starts_with("benches"))
+            && inventory.workspace_membership_rejected(workspace_root)
+        {
+            skipped.insert(file.clone());
+            continue;
+        }
         let all_skipped = context.roots.iter().all(|root| {
             if let Some(verdict) = verdicts.get(root) {
                 return *verdict;

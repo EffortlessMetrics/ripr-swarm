@@ -119,7 +119,16 @@ bullets' plain class words, and a summary that names classes in plain words
 reached but not noticed, 1 no test path. 4 found, 0 suppressed by your
 settings`; with zero changed behaviors, `Summary: 0 changed behaviors checked`, never
 "nothing to check", because a skipped language makes the run incomplete). The three unknown classes share the one plain word `unclear` and sum
-into a single bucket named only when non-zero. Limitation lines on this
+into a single bucket named only when non-zero. "Partly noticed" and "reached
+but not noticed" both say a test gets to the change, so when a finding in
+either bucket has a reach stage that is not `yes` (or callee-only reach), the
+bucket says how many: `2 partly noticed (1 through a test link ripr could not
+confirm)`. The count uses the same rule as the per-finding reason `test reach
+to this change is not established`, so the Summary and the finding under it
+cannot disagree (#15295); a bucket with no such finding is unchanged. A
+finding withheld by a suppression policy or an owner opt-out has left its
+bucket and is not counted in the note either.
+Limitation lines on this
 surface likewise drop their parenthesized kind/stage and recovery tokens; a
 `language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer
 to the preview-language note, which carries the `ripr.toml` recovery block
@@ -616,6 +625,38 @@ fill in the old stub first. Human output also escapes control and bidi
 characters in the stub text and in the `Inputs`, `Receiver:` and `Fill in:`
 lines, since they carry repository text.
 
+A match-arm stub writes the input the changed arm's own pattern names instead
+of a labelled `todo!()` for that parameter (#8361), for example `ev =
+Event::Fail` for `(State::Running, Event::Fail) => ..` on `match (self.state,
+ev)`, or `n = 2` for `2 => ..` on `match n`. The value is written only when:
+
+- the scrutinee is a bare parameter or a tuple of bare parameters and `self`
+  fields of the stub's owner function, the match is not inside a closure,
+  the seam sits on the arm's own pattern (not a nested `match` in its body),
+  neither the arm nor an earlier one carries an attribute such as `cfg`,
+  and the arm has no guard;
+- the parameter's sub-pattern (the first alternative of an or-pattern) is an
+  integer, char, bool or, for a `&str` parameter, string literal without
+  escapes or a raw prefix, written exactly as the arm spells it; or, in an
+  inline test module that sees the owner's items, a two-segment
+  `Type::Variant` path naming a unit variant of the one enum the file
+  declares under the parameter's declared (non-reference) type name, when no other item, rename, import other than through `super::`
+  or `self::`, or item-position macro gives that name another meaning;
+- every earlier arm differs from it at some position by a provably different
+  value: integers compared by parsed value, unescaped char and string literals
+  by text, distinct unit variants of that same enum. A constant, range,
+  binding or other pattern counts as possibly equal;
+- the owner's parameter is not declared `mut`, no `const`, `static` or `fn`
+  of its name sits in the body, and nothing before the match rebinds it
+  (`r#n` included), assigns it or names it inside a macro call.
+
+When the arm also constrains a `self` field (anything but `_` or a plain
+lowercase binding, since a bare `RUNNING` may be a constant), the receiver
+line names that state (for example "set it so `self.state` matches `State::Running`"),
+because a built receiver may start in another state. The input reaches the
+arm once the receiver is in that state; the expected value stays a `todo!()`.
+Human output lists the inputs on the `Inputs from the changed code:` line.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema
@@ -839,10 +880,26 @@ edit reaches past the shape. When a predicate's block body changed too
 (`if total >= 100 { total - 10 }` to `if total > 200 { total - 25 }`), the
 human `Changed` block prints the whole old line and the new condition, with a
 note that the after side is the condition only and where the new line is
-(#15420), the same way a head-only match arm row does (#9244). The same
-`before` reaches the MCP `changed_behavior.before` field and the LSP
-diagnostic witness; `ripr check --format json` never serializes
-`probe.before`, so it is unchanged.
+(#15420), the same way a head-only match arm row does (#9244). For a Rust
+finding, the probe producer reads the old condition from the old and new
+lines together and carries it as `probe.before_condition`: the new line's one
+`if`/`while` head must hold the changed predicate as its condition, and the
+old line must have exactly one head with a plain condition. An
+`old condition:` row under `before:` then prints the old condition
+(`total >= 100`), so both sides can be read at one granularity. No row is
+printed when that pairing is not established: a second head anywhere on
+either line (also one nested in a call argument), an `if let` or `while let`,
+a match guard, a block expression inside the condition, a comparison or
+boolean operator outside the condition, a changed predicate that is not the
+new head's condition (a comparison the branch body gained), an old condition
+equal to the new one (only the branch bodies changed), or an old condition
+that does not start with the identifier the new one starts with. Display
+surfaces read the carried value and derive nothing from `before` themselves.
+The same `before` reaches the MCP `changed_behavior.before` field and the
+diagnostic witness (`ripr context`, LSP diagnostic data), unchanged; both add
+the old condition as an optional `before_condition` field under the same
+rule. `ripr check --format json` never serializes `probe.before` or
+`probe.before_condition`, so it is unchanged.
 
 ### Terminal safety
 

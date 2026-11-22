@@ -47,6 +47,16 @@ pub(crate) use crate::core_error::GIT_TIMEOUT_REPAIR_GUIDANCE;
 pub(crate) const GIT_NOT_FOUND_ON_PATH_MESSAGE: &str =
     "git was not found on PATH; install git, or pass a saved diff with `--diff PATH` / `--diff -`";
 
+/// The saved-diff route inside [`GIT_NOT_FOUND_ON_PATH_MESSAGE`].
+const SAVED_DIFF_ROUTE: &str = ", or pass a saved diff with `--diff PATH` / `--diff -`";
+
+/// `error` with the saved-diff route removed, for commands that take no
+/// `--diff` (`pr-evidence`, `review-comments`, `gate check`): naming a flag
+/// the command rejects sends the reader to a second failure (#15257).
+pub(crate) fn without_saved_diff_route(error: &str) -> String {
+    error.replace(SAVED_DIFF_ROUTE, "")
+}
+
 /// True when `error` is the named missing-git spawn failure (#4735).
 pub(crate) fn is_git_not_found_on_path(error: &str) -> bool {
     error == GIT_NOT_FOUND_ON_PATH_MESSAGE

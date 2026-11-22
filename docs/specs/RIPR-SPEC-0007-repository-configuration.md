@@ -227,6 +227,20 @@ Supported bare keys, double-quoted entry string values, and the integer schema
 header retain their existing syntax. Single-quoted string values and quoted
 keys remain unsupported. This repair adds no broader TOML or calendar support.
 
+### Repository-controlled suppression path stays inside the repository (#14310)
+
+The implicit loader for the repository-controlled `suppressions.path` resolves
+every path component before reading. `..`, absolute and prefixed paths, a link
+or link chain whose target leaves the analyzed root, a dangling or looping link,
+and a final entry that is not a regular file all stop with one fixed refusal
+that names the entry and the repair, before any target bytes are read and
+without printing the resolved path. A link whose target stays inside the root
+still loads. A missing ordinary path, or an analyzed root that no longer exists,
+means no accepted debt. The explicit `--suppression-policy` path is an operator
+choice and is not confined. The check is not atomic against a concurrent
+writer replacing checkout entries during the run; ripr does not execute
+repository code, so that requires a separate local process.
+
 ### Unused default suppression disclosure (#7759)
 
 After successful analysis, `ripr check` in human, human-full, JSON or GitHub
@@ -476,6 +490,17 @@ with `(did you mean `draft`?)`, built only from that key's fixed accepted
 values; an unrelated value such as `mode = "slow"` gets no suggestion, a
 [severity.findings] value is never pointed at `off`, and the typed diagnostic
 keeps the same span, rejected value and accepted-value list.
+```
+
+A rejected value that equals an accepted one once `_` or a space is read as
+`-` names that accepted value before edit distance is consulted (#15481):
+
+```text
+Given ripr.toml sets [perl] producer = "perl_lsp", one edit from both
+`perllsp` and `perl-lsp`,
+when ripr loads the config,
+then the error ends with `(did you mean `perl-lsp`?)`; `producer = "perlsp"`,
+with no separator typed, still ends with `(did you mean `perllsp`?)`.
 ```
 
 ### Per-crate overrides (#2671)

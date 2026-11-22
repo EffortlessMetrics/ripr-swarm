@@ -50,6 +50,8 @@ mod public_proof;
 mod publish_rehearsal;
 mod publish_stage;
 mod release_authority;
+mod release_crates_io_transaction;
+mod release_github_transaction;
 mod source_package_contents;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.

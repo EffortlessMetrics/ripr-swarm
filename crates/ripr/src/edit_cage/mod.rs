@@ -3657,15 +3657,28 @@ fn path_change_kind_name(kind: AttemptPathChangeKind) -> &'static str {
     }
 }
 
+/// The repository-relative spelling the cage compares. A backslash is a
+/// separator only where the platform reads it as one: on Unix it is a
+/// file-name byte, and folding it to `/` made the capture look for
+/// `src/a/b.rs` when Git tracked `src/a\b.rs`, so an edit to that file was
+/// never observed (#15908).
 fn normalize_repo_relative_path(path: &Path) -> Result<String, String> {
     let raw = path
         .to_str()
-        .ok_or_else(|| "path is not valid UTF-8".to_string())?
-        .replace('\\', "/");
+        .ok_or_else(|| "path is not valid UTF-8".to_string())?;
+    #[cfg(not(unix))]
+    let raw = raw.replace('\\', "/");
     if raw.trim().is_empty() {
         return Err("path is empty".to_string());
     }
-    if raw.starts_with('/')
+    // Fail closed on Windows-shaped roots and traversal on every host: a
+    // name like `\\server\share\x.rs` or `..\x.rs` is a legal Unix file
+    // name, but no repair needs one, and admitting it would let the same
+    // text escape the repository on Windows.
+    if raw.split(['/', '\\']).any(|segment| segment == "..") {
+        return Err("path contains parent traversal".to_string());
+    }
+    if raw.starts_with(['/', '\\'])
         || raw
             .as_bytes()
             .get(1)
@@ -6982,7 +6995,7 @@ mod tests {
         let verdict = evaluate_edit_cage(
             &policy()?,
             &delta_with_admitted_external_test(vec![
-                AttemptPathChange::modified("tests\\pricing.rs"),
+                AttemptPathChange::modified("./tests/pricing.rs"),
                 AttemptPathChange::added("target/ripr/reports/agent-receipt.json"),
             ]),
         );
@@ -7175,11 +7188,25 @@ mod tests {
 
     #[test]
     fn deserialized_path_rules_reuse_the_repository_path_validator() -> Result<(), String> {
-        let normalized =
-            serde_json::from_str::<CagePathRule>(r#"{"path":"tests\\pricing.rs","scope":"exact"}"#)
-                .map_err(|error| error.to_string())?;
+        let normalized = serde_json::from_str::<CagePathRule>(
+            r#"{"path":"./tests/pricing.rs","scope":"exact"}"#,
+        )
+        .map_err(|error| error.to_string())?;
         assert_eq!(normalized.path, "tests/pricing.rs");
         assert_eq!(normalized.scope, CagePathScope::Exact);
+        // A backslash is a separator on Windows and a file-name byte on Unix
+        // (#15908): the rule names the path Git reports on this platform.
+        let backslash =
+            serde_json::from_str::<CagePathRule>(r#"{"path":"tests\\pricing.rs","scope":"exact"}"#)
+                .map_err(|error| error.to_string())?;
+        assert_eq!(
+            backslash.path,
+            if cfg!(unix) {
+                "tests\\pricing.rs"
+            } else {
+                "tests/pricing.rs"
+            }
+        );
 
         for invalid in [
             r#"{"path":"../tests/pricing.rs","scope":"exact"}"#,
@@ -7251,7 +7278,15 @@ mod tests {
     fn parent_drive_and_unc_paths_fail_closed() -> Result<(), String> {
         let drive_path = format!("{}:\\tests\\pricing.rs", 'C');
         let unc_path = ["", "", "server", "share", "test.rs"].join("\\");
-        for path in ["../tests/pricing.rs".to_string(), drive_path, unc_path] {
+        // `..\` and a leading `\` fail closed on every host, including Unix
+        // where they are legal file-name bytes (#15908).
+        let backslash_parent = ["..", "tests", "pricing.rs"].join("\\");
+        for path in [
+            "../tests/pricing.rs".to_string(),
+            backslash_parent,
+            drive_path,
+            unc_path,
+        ] {
             let verdict = evaluate_edit_cage(
                 &policy()?,
                 &AttemptDelta {

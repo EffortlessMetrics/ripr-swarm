@@ -32,9 +32,14 @@ enum Form {
     FeatureBranch,
     /// Left in the working tree on top of the base commit.
     Uncommitted,
-    /// Committed on `main` itself: the inferred base is `HEAD`, which differs
-    /// from nothing.
+    /// Committed on `main` itself: the inferred base is `main`, which differs
+    /// from nothing, so bare `ripr check` analyzes the last commit and repair
+    /// follows it (#16082).
     OnDefaultBranch,
+    /// The base commit amended to hold the change, so `main` is one root
+    /// commit: nothing differs from the inferred base and there is no last
+    /// commit to fall back to, so neither check nor repair can scope.
+    RootOnDefaultBranch,
     /// Committed on `trunk`, a branch name `ripr check` does not resolve as a
     /// default base, with no remote: no base resolves.
     NoResolvableBase,
@@ -151,6 +156,14 @@ impl Repo {
             Form::OnDefaultBranch | Form::NoResolvableBase => {
                 self.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])
             }
+            Form::RootOnDefaultBranch => self.git(&[
+                "commit",
+                "-q",
+                "--no-gpg-sign",
+                "--amend",
+                "-am",
+                "base with change",
+            ]),
         }
     }
 
@@ -203,6 +216,17 @@ impl Repo {
             Form::FeatureBranch => self.git_out(&["diff", "--name-only", "main...HEAD"])?,
             Form::OnDefaultBranch | Form::NoResolvableBase => {
                 self.git_out(&["diff", "--name-only", "HEAD~1", "HEAD"])?
+            }
+            Form::RootOnDefaultBranch => {
+                // No history holds the change: `main` is one root commit
+                // and the working tree is clean.
+                assert_eq!(
+                    self.git_out(&["rev-list", "--count", "HEAD"])?.trim(),
+                    "1",
+                    "root form keeps a single commit"
+                );
+                assert_eq!(self.git_out(&["status", "--porcelain"])?.trim(), "");
+                self.git_out(&["ls-files", "--", expected])?
             }
         };
         assert_eq!(names.trim(), expected, "fixture must hold the one change");
@@ -271,7 +295,21 @@ fn committed_scopes_like_uncommitted(
     uncommitted: &Repo,
     changed_path: &str,
 ) -> Result<(), String> {
-    committed.assert_changed_paths(Form::FeatureBranch, changed_path)?;
+    committed_form_scopes_like_uncommitted(
+        committed,
+        Form::FeatureBranch,
+        uncommitted,
+        changed_path,
+    )
+}
+
+fn committed_form_scopes_like_uncommitted(
+    committed: &Repo,
+    form: Form,
+    uncommitted: &Repo,
+    changed_path: &str,
+) -> Result<(), String> {
+    committed.assert_changed_paths(form, changed_path)?;
     uncommitted.assert_changed_paths(Form::Uncommitted, changed_path)?;
     // A bare `ripr check` reads each form with no flag at all.
     check_says_nothing_to_repair(committed, &["check"])?;
@@ -301,6 +339,23 @@ fn committed_error_variant_change_scopes_repair_like_the_uncommitted_one() -> Re
     committed_scopes_like_uncommitted(&committed, &uncommitted, "src/lib.rs")
 }
 
+/// #16082: a change committed on the default branch itself is the range bare
+/// `ripr check` analyzes (its last-commit rescope), so repair scopes to it
+/// exactly as it scopes the uncommitted change.
+#[test]
+fn change_committed_on_the_default_branch_scopes_repair_like_the_uncommitted_one()
+-> Result<(), String> {
+    let new = err_new();
+    let committed = Repo::package(ERR_BASE, &new, ERR_TEST, Form::OnDefaultBranch)?;
+    let uncommitted = Repo::package(ERR_BASE, &new, ERR_TEST, Form::Uncommitted)?;
+    committed_form_scopes_like_uncommitted(
+        &committed,
+        Form::OnDefaultBranch,
+        &uncommitted,
+        "src/lib.rs",
+    )
+}
+
 #[test]
 fn committed_workspace_change_scopes_repair_like_the_uncommitted_one() -> Result<(), String> {
     let committed = Repo::workspace(Form::FeatureBranch)?;
@@ -312,8 +367,8 @@ fn committed_workspace_change_scopes_repair_like_the_uncommitted_one() -> Result
 fn a_spot_outside_the_changed_lines_is_not_offered_as_the_start() -> Result<(), String> {
     // The error-variant change is already gripped; the boundary spot on
     // `s.len() > 10` is not part of this diff.
-    let on_default = Repo::package(ERR_BASE, &err_new(), ERR_TEST, Form::OnDefaultBranch)?;
-    on_default.assert_changed_paths(Form::OnDefaultBranch, "src/lib.rs")?;
+    let on_default = Repo::package(ERR_BASE, &err_new(), ERR_TEST, Form::RootOnDefaultBranch)?;
+    on_default.assert_changed_paths(Form::RootOnDefaultBranch, "src/lib.rs")?;
     let unscoped = on_default.ripr(&["repair", "--root", "."])?;
     assert!(
         unscoped.contains("ripr looked at ") && unscoped.contains("repair route not ready"),
@@ -386,8 +441,9 @@ fn refusal_with_no_resolvable_base_says_it_could_not_tell_which_lines_changed() 
 
 #[test]
 fn refusal_on_the_default_branch_says_nothing_differs_from_the_base() -> Result<(), String> {
-    let repo = all_gripped(Form::OnDefaultBranch)?;
-    repo.assert_changed_paths(Form::OnDefaultBranch, "src/lib.rs")?;
+    // A root commit: with a parent, check and repair read the last commit.
+    let repo = all_gripped(Form::RootOnDefaultBranch)?;
+    repo.assert_changed_paths(Form::RootOnDefaultBranch, "src/lib.rs")?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
         repair.contains("could not tell which lines you changed")
@@ -672,8 +728,8 @@ fn an_unscoped_menu_says_it_is_not_narrowed_and_names_the_base_rerun() -> Result
 fn an_unscoped_single_start_says_it_is_not_narrowed_and_names_the_base_rerun() -> Result<(), String>
 {
     let new = HELPER_BASE.replace("v / 10", "v / 5");
-    let repo = Repo::package(HELPER_BASE, &new, HELPER_TEST, Form::OnDefaultBranch)?;
-    repo.assert_changed_paths(Form::OnDefaultBranch, "src/lib.rs")?;
+    let repo = Repo::package(HELPER_BASE, &new, HELPER_TEST, Form::RootOnDefaultBranch)?;
+    repo.assert_changed_paths(Form::RootOnDefaultBranch, "src/lib.rs")?;
 
     let human = repo.run(&["repair", "--root", "."])?;
     // The fixture must start: the claim is about what a start says.
@@ -694,7 +750,7 @@ fn an_unscoped_single_start_says_it_is_not_narrowed_and_names_the_base_rerun() -
         human.stderr
     );
 
-    let json_repo = Repo::package(HELPER_BASE, &new, HELPER_TEST, Form::OnDefaultBranch)?;
+    let json_repo = Repo::package(HELPER_BASE, &new, HELPER_TEST, Form::RootOnDefaultBranch)?;
     let json = json_repo.run(&["repair", "--root", ".", "--json"])?;
     assert_eq!(json.code, Some(0), "{}", json.stderr);
     let document = json_document(&json)?;

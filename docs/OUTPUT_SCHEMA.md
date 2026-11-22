@@ -181,8 +181,9 @@ records that distinction.
 | `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
-| `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document is not covered yet |
+| `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document has its own schema |
 | `schemas/ripr/agent-seam-packets.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the repository-wide packet document (`ripr check --format agent-seam-packets-json`), sharing the packet definitions of `agent-packet.schema.json` |
+| `schemas/ripr/agent-gap-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the GapRecord-backed packet document (`ripr agent packet --gap-ledger <path> --gap-id <id> --json`), advisory or blocked |
 | `schemas/ripr/agent-packet-refusal.schema.json` | `0.5` | `crates/ripr/src/app.rs`; the refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet, keyed with the packet's version |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
@@ -5378,6 +5379,28 @@ rejected. Unknown witness properties are accepted and ignored by the typed
 reader, so typed reserialization does not preserve those properties. Consumers
 that need to forward unknown properties must retain the complete JSON value.
 `witness.confidence.value` is rendered at the contract's two-decimal precision, matching SARIF `properties.confidence` and the finding `confidence` (#10717).
+`witness.before_condition` (#15420, additive, optional) is the old line's
+`if`/`while` condition for a Rust predicate whose `before` is the whole old
+line while `after` is only the new condition. That pairing happens when the
+same line also changed outside the condition
+(`if total >= 100 { total - 10 } else { total }` to
+`if total > 200 { total - 25 } else { total }`): `before` stays the whole old
+line, `before_condition` is `total >= 100` and `after` is `total > 200`. It is
+display evidence at the granularity of `after`; `before` is unchanged. The
+probe producer reads it from the old and new lines together, and renderers
+only carry it. The field is absent for every other language, when `before` is
+already the old condition, and when the pairing is not established: a second
+`if`/`while` head anywhere on either line (also one nested in a call
+argument), an `if let` or `while let`, a match guard, a block expression
+inside the condition, a comparison or boolean operator elsewhere on the line,
+a changed predicate that is not the new line's head condition (a comparison
+the branch body gained while the guard stayed), an old condition equal to
+`after` (only the branch bodies changed), or an old condition that does not
+start with the identifier `after` starts with. MCP `ripr_get_gap` and `ripr_prepare_repair` carry the same
+value as `changed_behavior.before_condition` (present only when read), and
+the MCP gap brief's `changed:` line pairs it with `after`. The editor hover
+prints it as `old condition`, and human `ripr explain` prints an
+`old condition:` row under `before:`.
 Renderers must not infer evidence from paths, lines, classes, or prose.
 `probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr
@@ -17739,8 +17762,7 @@ suggested test command, a non-empty edit surface and the top-level `next`
 block. `crates/ripr/tests/agent_packet_json_schema.rs` validates the real
 command's bytes for every seam of a fixture crate and pins the documents the
 schema rejects. The `--gap-ledger` document below has a different packet shape
-(`source`, `status`, `inputs`, `source_currentness`) and is not covered by this
-schema yet (#3920).
+(`source`, `status`, `inputs`, `source_currentness`) and its own schema.
 
 The `ripr check --format agent-seam-packets-json` document is published as
 [`schemas/ripr/agent-seam-packets.schema.json`](../schemas/ripr/agent-seam-packets.schema.json),
@@ -17765,6 +17787,25 @@ projectability from raw classifications. The selected record must have
 or a path-like `repair_route.related_test` fallback. Records that are already observed, waived,
 suppressed, preview-gating ineligible, or otherwise not agent-packet eligible
 return an actionable error instead of a repair packet.
+
+The `--gap-ledger` document is published as
+[`schemas/ripr/agent-gap-packet.schema.json`](../schemas/ripr/agent-gap-packet.schema.json)
+(`agent-gap-packet.schema.json`). Its `status` is `advisory` only when the
+ledger's repo-exposure source still matches the checkout
+(`source_currentness.status` `current`, `queue_state` `queued`): the document
+then holds exactly one packet with `assignment.eligible: true`, its verify and
+receipt routes, and `analysis_outcome_status: "not_applicable"`, plus
+`causal_comparison` when a canonical delta artifact is present, and the
+packet's canonical-delta fields only when that artifact holds a delta for the
+record's canonical gap. Otherwise `status` is `blocked` (`stale` for a dirty
+checkout or a historical HEAD, `not_evaluated` for a source with no live
+snapshot authority, such as a `--records` ledger): `packets` is empty and a
+review-only `blocked_candidate` carries the record's identity, its currentness
+and `refresh_commands`, with no edit, verify or receipt command, beside a fixed
+three-entry `must_not_infer` list. An ineligible record is refused with the
+`agent-packet-refusal.schema.json` envelope (exit 2). The command and
+canonical-delta definitions are copied from
+`agent-seam-packets.schema.json`, and a test holds them equal.
 
 When the gap ledger was derived from check JSON, actionable Python
 `python_repair_card` findings become preview-language GapRecords with
@@ -21027,7 +21068,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.189",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.191",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21818,7 +21859,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.64",
+    "schema_version": "1.66",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -21831,7 +21872,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.189",
+      "schema_version": "1.191",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

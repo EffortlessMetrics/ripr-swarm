@@ -4981,6 +4981,7 @@ mod tests {
 
     fn probe(family: ProbeFamily, expression: &str, line: usize) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", line, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),

@@ -57,6 +57,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
         }
+        XtaskCommand::WindowsAdvisoryFeatureRows(args) => {
+            super::windows_advisory::run_feature_rows(&args)
+        }
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => precommit_v2::run(),
@@ -172,6 +175,18 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::ReleaseBindServerDescriptor(args) => {
             super::reports::release_server::release_bind_server_descriptor(&args)
+        }
+        XtaskCommand::ReleaseGithubTransactionPlan(args) => {
+            super::release_github_transaction::plan_command(&args)
+        }
+        XtaskCommand::ReleaseGithubTransactionObserve(args) => {
+            super::release_github_transaction::observe_command(&args)
+        }
+        XtaskCommand::ReleaseCratesIoTransactionObserve(args) => {
+            super::release_crates_io_transaction::observe_command(&args)
+        }
+        XtaskCommand::ReleaseCratesIoTransactionPlan(args) => {
+            super::release_crates_io_transaction::plan_command(&args)
         }
         XtaskCommand::ReleaseUploadAssets(args) => {
             super::reports::release_server::release_upload_assets(&args)

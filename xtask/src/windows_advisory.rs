@@ -866,6 +866,144 @@ fn classify_isolated(log: Option<&str>, raw_status: Option<&str>) -> IsolatedObs
     }
 }
 
+/// One feature-combination step's verdict, read from its captured status file
+/// (#2400, #16036).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FeatureRowState {
+    Pass,
+    Fail,
+    /// The step left no verdict: cut at its deadline (124), not started (127),
+    /// an unreadable status, or no status file at all.
+    Incomplete,
+}
+
+/// Classify one status file's content. `None` is a missing file.
+fn feature_row(status: Option<&str>) -> (FeatureRowState, String) {
+    let Some(status) = status else {
+        return (
+            FeatureRowState::Incomplete,
+            "not_run (no status file)".to_string(),
+        );
+    };
+    let code = status.trim();
+    match code.parse::<i32>() {
+        Ok(0) => (FeatureRowState::Pass, "PASS".to_string()),
+        Ok(124) => (
+            FeatureRowState::Incomplete,
+            "INCOMPLETE (cut at its deadline, exit 124; no test verdict)".to_string(),
+        ),
+        Ok(127) => (
+            FeatureRowState::Incomplete,
+            "INCOMPLETE (command did not start, exit 127)".to_string(),
+        ),
+        Ok(code) => (FeatureRowState::Fail, format!("FAIL (exit {code})")),
+        Err(_) => (
+            FeatureRowState::Incomplete,
+            format!("INCOMPLETE (unreadable status `{code}`)"),
+        ),
+    }
+}
+
+/// Join the parts of one split step: a part that failed fails the step, the
+/// step passes only when every part passed, and otherwise it has no verdict.
+/// FAIL outranks INCOMPLETE because a failure observed in one part stays a
+/// failure whatever the other parts did not report.
+fn join_feature_parts(parts: &[FeatureRowState]) -> (FeatureRowState, &'static str) {
+    if parts.contains(&FeatureRowState::Fail) {
+        (FeatureRowState::Fail, "FAIL (a part failed; see its row)")
+    } else if !parts.is_empty() && parts.iter().all(|part| *part == FeatureRowState::Pass) {
+        (FeatureRowState::Pass, "PASS (every part passed)")
+    } else {
+        (
+            FeatureRowState::Incomplete,
+            "INCOMPLETE (no part failed, but a part has no verdict; see its row)",
+        )
+    }
+}
+
+enum FeatureArg {
+    Row(String, String),
+    Part(String, String),
+}
+
+/// Parse `--join <label> (--row <label> <status> | --part <label> <status>)...`.
+fn parse_feature_rows(args: &[String]) -> Result<(String, Vec<FeatureArg>), String> {
+    const USAGE: &str = "usage: windows-advisory-feature-rows --join <label> \
+                         [--row <label> <status>]... --part <label> <status> [--part <label> <status>]...";
+    let mut join = None;
+    let mut rows = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let value = |offset: usize| {
+            args.get(index + offset)
+                .filter(|value| !value.is_empty() && !value.starts_with("--"))
+                .cloned()
+                .ok_or_else(|| format!("{} needs a value; {USAGE}", args[index]))
+        };
+        match args[index].as_str() {
+            "--join" if join.is_none() => {
+                join = Some(value(1)?);
+                index += 2;
+            }
+            "--row" => {
+                rows.push(FeatureArg::Row(value(1)?, value(2)?));
+                index += 3;
+            }
+            "--part" => {
+                rows.push(FeatureArg::Part(value(1)?, value(2)?));
+                index += 3;
+            }
+            other => return Err(format!("unexpected argument {other:?}; {USAGE}")),
+        }
+    }
+    let join = join.ok_or_else(|| format!("--join is required; {USAGE}"))?;
+    if !rows.iter().any(|row| matches!(row, FeatureArg::Part(..))) {
+        return Err(format!("at least one --part is required; {USAGE}"));
+    }
+    Ok((join, rows))
+}
+
+/// Render the rows in argument order, with the joined row right after the
+/// last part, so it reads beside the parts it summarises.
+fn render_feature_rows(join: &str, rows: &[(FeatureArg, Option<String>)]) -> String {
+    let last_part = rows
+        .iter()
+        .rposition(|(row, _)| matches!(row, FeatureArg::Part(..)));
+    let mut parts = Vec::new();
+    let mut out = String::new();
+    for (index, (row, status)) in rows.iter().enumerate() {
+        let (FeatureArg::Row(label, _) | FeatureArg::Part(label, _)) = row;
+        let (state, text) = feature_row(status.as_deref());
+        out.push_str(&format!("- {label}: {text}\n"));
+        if matches!(row, FeatureArg::Part(..)) {
+            parts.push(state);
+        }
+        if Some(index) == last_part {
+            out.push_str(&format!("- {join}: {}\n", join_feature_parts(&parts).1));
+        }
+    }
+    out
+}
+
+/// Print the feature-combination rows (#2400, #16036). Outcomes are advisory:
+/// this exits non-zero only for a malformed invocation or a status file that
+/// exists but cannot be read.
+pub(crate) fn run_feature_rows(args: &[String]) -> Result<(), String> {
+    let (join, parsed) = parse_feature_rows(args)?;
+    let mut rows = Vec::new();
+    for row in parsed {
+        let (FeatureArg::Row(_, path) | FeatureArg::Part(_, path)) = &row;
+        let status = match std::fs::read_to_string(path) {
+            Ok(status) => Some(status),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(format!("read {path}: {error}")),
+        };
+        rows.push((row, status));
+    }
+    print!("{}", render_feature_rows(&join, &rows));
+    Ok(())
+}
+
 /// Summarize three explicitly requested native Windows named-test repetitions.
 /// Unlike the broad advisory verdict, any failed named repetition fails this
 /// opt-in proof. Every run is reported before the command returns its status.
@@ -2649,6 +2787,169 @@ mod tests {
         );
     }
 
+    /// #16036: the Rust-only (`--no-default-features`) tests are split into
+    /// parts across jobs, and the feature-combination summary joins them. A
+    /// part that runs but is not read, or is read but never produced, would
+    /// let the joined `nofeatures-test` row claim a pass over tests it never
+    /// saw. Bind the summary's part list to the integration matrix and to the
+    /// status files the steps actually write.
+    #[test]
+    fn the_rust_only_test_parts_are_each_produced_and_joined() {
+        let workflow = include_str!("../../.github/workflows/windows-advisory.yml");
+        let matrix_parts: Vec<&str> = workflow
+            .lines()
+            .map(str::trim)
+            .filter_map(|line| line.strip_prefix("- part: "))
+            .collect();
+        assert_eq!(
+            matrix_parts,
+            ["a-c", "d-o", "rest"],
+            "the integration matrix is the split this test binds"
+        );
+
+        let command = workflow
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("cargo xtask windows-advisory-feature-rows "))
+            .unwrap_or_default();
+        let tokens: Vec<&str> = command.split_whitespace().collect();
+        let parts: Vec<(&str, &str)> = tokens
+            .windows(3)
+            .filter(|window| window[0] == "--part")
+            .map(|window| (window[1], window[2]))
+            .collect();
+        let mut expected = vec![
+            (
+                "nofeatures-test-unit".to_string(),
+                "target/nofeatures-test-unit.status".to_string(),
+            ),
+            (
+                "nofeatures-test-doc".to_string(),
+                "target/nofeatures-test-doc.status".to_string(),
+            ),
+        ];
+        expected.extend(matrix_parts.iter().map(|part| {
+            (
+                format!("nofeatures-test-{part}"),
+                format!("target/integration/nofeatures-test-{part}.status"),
+            )
+        }));
+        let parts: Vec<(String, String)> = parts
+            .into_iter()
+            .map(|(label, path)| (label.to_string(), path.to_string()))
+            .collect();
+        assert_eq!(
+            parts, expected,
+            "the summary must join the unit, doctest and every integration part: {command}"
+        );
+        assert!(
+            command.contains("--join nofeatures-test ")
+                && command.contains("| tee -a target/windows-verdict.md"),
+            "the joined row must reach the verdict file: {command}"
+        );
+
+        for producer in [
+            "--status target/nofeatures-test-unit.status",
+            "--status target/nofeatures-test-doc.status",
+            r#"--status "target/nofeatures-test-$PART.status""#,
+            "target/nofeatures-test-${{ matrix.part }}.status",
+        ] {
+            assert!(
+                workflow.contains(producer),
+                "missing producer or upload `{producer}`"
+            );
+        }
+        assert!(
+            !workflow.contains("target/nofeatures-test.status"),
+            "the unsplit step's status would be read as a row no step writes"
+        );
+    }
+
+    fn feature_args(rows: &[(&str, &str, &str)]) -> Vec<String> {
+        let mut args = argv(&["--join", "joined"]);
+        for (flag, label, path) in rows {
+            args.extend(argv(&[flag, label, path]));
+        }
+        args
+    }
+
+    /// #16036: a cut, unstarted or unreported step has no verdict; only a
+    /// real non-zero exit is a failure.
+    #[test]
+    fn a_feature_row_separates_failure_from_missing_evidence() {
+        assert_eq!(feature_row(Some("0\n")).0, FeatureRowState::Pass);
+        assert_eq!(feature_row(Some("101\n")).0, FeatureRowState::Fail);
+        assert_eq!(feature_row(Some("1")).0, FeatureRowState::Fail);
+        for incomplete in [Some("124\n"), Some("127"), Some(""), Some("ok"), None] {
+            assert_eq!(
+                feature_row(incomplete).0,
+                FeatureRowState::Incomplete,
+                "{incomplete:?} is missing evidence, not a verdict"
+            );
+        }
+        assert!(feature_row(Some("124")).1.contains("cut at its deadline"));
+        assert!(feature_row(None).1.starts_with("not_run"));
+    }
+
+    /// A failure in one part outranks a part with no verdict, and a pass needs
+    /// every part to have passed.
+    #[test]
+    fn the_joined_row_ranks_failure_over_missing_evidence_over_pass() {
+        use FeatureRowState::{Fail, Incomplete, Pass};
+        assert_eq!(join_feature_parts(&[Pass, Pass, Pass]).0, Pass);
+        assert_eq!(join_feature_parts(&[Pass, Incomplete, Pass]).0, Incomplete);
+        assert_eq!(join_feature_parts(&[Incomplete, Fail]).0, Fail);
+        assert_eq!(join_feature_parts(&[Fail, Incomplete]).0, Fail);
+        assert_eq!(join_feature_parts(&[Pass, Fail, Pass]).0, Fail);
+        assert_eq!(
+            join_feature_parts(&[]).0,
+            Incomplete,
+            "no parts is no evidence"
+        );
+    }
+
+    #[test]
+    fn feature_rows_render_in_order_with_the_join_after_the_last_part() -> Result<(), String> {
+        let (join, parsed) = parse_feature_rows(&feature_args(&[
+            ("--row", "check", "c.status"),
+            ("--part", "unit", "u.status"),
+            ("--part", "rest", "r.status"),
+            ("--row", "all", "a.status"),
+        ]))?;
+        let statuses = [Some("0"), Some("0"), Some("124"), None];
+        let rows: Vec<_> = parsed
+            .into_iter()
+            .zip(statuses)
+            .map(|(row, status)| (row, status.map(str::to_string)))
+            .collect();
+        assert_eq!(
+            render_feature_rows(&join, &rows),
+            "- check: PASS\n\
+             - unit: PASS\n\
+             - rest: INCOMPLETE (cut at its deadline, exit 124; no test verdict)\n\
+             - joined: INCOMPLETE (no part failed, but a part has no verdict; see its row)\n\
+             - all: not_run (no status file)\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn feature_rows_refuse_a_malformed_invocation() {
+        for args in [
+            argv(&["--part", "unit", "u.status"]),
+            argv(&["--join", "joined", "--row", "check", "c.status"]),
+            argv(&["--join", "joined", "--part", "unit"]),
+            argv(&["--join", "joined", "--part", "unit", "--row"]),
+            argv(&["--join", "a", "--join", "b", "--part", "unit", "u.status"]),
+            argv(&["--join", "joined", "--part", "unit", "u.status", "--extra"]),
+        ] {
+            assert!(
+                parse_feature_rows(&args).is_err(),
+                "{args:?} must be refused"
+            );
+        }
+    }
+
     fn control(test: &'static str) -> SeamControl {
         SeamControl {
             seam: "process",
@@ -3521,6 +3822,125 @@ mod tests {
                 .unwrap_or_default()
                 .contains("unexpected argument \"extra.log\""),
             "a stray positional must be refused"
+        );
+    }
+
+    /// The flags named in a usage string, each once, in order.
+    fn flags_named_in(text: &str) -> Vec<String> {
+        let mut flags = Vec::new();
+        for token in text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '[' | ']')) {
+            let flag = token.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-'));
+            if flag.starts_with("--") && !flags.iter().any(|seen: &String| seen == flag) {
+                flags.push(flag.to_string());
+            }
+        }
+        flags
+    }
+
+    /// Public ripr #1745 added `--nofeatures-log` / `--nofeatures-status`, a
+    /// single-sample fallback for a `--no-default-features` step that ate the
+    /// whole job before either workspace run started. Swarm does not carry it
+    /// (#16122): `windows-advisory-run` ends that step at its own deadline and
+    /// names every still-running test, so the workspace runs still start and
+    /// the stuck test is still named. The catalog entry and the parser must
+    /// agree on that, in both directions: a catalog that advertised the pair
+    /// (the import's stale duplicate) or a parser that quietly accepted it
+    /// without a catalog line would each mislead a caller.
+    #[test]
+    fn catalog_and_parser_agree_and_the_public_nofeatures_fallback_is_refused() {
+        let summary_entries: Vec<_> = crate::command::command_catalog()
+            .into_iter()
+            .filter(|entry| entry.command.starts_with("windows-advisory-summary "))
+            .collect();
+        assert_eq!(
+            summary_entries.len(),
+            1,
+            "exactly one catalog entry documents windows-advisory-summary"
+        );
+        let catalog_flags = flags_named_in(summary_entries[0].command);
+
+        // The parser names what it accepts when it refuses an unknown flag.
+        let mut probe = complete_argv();
+        probe.push("--catalog-probe".to_string());
+        let refusal = parse_inputs(&probe).err().unwrap_or_default();
+        let accepted = refusal
+            .split_once("expected only ")
+            .map(|(_, list)| flags_named_in(list))
+            .unwrap_or_default();
+        assert!(
+            !accepted.is_empty(),
+            "the refusal must name the accepted flags: {refusal}"
+        );
+        let mut catalog_sorted = catalog_flags.clone();
+        catalog_sorted.sort();
+        let mut accepted_sorted = accepted;
+        accepted_sorted.sort();
+        assert_eq!(
+            catalog_sorted, accepted_sorted,
+            "the catalog entry and the parser must name the same flags"
+        );
+
+        // The catalog's own usage line, with each `<value>` placeholder filled
+        // and the optional brackets and repeat marks dropped, must parse: a
+        // catalog that changed a flag's arity (say `--run1-part <log>` without
+        // its status) fails here, not in the nightly lane.
+        let mut filled = 0usize;
+        let documented: Vec<String> = summary_entries[0]
+            .command
+            .split_whitespace()
+            .skip(1)
+            .map(|token| {
+                token
+                    .trim_start_matches('[')
+                    .trim_end_matches("...")
+                    .trim_end_matches(']')
+            })
+            .filter(|token| !token.is_empty())
+            .map(|token| {
+                if token.starts_with('<') && token.ends_with('>') {
+                    filled += 1;
+                    format!("value{filled}.txt")
+                } else {
+                    token.to_string()
+                }
+            })
+            .collect();
+        assert!(
+            catalog_flags
+                .iter()
+                .all(|flag| documented.iter().any(|arg| arg == flag)),
+            "the documented invocation must pass every catalog flag: {documented:?}"
+        );
+        assert_eq!(
+            parse_inputs(&documented).err(),
+            None,
+            "the catalog's documented invocation must parse: {documented:?}"
+        );
+
+        // Public's pair is refused, alone or together, never ignored.
+        for extra in [
+            &["--nofeatures-log", "nf.log"][..],
+            &["--nofeatures-status", "nf.status"][..],
+            &[
+                "--nofeatures-log",
+                "nf.log",
+                "--nofeatures-status",
+                "nf.status",
+            ][..],
+        ] {
+            let mut args = complete_argv();
+            args.extend(argv(extra));
+            let error = parse_inputs(&args).err().unwrap_or_default();
+            assert!(
+                error.contains(&format!("unexpected argument {:?}", extra[0])),
+                "{extra:?} must be refused as unexpected: {error:?}"
+            );
+        }
+        assert!(
+            !catalog_flags
+                .iter()
+                .any(|flag| flag.starts_with("--nofeatures")),
+            "the catalog must not advertise the public fallback: {catalog_flags:?}"
         );
     }
 

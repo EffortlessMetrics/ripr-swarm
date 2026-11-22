@@ -753,6 +753,20 @@ fn read_manifest(workspace_root: &Path, package_dir: &Path) -> Option<(String, t
     Some((text, value))
 }
 
+/// [`production_roots`] for one package manifest's text: empty for an
+/// invalid or virtual manifest, which compiles nothing.
+pub(super) fn manifest_production_roots(
+    workspace_root: &Path,
+    manifest_text: &str,
+    package_dir: &Path,
+) -> BTreeSet<PathBuf> {
+    toml::from_str::<toml::Value>(manifest_text)
+        .ok()
+        .filter(|manifest| manifest.get("package").is_some())
+        .map(|manifest| production_roots(workspace_root, &manifest, package_dir))
+        .unwrap_or_default()
+}
+
 /// Explicit `[lib]`/`[[bin]]` paths plus the autodiscovered `src/lib.rs`
 /// (unless `[lib] path` replaces it), `src/main.rs` and `src/bin/` roots.
 fn production_roots(

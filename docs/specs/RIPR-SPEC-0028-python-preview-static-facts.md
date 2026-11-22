@@ -474,7 +474,19 @@ A re-exported package name is shadowed like an src-layout short name: when a pla
 module of the same project (beside `src/` or at the repo root) resolves under the
 package's name, `from core import price` cannot be told apart from it, so the
 re-export identifies no owner and credits no test.
-Methods and module owners are never re-exported. The test must still call the owner's own name through
+Module owners are never re-exported. A method is not re-exported either, but
+its class is (#15967): a method of a top-level class the file defines exactly
+once, and binds nowhere else except as `Name = wrap(Name)`, carries that
+class's re-exporting packages, so `from pkg import Manager`
+or `import pkg` / `pkg.Manager(...)` binds a receiver to the owner's class the
+way `from pkg.manager import Manager` does. Only a plain `import` names the
+package as a receiver: `from parent import pkg` binds whatever
+`parent/__init__.py` put under the name. A rival project's package of the
+same name makes the class exporter as ambiguous as a function's (#13786). A class imported under the same
+name from any other source (another module, a package that binds a different
+class under the name, an unresolved module) is not the owner's class: a
+method call on its instance stays a name-level relation and reads no stronger
+than `weakly_exposed`. The test must still call the owner's own name through
 the package, so a test that only calls a sibling name from the same package
 stays unrelated, and a test that binds a local named like the package alias
 (a parameter, fixture or assignment) calls that local, not the package. Diff
@@ -2118,6 +2130,33 @@ its enclosing expression (#13888). Editing it produces a candidate finding.
 Deleting it from a kept statement produces base-side evidence. A backslash in
 a comment or a string token supplies no evidence of a join between tokens.
 Docstrings and standalone sequences of plain string literals stay quiet.
+
+A bracket-continuation line holding one keyword argument with a literal value
+(`stacklevel=3,`: a number, string, `True`, `False` or `None`, with an optional
+argument comma or trailing comment) is not a statement on its own either
+(#16018). It takes the probe family of its enclosing statement, and the static
+limits read that statement, as they would for the same call written on one
+line. So a changed `stacklevel=` of a statement-level `warnings.warn(` is a
+side effect of an imported call, and a return-value assertion reads it as
+`weakly_exposed`, not `exposed`. A keyword continuing `return f(` stays a
+returned value. A keyword whose value is a name, a call or a comparison keeps
+the line's own reading.
+
+Tests: `deleted_lines_tests.rs::literal_keyword_argument_line_takes_the_call_shape`.
+
+A one-line `def` header edit whose only runtime difference is the position of
+the positional-only `/` marker (#16011) changes behavior only for a call that
+passes a moved parameter by keyword. Unless a related test with a strong
+oracle calls the owner with a moved parameter by keyword (by its own name, an
+import alias or a module receiver), the edit reads `weakly_exposed` and the
+missing discriminator names that keyword call. A call
+whose arguments the reader cannot account for (`**options`) does not count as
+such a call.
+
+Tests: `positional_only_marker_tests.rs::positional_calls_do_not_expose_a_marker_only_edit`,
+`positional_only_marker_tests.rs::a_keyword_call_on_a_moved_parameter_keeps_exposed`,
+`positional_only_marker_tests.rs::an_aliased_keyword_call_keeps_exposed`,
+`positional_only_marker_tests.rs::marker_only_edits_name_the_moved_parameters`.
 
 ## Changed Range Header Amendment (#12948)
 

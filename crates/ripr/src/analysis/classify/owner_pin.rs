@@ -51,6 +51,7 @@ mod helper_arguments;
 pub(in crate::analysis::classify) mod path_value;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
+mod scalar_exits;
 mod shared_macro_scan;
 pub(super) mod short_circuit;
 mod unseen_member;
@@ -661,8 +662,14 @@ impl ProjectedCollectionWorkspaceMemo {
 /// admits every file that spells a test file's local empty-macro name.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct WithheldMacroBindings {
-    /// Some withheld file may shadow any macro name.
+    /// Some withheld site binds every trusted name, so no later file can
+    /// change the result.
     any_name: bool,
+    /// Some withheld workspace-wide foreign glob may shadow any name but the
+    /// core prelude macros (#16060). It does not end the fold, since a later
+    /// file may still bind one of those, but a test file's local empty-macro
+    /// names stay ambiguous as they do for `any_name`.
+    glob_any_name: bool,
     /// A crate-local site routed by root may shadow any macro name. The
     /// trusted set stays per root, but a test file's local empty-macro names
     /// are refused workspace-wide, as the full scan's empty-macro check
@@ -744,7 +751,8 @@ impl WithheldMacroBindings {
                     .or_insert_with(|| (path.to_path_buf(), site));
                 continue;
             }
-            self.any_name |= site.kind.binds_any_name();
+            self.any_name |= site.kind.binds_every_trusted_name();
+            self.glob_any_name |= site.kind.binds_any_name();
             self.trusted.insert(name.clone());
             self.sites
                 .entry(name)
@@ -769,7 +777,8 @@ impl WithheldMacroBindings {
                 else {
                     continue;
                 };
-                self.any_name |= site.kind.binds_any_name();
+                self.any_name |= site.kind.binds_every_trusted_name();
+                self.glob_any_name |= site.kind.binds_any_name();
                 self.trusted.insert(name.clone());
                 self.sites.entry(name).or_insert((path, site));
             }
@@ -806,7 +815,8 @@ impl WithheldMacroBindings {
                 else {
                     continue;
                 };
-                self.any_name |= site.kind.binds_any_name();
+                self.any_name |= site.kind.binds_every_trusted_name();
+                self.glob_any_name |= site.kind.binds_any_name();
                 self.trusted.insert(name.clone());
                 self.sites.entry(name).or_insert((path, site));
             }
@@ -2361,7 +2371,9 @@ impl OwnerPinSyntax {
                     )
                 })
                 .chain(
-                    (self.withheld.any_name || self.withheld.root_any_name)
+                    (self.withheld.any_name
+                        || self.withheld.glob_any_name
+                        || self.withheld.root_any_name)
                         .then(|| names.clone())
                         .into_iter()
                         .flatten(),
@@ -4268,7 +4280,7 @@ impl AssertionRefusal {
         // Evidence text is host-independent: use the stable slash spelling
         // so Windows and Unix emit identical bytes (#2337 family).
         let at = |path: &Path, line: usize| {
-            let text = crate::analysis::stable_path_text(path);
+            let text = crate::analysis::stable_display_path_text(path);
             if line == 0 {
                 text
             } else {
@@ -4372,7 +4384,10 @@ impl AssertionRefusal {
                     match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
-                            crate::analysis::stable_path_text(path)
+                            crate::analysis::stable_display_path_text(path)
+                        ),
+                        MacroBindingKind::Included => format!(
+                            "`include!` at {place} splices in a file ripr does not read here, which may define `{name}!`"
                         ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
@@ -4821,8 +4836,10 @@ fn trusted_macro_sites_in(
     // (a bench's `#[macro_use] extern crate bencher;`) is kept per root.
     let mut by_root = CrateMacroBindings::new();
     let mut retained = WorkspaceMacroSiteIndex::default();
-    // One foreign glob import, `#[macro_use]` or unparsable file makes
-    // every trusted name ambiguous, and most workspaces have one. Scan
+    // One `#[macro_use]` or unparsable file makes every trusted name
+    // ambiguous. A foreign glob makes every name but the core prelude
+    // macros ambiguous (#16060), so it saturates only beside another site
+    // for those. Scan
     // the files that can do that first; once every name is ambiguous for
     // every test, no later file (scoped sites included) changes an answer,
     // so the rest are skipped. A refusal that needs a site completes the
@@ -10070,35 +10087,16 @@ fn scalar_early_return_gate(
     {
         return None;
     }
-    let mut changed_returns = 0usize;
-    for offset in whole_word_offsets(inner, "return") {
-        let value_start = offset + "return".len();
-        let value_end = value_start + inner[value_start..].find(';')?;
-        let value = collapse_whitespace(&inner_text[value_start..value_end]);
-        let value = value.trim();
-        if !super::boundary_pairing::is_whole_decimal_literal(value) {
-            // A parameter, const or computed exit may alias the changed
-            // literal under an input this static read does not evaluate.
-            return None;
-        }
-        if super::boundary_pairing::same_scalar_literal(value, changed) {
-            // Only the changed line may produce this literal; a second
-            // `return` of it elsewhere is a second source.
-            if !spans_changed_line(offset, value_end) {
-                return None;
-            }
-            changed_returns += 1;
-        }
-    }
-    let (after_semicolon, after_brace) = top_level_tail_starts(inner);
-    let tail = collapse_whitespace(&inner_text[after_semicolon.max(after_brace)..]);
-    let tail = tail.trim();
-    (changed_returns == 1
-        && super::boundary_pairing::is_whole_decimal_literal(tail)
-        && !super::boundary_pairing::same_scalar_literal(tail, changed))
-    .then(|| ReturnPathGate::EarlyScalar {
-        literal: changed.to_string(),
-    })
+    // #11738: the exits are a pure function of the owner text, read once per
+    // scope; only which of them build the changed literal is asked here.
+    let exits = scalar_exits::scalar_exits(inner, inner_text);
+    exits
+        .as_ref()
+        .as_ref()?
+        .changed_is_only_source(changed, spans_changed_line)
+        .then(|| ReturnPathGate::EarlyScalar {
+            literal: changed.to_string(),
+        })
 }
 
 /// #13037 Defect A, tail direction: whether every early `return` in `inner`
@@ -10314,7 +10312,12 @@ fn assertion_context_macros() -> Vec<&'static str> {
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
 fn is_bounded_macro(name: &str) -> bool {
-    NON_RETURNING_MACROS.contains(&name) && !is_test_scoped_trusted_macro(name)
+    NON_RETURNING_MACROS.contains(&name)
+        && !is_test_scoped_trusted_macro(name)
+        // The owner-side return scan reads spellings without the binding
+        // check, so a local `macro_rules! include_str` there could hide a
+        // `return`; the include pair is trusted in assertion context only.
+        && !matches!(name, "include_bytes" | "include_str")
 }
 
 fn has_unbounded_macro(masked: &str) -> bool {

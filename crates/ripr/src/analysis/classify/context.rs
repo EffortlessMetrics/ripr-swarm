@@ -300,6 +300,7 @@ mod tests {
     #[test]
     fn probe_context_carries_probe_owner_and_related_tests() {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new(PathBuf::from("src/lib.rs"), 1, 1),
             owner: None,

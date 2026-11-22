@@ -6692,7 +6692,7 @@ mod tests {
     }
 
     /// #5320: the owner-pin macro-binding union spans every indexed file, so
-    /// a dependent file's foreign glob import makes `assert_eq!` ambiguous
+    /// a dependent file's foreign glob import makes `vec!` ambiguous
     /// for the changed package's tests too. The narrowed scope withholds that
     /// file but folds its bindings in, so the equality-assertion decision
     /// matches the full closure's. The glob is load-bearing: without it the
@@ -6700,7 +6700,10 @@ mod tests {
     #[test]
     fn dependent_scope_folds_in_withheld_macro_bindings() -> Result<(), String> {
         use dependent_scope::DependentScopeMode;
+        // `vec!` is a name a glob can bind; a glob cannot rebind the bare
+        // `assert_eq!` (#16060).
         let gauge_test = "#[test]\nfn gauge_pins_both_arms() {\n    \
+                          let _ = vec![0u8];\n    \
                           assert_eq!(scope_a::quarble_gauge(true), true);\n    \
                           assert_eq!(scope_a::quarble_gauge(false), false);\n}\n";
         // A re-exported glob is workspace-wide; a private one at a crate
@@ -6738,6 +6741,48 @@ mod tests {
             rooted(&plain_full, &plain_root),
             rooted(&full, &root),
             "the withheld glob must change the full closure's decision"
+        );
+
+        // #16060: a withheld foreign glob binds every name but the core
+        // prelude macros, so the fold continues past it and a later withheld
+        // import of `assert_eq` still reaches a plain `assert_eq!` test.
+        let plain_test = gauge_test.replace("let _ = vec![0u8];\n    ", "");
+        assert!(!plain_test.contains("vec!"), "{plain_test}");
+        let later_root = temp_root("dependent-scope-macro-bindings-later")?;
+        write_dependent_scope_workspace(
+            &later_root,
+            "pub use proptest::prelude::*;\nmod z;\n\npub fn unrelated() -> u8 {\n    1\n}\n",
+        )?;
+        write(
+            &later_root.join("e/src/z.rs"),
+            "pub use other::assert_eq;\n",
+        )?;
+        write(&later_root.join("a/tests/gauge_tests.rs"), &plain_test)?;
+        let (later_full, _, _) = scoped_findings(&later_root, DependentScopeMode::Full)?;
+        let (later_named, later_main, _) =
+            scoped_findings(&later_root, DependentScopeMode::NameAdmitted)?;
+        let later_main = slash_paths(&later_main.ok_or("the named mode must narrow")?);
+        assert!(
+            !later_main.contains(&"e/src/lib.rs".to_string())
+                && !later_main.contains(&"e/src/z.rs".to_string()),
+            "both e files must stay withheld: {later_main:?}"
+        );
+        assert_eq!(
+            later_named, later_full,
+            "a later withheld binding must count past the glob"
+        );
+        // Without the later import the glob alone leaves the plain
+        // assertion credited, so the import is what decides.
+        let glob_root = temp_root("dependent-scope-macro-bindings-glob-only")?;
+        write_dependent_scope_workspace(&glob_root, glob_e)?;
+        write(&glob_root.join("a/tests/gauge_tests.rs"), &plain_test)?;
+        let (glob_full, _, _) = scoped_findings(&glob_root, DependentScopeMode::Full)?;
+        let (glob_named, _, _) = scoped_findings(&glob_root, DependentScopeMode::NameAdmitted)?;
+        assert_eq!(glob_named, glob_full);
+        assert_ne!(
+            rooted(&glob_full, &glob_root),
+            rooted(&later_full, &later_root),
+            "the later import must change the decision"
         );
 
         let private_root = temp_root("dependent-scope-macro-bindings-private")?;
@@ -9130,7 +9175,9 @@ fn absent_delimiter_boundary_returns_head() {
 
         assert!(scope.selects(Path::new("src/a.rs")));
         assert!(scope.selects(Path::new("./src/a.rs")));
-        assert!(scope.selects(Path::new("src\\a.rs")));
+        // A backslash is a separator on Windows only; on Unix `src\a.rs` is a
+        // different file that this scope does not select (#15908).
+        assert_eq!(scope.selects(Path::new("src\\a.rs")), !cfg!(unix));
         assert!(!scope.selects(Path::new("src/b.rs")));
         Ok(())
     }
@@ -9656,6 +9703,7 @@ fn absent_delimiter_boundary_returns_head() {
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:predicate:test".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(SymbolId("src/lib.rs::inner".to_string())),
