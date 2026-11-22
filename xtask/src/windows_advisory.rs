@@ -3524,6 +3524,112 @@ mod tests {
         );
     }
 
+    /// The flags named in a usage string, each once, in order.
+    fn flags_named_in(text: &str) -> Vec<String> {
+        let mut flags = Vec::new();
+        for token in text.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '[' | ']')) {
+            let flag = token.trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-'));
+            if flag.starts_with("--") && !flags.iter().any(|seen: &String| seen == flag) {
+                flags.push(flag.to_string());
+            }
+        }
+        flags
+    }
+
+    /// Public ripr #1745 added `--nofeatures-log` / `--nofeatures-status`, a
+    /// single-sample fallback for a `--no-default-features` step that ate the
+    /// whole job before either workspace run started. Swarm does not carry it
+    /// (#16122): `windows-advisory-run` ends that step at its own deadline and
+    /// names every still-running test, so the workspace runs still start and
+    /// the stuck test is still named. The catalog entry and the parser must
+    /// agree on that, in both directions: a catalog that advertised the pair
+    /// (the import's stale duplicate) or a parser that quietly accepted it
+    /// without a catalog line would each mislead a caller.
+    #[test]
+    fn catalog_and_parser_agree_and_the_public_nofeatures_fallback_is_refused() {
+        let summary_entries: Vec<_> = crate::command::command_catalog()
+            .into_iter()
+            .filter(|entry| entry.command.starts_with("windows-advisory-summary "))
+            .collect();
+        assert_eq!(
+            summary_entries.len(),
+            1,
+            "exactly one catalog entry documents windows-advisory-summary"
+        );
+        let catalog_flags = flags_named_in(summary_entries[0].command);
+
+        // The parser names what it accepts when it refuses an unknown flag.
+        let mut probe = complete_argv();
+        probe.push("--catalog-probe".to_string());
+        let refusal = parse_inputs(&probe).err().unwrap_or_default();
+        let accepted = refusal
+            .split_once("expected only ")
+            .map(|(_, list)| flags_named_in(list))
+            .unwrap_or_default();
+        assert!(
+            !accepted.is_empty(),
+            "the refusal must name the accepted flags: {refusal}"
+        );
+        let mut catalog_sorted = catalog_flags.clone();
+        catalog_sorted.sort();
+        let mut accepted_sorted = accepted;
+        accepted_sorted.sort();
+        assert_eq!(
+            catalog_sorted, accepted_sorted,
+            "the catalog entry and the parser must name the same flags"
+        );
+
+        // Every flag the catalog names parses, with its documented arity.
+        let mut every_flag = complete_argv();
+        every_flag.extend(argv(&[
+            "--run1-part",
+            "p1.log",
+            "p1.status",
+            "--run2-part",
+            "p2.log",
+            "p2.status",
+            "--expected-targets",
+            "build.log",
+        ]));
+        assert!(
+            catalog_flags
+                .iter()
+                .all(|flag| every_flag.iter().any(|arg| arg == flag)),
+            "the positive control must pass every catalog flag: {catalog_flags:?}"
+        );
+        assert!(
+            parse_inputs(&every_flag).is_ok(),
+            "every catalog flag must be accepted: {:?}",
+            parse_inputs(&every_flag).err()
+        );
+
+        // Public's pair is refused, alone or together, never ignored.
+        for extra in [
+            &["--nofeatures-log", "nf.log"][..],
+            &["--nofeatures-status", "nf.status"][..],
+            &[
+                "--nofeatures-log",
+                "nf.log",
+                "--nofeatures-status",
+                "nf.status",
+            ][..],
+        ] {
+            let mut args = complete_argv();
+            args.extend(argv(extra));
+            let error = parse_inputs(&args).err().unwrap_or_default();
+            assert!(
+                error.contains(&format!("unexpected argument {:?}", extra[0])),
+                "{extra:?} must be refused as unexpected: {error:?}"
+            );
+        }
+        assert!(
+            !catalog_flags
+                .iter()
+                .any(|flag| flag.starts_with("--nofeatures")),
+            "the catalog must not advertise the public fallback: {catalog_flags:?}"
+        );
+    }
+
     #[test]
     fn packaged_qualification_workflow_is_immutable_and_non_publishing() {
         let workflow = include_str!("../../.github/workflows/windows-packaged-qualification.yml");

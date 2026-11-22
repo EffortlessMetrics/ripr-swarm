@@ -711,6 +711,16 @@ and single-platform CI was the root cause enabling both.
   job. A missing log, a missing captured exit status, or a summarizer crash
   does. A lane that reports success while proving nothing is exactly the
   false-confidence condition it exists to prevent.
+- **Public's no-default-features fallback is superseded (#16122).** Public
+  ripr #1745 added `windows-advisory-summary --nofeatures-log <path>
+  --nofeatures-status <path>` after run 35497884041, where the unbounded
+  `--no-default-features` test step consumed the whole job before either
+  workspace run started, so the verdict could only report two missing logs. In
+  this lane that step runs under `windows-advisory-run`, which ends it at its
+  own deadline and names every test still running, and the workspace runs
+  start regardless. The summarizer refuses both flags and the catalog does not
+  list them; a test holds the catalog and the parser to the same flags. When
+  swarm returns to public, the option's removal there is deliberate.
 - **Selection.** A daily schedule and explicit `workflow_dispatch`. PR and
   label subscriptions are retired. `runner_probe_only` selects the manual
   runner probe instead of the full and subset jobs.
