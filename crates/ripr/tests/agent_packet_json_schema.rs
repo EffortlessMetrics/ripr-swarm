@@ -149,10 +149,16 @@ fn fixture_repo_with(root: &Path, lib: &str, tests: &str) -> Result<(), String> 
     Ok(())
 }
 
-fn ripr(args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
+fn ripr_command(args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
         .args(args)
-        .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+        .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT");
+    command
+}
+
+fn ripr(args: &[&str]) -> Result<Output, String> {
+    ripr_command(args)
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
@@ -963,10 +969,8 @@ const PACKET_REFUSAL_SCHEMA: &str = "schemas/ripr/agent-packet-refusal.schema.js
 /// Run ripr from `root`, so the ledger's Markdown sidecar lands in the
 /// fixture rather than in the crate directory.
 fn ripr_in(root: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(args)
+    ripr_command(args)
         .current_dir(root)
-        .env_remove("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
