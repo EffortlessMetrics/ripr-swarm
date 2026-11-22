@@ -204,6 +204,10 @@ function sha256Bytes(bytes: Buffer): string {
   return crypto.createHash('sha256').update(bytes).digest('hex');
 }
 
+function quotePowerShell(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 function run(command: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = require('child_process').spawn(command, args, { shell: false, stdio: 'ignore' });
@@ -234,7 +238,7 @@ async function buildFixtureArchive(workRoot: string): Promise<{ readonly bytes: 
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      `Compress-Archive -Path '${staging}\\*' -DestinationPath '${archivePath}' -Force`
+      `Compress-Archive -Path ${quotePowerShell(`${staging}\\*`)} -DestinationPath ${quotePowerShell(archivePath)} -Force`
     ]);
   } else {
     await run('tar', ['-czf', archivePath, '-C', staging, executableName]);
@@ -255,7 +259,7 @@ async function buildFixtureArchive(workRoot: string): Promise<{ readonly bytes: 
       '-ExecutionPolicy',
       'Bypass',
       '-Command',
-      `Expand-Archive -LiteralPath '${archivePath}' -DestinationPath '${trial}' -Force`
+      `Expand-Archive -LiteralPath ${quotePowerShell(archivePath)} -DestinationPath ${quotePowerShell(trial)} -Force`
     ]);
     const extracted = await fs.promises.readdir(trial, { recursive: true });
     assert.deepStrictEqual(extracted, [executableName], `fixture archive extracted to: ${JSON.stringify(extracted)}`);
