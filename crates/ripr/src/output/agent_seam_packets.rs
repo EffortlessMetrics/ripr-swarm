@@ -663,6 +663,12 @@ pub(crate) struct BeforePhaseAttemptContinuation {
     /// summary then words it as a test file, not as a source file's inline
     /// test module, which is what its path shape alone would suggest.
     pub(crate) declared_cargo_test_target: bool,
+    /// #16164: the attempt follows a new-test proposal, so its after phase
+    /// finishes only with a focused result. `next_command` then already names
+    /// `--test-result FILE`; this text says how to produce FILE. `None` for an
+    /// attempt that follows an existing test target, whose bytes stay as they
+    /// were.
+    pub(crate) focused_result_requirement: Option<String>,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -710,6 +716,10 @@ pub(crate) fn render_before_phase_attempt_stdout(
     }
     if continuation.typescript_test_cache_guidance {
         attempt_block["test_runner_cache_guidance"] = json!(TYPESCRIPT_TEST_CACHE_GUIDANCE);
+    }
+    // #16164: additive and present only for a new-test proposal attempt.
+    if let Some(requirement) = &continuation.focused_result_requirement {
+        attempt_block["focused_result_requirement"] = json!(requirement);
     }
     object.insert("repair_attempt".to_string(), attempt_block);
     let mut rendered = serde_json::to_string_pretty(&value)

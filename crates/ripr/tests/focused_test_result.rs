@@ -580,23 +580,28 @@ struct Attempt {
     id: String,
 }
 
-fn begin(root: &Path) -> Result<Attempt, String> {
+/// Runs the before phase, with or without `--json`.
+fn begin_output(root: &Path, json: bool) -> Result<Output, String> {
     let root_arg = root.display().to_string();
     let seam = seam_id(root, &root_arg)?;
-    let output = run_ripr(
-        root,
-        &[
-            "agent",
-            "repair",
-            "--json",
-            "--root",
-            &root_arg,
-            "--seam-id",
-            &seam,
-            "--phase",
-            "before",
-        ],
-    )?;
+    let mut args = vec!["agent", "repair"];
+    if json {
+        args.push("--json");
+    }
+    args.extend([
+        "--root",
+        root_arg.as_str(),
+        "--seam-id",
+        seam.as_str(),
+        "--phase",
+        "before",
+    ]);
+    run_ripr(root, &args)
+}
+
+fn begin(root: &Path) -> Result<Attempt, String> {
+    let root_arg = root.display().to_string();
+    let output = begin_output(root, true)?;
     if !output.status.success() {
         return Err(format!("before phase failed: {}", combined(&output)));
     }
@@ -2144,6 +2149,22 @@ fn review_existing_test_target_keeps_result_optional() -> Result<(), String> {
     commit_all(root, "existing related test")?;
     let attempt = begin(root)?;
     let before = manifest(root, &attempt)?;
+    // #16164 negative: an existing-target attempt's printed after command
+    // stays exactly the plain `--phase after` form, with no result flag.
+    let next = before["next_command"]
+        .as_str()
+        .ok_or("next_command missing")?;
+    assert!(
+        next.starts_with("ripr agent repair --root ")
+            && next.ends_with(&format!(" --attempt {} --phase after", attempt.id))
+            && !next.contains("--test-result"),
+        "{next}"
+    );
+    let (command, reason) = status_next(root, &attempt)?;
+    assert!(
+        !command.contains("--test-result") && !reason.contains("new-test proposal"),
+        "{command}\n{reason}"
+    );
     let baseline_path = before["artifacts"]
         .as_array()
         .ok_or("artifacts missing")?
@@ -2350,6 +2371,11 @@ fn a_proposal_file_appearing_after_the_gate_cannot_finish_unrecorded() -> Result
     )?;
     let manifest = manifest(root, &attempt)?;
     assert!(terminal_roles(&manifest).is_empty(), "{manifest}");
+    // A missing result is not charged at the finish authority either (#16164).
+    assert!(
+        manifest["after_refusal_count"].is_null() && manifest["last_after_refusal"].is_null(),
+        "{manifest}"
+    );
     Ok(())
 }
 
@@ -2380,6 +2406,12 @@ fn a_failing_result_the_gate_did_not_check_cannot_finish() -> Result<(), String>
     assert_refused_and_unrecorded(root, &attempt, &output, "not a counted passing run")?;
     let manifest = manifest(root, &attempt)?;
     assert!(terminal_roles(&manifest).is_empty(), "{manifest}");
+    // A supplied failing result is still charged (#16164).
+    assert_eq!(
+        manifest["after_refusal_count"],
+        serde_json::json!(1),
+        "{manifest}"
+    );
     Ok(())
 }
 
@@ -2398,10 +2430,16 @@ fn review_continue_refusal_recovers_on_the_same_attempt() -> Result<(), String> 
         ],
     )?;
     assert_refused_and_unrecorded(root, &attempt, &output, "needs a focused test result")?;
+    // #16164: `ripr continue` cannot pass a result, so its refusal names the
+    // explicit command and how to produce FILE, and charges no retry.
+    let text = combined(&output);
+    assert!(
+        text.contains("--test-result FILE") && text.contains("--format json"),
+        "{text}"
+    );
     let refused = manifest(root, &attempt)?;
-    assert_eq!(
-        refused["after_refusal_count"],
-        serde_json::json!(1),
+    assert!(
+        refused["after_refusal_count"].is_null() && refused["last_after_refusal"].is_null(),
         "{refused}"
     );
     let document = result_document(
@@ -2414,11 +2452,7 @@ fn review_continue_refusal_recovers_on_the_same_attempt() -> Result<(), String> 
     let output = after_with(root, &attempt, &path)?;
     assert!(output.status.success(), "{}", combined(&output));
     let finished = manifest(root, &attempt)?;
-    assert_eq!(
-        finished["after_refusal_count"],
-        serde_json::json!(1),
-        "{finished}"
-    );
+    assert!(finished["after_refusal_count"].is_null(), "{finished}");
     assert_eq!(
         finished
             .pointer("/after/verdict/status")
@@ -2554,7 +2588,10 @@ fn review_absent_proposed_file_without_edits_uses_no_movement_refusal() -> Resul
 
 #[test]
 fn review_fifth_focused_refusal_requires_restart() -> Result<(), String> {
-    for kind in ["missing", "zero", "failed", "incomplete"] {
+    // A missing result charges no retry (#16164), so only supplied results
+    // that the gate refuses spend the budget; see
+    // `a_missing_result_never_spends_the_retry_budget`.
+    for kind in ["zero", "failed", "incomplete"] {
         let (fixture, attempt) = edited_attempt(&format!("review-budget-{kind}"))?;
         let root = &fixture.root;
         let events = if kind == "zero" {
@@ -2567,11 +2604,7 @@ fn review_fifth_focused_refusal_requires_restart() -> Result<(), String> {
         let document = result_document(&attempt.id, &head_sha(root)?, PROPOSED_FILE, events);
         let path = write_result(root, "budget", &document)?;
         for index in 1..=5 {
-            let output = if kind == "missing" {
-                review_after_without_result(root, &attempt)?
-            } else {
-                after_with(root, &attempt, &path)?
-            };
+            let output = after_with(root, &attempt, &path)?;
             assert_refused_and_unrecorded(root, &attempt, &output, "")?;
             assert_eq!(output.status.code(), Some(3), "{}", combined(&output));
             let text = combined(&output);
@@ -2844,4 +2877,206 @@ fn proposal_recovery_refuses_a_retained_claim_that_is_not_a_passing_run() -> Res
         &retained,
         "the retained focused result is not a counted passing run",
     )
+}
+
+/// The default and attempt-selected `agent status` next command and reason.
+fn status_next(root: &Path, attempt: &Attempt) -> Result<(String, String), String> {
+    let mut texts = (String::new(), String::new());
+    for selected in [false, true] {
+        let mut args = vec!["agent", "status", "--json", "--root", &attempt.root_arg];
+        if selected {
+            args.extend(["--attempt", attempt.id.as_str()]);
+        }
+        let output = run_ripr(root, &args)?;
+        let document = stdout_json(&output)?;
+        // The default status names `next_command`; `--attempt` names
+        // `next_action`.
+        let next = if selected {
+            &document["next_action"]
+        } else {
+            &document["next_command"]
+        };
+        let command = next["command"]
+            .as_str()
+            .ok_or_else(|| format!("status names no next command:\n{document}"))?;
+        let reason = next["reason"].as_str().unwrap_or_default();
+        texts.0.push_str(command);
+        texts.0.push('\n');
+        texts.1.push_str(reason);
+        texts.1.push('\n');
+    }
+    Ok(texts)
+}
+
+const PRODUCE_FILE: &str =
+    "cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json";
+
+/// #16164: a proposal attempt states its focused-result requirement up front.
+/// The start (human and `--json`) and `agent status` (default and selected)
+/// name `--test-result FILE` and how to produce FILE, before any after phase.
+#[test]
+fn a_proposal_attempt_names_the_focused_result_up_front() -> Result<(), String> {
+    let human_fixture = fixture("upfront-human")?;
+    let root = &human_fixture.root;
+    let human = begin_output(root, false)?;
+    let text = combined(&human);
+    assert!(human.status.success(), "{text}");
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let next_line = stdout
+        .lines()
+        .find(|line| line.starts_with("Next, after the test edit:"))
+        .ok_or_else(|| format!("no next line:\n{text}"))?;
+    assert!(
+        next_line.contains(" --phase after --test-result FILE"),
+        "{text}"
+    );
+    assert!(
+        stdout.contains("follows a new-test proposal") && stdout.contains(PRODUCE_FILE),
+        "{text}"
+    );
+    let attempts = fs::read_dir(root.join("target/ripr/repair-attempts"))
+        .map_err(|error| format!("list attempts: {error}"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("repair-attempt-"))
+        .collect::<Vec<_>>();
+    let [id] = attempts.as_slice() else {
+        return Err(format!("expected one attempt, found {attempts:?}"));
+    };
+    let attempt = Attempt {
+        root_arg: root.display().to_string(),
+        id: id.clone(),
+    };
+    let committed = manifest(root, &attempt)?;
+    assert!(
+        committed["next_command"]
+            .as_str()
+            .is_some_and(|next| next.ends_with(" --phase after --test-result FILE")),
+        "{committed}"
+    );
+    let (command, reason) = status_next(root, &attempt)?;
+    assert_eq!(
+        command.matches(" --phase after --test-result FILE").count(),
+        2,
+        "{command}"
+    );
+    assert_eq!(reason.matches(PRODUCE_FILE).count(), 2, "{reason}");
+    assert_eq!(
+        reason.matches("follows a new-test proposal").count(),
+        2,
+        "{reason}"
+    );
+
+    let json_fixture = fixture("upfront-json")?;
+    let output = begin_output(&json_fixture.root, true)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let document = stdout_json(&output)?;
+    let block = &document["repair_attempt"];
+    assert!(
+        block["next_command"]
+            .as_str()
+            .is_some_and(|next| next.ends_with(" --phase after --test-result FILE")),
+        "{block}"
+    );
+    assert!(
+        block["focused_result_requirement"]
+            .as_str()
+            .is_some_and(|text| text.contains(PRODUCE_FILE) && text.contains("--test-result FILE")),
+        "{block}"
+    );
+    Ok(())
+}
+
+/// #16164: running the after phase with no `--test-result` is a usage
+/// refusal: typed, narrated with the explicit command and how to produce
+/// FILE, leaving the attempt awaiting its edit, and never charged. More
+/// refusals than the budget allows do not exhaust it, and a passing result
+/// then still finishes.
+#[test]
+fn a_missing_result_never_spends_the_retry_budget() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("missing-uncharged")?;
+    let root = &fixture.root;
+    for _ in 0..7 {
+        let output = review_after_without_result(root, &attempt)?;
+        assert_refused_and_unrecorded(root, &attempt, &output, "needs a focused test result")?;
+        let text = combined(&output);
+        assert!(
+            text.contains("to recover: rerun")
+                && text.contains("--phase after --test-result FILE")
+                && text.contains(PRODUCE_FILE)
+                && !text.contains("retry_budget_exhausted"),
+            "{text}"
+        );
+        let state = manifest(root, &attempt)?;
+        assert!(
+            state["after_refusal_count"].is_null()
+                && state["last_after_refusal"].is_null()
+                && state["after_refusal_history"].is_null(),
+            "{state}"
+        );
+    }
+    let (command, reason) = status_next(root, &attempt)?;
+    assert!(
+        command.contains("--test-result FILE") && reason.contains(PRODUCE_FILE),
+        "{command}\n{reason}"
+    );
+    let document = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([ok_event("equality_boundary_discounts")]),
+    );
+    let path = write_result(root, "missing-then-passing", &document)?;
+    let output = after_with(root, &attempt, &path)?;
+    assert!(output.status.success(), "{}", combined(&output));
+    let finished = manifest(root, &attempt)?;
+    assert_eq!(
+        finished
+            .pointer("/after/verdict/status")
+            .and_then(Value::as_str),
+        Some("compliant"),
+        "{finished}"
+    );
+    Ok(())
+}
+
+/// #16164: a supplied result the gate refuses still charges a retry, and an
+/// uncharged missing-result refusal neither charges nor erases that count.
+#[test]
+fn a_failing_result_still_charges_between_uncharged_refusals() -> Result<(), String> {
+    let (fixture, attempt) = edited_attempt("failing-charged")?;
+    let root = &fixture.root;
+    let output = review_after_without_result(root, &attempt)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "needs a focused test result")?;
+    assert!(manifest(root, &attempt)?["after_refusal_count"].is_null());
+    let failing = result_document(
+        &attempt.id,
+        &head_sha(root)?,
+        PROPOSED_FILE,
+        serde_json::json!([
+            {"type": "test", "event": "failed", "name": "equality_boundary_discounts"}
+        ]),
+    );
+    let path = write_result(root, "charged-failing", &failing)?;
+    let output = after_with(root, &attempt, &path)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "1 failed test(s)")?;
+    assert_eq!(
+        manifest(root, &attempt)?["after_refusal_count"],
+        serde_json::json!(1)
+    );
+    let output = review_after_without_result(root, &attempt)?;
+    assert_refused_and_unrecorded(root, &attempt, &output, "needs a focused test result")?;
+    let state = manifest(root, &attempt)?;
+    assert_eq!(
+        state["after_refusal_count"],
+        serde_json::json!(1),
+        "{state}"
+    );
+    assert!(
+        state["last_after_refusal"]["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("failed test")),
+        "{state}"
+    );
+    Ok(())
 }

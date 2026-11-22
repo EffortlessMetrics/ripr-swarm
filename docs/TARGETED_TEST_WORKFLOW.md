@@ -237,6 +237,13 @@ prints (with `--json`, `repair_attempt.next_command` carries the equivalent
 captures its own before evidence. A manual snapshot or a CI packet alone does
 not prepare that attempt. See [Repair attempt identity](REPAIR_ATTEMPT.md).
 
+When the attempt follows a **new-test proposal** (the test file does not exist
+yet), it prints `ripr agent repair ... --phase after --test-result FILE`
+instead of `ripr continue`, because finishing needs a focused result. Run the
+new test on a nightly toolchain for its own package and target
+(`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json`, or `--lib` for an inline test), save the events
+as the `focused_test_result` document the start describes, and pass that file.
+
 ## 4. Add One Focused Test
 
 Keep the code change narrow:
