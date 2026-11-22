@@ -4234,8 +4234,15 @@ mod tests {
 
         let rendered = render(&bounded_output_with_findings(findings));
 
+        // #15335: a removal-only run names why nothing is selected.
         assert!(
-            rendered.contains("State: no gap selected for repair"),
+            rendered.contains(
+                "  State: every finding left is on removed code, which is never an edit target\n"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("no gap selected for repair"),
             "{rendered}"
         );
         assert!(
