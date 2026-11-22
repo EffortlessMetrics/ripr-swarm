@@ -416,6 +416,16 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .with_absent_file_limitations(absent_file_limitations)
         .with_evidence_limitations(folded.evidence_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
+    // #15278: a changed spot the inventory reads as gripped may still hold a
+    // gap `ripr check` reports for the changed lines. Check runs only when
+    // such a spot exists.
+    let check_reads_open = crate::app::task_first::count_gripped_seams_check_reads_open(
+        &input.root,
+        &config,
+        &classified,
+        |entry| current_change.touches(entry),
+    );
+    let current_change = current_change.with_check_reads_open(check_reads_open);
     let budget_started = Instant::now();
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)

@@ -140,6 +140,15 @@ impl PilotCurrentChange {
         self
     }
 
+    /// Record how many gripped seams on the change `ripr check` reads as a
+    /// gap or a limit (#15278). No effect without a change.
+    pub(crate) fn with_check_reads_open(mut self, count: usize) -> Self {
+        if let Self::Changed { seams, .. } = &mut self {
+            seams.check_reads_open = count;
+        }
+        self
+    }
+
     /// The change's Rust files, root-relative, for classifying the change on
     /// its own when the inventory seam limit cut it (#6943). Empty without a
     /// change.
@@ -445,6 +454,11 @@ pub(crate) struct ChangeSeams {
     /// `(analyzed, total)` when the inventory seam limit left seams
     /// unclassified: the change may have seams among them.
     pub(crate) unanalyzed: Option<(usize, usize)>,
+    /// Of the touched seams the inventory reads as strongly gripped, the
+    /// ones whose changed code `ripr check` reads as a gap or a limit
+    /// (#15278). Pilot judges the whole spot and check the changed lines, so
+    /// "already gripped" alone would contradict check for these.
+    pub(crate) check_reads_open: usize,
 }
 
 /// Slash-separated path without leading `./`, so the seam inventory's paths

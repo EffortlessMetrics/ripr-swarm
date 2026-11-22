@@ -1118,6 +1118,11 @@ fn render_pilot_terminal_unescaped(
             None if !declined_rust_files(context).is_empty() => out.push_str(
                 "No gap was found in the files ripr could read, but the Rust files listed above were not checked and may hold gaps: split them as described, then rerun `ripr pilot`.\n",
             ),
+            // #15278: no ranked gap is not "no test to add" while check
+            // reports a gap on the change.
+            None if change_check_reads_open(context) => out.push_str(
+                "Pilot ranked no gap, but `ripr check` reads your changed code as a gap or cannot tell: run `ripr check` and follow its next step.\n",
+            ),
             None => out.push_str(
                 "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
             ),
@@ -1306,6 +1311,15 @@ fn current_change_label(
 /// either, when it has any or a seam limit may hide them (#5309). The
 /// pilot budget can drop those seams before the empty-ranking text counts
 /// what was withheld, so this reads the counts taken before the cut.
+/// Whether `ripr check` reads a gap or a limit on a changed spot the
+/// inventory reads as gripped (#15278).
+fn change_check_reads_open(context: PilotSummaryContext<'_>) -> bool {
+    context
+        .current_change
+        .and_then(PilotCurrentChange::seams)
+        .is_some_and(|seams| seams.check_reads_open > 0)
+}
+
 fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
     let change = context.current_change?;
     let seams = change.seams()?;
@@ -1361,6 +1375,7 @@ impl CurrentChangeLabel {
             touched,
             withheld,
             unanalyzed,
+            check_reads_open,
         } = seams;
         let lines = |count| Self::changed_lines(base, code, count);
         // Seams past the inventory limit were never classified, so a reason
@@ -1413,6 +1428,18 @@ impl CurrentChangeLabel {
         } else {
             return format!("Pilot checked no spot on {}.", lines(1));
         };
+        // #15278: pilot reads the whole spot, `ripr check` the changed
+        // lines. A spot pilot calls gripped may still hold a gap check
+        // reports for the change, so "already gripped" must not stand alone.
+        if check_reads_open > 0 {
+            let which = match (check_reads_open, touched) {
+                (1, 1) => "your changed code there".to_string(),
+                (open, _) => format!("your changed code at {open} of them"),
+            };
+            reason.push_str(&format!(
+                "; but `ripr check` reads {which} as a gap or cannot tell (pilot judges the whole spot, check your changed lines), so follow `ripr check` for your change"
+            ));
+        }
         if touched > 0
             && let Some(note) = diff_only
         {
