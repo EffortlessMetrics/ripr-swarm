@@ -11,6 +11,21 @@ const LABELS: &str = r#"
 pub fn device_labels() -> Vec<&'static str> {
     Vec::new()
 }
+
+fn exercise_device_labels() -> Vec<&'static str> {
+    device_labels()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helper_reaches_device_labels() {
+        let labels = exercise_device_labels();
+        assert!(labels.is_empty());
+    }
+}
 "#;
 
 fn fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
@@ -21,11 +36,6 @@ fn fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
             PathBuf::from("tests/direct.rs"),
             "#[test] fn boundary() { assert_eq!(discounted_total(100, 100), 90); }\n\
              #[test] fn arithmetic() { assert_eq!(2 + 2, 4); }\n",
-        ),
-        (
-            PathBuf::from("tests/through_helper.rs"),
-            "fn total_at(amount: i32) -> i32 { discounted_total(amount, 100) }\n\
-             #[test] fn helper_boundary() { assert_eq!(total_at(100), 90); }\n",
         ),
         (
             PathBuf::from("tests/billing.rs"),
@@ -150,41 +160,67 @@ fn pool_check_matches_the_complete_relation_for_every_seam_and_pool() -> Result<
     Ok(())
 }
 
-#[test]
-fn owner_call_scope_resolves_only_pool_tests() -> Result<(), String> {
+/// The pool tests `matcher` admits for the first seam of `file`, and the
+/// same walk without a pool.
+type OwnerCallMatcher = fn(
+    &mut BTreeMap<usize, RelationReason>,
+    &CompactGripContext<'_>,
+    Option<&str>,
+    &OwnerContext<'_>,
+    Option<&BTreeSet<usize>>,
+);
+
+fn scoped_walk_admits_only_pool_tests(
+    file: &str,
+    matcher: OwnerCallMatcher,
+    expected: RelationReason,
+) -> Result<(), String> {
     let (index, seams) = fixture()?;
     let context = CompactGripContext::new(&index);
     let seam = seams
         .iter()
-        .find(|seam| seam.file() == Path::new("src/pricing.rs"))
-        .ok_or("fixture needs a pricing seam")?;
+        .find(|seam| seam.file() == Path::new(file))
+        .ok_or_else(|| format!("fixture needs a seam in {file}"))?;
     let owner = OwnerContext::resolve(seam, &context);
 
     let mut every = BTreeMap::new();
-    match_direct_owner_call(&mut every, &context, None, &owner, None);
-    match_helper_owner_call(&mut every, &context, None, &owner, None);
-    if every.len() != 2 {
-        return Err(format!(
-            "one direct and one helper caller expected, got {every:?}"
-        ));
+    matcher(&mut every, &context, None, &owner, None);
+    let admitted = match every.iter().collect::<Vec<_>>().as_slice() {
+        [(index, reason)] if **reason == expected => **index,
+        _ => return Err(format!("one {expected:?} test expected, got {every:?}")),
+    };
+
+    let mut inside = BTreeMap::new();
+    let pool = BTreeSet::from([admitted]);
+    matcher(&mut inside, &context, None, &owner, Some(&pool));
+    if inside != every {
+        return Err(format!("pool {pool:?} admitted {inside:?}, not {every:?}"));
     }
-    for admitted in every.keys() {
-        let pool = BTreeSet::from([*admitted]);
-        let mut scoped = BTreeMap::new();
-        match_direct_owner_call(&mut scoped, &context, None, &owner, Some(&pool));
-        match_helper_owner_call(&mut scoped, &context, None, &owner, Some(&pool));
-        if scoped.keys().collect::<Vec<_>>() != vec![admitted] {
-            return Err(format!("pool {pool:?} admitted {scoped:?}"));
-        }
-        if scoped.get(admitted) != every.get(admitted) {
-            return Err("a pool test must keep the reason the complete walk gives it".into());
-        }
-    }
-    let mut none = BTreeMap::new();
-    match_direct_owner_call(&mut none, &context, None, &owner, Some(&BTreeSet::new()));
-    match_helper_owner_call(&mut none, &context, None, &owner, Some(&BTreeSet::new()));
-    if !none.is_empty() {
-        return Err(format!("an empty pool admitted {none:?}"));
+    let others = (0..context.tests.len())
+        .filter(|index| *index != admitted)
+        .collect::<BTreeSet<_>>();
+    let mut outside = BTreeMap::new();
+    matcher(&mut outside, &context, None, &owner, Some(&others));
+    if !outside.is_empty() {
+        return Err(format!("a pool without the caller admitted {outside:?}"));
     }
     Ok(())
+}
+
+#[test]
+fn direct_owner_call_scope_resolves_only_pool_tests() -> Result<(), String> {
+    scoped_walk_admits_only_pool_tests(
+        "src/pricing.rs",
+        match_direct_owner_call,
+        RelationReason::DirectOwnerCall,
+    )
+}
+
+#[test]
+fn helper_owner_call_scope_resolves_only_pool_tests() -> Result<(), String> {
+    scoped_walk_admits_only_pool_tests(
+        "src/labels.rs",
+        match_helper_owner_call,
+        RelationReason::HelperOwnerCall,
+    )
 }
