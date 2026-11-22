@@ -20,7 +20,9 @@
 //! - a star re-export never carries a `_private` name, and when the source
 //!   module binds `__all__` at top level, the name must be listed in it (a
 //!   binding that is not a literal list/tuple of strings fails closed);
-//! - methods and module owners are never re-exported;
+//! - methods and module owners are never re-exported; a method of a
+//!   top-level class instead records the packages that re-export its class
+//!   (`class_reexport_modules`), which only identify the class in an import;
 //! - the chain stops after [`MAX_REEXPORT_HOPS`] packages.
 //!
 //! The result only widens *which module path* identifies the owner. The
@@ -176,6 +178,55 @@ fn apply_with<'s>(
             .collect();
         owner.reexport_modules =
             package_reexport_modules(owner, &candidates, definitions, &mut star_exports);
+    }
+    apply_class_reexports(owners);
+}
+
+/// Sets `class_reexport_modules` on each method of a top-level class to that
+/// class owner's `reexport_modules`: a method is reached through its class,
+/// so the package paths that re-export the class are the ones a `from M
+/// import Class` may name. Fails closed (stays empty) for a nested class, a
+/// class name the file defines more than once, and a method outside the one
+/// definition's lines.
+fn apply_class_reexports(owners: &mut [PythonOwner]) {
+    // (file, class name) -> (definitions seen, index of the first).
+    let mut classes: HashMap<(&Path, &str), (usize, usize)> = HashMap::new();
+    for (index, owner) in owners.iter().enumerate() {
+        if owner.owner_kind.is_none()
+            && !owner.is_module_owner()
+            && !owner.name.is_empty()
+            && owner.qualified_name == owner.name
+        {
+            classes
+                .entry((owner.file.as_path(), owner.name.as_str()))
+                .or_insert((0, index))
+                .0 += 1;
+        }
+    }
+    let assignments: Vec<(usize, Vec<String>)> = owners
+        .iter()
+        .enumerate()
+        .filter_map(|(index, owner)| {
+            if !matches!(
+                owner.owner_kind,
+                Some(OwnerKind::Method | OwnerKind::ClassMethod)
+            ) || owner.class_path.is_empty()
+                || owner.class_path.contains('.')
+            {
+                return None;
+            }
+            let &(count, class_index) =
+                classes.get(&(owner.file.as_path(), owner.class_path.as_str()))?;
+            let class = &owners[class_index];
+            (count == 1
+                && !class.reexport_modules.is_empty()
+                && class.start_line <= owner.start_line
+                && owner.end_line <= class.end_line)
+                .then(|| (index, class.reexport_modules.clone()))
+        })
+        .collect();
+    for (index, modules) in assignments {
+        owners[index].class_reexport_modules = modules;
     }
 }
 

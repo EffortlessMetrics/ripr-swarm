@@ -745,9 +745,19 @@ pub(super) fn mark_isolated_fixture_defs(
                             }
                             if let Some(side) = side_by_file.get(&file) {
                                 scope_modules.extend(side.imported_modules.iter().cloned());
+                                // An import whose workspace modules define no
+                                // fixture cannot bring one into the scope, so
+                                // the owner check need not see it.
                                 scope_imports.extend(
                                     side.from_imports
                                         .iter()
+                                        .filter(|import| {
+                                            !import_brings_no_fixture(
+                                                import,
+                                                defs_by_file,
+                                                side_by_file,
+                                            )
+                                        })
                                         .map(|import| (file.clone(), import.clone())),
                                 );
                                 if side.opaque
@@ -791,6 +801,113 @@ pub(super) fn mark_isolated_fixture_defs(
             def.scope_imports = scope_imports;
         }
     }
+}
+
+/// Public top-level modules of the Python standard library (CPython 3.13
+/// `sys.stdlib_module_names`, without the interpreter's own `test` package
+/// and the bundled applications). None of them defines a pytest fixture.
+const STDLIB_MODULES: &str = "\
+    __future__ abc argparse array ast asyncio atexit base64 bdb binascii bisect builtins \
+    bz2 cProfile calendar cmath cmd code codecs codeop collections colorsys compileall \
+    concurrent configparser contextlib contextvars copy copyreg csv ctypes curses \
+    dataclasses datetime dbm decimal difflib dis doctest email encodings ensurepip enum \
+    errno faulthandler fcntl filecmp fileinput fnmatch fractions ftplib functools gc \
+    genericpath getopt getpass gettext glob graphlib grp gzip hashlib heapq hmac html \
+    http imaplib importlib inspect io ipaddress itertools json keyword linecache locale \
+    logging lzma mailbox marshal math mimetypes mmap modulefinder msvcrt multiprocessing \
+    netrc nt ntpath nturl2path numbers opcode operator optparse os pathlib pdb pickle \
+    pickletools pkgutil platform plistlib poplib posix posixpath pprint profile pstats \
+    pty pwd py_compile pyclbr pydoc pyexpat queue quopri random re readline reprlib \
+    resource rlcompleter runpy sched secrets select selectors shelve shlex shutil signal \
+    site smtplib socket socketserver sqlite3 sre_compile sre_constants sre_parse ssl \
+    stat statistics string stringprep struct subprocess symtable sys sysconfig syslog \
+    tabnanny tarfile tempfile termios textwrap threading time timeit tkinter token \
+    tokenize tomllib trace traceback tracemalloc tty turtle types typing unicodedata \
+    unittest urllib uuid venv warnings wave weakref webbrowser winreg winsound wsgiref \
+    xml xmlrpc zipapp zipfile zipimport zlib zoneinfo";
+
+/// Whether `head`, the first segment of a dotted module, names a
+/// standard-library module.
+pub(super) fn is_stdlib_module(head: &str) -> bool {
+    STDLIB_MODULES
+        .split_ascii_whitespace()
+        .any(|module| module == head)
+}
+
+/// Most workspace modules read behind one scope import before the read gives
+/// up and leaves the import to the owner check.
+const MAX_FIXTURE_FREE_MODULES: usize = 256;
+
+/// Whether `from M import y` cannot bring a pytest fixture into the scope:
+/// `M` is an absolute import that resolves to a workspace module, and neither
+/// it, `M.y`, nor any workspace module they import in turn defines a fixture,
+/// imports pytest (the only way to build one), or is opaque. A fixture pytest
+/// registers from an imported name is a fixture some module defined, so a
+/// closure without one hands the conftest plain objects only. A
+/// standard-library module no workspace file shadows brings none either.
+/// Fails closed for a relative import, any other module outside the
+/// workspace, and a closure larger than [`MAX_FIXTURE_FREE_MODULES`]; modules
+/// outside the workspace
+/// that the closure imports are not visible to this read, as in
+/// [`imported_modules_may_touch_fixture`].
+fn import_brings_no_fixture(
+    import: &PythonImport,
+    defs_by_file: &BTreeMap<PathBuf, Vec<PythonFixtureDef>>,
+    side_by_file: &BTreeMap<PathBuf, FixtureSideEffects>,
+) -> bool {
+    let root = import.source_module.as_str();
+    if root.is_empty() || root.starts_with('.') || import.imported == "*" {
+        return false;
+    }
+    let files_of = |module: &str| -> Vec<&PathBuf> {
+        let path = module.replace('.', "/");
+        let suffixes = [format!("{path}.py"), format!("{path}/__init__.py")];
+        side_by_file
+            .keys()
+            .filter(|file| {
+                let file = super::normalized_path(file);
+                suffixes
+                    .iter()
+                    .any(|suffix| file == *suffix || file.ends_with(&format!("/{suffix}")))
+            })
+            .collect()
+    };
+    if files_of(root).is_empty() {
+        // No workspace file answers to the name, so a standard-library name
+        // is the standard library's module, which defines no pytest fixture.
+        let head = root.split('.').next().unwrap_or(root);
+        return is_stdlib_module(head);
+    }
+    let submodule = format!("{root}.{}", import.imported);
+    let mut pending: Vec<&str> = vec![root, submodule.as_str()];
+    let mut seen_modules: BTreeSet<&str> = BTreeSet::new();
+    let mut seen_files: BTreeSet<&PathBuf> = BTreeSet::new();
+    while let Some(module) = pending.pop() {
+        if module.is_empty() || !seen_modules.insert(module) {
+            continue;
+        }
+        if seen_modules.len() > MAX_FIXTURE_FREE_MODULES {
+            return false;
+        }
+        let head = module.trim_start_matches('.');
+        let head = head.split('.').next().unwrap_or(head);
+        if head.starts_with("pytest") || head.starts_with("_pytest") || head == "conftest" {
+            return false;
+        }
+        for file in files_of(module) {
+            if !seen_files.insert(file) {
+                continue;
+            }
+            let Some(side) = side_by_file.get(file) else {
+                continue;
+            };
+            if side.opaque || defs_by_file.get(file).is_some_and(|defs| !defs.is_empty()) {
+                return false;
+            }
+            pending.extend(side.imported_modules.iter().map(String::as_str));
+        }
+    }
+    true
 }
 
 /// Whether a workspace module the scope imports, directly or through the

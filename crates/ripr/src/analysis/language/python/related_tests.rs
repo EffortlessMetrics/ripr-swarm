@@ -3138,7 +3138,11 @@ pub(super) fn import_source_module_matches_owner(
     let names_owner_module = owner_import_modules_for(owner, test_file).contains(&import.source_module)
         // `from humanize import naturaldelta`: the package re-exports the
         // owner under its own name, so the package path identifies it too.
-        || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module));
+        || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module))
+        // `from pluggy import PluginManager` for a method of the class
+        // `pluggy/_manager.py` defines: the package re-exports the class.
+        || (import.imported == owner.class_path
+            && owner.class_reexport_modules.contains(&import.source_module));
     names_owner_module && module_name_identifies_owner_for(owner, &import.source_module, test_file)
 }
 
@@ -3659,6 +3663,10 @@ pub(super) fn owner_class_locals(
                 .count()
                 == 1
             && import_module_may_be_owners(import, owner, &test.file)
+            // The import must name the owner's module or a package that
+            // re-exports the class: a same-named class from any other module
+            // is a different class.
+            && import_source_module_matches_owner(import, owner, &test.file)
         {
             locals.push(import.alias.clone());
         }
@@ -3671,8 +3679,45 @@ pub(super) fn owner_class_locals(
                 locals.push(qualified);
             }
         }
+        // The class through a package that re-exports it (`import pluggy`,
+        // then `pluggy.PluginManager`; `from werkzeug import datastructures
+        // as ds`, then `ds.MultiDict`).
+        if let Some(receiver) = class_reexport_receiver(import, owner, class, &test.file) {
+            let qualified = format!("{receiver}.{class}");
+            if !test_rebinds_import_alias(test, &import.alias) && !locals.contains(&qualified) {
+                locals.push(qualified);
+            }
+        }
     }
     locals
+}
+
+/// The name an import binds to a package that re-exports the method owner's
+/// top-level `class` (`reexports.rs`): the bound module's full dotted path
+/// must be one of the owner's `class_reexport_modules` and must identify the
+/// owner for this test (#4566, #13706).
+fn class_reexport_receiver<'i>(
+    import: &'i PythonImport,
+    owner: &PythonOwner,
+    class: &str,
+    test_file: &Path,
+) -> Option<&'i str> {
+    if owner.class_reexport_modules.is_empty()
+        || class != owner.class_path
+        || import.alias.is_empty()
+        || import.imported == "*"
+    {
+        return None;
+    }
+    let bound = if import.source_module.is_empty() {
+        import.imported.clone()
+    } else {
+        format!("{}.{}", import.source_module, import.imported)
+    };
+    (owner.class_reexport_modules.contains(&bound)
+        && import_module_may_be_owners(import, owner, test_file)
+        && module_name_identifies_owner_for(owner, &bound, test_file))
+    .then_some(import.alias.as_str())
 }
 
 /// Whether `body` calls `method` on a receiver statically bound to the owner class

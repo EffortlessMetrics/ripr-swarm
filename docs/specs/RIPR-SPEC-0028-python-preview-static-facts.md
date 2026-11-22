@@ -474,7 +474,15 @@ A re-exported package name is shadowed like an src-layout short name: when a pla
 module of the same project (beside `src/` or at the repo root) resolves under the
 package's name, `from core import price` cannot be told apart from it, so the
 re-export identifies no owner and credits no test.
-Methods and module owners are never re-exported. The test must still call the owner's own name through
+Module owners are never re-exported. A method is not re-exported either, but
+its class is (#15967): a method of a top-level class the file defines exactly
+once carries that class's re-exporting packages, so `from pkg import Manager`
+or `import pkg` / `pkg.Manager(...)` binds a receiver to the owner's class the
+way `from pkg.manager import Manager` does. A class imported under the same
+name from any other source (another module, a package that binds a different
+class under the name, an unresolved module) is not the owner's class: a
+method call on its instance stays a name-level relation and reads no stronger
+than `weakly_exposed`. The test must still call the owner's own name through
 the package, so a test that only calls a sibling name from the same package
 stays unrelated, and a test that binds a local named like the package alias
 (a parameter, fixture or assignment) calls that local, not the package. Diff
