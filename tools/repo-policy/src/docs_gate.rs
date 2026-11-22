@@ -29,7 +29,6 @@ pub const RETAINED_PRODUCT_FREE_GATES: &[&str] = &[
     "check-output-contracts",
     "check-doc-artifacts",
     "check-doc-index",
-    "check-doc-roles",
     "check-readme-state",
     "check-badge-diff-policy",
     "check-release-targets",
@@ -178,6 +177,7 @@ pub fn plan(changed: &[String]) -> DocsGatePlan {
         has_disposition |= path == "policy/ripr-agent-disposition.toml";
     }
     if result.is_docs_eligible() {
+        result.gates.push("check-doc-roles");
         result.gates.push("check-text-encoding");
         result.gates.push("check-static-language");
         result.gates.push("markdown-links");
@@ -801,7 +801,7 @@ pub fn run_docs_gate(root: &Path, changed: &[String]) -> Result<DocsGateReport, 
             violations: Vec::new(),
         });
     }
-    let mut violations = Vec::new();
+    let mut violations = crate::doc_roles::staged_violations(root)?;
     let inventory = spec_inventory(root);
     for raw in changed {
         let rel = normalize(raw);
@@ -883,9 +883,80 @@ pub fn run_docs_gate_at_revision(
         Ok(tree) => tree,
         Err(reason) => return Ok(widen_report(&changed, vec![reason])),
     };
-    let result = run_docs_gate(&tree, &changed);
+    let result = verify_archived_roles(checkout, &head_id, &tree).map_or_else(
+        |reason| Ok(widen_report(&changed, vec![reason])),
+        |()| run_docs_gate(&tree, &changed),
+    );
     let _ = std::fs::remove_dir_all(&tree);
     result
+}
+
+/// Git archive honors export-ignore and export-subst. The whole-tree role check
+/// can discharge its obligation only when the role files have their Git bytes.
+fn verify_archived_roles(checkout: &Path, head: &str, tree: &Path) -> Result<(), String> {
+    let listing = offline_git()
+        .args(["ls-tree", "-rz", head, "--", "docs"])
+        .current_dir(checkout)
+        .output()
+        .map_err(|error| format!("cannot list committed role inputs: {error}"))?;
+    if !listing.status.success() {
+        return Err("cannot establish the committed role inputs".into());
+    }
+    let mut files = Vec::new();
+    let mut expected = Vec::new();
+    for record in listing
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|r| !r.is_empty())
+    {
+        let tab = record
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .ok_or("malformed git ls-tree role record")?;
+        let (header, path) = record.split_at(tab);
+        let path = path
+            .strip_prefix(b"\t")
+            .ok_or("missing git ls-tree role path")?;
+        if !(path == b"docs"
+            || path == b"docs/adr"
+            || path == b"docs/proposals"
+            || path.starts_with(b"docs/adr/")
+            || path.starts_with(b"docs/proposals/"))
+        {
+            continue;
+        }
+        let header = std::str::from_utf8(header).map_err(|error| error.to_string())?;
+        let path = std::str::from_utf8(path).map_err(|error| error.to_string())?;
+        let fields: Vec<_> = header.split_ascii_whitespace().collect();
+        let ["100644" | "100755", "blob", oid] = fields.as_slice() else {
+            return Err(format!(
+                "non-regular document-role input {path} requires full proof"
+            ));
+        };
+        if path.contains(['\\', ':']) {
+            return Err(format!(
+                "ambiguous document-role path {path:?} requires full proof"
+            ));
+        }
+        if crate::doc_roles::required_sections(Path::new(path)).is_none() {
+            continue;
+        }
+        files.push(tree.join(path));
+        expected.push(*oid);
+    }
+    if files.is_empty() {
+        return Ok(());
+    }
+    let hashes = offline_git()
+        .args(["hash-object", "--no-filters", "--"])
+        .args(files)
+        .current_dir(checkout)
+        .output()
+        .map_err(|error| format!("cannot verify archived role bytes: {error}"))?;
+    if !hashes.status.success() || !String::from_utf8_lossy(&hashes.stdout).lines().eq(expected) {
+        return Err("archived role inputs differ from the commit; full proof required".into());
+    }
+    Ok(())
 }
 
 fn widen_report(changed: &[String], reasons: Vec<String>) -> DocsGateReport {

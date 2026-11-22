@@ -1,0 +1,2 @@
+crates/ripr/src/analysis/new_test_target.rs|`package.name` must be a valid Cargo package name
+crates/ripr/src/analysis/new_test_target.rs|`package` must be a table

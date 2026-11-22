@@ -74,8 +74,8 @@ pub(crate) struct ReExportIndex {
     /// export. Kept separate from discovery, which still owns path precedence.
     indexed_modules: HashSet<String>,
     /// Extension stripping can collapse distinct real files. General owner
-    /// discovery keeps its existing behavior; strict enum identity refuses.
-    ambiguous_enum_modules: HashSet<String>,
+    /// discovery keeps its existing behavior; default-import and enum identity refuse.
+    ambiguous_modules: HashSet<String>,
     /// Actual runtime enum declarations and their statically named members.
     /// Export-list mentions and unresolved re-exports cannot create these facts.
     enum_bindings: HashMap<(String, String), Vec<String>>,
@@ -158,6 +158,22 @@ enum ExportResolution {
     Found(String, String),
     /// The chain is too deep, ambiguous, or otherwise not decidable.
     Unknown,
+}
+
+#[derive(Clone, Copy)]
+enum ExportLookup<'a> {
+    Owner,
+    DeclaredDefault,
+    Enum(&'a EnumBindingContext<'a>),
+}
+
+impl<'a> ExportLookup<'a> {
+    fn enum_context(self) -> Option<&'a EnumBindingContext<'a>> {
+        match self {
+            Self::Enum(context) => Some(context),
+            Self::Owner | Self::DeclaredDefault => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -270,7 +286,7 @@ impl ReExportIndex {
             .collect();
         let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
-        let mut ambiguous_enum_modules = HashSet::new();
+        let mut ambiguous_modules = HashSet::new();
         let mut outbound_calls: Vec<(PathBuf, OutboundImportCall)> = Vec::new();
         let mut commonjs_forwards: HashMap<String, String> = HashMap::new();
         let mut commonjs_own_names: HashMap<String, HashSet<String>> = HashMap::new();
@@ -284,7 +300,7 @@ impl ReExportIndex {
                 .insert(module.clone(), path.clone())
                 .is_some_and(|previous| previous != path)
             {
-                ambiguous_enum_modules.insert(module);
+                ambiguous_modules.insert(module);
             }
         }
         for relative in workspace_files {
@@ -369,7 +385,7 @@ impl ReExportIndex {
             local_exports,
             modules,
             indexed_modules,
-            ambiguous_enum_modules,
+            ambiguous_modules,
             enum_bindings,
             enum_imports,
             unstable_enum_roots,
@@ -839,7 +855,7 @@ impl ReExportIndex {
             return None;
         };
         let module = normalized_module_path(file);
-        if self.ambiguous_enum_modules.contains(&module) {
+        if self.ambiguous_modules.contains(&module) {
             return None;
         }
         // Owner.imports also carries synthetic re-export records for call
@@ -908,7 +924,7 @@ impl ReExportIndex {
                 0,
                 &mut stack,
                 &mocked,
-                Some(&context),
+                ExportLookup::Enum(&context),
             )
         } else {
             self.enum_local_binding(&binding_module, &name, 0, &mut stack, &context)
@@ -953,7 +969,7 @@ impl ReExportIndex {
     ) -> ExportResolution {
         let module = self.canonical_module(module);
         if (context.mocked)(&module)
-            || self.ambiguous_enum_modules.contains(&module)
+            || self.ambiguous_modules.contains(&module)
             || (context.check_stability
                 && self
                     .unstable_enum_roots
@@ -997,7 +1013,7 @@ impl ReExportIndex {
             hops + 1,
             stack,
             context.mocked,
-            Some(context),
+            ExportLookup::Enum(context),
         )
     }
 
@@ -1043,7 +1059,7 @@ impl ReExportIndex {
                         0,
                         &mut Vec::new(),
                         context.mocked,
-                        Some(&raw_context),
+                        ExportLookup::Enum(&raw_context),
                     ) {
                         ExportResolution::Found(module, name) => {
                             module == desired.0 && name == desired.1
@@ -1170,7 +1186,7 @@ impl ReExportIndex {
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
     ) -> ExportResolution {
-        self.resolve_export_with_context(module, name, hops, stack, mocked, None)
+        self.resolve_export_with_context(module, name, hops, stack, mocked, ExportLookup::Owner)
     }
 
     fn resolve_export_with_context(
@@ -1180,8 +1196,9 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
-        enum_context: Option<&EnumBindingContext<'_>>,
+        lookup: ExportLookup<'_>,
     ) -> ExportResolution {
+        let enum_context = lookup.enum_context();
         let module = self.canonical_module(module);
         if !self.indexed_modules.contains(&module) {
             // Unknown is contagious across star siblings; NotFound would
@@ -1189,7 +1206,7 @@ impl ReExportIndex {
             return ExportResolution::Unknown;
         }
         if mocked(&module)
-            || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
+            || (!matches!(lookup, ExportLookup::Owner) && self.ambiguous_modules.contains(&module))
             || (enum_context.is_some_and(|context| context.check_stability)
                 && self
                     .unstable_enum_roots
@@ -1206,8 +1223,7 @@ impl ReExportIndex {
             return ExportResolution::NotFound;
         }
         stack.push(frame);
-        let mut resolution =
-            self.resolve_export_frame(&module, name, hops, stack, mocked, enum_context);
+        let mut resolution = self.resolve_export_frame(&module, name, hops, stack, mocked, lookup);
         if let (Some(context), ExportResolution::Found(target_module, target_name)) =
             (enum_context, &resolution)
             && context.check_stability
@@ -1241,8 +1257,9 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
-        enum_context: Option<&EnumBindingContext<'_>>,
+        lookup: ExportLookup<'_>,
     ) -> ExportResolution {
+        let enum_context = lookup.enum_context();
         // Import-then-export (#15922): the exported name is the import
         // binding, so it resolves in the imported module like an explicit
         // `export { N as name } from`. Checked before the module's own
@@ -1263,11 +1280,14 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 // The import asserts the source exports the name.
-                ExportResolution::NotFound => {
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::Owner) => {
                     ExportResolution::Found(self.canonical_module(source), original.clone())
+                }
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::DeclaredDefault) => {
+                    ExportResolution::Unknown
                 }
                 resolved => resolved,
             };
@@ -1290,13 +1310,16 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 // An explicit `export { N } from './A'` asserts that A
                 // exports N; when A records no deeper fact for it, A's own
                 // binding is the named target.
-                ExportResolution::NotFound if enum_context.is_none() => {
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::Owner) => {
                     ExportResolution::Found(self.canonical_module(source), original.clone())
+                }
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::DeclaredDefault) => {
+                    ExportResolution::Unknown
                 }
                 resolved => resolved,
             };
@@ -1328,7 +1351,7 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 // The forward asserts the source's `module.exports` is this
                 // module's: an unrecorded name is the source's own binding
@@ -1362,7 +1385,7 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 ExportResolution::NotFound => {}
                 ExportResolution::Unknown => return ExportResolution::Unknown,
@@ -1406,6 +1429,11 @@ impl ReExportIndex {
             return false;
         };
         let owner_module = normalized_module_path(&owner.file);
+        // Default imports only gain a barrel relation across distinct modules.
+        // A direct import (including a directory index) keeps its own rules.
+        if imported_name == "default" && self.canonical_module(&import_module) == owner_module {
+            return false;
+        }
         // The import names the owner module directly. A plain same-name
         // import is owned by the direct/imported-call relations (with their
         // own identity guards); only an owner-file RENAME export
@@ -1423,9 +1451,21 @@ impl ReExportIndex {
         };
         let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
         let mut stack = Vec::new();
-        let ExportResolution::Found(target_module, target_name) =
-            self.resolve_export(&import_module, imported_name, 0, &mut stack, &mocked)
-        else {
+        // Default imports need an observed export at the end of the chain.
+        // An explicit forwarding clause can request a name its source never exports.
+        let lookup = if imported_name == "default" {
+            ExportLookup::DeclaredDefault
+        } else {
+            ExportLookup::Owner
+        };
+        let ExportResolution::Found(target_module, target_name) = self.resolve_export_with_context(
+            &import_module,
+            imported_name,
+            0,
+            &mut stack,
+            &mocked,
+            lookup,
+        ) else {
             return false;
         };
         // The chain must land on the owner's file and the owner's name.
@@ -2714,9 +2754,10 @@ pub(crate) fn related_test_candidates<'a>(
             .as_ref()
             .is_none_or(|scope| scope.contains(&test.file))
     };
-    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = relation_index
-        .candidates(owner, all_tests)
-        .into_iter()
+    let indexed = relation_index.candidates(owner, all_tests);
+    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = indexed
+        .iter()
+        .copied()
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
@@ -2761,6 +2802,21 @@ pub(crate) fn related_test_candidates<'a>(
             })
             .collect();
     }
+    if candidates.is_empty()
+        && let (Some(map), Some(scope)) = (alias_map, &package_scope)
+        && let Some(package) = &scope.owner_package
+        && let Some(source) = map.build_source_in(package)
+        && normalized_path_eq(&owner.file, source)
+    {
+        candidates = indexed
+            .into_iter()
+            .filter_map(|test| {
+                build_entry_call(test, owner, reexport_index, map, scope.workspace_root).map(
+                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
+                )
+            })
+            .collect();
+    }
     if candidates.is_empty() {
         candidates = all_tests
             .iter()
@@ -2774,6 +2830,54 @@ pub(crate) fn related_test_candidates<'a>(
     }
     sort_related_candidates(&mut candidates);
     candidates
+}
+
+/// Only the source relationship is known. Reuse the direct-call binding guards
+/// on a view of the import; never expose the redirect to the oracle, barrel or
+/// module-entry graph as an ordinary runtime module identity.
+fn build_entry_call(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexports: &ReExportIndex,
+    map: &TsAliasMap,
+    root: &Path,
+) -> Option<TypeScriptRelationKind> {
+    if !test.mocks_in_file.is_empty() {
+        return None;
+    }
+    for (index, import) in test.imports_in_file.iter().enumerate() {
+        if import.namespace || !is_relative_specifier(&import.source) {
+            continue;
+        }
+        let Some(base) = relative_import_base(&test.file, &import.source) else {
+            continue;
+        };
+        let module = normalized_path(&base);
+        let Some(source) = map
+            .own_build_entry(&test.file, &module)
+            .and_then(|entry| entry.source.as_deref())
+        else {
+            continue;
+        };
+        if !normalized_path_eq(&owner.file, source) || file_module_exists(root, &module) {
+            continue;
+        }
+        let mut imports = test.imports_in_file.to_vec();
+        imports[index].source = relative_module_specifier(&test.file, source);
+        let mut view = test.clone();
+        view.imports_in_file = imports.into();
+        if matches!(
+            owner_call_relation(&view, owner, reexports, Some(map), Some(root)),
+            Some(
+                TypeScriptRelationKind::DirectOwnerCall
+                    | TypeScriptRelationKind::ImportedOwnerCall
+                    | TypeScriptRelationKind::ImportAliasOwnerCall
+            )
+        ) {
+            return Some(TypeScriptRelationKind::PackageBuildSource);
+        }
+    }
+    None
 }
 
 pub(crate) fn sort_related_candidates(candidates: &mut [TypeScriptRelatedCandidate<'_>]) {
@@ -2959,8 +3063,10 @@ pub(crate) fn owner_call_relation(
         let Some(imported_name) = import.imported.as_deref() else {
             return false;
         };
-        if imported_name == "default" {
-            return false; // default imports are out of scope for re-export tracing
+        if imported_name == "default"
+            && (!owner.exported_as_default || owner.commonjs_default_export)
+        {
+            return false;
         }
         // The local alias in the test is what gets called; check the call site.
         let local = &import.local;
@@ -2969,7 +3075,11 @@ pub(crate) fn owner_call_relation(
         }
         // Shadow guard (#4102): a test-body declaration of the local name
         // reaches the shadow, not the re-exported owner.
-        if local_identifier_declared_in_test_body(&test.body_text, local) {
+        if local_identifier_declared_in_test_body(&test.body_text, local)
+            || (imported_name == "default"
+                && (local_destructured_in_test_body(&test.body_text, local)
+                    || body_declares_class_named(&test.body_text, local)))
+        {
             return false;
         }
         // An enclosing `describe`/`beforeEach` binding of the local name
@@ -5752,6 +5862,9 @@ pub(crate) fn owner_path_disposition(
     if let Some(view) = test.reach_view() {
         return owner_path_disposition(&view, relation, owner, alias_map, workspace_root);
     }
+    if relation == TypeScriptRelationKind::PackageBuildSource {
+        return TypeScriptOwnerPathDisposition::UnresolvedAliasOrReexport;
+    }
     if relation == TypeScriptRelationKind::ModuleEntryCall {
         return TypeScriptOwnerPathDisposition::ModuleEntryPath;
     }
@@ -5803,7 +5916,9 @@ fn ts_relation_to_domain(
         // rename is syntactically explicit and the call is to the local alias —
         // same certainty as DirectOwnerCall.
         TypeScriptRelationKind::ImportAliasOwnerCall => RelationReason::DirectOwnerCall,
-        TypeScriptRelationKind::ImportedOwnerCall => RelationReason::ImportPathAffinity,
+        TypeScriptRelationKind::ImportedOwnerCall | TypeScriptRelationKind::PackageBuildSource => {
+            RelationReason::ImportPathAffinity
+        }
         TypeScriptRelationKind::ModuleValueReference => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ReceiverOwnerCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ClassMethodCall => RelationReason::DirectOwnerCall,
@@ -5832,7 +5947,8 @@ fn ts_relation_to_domain(
         TypeScriptRelationKind::ModuleValueUse
         | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
-        | TypeScriptRelationKind::TestName => RelationConfidence::Low,
+        | TypeScriptRelationKind::TestName
+        | TypeScriptRelationKind::PackageBuildSource => RelationConfidence::Low,
     };
     (Some(reason), Some(confidence))
 }
@@ -6351,9 +6467,18 @@ fn normalized_relative_import_module_uncached(
             && !escaped_root
             && !absolute
             && module == joined
-            && let Some(resolved) = resolve_directory_module(root, &module)
         {
-            return Some(resolved);
+            if alias_map
+                .and_then(|map| map.own_build_entry(test_file, &module))
+                .is_some()
+                && !file_module_exists(root, &module)
+            {
+                // A declared source is not the loaded build artifact.
+                return None;
+            }
+            if let Some(resolved) = resolve_directory_module(root, &module) {
+                return Some(resolved);
+            }
         }
         // A relative import of `tsc` build output whose target does not
         // exist maps back to its TypeScript source through the root
@@ -6756,7 +6881,7 @@ fn index_module(root: &Path, module: &str) -> Option<String> {
 
 /// Whether `<module>.<ext>` exists as a regular file for a supported
 /// extension.
-fn file_module_exists(root: &Path, module: &str) -> bool {
+pub(super) fn file_module_exists(root: &Path, module: &str) -> bool {
     !module.is_empty()
         && DIRECTORY_MODULE_EXTENSIONS
             .iter()

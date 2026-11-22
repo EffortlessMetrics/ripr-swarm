@@ -1,0 +1,2 @@
+crates/ripr/src/app/task_first.rs|continue selection refused: attempt row `{directory}` is invalid: {error}
+crates/ripr/src/app/task_first.rs|could not establish the analyzed diff origin
