@@ -4410,6 +4410,23 @@ fn spy_call_close_offset(after_open: &str) -> Option<usize> {
 /// optional `await` and the needle's `vi.` / `jest.` qualifier). A member
 /// tail (`obj.spy = ...`), a compound operator (`==`, `=>`), or any other
 /// prefix returns `None` (conservative: only clear bindings count).
+/// The name a `const` / `let` / `var` declaration with a type annotation
+/// binds, when `assigned` (the text before the `=`) ends with one on its
+/// last line: `spy` for `const spy: ReturnType<typeof vi.spyOn>`.
+fn annotated_declaration_name(assigned: &str) -> Option<String> {
+    let line = assigned.rsplit(['\n', ';']).next()?.trim_start();
+    let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+    let declarator = ["const ", "let ", "var "]
+        .into_iter()
+        .find_map(|keyword| line.strip_prefix(keyword))?;
+    let (name, annotation) = declarator.split_once(':')?;
+    let name = name.trim();
+    (!name.is_empty()
+        && !annotation.contains('=')
+        && name.chars().all(is_javascript_identifier_char))
+    .then(|| name.to_string())
+}
+
 fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
     let mut prefix = body[..call_start].trim_end();
     // The qualified needle forms leave the callee qualifier (`vi.` / `jest.`)
@@ -4427,6 +4444,11 @@ fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
         prefix = stripped;
     }
     let assigned = prefix.strip_suffix('=')?.trim_end();
+    // `const spy: ReturnType<typeof vi.spyOn> = ...`: the annotation ends in
+    // `>` and hides the name from the scan below.
+    if let Some(name) = annotated_declaration_name(assigned) {
+        return Some(name);
+    }
     // A compound operator ending in `=` (`==`, `===`, `!=`, `<=`, `>=`,
     // `=>`, `+=`, ...) never binds the call result.
     if assigned
@@ -4928,7 +4950,7 @@ pub(crate) fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
 /// before the import call. Requires the import call to be the declarator's
 /// whole initializer on its line (optionally wrapped in `await`); a trailing
 /// member access like `.default` fails the scan (fail-closed).
-fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
+pub(crate) fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
     let line_start = body[..at].rfind('\n').map_or(0, |offset| offset + 1);
     let trimmed = body[line_start..at].trim();
     // The import must actually be awaited: `const m = import(...)` binds a

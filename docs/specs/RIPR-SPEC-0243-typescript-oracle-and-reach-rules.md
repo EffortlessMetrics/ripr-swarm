@@ -1100,18 +1100,21 @@ replacements read are `stub(x, "owner")`, a three-argument
 `replace(x, "owner", fake)`, `replaceProperty` and `defineProperty` naming the
 owner, `mock.method(x, "owner", fake)` (or with two arguments when the file
 mentions `mockImplementation`), a `spyOn(x, "owner")` fabricated anywhere in
-the file, directly or through the variable it is bound to, and a member
-assignment `x.owner = ...`. The target `x` counts when it is rooted at a
-local the file imports (a plain identifier, a dotted path, a cast) or is not
-rooted at an identifier at all (a call result such as `require("./m")`); a
+the file, directly or through the variable it is bound to (with or without a
+type annotation), and a member assignment `x.owner = ...`. The target `x`
+counts when it is rooted at a local the file imports (a plain identifier, a
+dotted path, a cast), at a local the test body binds with
+`const x = await import(...)`, or is not rooted at an identifier at all (a call result such as `require("./m")`); a
 global or a body-local object (`console`, `Date`, a fixture) is not the
 owner's module. A whole-object stub `stub(x)` or a member name that is not a
 plain string literal replaces every member of `x`. A default-exported owner
 is also named by `"default"`. The finding carries
 `typescript_spy_fabricated_observer`. `spy(x, "owner")`, a two-argument
-`mock.method` with no `mockImplementation` in the file, a two-argument
-`replace` (`String.prototype.replace`) and a replacement naming another
-member still relate. Not read: `Object.assign(x, { owner: fake })`, a
+`mock.method` with no `mockImplementation` in the file, a `mock.method` whose
+third argument is an options object literal (`{ times: 1 }`), a
+`defineProperty` whose descriptor literal supplies no `value`, `get` or `set`,
+a two-argument `replace` (`String.prototype.replace`), a replacement naming
+another member and a replacement on a line that is a comment still relate. Not read: `Object.assign(x, { owner: fake })`, a
 replacement made by a helper in another file, and a restore before a sibling
 test's call (that sibling loses its relation). The fact is text-level and can
 only withhold.

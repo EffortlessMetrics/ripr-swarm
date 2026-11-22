@@ -37,6 +37,16 @@ impl Workspace {
     /// a single test whose body is `body`. `export_keyword` is `export` or
     /// `export default`.
     fn new(export_keyword: &str, prelude: &str, body: &str) -> Result<Self, String> {
+        Self::with_source_tail(export_keyword, "", prelude, body)
+    }
+
+    /// [`Workspace::new`] with `source_tail` appended to the owner's module.
+    fn with_source_tail(
+        export_keyword: &str,
+        source_tail: &str,
+        prelude: &str,
+        body: &str,
+    ) -> Result<Self, String> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let parent = std::env::temp_dir();
         fs::create_dir_all(&parent)
@@ -59,14 +69,14 @@ impl Workspace {
             root,
             "src/discount.ts",
             &format!(
-                "{export_keyword} function applyDiscount(amount: number, threshold: number): number {{\n  if (amount >= threshold) {{\n    return amount - 10;\n  }}\n  return amount;\n}}\n"
+                "{export_keyword} function applyDiscount(amount: number, threshold: number): number {{\n  if (amount >= threshold) {{\n    return amount - 10;\n  }}\n  return amount;\n}}\n{source_tail}"
             ),
         )?;
         write_file(
             root,
             "test/pricing.test.ts",
             &format!(
-                "import {{ describe, it, expect, vi, beforeEach, beforeAll }} from 'vitest';\n{prelude}\n\ndescribe('discount', () => {{\n  it('discounts at the threshold', () => {{\n    {body}\n  }});\n}});\n"
+                "import {{ describe, it, expect, vi, beforeEach, beforeAll }} from 'vitest';\n{prelude}\n\ndescribe('discount', () => {{\n  it('discounts at the threshold', async () => {{\n    {body}\n  }});\n}});\n"
             ),
         )?;
         write_file(
@@ -364,6 +374,22 @@ fn call_through_spies_and_other_targets_stay_exposed() -> Result<(), String> {
         ),
         ("anonymous stub", "const callback = sinon.stub();"),
         (
+            "stub in a line comment",
+            "// sinon.stub(pricing, 'applyDiscount').returns(90);",
+        ),
+        (
+            "assignment in a block comment",
+            "/* pricing.applyDiscount = () => 90; */",
+        ),
+        (
+            "mock.method with an options object",
+            "mock.method(pricing, 'applyDiscount', { times: 1 });",
+        ),
+        (
+            "defineProperty that only sets flags",
+            "Object.defineProperty(pricing, 'applyDiscount', { writable: false });",
+        ),
+        (
             "comparison of the member",
             "if (pricing.applyDiscount === undefined) { throw new Error('missing'); }",
         ),
@@ -376,4 +402,35 @@ fn call_through_spies_and_other_targets_stay_exposed() -> Result<(), String> {
         )?;
     }
     Ok(())
+}
+
+#[test]
+fn annotated_spy_binding_fabricated_in_the_test_withholds() -> Result<(), String> {
+    assert_withheld(
+        "export",
+        &format!(
+            "{NAMESPACE_IMPORT}\nconst spy: ReturnType<typeof vi.spyOn> = vi.spyOn(pricing, 'applyDiscount');"
+        ),
+        &format!("spy.mockReturnValue(90);\n    {NAMESPACE_CALL}"),
+        "annotated spy binding",
+    )
+}
+
+#[test]
+fn replaced_dynamic_import_binding_withholds_the_relation() -> Result<(), String> {
+    let binding = "const pricing = await import('../src/discount');";
+    assert_exposed(
+        "export",
+        "",
+        &format!("{binding}\n    {NAMESPACE_CALL}"),
+        "dynamic import binding, no stub",
+    )?;
+    assert_withheld(
+        "export",
+        "",
+        &format!(
+            "{binding}\n    sinon.stub(pricing, 'applyDiscount').returns(90);\n    {NAMESPACE_CALL}"
+        ),
+        "stub on a dynamic import binding",
+    )
 }

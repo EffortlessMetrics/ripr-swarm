@@ -39,4 +39,32 @@ fn replacement_names_record_the_documented_entry_forms() {
         nothing
     );
     assert_eq!(names("restub(ns, 'run'); stubbed(ns, 'run');"), nothing);
+    assert_eq!(names("// sinon.stub(ns, 'run');"), nothing);
+    assert_eq!(names("/* ns.run = fake; */"), nothing);
+    assert_eq!(names("/**\n * sinon.stub(ns, 'run');\n */"), nothing);
+    assert_eq!(names("mock.method(ns, 'run', { times: 1 });"), nothing);
+    assert_eq!(
+        names("mock.method(ns, 'run', fake, { times: 1 });"),
+        ["ns.run"]
+    );
+    assert_eq!(
+        names("Object.defineProperty(ns, 'run', { writable: false });"),
+        nothing
+    );
+    assert_eq!(
+        names("Object.defineProperty(ns, 'run', { value: fake });"),
+        ["ns.run"]
+    );
+    assert_eq!(
+        names("Object.defineProperty(ns, 'run', { get: () => fake });"),
+        ["ns.run"]
+    );
+    assert_eq!(
+        names("Object.defineProperty(ns, 'run', descriptor);"),
+        ["ns.run"]
+    );
+    assert_eq!(
+        names("const s: jest.SpyInstance<number> = jest.spyOn(ns, 'run');\ns.mockReturnValue(1);"),
+        ["ns.run"]
+    );
 }

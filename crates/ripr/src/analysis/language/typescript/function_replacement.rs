@@ -21,7 +21,8 @@
 //! before a sibling test calls it (that sibling loses its relation).
 
 use super::related_tests::{
-    has_member_call_boundary, is_javascript_identifier_char, owner_spy_call_fabricated,
+    awaited_import_binding_before, has_member_call_boundary, is_javascript_identifier_char,
+    owner_spy_call_fabricated,
 };
 use super::{TypeScriptOwner, TypeScriptTest};
 
@@ -53,9 +54,11 @@ const MAX_ARGUMENT_BYTES: usize = 8192;
 ///
 /// The recognised replacement calls are `stub`, a three-argument `replace`
 /// (a two-argument `replace` is `String.prototype.replace`), `replaceProperty`,
-/// `defineProperty`, `mock.method` with an implementation argument (or with
-/// none when the file mentions `mockImplementation`), and a `spyOn` whose
-/// value is fabricated anywhere in the file.
+/// a `defineProperty` whose descriptor is not a flags-only object literal,
+/// `mock.method` with an implementation argument (or with none when the file
+/// mentions `mockImplementation`; an object-literal third argument is Node's
+/// options bag and replaces nothing), and a `spyOn` whose value is fabricated
+/// anywhere in the file. A match on a comment line is not read.
 pub(crate) fn replaced_function_member_names(source: &str) -> Vec<String> {
     let mut names = std::collections::BTreeSet::new();
     let file_reimplements_mocks = source.contains("mockImplementation");
@@ -81,6 +84,9 @@ pub(crate) fn replaced_function_member_names(source: &str) -> Vec<String> {
             if word == "method" && !source[..idx].ends_with("mock.") {
                 continue;
             }
+            if in_comment_line(source, idx) {
+                continue;
+            }
             let Some(inner) = rest.trim_start().strip_prefix('(') else {
                 continue;
             };
@@ -94,10 +100,17 @@ pub(crate) fn replaced_function_member_names(source: &str) -> Vec<String> {
             let arguments = top_level_arguments(&inner[..end]);
             let replaces = match word {
                 "stub" => !arguments.is_empty(),
-                "replace" | "replaceProperty" | "defineProperty" => arguments.len() >= 3,
-                "method" => {
-                    arguments.len() >= 3 || (arguments.len() == 2 && file_reimplements_mocks)
-                }
+                "replace" | "replaceProperty" => arguments.len() >= 3,
+                // A descriptor that only sets flags keeps the function.
+                "defineProperty" => arguments
+                    .get(2)
+                    .is_some_and(|descriptor| !flags_only_descriptor(descriptor)),
+                // A third argument that is an object literal is Node's
+                // options bag (`{ times: 1 }`): the original still runs.
+                "method" => match arguments.get(2) {
+                    Some(third) => arguments.len() >= 4 || !third.starts_with('{'),
+                    None => arguments.len() == 2 && file_reimplements_mocks,
+                },
                 _ => arguments.len() >= 2 && owner_spy_call_fabricated(source, idx, inner),
             };
             if !replaces {
@@ -115,7 +128,7 @@ pub(crate) fn replaced_function_member_names(source: &str) -> Vec<String> {
             .take_while(|ch| is_javascript_identifier_char(*ch))
             .map(char::len_utf8)
             .sum();
-        if len == 0 || !assignment_follows(&rest[len..]) {
+        if len == 0 || !assignment_follows(&rest[len..]) || in_comment_line(source, idx) {
             continue;
         }
         names.insert(replacement_entry(
@@ -128,7 +141,8 @@ pub(crate) fn replaced_function_member_names(source: &str) -> Vec<String> {
 
 /// `true` when the test's file replaces the owner function: an entry names
 /// the owner (or `default` for a default-exported owner) through a local the
-/// file imports, or on a target that is not rooted at an identifier. A
+/// file imports or the test body binds with `await import(...)`, or on a
+/// target that is not rooted at an identifier. A
 /// global or body-local target (`console`, `Date`, a fixture object) is not
 /// the owner's module. The import's source is not compared with the owner's
 /// module, so a barrel namespace (`import * as lib from '../src'`) is covered
@@ -147,13 +161,51 @@ pub(crate) fn owner_function_replaced_in_file(
             None => names_owner(entry),
             Some((local, member)) => {
                 (member == "*" || names_owner(member))
-                    && test
+                    && (test
                         .imports_in_file
                         .iter()
                         .any(|import| import.local == local)
+                        || awaited_import_bindings(&test.body_text).any(|binding| binding == local))
             }
         }
     })
+}
+
+/// `true` when the line holding `idx` is a comment up to `idx`: it starts
+/// with `//`, `/*` or a block comment's leading `*`. A trailing comment and
+/// a block comment line with no leading `*` are still read, which only
+/// withholds.
+fn in_comment_line(source: &str, idx: usize) -> bool {
+    let line_start = source[..idx].rfind('\n').map_or(0, |offset| offset + 1);
+    let prefix = source[line_start..idx].trim_start();
+    prefix.starts_with("//") || prefix.starts_with("/*") || prefix.starts_with('*')
+}
+
+/// `true` when a `defineProperty` descriptor is an object literal that
+/// supplies no `value`, `get` or `set`, so the property keeps its function.
+/// Any other descriptor (an identifier, a call, a spread) may replace it.
+fn flags_only_descriptor(descriptor: &str) -> bool {
+    descriptor.starts_with('{')
+        && !descriptor.contains("...")
+        && !["value", "get", "set"].iter().any(|key| {
+            descriptor.match_indices(key).any(|(at, _)| {
+                !descriptor[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_javascript_identifier_char)
+                    && !descriptor[at + key.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_javascript_identifier_char)
+            })
+        })
+}
+
+/// Locals a test body binds with `const m = await import("...")`, the
+/// declarator form the dynamic-import relation credits a call through.
+fn awaited_import_bindings(body: &str) -> impl Iterator<Item = String> + '_ {
+    body.match_indices("import(")
+        .filter_map(move |(at, _)| awaited_import_binding_before(body, at))
 }
 
 /// The entry for a replacement of `member` (every member when `None`) on

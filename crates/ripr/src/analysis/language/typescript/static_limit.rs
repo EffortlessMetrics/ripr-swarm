@@ -685,7 +685,11 @@ pub(crate) fn named_limitations_for_spy_fabrication_from_candidates(
         // #15939: the same limitation for a replacement the
         // spy guard does not read (a stub, a member assignment, a spy
         // fabricated in a hook).
-        if super::function_replacement::owner_function_replaced_in_file(test, owner) {
+        if !matches!(
+            owner.owner_kind,
+            OwnerKind::Method | OwnerKind::ClassMethod | OwnerKind::ModuleFunction
+        ) && super::function_replacement::owner_function_replaced_in_file(test, owner)
+        {
             limitations.push(TypeScriptNamedLimitation {
                 name: "typescript_spy_fabricated_observer",
                 sample_source: format!("{}:{}", normalized_path(&test.file), test.line),
