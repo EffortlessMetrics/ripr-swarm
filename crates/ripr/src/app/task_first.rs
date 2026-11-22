@@ -8047,4 +8047,42 @@ pub(crate) mod tests {
         );
         Ok(())
     }
+
+    /// #15488: the gap-bound branch of `RepairStartGate::check` applies the
+    /// exact-top-level gate before it returns the seam-inventory `None`, so a
+    /// gap-bound start under a subdirectory root refuses with the cage's own
+    /// reason instead of being admitted by the namespace shortcut.
+    #[test]
+    fn gap_bound_start_refuses_a_subdirectory_root() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-gap-bound-subdir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).map_err(|error| error.to_string())?;
+        run_git(&root, &["init", "-q"])?;
+        let gate = RepairStartGate::real(&root.join("sub"));
+        let refusal = gate
+            .check("gap:typescript:typescript_preview:abc123")
+            .ok_or("a gap-bound start under a subdirectory root must refuse")?;
+        if !refusal.reason.contains("not the exact Git top-level") {
+            return Err(format!(
+                "the refusal must name the exact-top-level rule: {}",
+                refusal.reason
+            ));
+        }
+        // Control: the same subject at the top-level is not refused by the
+        // root gate (the seam-inventory shortcut still admits it).
+        let top = RepairStartGate::real(&root);
+        if top.check("gap:typescript:typescript_preview:abc123").is_some() {
+            return Err("a gap-bound start at the top-level must not hit the root gate".to_string());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 }

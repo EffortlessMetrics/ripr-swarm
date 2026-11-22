@@ -1236,14 +1236,14 @@ fn subdir_check_withholds_the_seam_start_and_names_the_top_level() -> Result<(),
 /// named first. The top-level gate applies only where a start would otherwise
 /// be printed, so it does not rewrite this reason.
 #[test]
-fn committed_only_check_refuses_the_seam_route_over_dirty_files() -> Result<(), String> {
+fn committed_only_check_at_a_subdirectory_root_refuses_the_seam_route() -> Result<(), String> {
     let repo = outer_repo_with_subdir_root(true)?;
     let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD~1"])?;
     assert!(
         !check.contains("Commit your production change")
             && !check.contains("\n  ripr repair ")
             && check.contains("No strong assertion was detected"),
-        "a committed-only run must refuse the seam route over dirty files:\n{check}"
+        "a committed-only run at a subdirectory root must refuse the seam route:\n{check}"
     );
     let json = repo.ripr(&[
         "check", "--root", "crate", "--base", "HEAD~1", "--format", "json",
