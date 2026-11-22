@@ -845,8 +845,8 @@ const MAX_FIXTURE_FREE_MODULES: usize = 256;
 /// registers from an imported name is a fixture some module defined, so a
 /// closure without one hands the conftest plain objects only. A
 /// standard-library module no workspace file shadows brings none either.
-/// Fails closed for a relative import, any other module outside the
-/// workspace (named by the scope import or anywhere in the closure, since a
+/// Fails closed for an unresolved relative import, any other module outside
+/// the workspace (named by the scope import or anywhere in the closure, since a
 /// third-party module can hand a fixture on), and a closure larger than
 /// [`MAX_FIXTURE_FREE_MODULES`].
 fn import_brings_no_fixture(
@@ -907,6 +907,16 @@ fn import_brings_no_fixture(
             if !parent_in_workspace && !unshadowed_stdlib(module) {
                 return false;
             }
+        }
+        // Loading `a.b.c` runs `a/__init__.py` and `a/b/__init__.py` first,
+        // and a name read off a parent package is whatever they bound.
+        // A parent with no fixture facts of its own has nothing to read.
+        let mut parent = module;
+        while let Some((prefix, _)) = parent.rsplit_once('.') {
+            if !files_of(prefix).is_empty() {
+                pending.push(prefix);
+            }
+            parent = prefix;
         }
         for file in files {
             if !seen_files.insert(file) {

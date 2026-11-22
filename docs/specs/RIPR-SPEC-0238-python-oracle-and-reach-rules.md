@@ -747,14 +747,16 @@ This order is the existing behavior and is normative:
   file but the fixture's own binds the name by import or assignment;
   every `from` import comes from the owner's module, a package that
   re-exports the owner's class, pytest, or a module that can bring no
-  fixture (#15967): an absolute, non-star import of a standard-library
-  module, or of a workspace module whose import closure (at most 256
-  modules) defines no fixture, has no star import or other opaque
-  construct, and imports only workspace or standard-library modules
-  (never pytest or a conftest). A relative import, a module anywhere in
-  the closure that resolves to no workspace file and is not standard
-  library, and a standard-library name a workspace file also answers to
-  whose closure has one of these hazards keep the limit; and no file
+  fixture (#15967): a non-star import of a standard-library module, or
+  of a workspace module (a relative import is read as the module it
+  resolves to) whose import closure (at most 256 modules, with the
+  `__init__.py` of every parent package that loading them runs) defines
+  no fixture, has no star import or other opaque construct, and imports
+  only workspace or standard-library modules (never pytest or a
+  conftest). An import that resolves to no workspace file and is not
+  standard library, such a module anywhere in the closure, and a
+  standard-library name a workspace file also answers to whose closure
+  has one of these hazards keep the limit; and no file
   star-imports, declares `pytest_plugins` or `pytestmark`, defines a
   `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
   `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.

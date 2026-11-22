@@ -121,6 +121,86 @@ fn a_same_named_class_from_another_module_is_not_the_owner_class() -> Result<(),
 }
 
 #[test]
+fn a_rival_project_package_of_the_same_name_does_not_identify_the_owner() -> Result<(), String> {
+    // Project `b` installs its own `pkg`; its tests never load project `a`'s.
+    for (case, import, class) in [
+        ("named import", "from pkg import Manager", "Manager"),
+        ("package receiver", "import pkg", "pkg.Manager"),
+    ] {
+        let test = body_test(import, class);
+        let files = [
+            ("a/pyproject.toml", "[project]\nname = \"a\"\n"),
+            ("b/pyproject.toml", "[project]\nname = \"b\"\n"),
+            ("a/pkg/manager.py", MANAGER_PY),
+            ("a/pkg/__init__.py", "from .manager import Manager\n"),
+            ("b/pkg/__init__.py", RIVAL_PY),
+            ("b/tests/test_manager.py", test.as_str()),
+        ];
+        let finding =
+            analyze_one_line("class-identity-two-projects", &files, "a/pkg/manager.py", 7)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{case}");
+        // Control: the same test inside project `a` binds the owner's class.
+        let files = [
+            ("a/pyproject.toml", "[project]\nname = \"a\"\n"),
+            ("b/pyproject.toml", "[project]\nname = \"b\"\n"),
+            ("a/pkg/manager.py", MANAGER_PY),
+            ("a/pkg/__init__.py", "from .manager import Manager\n"),
+            ("b/pkg/__init__.py", RIVAL_PY),
+            ("a/tests/test_manager.py", test.as_str()),
+        ];
+        let finding = analyze_one_line(
+            "class-identity-two-projects-own",
+            &files,
+            "a/pkg/manager.py",
+            7,
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{case} in its own project"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_package_name_taken_from_its_parent_is_not_a_class_receiver() -> Result<(), String> {
+    // `from pkg import api` binds what `pkg/__init__.py` put under `api`,
+    // here another module with a class of the same name.
+    let test = body_test("from pkg import api", "api.Manager");
+    let files = [
+        ("src/pkg/api/impl.py", MANAGER_PY),
+        ("src/pkg/api/__init__.py", "from .impl import Manager\n"),
+        ("src/pkg/legacy.py", RIVAL_PY),
+        ("src/pkg/__init__.py", "from . import legacy as api\n"),
+        ("tests/test_manager.py", test.as_str()),
+    ];
+    let finding = analyze_one_line(
+        "class-identity-parent-binding",
+        &files,
+        "src/pkg/api/impl.py",
+        7,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // Control: the plain import of the same package binds the package.
+    let test = body_test("import pkg.api", "pkg.api.Manager");
+    let files = [
+        ("src/pkg/api/impl.py", MANAGER_PY),
+        ("src/pkg/api/__init__.py", "from .impl import Manager\n"),
+        ("src/pkg/__init__.py", ""),
+        ("tests/test_manager.py", test.as_str()),
+    ];
+    let finding = analyze_one_line(
+        "class-identity-parent-control",
+        &files,
+        "src/pkg/api/impl.py",
+        7,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
 fn a_package_that_binds_another_class_under_the_name_does_not_identify_the_owner()
 -> Result<(), String> {
     // The package sits above the owner's module, but the `Manager` it
@@ -183,6 +263,52 @@ fn a_class_name_the_module_defines_twice_is_not_followed_through_a_reexport() ->
         line,
     )?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    // The module replaces its class after defining it: the package exports
+    // the replacement.
+    for (case, tail) in [
+        (
+            "import after the definition",
+            "from .legacy import Manager\n",
+        ),
+        ("assignment after the definition", "Manager = object\n"),
+    ] {
+        let replaced = format!("{MANAGER_PY}\n\n{tail}");
+        let finding = is_blocked_finding(
+            "class-identity-replaced",
+            &[
+                ("src/pkg/manager.py", &replaced),
+                ("src/pkg/legacy.py", RIVAL_PY),
+                (
+                    "tests/test_manager.py",
+                    &body_test("import pkg", "pkg.Manager"),
+                ),
+            ],
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{case}");
+    }
+    // A module that rebinds the name to a wrapped copy of the class keeps it.
+    let wrapped = format!(
+        "def keep(cls):\n    return cls\n\n\n{MANAGER_PY}\n\nManager = keep(\n    Manager\n)\n"
+    );
+    let line = wrapped
+        .lines()
+        .position(|line| line.contains("len(self.blocked) > n"))
+        .map(|index| index + 1)
+        .ok_or("the changed line is in the definition")?;
+    let finding = analyze_one_line(
+        "class-identity-rewrapped",
+        &[
+            ("src/pkg/manager.py", &wrapped),
+            ("src/pkg/__init__.py", "from .manager import Manager\n"),
+            (
+                "tests/test_manager.py",
+                &body_test("from pkg import Manager", "Manager"),
+            ),
+        ],
+        "src/pkg/manager.py",
+        line,
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "rewrapped class");
     Ok(())
 }
 
@@ -284,7 +410,7 @@ fn a_scope_import_that_may_bring_a_fixture_keeps_the_limit() -> Result<(), Strin
             "from vendor.plugin import primed\n",
         ),
         (
-            "relative import",
+            "relative import of a module the workspace does not hold",
             "from pkg import Manager\nfrom .autouse import primed",
             "",
         ),
@@ -304,6 +430,39 @@ fn a_scope_import_that_may_bring_a_fixture_keeps_the_limit() -> Result<(), Strin
             ],
         )?;
         assert_fixture_limited(&finding, case);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_fixture_read_off_a_parent_package_keeps_the_limit() -> Result<(), String> {
+    const AUTOUSE: &str = "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef primed(request):\n    request.getfixturevalue(\"pm\").blocked.append(1)\n";
+    // `import support.helpers` runs `support/__init__.py`, and the bridge
+    // hands on the fixture that initializer defines.
+    for (case, init, limited) in [
+        ("fixture in the parent", AUTOUSE, true),
+        ("plain parent", "primed = object()\n", false),
+    ] {
+        let finding = fixture_finding(
+            "class-identity-fixture-parent",
+            &[
+                (
+                    "tests/conftest.py",
+                    &conftest("from pkg import Manager\nfrom support.bridge import primed"),
+                ),
+                ("support/__init__.py", init),
+                (
+                    "support/bridge.py",
+                    "import support.helpers\n\nprimed = support.primed\n",
+                ),
+                ("support/helpers.py", "VALUE = 1\n"),
+            ],
+        )?;
+        if limited {
+            assert_fixture_limited(&finding, case);
+        } else {
+            assert_eq!(finding.class, ExposureClass::Exposed, "{case}");
+        }
     }
     Ok(())
 }

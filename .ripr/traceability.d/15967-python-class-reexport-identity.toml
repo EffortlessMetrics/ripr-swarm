@@ -9,5 +9,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_literal_instance_fixture_resolves_through_a_reexported_class",
   "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_fixture_built_from_another_class_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_scope_import_that_may_bring_a_fixture_keeps_the_limit",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_rival_project_package_of_the_same_name_does_not_identify_the_owner",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_package_name_taken_from_its_parent_is_not_a_class_receiver",
+  "crates/ripr/src/analysis/language/python/class_identity_tests.rs::a_fixture_read_off_a_parent_package_keeps_the_limit",
   "crates/ripr/src/analysis/language/python/class_identity_tests.rs::only_standard_library_names_are_standard_library_modules",
 ]

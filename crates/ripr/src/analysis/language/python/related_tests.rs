@@ -3008,8 +3008,17 @@ impl SrcModuleIndex {
                     });
                 }
             }
-            for module in &owner.reexport_modules {
-                if own.iter().any(|(own_module, _)| own_module == module) {
+            // A method's class exporters name its class in an import, so a
+            // rival project's package of the same name is as ambiguous for
+            // them as for a function's own exporters (#15967).
+            for module in owner
+                .reexport_modules
+                .iter()
+                .chain(&owner.class_reexport_modules)
+            {
+                if own.iter().any(|(own_module, _)| own_module == module)
+                    || ambiguous.iter().any(|record| &record.module == module)
+                {
                     continue;
                 }
                 // The re-exporting package is the one whose project root holds the
@@ -3680,8 +3689,7 @@ pub(super) fn owner_class_locals(
             }
         }
         // The class through a package that re-exports it (`import pluggy`,
-        // then `pluggy.PluginManager`; `from werkzeug import datastructures
-        // as ds`, then `ds.MultiDict`).
+        // then `pluggy.PluginManager`).
         if let Some(receiver) = class_reexport_receiver(import, owner, class, &test.file) {
             let qualified = format!("{receiver}.{class}");
             if !test_rebinds_import_alias(test, &import.alias) && !locals.contains(&qualified) {
@@ -3693,9 +3701,9 @@ pub(super) fn owner_class_locals(
 }
 
 /// The name an import binds to a package that re-exports the method owner's
-/// top-level `class` (`reexports.rs`): the bound module's full dotted path
-/// must be one of the owner's `class_reexport_modules` and must identify the
-/// owner for this test (#4566, #13706).
+/// top-level `class` (`reexports.rs`): a plain `import` whose dotted path is
+/// one of the owner's `class_reexport_modules` and identifies the owner for
+/// this test (#4566, #13706).
 fn class_reexport_receiver<'i>(
     import: &'i PythonImport,
     owner: &PythonOwner,
@@ -3709,14 +3717,16 @@ fn class_reexport_receiver<'i>(
     {
         return None;
     }
-    let bound = if import.source_module.is_empty() {
-        import.imported.clone()
-    } else {
-        format!("{}.{}", import.source_module, import.imported)
-    };
-    (owner.class_reexport_modules.contains(&bound)
+    // Only a plain `import pkg` binds the package itself. `from parent
+    // import pkg` takes whatever `parent/__init__.py` bound under the name,
+    // which this reader does not see.
+    if !import.source_module.is_empty() {
+        return None;
+    }
+    let bound = &import.imported;
+    (owner.class_reexport_modules.contains(bound)
         && import_module_may_be_owners(import, owner, test_file)
-        && module_name_identifies_owner_for(owner, &bound, test_file))
+        && module_name_identifies_owner_for(owner, bound, test_file))
     .then_some(import.alias.as_str())
 }
 

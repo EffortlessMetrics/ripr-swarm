@@ -179,7 +179,7 @@ fn apply_with<'s>(
         owner.reexport_modules =
             package_reexport_modules(owner, &candidates, definitions, &mut star_exports);
     }
-    apply_class_reexports(owners);
+    apply_class_reexports(owners, &star_exports.source_of);
 }
 
 /// Sets `class_reexport_modules` on each method of a top-level class to that
@@ -187,8 +187,13 @@ fn apply_with<'s>(
 /// so the package paths that re-export the class are the ones a `from M
 /// import Class` may name. Fails closed (stays empty) for a nested class, a
 /// class name the file defines more than once, and a method outside the one
-/// definition's lines.
-fn apply_class_reexports(owners: &mut [PythonOwner]) {
+/// definition's lines, and a file that binds the class name again outside the
+/// definition (an import or assignment replaces the class the package
+/// exports) or whose source is not at hand.
+fn apply_class_reexports<'s>(
+    owners: &mut [PythonOwner],
+    source_of: &impl Fn(&Path) -> Option<&'s str>,
+) {
     // (file, class name) -> (definitions seen, index of the first).
     let mut classes: HashMap<(&Path, &str), (usize, usize)> = HashMap::new();
     for (index, owner) in owners.iter().enumerate() {
@@ -221,13 +226,47 @@ fn apply_class_reexports(owners: &mut [PythonOwner]) {
             (count == 1
                 && !class.reexport_modules.is_empty()
                 && class.start_line <= owner.start_line
-                && owner.end_line <= class.end_line)
-                .then(|| (index, class.reexport_modules.clone()))
+                && owner.end_line <= class.end_line
+                && !rebound_outside_definition(class, source_of(&class.file)))
+            .then(|| (index, class.reexport_modules.clone()))
         })
         .collect();
     for (index, modules) in assignments {
         owners[index].class_reexport_modules = modules;
     }
+}
+
+/// Whether the file binds the class's name anywhere outside its one
+/// definition. A top-level `Name = wrap(Name)` keeps the class (attrs'
+/// `Converter = _add_hash(_add_eq(Converter))`), like a class decorator.
+/// Unknown source counts as rebound.
+fn rebound_outside_definition(class: &PythonOwner, source: Option<&str>) -> bool {
+    let Some(source) = source else {
+        return true;
+    };
+    // Top-level statements outside the definition: a line at column 0 opens
+    // one, indented and blank lines continue it.
+    let mut statements: Vec<String> = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        if index + 1 >= class.start_line && index < class.end_line {
+            continue;
+        }
+        let continues = line.is_empty() || line.starts_with([' ', '\t', ')', ']', '}']);
+        match statements.last_mut() {
+            Some(statement) if continues => {
+                statement.push('\n');
+                statement.push_str(line);
+            }
+            _ => statements.push(line.to_string()),
+        }
+    }
+    let rewrap = format!("{} = ", class.name);
+    statements.iter().any(|statement| {
+        super::related_tests::text_binds_name(statement, &class.name)
+            && !statement.strip_prefix(&rewrap).is_some_and(|value| {
+                super::module_constants::mentions_identifier(value, &class.name)
+            })
+    })
 }
 
 /// Module paths of every file defining a top-level function or class, by name.

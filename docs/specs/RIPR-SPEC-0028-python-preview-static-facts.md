@@ -478,7 +478,10 @@ Module owners are never re-exported. A method is not re-exported either, but
 its class is (#15967): a method of a top-level class the file defines exactly
 once carries that class's re-exporting packages, so `from pkg import Manager`
 or `import pkg` / `pkg.Manager(...)` binds a receiver to the owner's class the
-way `from pkg.manager import Manager` does. A class imported under the same
+way `from pkg.manager import Manager` does. Only a plain `import` names the
+package as a receiver: `from parent import pkg` binds whatever
+`parent/__init__.py` put under the name. A rival project's package of the
+same name makes the class exporter as ambiguous as a function's (#13786). A class imported under the same
 name from any other source (another module, a package that binds a different
 class under the name, an unresolved module) is not the owner's class: a
 method call on its instance stays a name-level relation and reads no stronger
