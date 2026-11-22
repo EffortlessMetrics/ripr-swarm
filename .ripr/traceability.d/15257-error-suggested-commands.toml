@@ -1,0 +1,19 @@
+# Registers the #15257 refusal next-step tests under RIPR-SPEC-0184: every
+# command, flag or format a refusal or help text suggests is one the public
+# catalog and its parsers accept, and the refusal names the command run.
+[[extend]]
+id = "RIPR-SPEC-0184"
+tests = [
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::a_stray_option_with_no_command_does_not_name_check",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::cache_export_without_a_cache_names_the_producing_check",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::verify_rollback_alone_asks_for_the_authority_pair",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::verify_without_authority_names_agent_repair_not_python",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::missing_vcs_does_not_suggest_diff_to_commands_without_it",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::gate_check_after_a_failed_producer_does_not_blame_the_removed_guidance",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::gap_ledger_missing_check_output_is_not_sent_to_pilot",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::feedback_bad_reason_lists_the_taxonomy_and_help_lists_it_too",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::ts_false_actionable_error_points_at_help_that_documents_the_corpus",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::agent_repair_unknown_seam_names_agent_repair",
+  "crates/ripr/tests/cli_smoke/error_next_steps.rs::help_text_matches_behavior",
+  "crates/ripr-contract/src/domain/feedback.rs::tests::unknown_reason_lists_codes_without_naming_a_flag",
+]

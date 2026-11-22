@@ -485,7 +485,10 @@ fn load_check_output_suppressed_findings(
 }
 
 pub(in crate::cli) fn review_comments(args: &[String]) -> Result<(), String> {
+    // review-comments takes no `--diff`, so the missing-git message must not
+    // name it (#15257).
     review_comments_with_diff_loader(args, load_review_comments_diff)
+        .map_err(|error| crate::git::without_saved_diff_route(&error))
 }
 
 fn review_comments_with_diff_loader(

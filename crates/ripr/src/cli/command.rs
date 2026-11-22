@@ -138,7 +138,14 @@ impl CliCommand {
                         },
                     )
                 }
-                None => Err(unknown_command_error(command)),
+                None => {
+                    // `ripr --bogus check` typed a command after the stray
+                    // option; `ripr --bogus` typed none (#15257).
+                    let command_typed = command_args
+                        .iter()
+                        .any(|arg| crate::cli::command_catalog::resolve_top_level(arg).is_some());
+                    Err(unknown_command_error(command, command_typed))
+                }
             },
         }
     }
@@ -313,14 +320,14 @@ pub(super) fn strict_route_usage(route: &str, extras: &[String]) -> String {
     message
 }
 
-fn unknown_command_error(command: &str) -> String {
-    let message = unknown_command_message(command);
+fn unknown_command_error(command: &str, command_typed: bool) -> String {
+    let message = unknown_command_message(command, command_typed);
     // #11584: typed code and token for a JSON-requested boundary.
     crate::cli::usage_refusal::note_unknown_command(command, &message);
     message
 }
 
-fn unknown_command_message(command: &str) -> String {
+fn unknown_command_message(command: &str, command_typed: bool) -> String {
     // An empty command name is nearly always an unset shell variable
     // (`ripr $CMD`). Echoing `""` back says nothing about that (#15985).
     if command.trim().is_empty() {
@@ -352,6 +359,11 @@ fn unknown_command_message(command: &str) -> String {
             FlagPlacement::Near(flag) => format!(
                 "unknown command {command:?}; options go after the command. Did you mean `ripr check {flag}`? Run `ripr --help`."
             ),
+            // No command was typed, so naming `ripr check` would claim a
+            // command the user never ran (#15257).
+            FlagPlacement::Unknown if !command_typed => {
+                format!("unknown option {command}; run `ripr --help` to list commands and options")
+            }
             FlagPlacement::Unknown => format!(
                 "unknown command {command:?}; options go after the command, and `ripr check` has no `{}` option. Run `ripr --help`.",
                 crate::cli::suggest::flag_name(command)
@@ -614,7 +626,7 @@ mod tests {
         let typo = CliCommand::from_parts(Some("help"), args(&["chekc", "--all"]));
         assert_eq!(
             typo,
-            Err(unknown_command_error("chekc")),
+            Err(unknown_command_error("chekc", false)),
             "`ripr help <typo> --all` should still report the typo"
         );
     }
@@ -699,7 +711,7 @@ mod tests {
             )
         );
         assert_eq!(
-            unknown_command_error("--base"),
+            unknown_command_error("--base", false),
             "unknown command \"--base\"; options go after the command, e.g. `ripr check --base ...`"
         );
     }
@@ -753,10 +765,16 @@ mod tests {
             assert_eq!(
                 CliCommand::from_parts(Some(option), Vec::new()),
                 Err(format!(
-                    "unknown command {option:?}; options go after the command, and `ripr check` has no `{option}` option. Run `ripr --help`."
+                    "unknown option {option}; run `ripr --help` to list commands and options"
                 ))
             );
         }
+        // With a command typed after the stray option, `ripr check` is the
+        // command the user meant, so the placement advice stays.
+        assert_eq!(
+            CliCommand::from_parts(Some("--bogus"), vec!["check".to_string()]),
+            Err("unknown command \"--bogus\"; options go after the command, and `ripr check` has no `--bogus` option. Run `ripr --help`.".to_string())
+        );
     }
 
     #[test]
@@ -820,11 +838,11 @@ mod tests {
     #[test]
     fn nested_subcommand_at_top_level_suggests_full_path() {
         assert_eq!(
-            unknown_command_error("ci-summary"),
+            unknown_command_error("ci-summary", false),
             "unknown command \"ci-summary\". Did you mean `ripr reports ci-summary`? Run `ripr --help`."
         );
         assert_eq!(
-            unknown_command_error("ci-packet"),
+            unknown_command_error("ci-packet", false),
             "unknown command \"ci-packet\". Did you mean `ripr reports ci-packet`? Run `ripr --help`."
         );
     }
@@ -976,8 +994,8 @@ mod tests {
         );
         // Outside `help`, the same token is not a help option.
         assert_eq!(
-            unknown_command_error("--al"),
-            "unknown command \"--al\"; options go after the command, and `ripr check` has no `--al` option. Run `ripr --help`."
+            unknown_command_error("--al", false),
+            "unknown option --al; run `ripr --help` to list commands and options"
         );
     }
 

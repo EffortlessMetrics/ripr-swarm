@@ -77,6 +77,8 @@ mod discarded_matches;
 mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
+#[path = "cli_smoke/error_next_steps.rs"]
+mod error_next_steps;
 #[path = "cli_smoke/explicit_input_refusals.rs"]
 mod explicit_input_refusals;
 #[path = "cli_smoke/findings_byte_budget.rs"]
