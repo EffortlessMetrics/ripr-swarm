@@ -514,11 +514,12 @@ pub(super) fn declares_value_named(masked: &str, name: &str) -> bool {
             Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
             _ => before,
         };
-        // `let Name(..)` and `let Name { .. }` (also under `if let` or
-        // `while let`) are destructuring patterns that bind nothing named
-        // `Name`.
+        // `let Name(..)`, `let Name { .. }` and the path pattern
+        // `let Name::Variant` (also under `if let` or `while let`) are
+        // destructuring or path patterns that bind nothing named `Name`.
         let after = masked[at + name.len()..].trim_start();
-        let destructures = after.starts_with('(') || after.starts_with('{');
+        let destructures =
+            after.starts_with('(') || after.starts_with('{') || after.starts_with("::");
         VALUE_BINDER_KEYWORDS.iter().any(|keyword| {
             if *keyword == "let" && destructures {
                 return false;
@@ -1203,6 +1204,12 @@ mod tests {
         assert!(!declares_value_named("let Key(v) = k;", "Key"));
         assert!(!declares_value_named("if let Key(v) = k {}", "Key"));
         assert!(!declares_value_named("let Key { v } = k;", "Key"));
+        assert!(!declares_value_named("if let Key::Fast = k {}", "Key"));
+        assert!(!declares_value_named(
+            "while let Key::Fast = next() {}",
+            "Key"
+        ));
+        assert!(!declares_value_named("let Key::Only = k;", "Key"));
         assert!(!declares_value_named("let r: &'static Key = &K;", "Key"));
         assert!(declares_value_named(
             "let Key: fn(i32) -> Other = mk;",
@@ -1272,6 +1279,7 @@ mod tests {
             "let ks: Vec<(i32, Key)> = Vec::new();",
             "let f: fn(Key) -> Other = convert;",
             "let Key { v } = k;",
+            "if let Key::Fast = k {}",
             "if let Some(Key { v }) = maybe {}",
             "let n = keyed(|k: Key| k.v);",
             "let x = make::<Key>();",
