@@ -476,7 +476,8 @@ package's name, `from core import price` cannot be told apart from it, so the
 re-export identifies no owner and credits no test.
 Module owners are never re-exported. A method is not re-exported either, but
 its class is (#15967): a method of a top-level class the file defines exactly
-once carries that class's re-exporting packages, so `from pkg import Manager`
+once, and binds nowhere else except as `Name = wrap(Name)`, carries that
+class's re-exporting packages, so `from pkg import Manager`
 or `import pkg` / `pkg.Manager(...)` binds a receiver to the owner's class the
 way `from pkg.manager import Manager` does. Only a plain `import` names the
 package as a receiver: `from parent import pkg` binds whatever
