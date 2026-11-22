@@ -263,8 +263,8 @@ test elsewhere, when all of these hold:
   token, since a nested `#[macro_export]` definition, a module or pasted file
   text can leave a function body.
 - Every `use` item in the arguments ends in `;`, is not a glob or a rename,
-  and names no trusted assertion-context macro, wrapper above or inert
-  attribute below anywhere in its path. Such an item (`use
+  and names no trusted assertion-context macro, wrapper above, `serde_json`
+  or inert attribute below anywhere in its path. Such an item (`use
   std::os::unix::ffi::OsStrExt;`) binds a trait or item inside the generated
   body only; a glob, a rename (`use helper as prop_assert;`) or an import of
   a trusted name can redirect a nested call the confinement trusts by name.
@@ -277,7 +277,11 @@ test elsewhere, when all of these hold:
 - Every nested macro call in the arguments is a single-segment trusted
   assertion-context name, one of the wrapper macros above spelled bare or
   under the `proptest` root (`proptest::prop_oneof!`, `::proptest::prop_assert!`),
-  or one whose own arguments mention no trusted name. Any other path, such as
+  `serde_json::json!` or `::serde_json::json!` (the same expression-only
+  wrapper, needing the same drop-in proof of the `serde_json` root as an
+  outer call), or one whose own arguments mention no trusted name. A nested
+  call of that last kind is accepted on that ground alone, so it adds no
+  root that needs proof. Any other path, such as
   `dep::prop_assert!` or `crate::prop_assert!`, names whatever that module
   exports. Any other nested call could define a name from its arguments
   where the call's scope cannot bound it. When a nested bare `prop_*` call is
