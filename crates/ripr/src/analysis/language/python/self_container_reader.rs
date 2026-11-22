@@ -175,6 +175,21 @@ pub(super) fn python_self_container_reader_gap(
     if body(owner).any(|text| names_bare_self(text)) {
         return None;
     }
+    // `extend`, `extendleft` and `update` iterate their argument, which
+    // consumes an iterator the method may still return or read.
+    if consumes_argument(new_line, attr) {
+        let names: Vec<&str> = [new_line, old_line]
+            .iter()
+            .flat_map(|text| argument_names(text))
+            .collect();
+        let shared = (owner.start_line..owner.end_line.min(lines.len()))
+            .filter(|index| *index != changed)
+            .filter_map(|index| lines.get(index))
+            .any(|text| names.iter().any(|name| mentions_identifier(text, name)));
+        if shared {
+            return None;
+        }
+    }
     loop {
         let more: Vec<&str> = functions
             .iter()
@@ -314,6 +329,23 @@ fn calls_own_helper_method(body: &str) -> bool {
             && !name.starts_with("fail")
             && rest[name_len..].starts_with('(')
     })
+}
+
+/// Whether the recorded call iterates its argument.
+fn consumes_argument(line: &str, attr: &str) -> bool {
+    let call = format!("self.{attr}.");
+    line.split_once(call.as_str())
+        .and_then(|(_, rest)| rest.split_once('('))
+        .is_some_and(|(mutator, _)| matches!(mutator, "extend" | "extendleft" | "update"))
+}
+
+/// The identifiers in the recorded call's argument.
+fn argument_names(line: &str) -> impl Iterator<Item = &str> {
+    line.split_once('(')
+        .and_then(|(_, rest)| rest.rsplit_once(')'))
+        .map_or("", |(argument, _)| argument)
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| is_simple_python_identifier(word))
 }
 
 fn is_dunder(name: &str) -> bool {

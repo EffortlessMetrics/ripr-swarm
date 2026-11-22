@@ -237,7 +237,8 @@ fn test_side_hidden_reads_keep_the_oracle_verdict() -> Result<(), String> {
 }
 
 /// A recorded argument that calls can change other state the result
-/// carries, so the edit is not confined to the container.
+/// carries, so the edit is not confined to the container. An iterating
+/// mutator (`extend`) consumes an iterator the method may still return.
 #[test]
 fn calling_argument_keeps_the_oracle_verdict() -> Result<(), String> {
     let source = CLOCK_PY.replace("self._seen.append(n + 1)", "self._seen.append(abs(n + 1))");
@@ -248,5 +249,23 @@ fn calling_argument_keeps_the_oracle_verdict() -> Result<(), String> {
         &tests_then(""),
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+
+    let source = CLOCK_PY.replace(
+        "    def tick(self, n):\n        self._seen.append(n + 1)\n        return self.hours + n\n",
+        "    def tick(self, n, m):\n        self._seen.extend(m)\n        return list(m)\n",
+    );
+    assert_ne!(source, CLOCK_PY, "consumed-iterator rewrite did not apply");
+    let tests = "from src.clock import Clock\n\n\ndef test_tick():\n    assert Clock(1).tick(iter([1]), iter([2])) == []\n";
+    let consumed = analyze_edit(
+        "consumed-iterator",
+        &source,
+        Some("        self._seen.extend(n)"),
+        tests,
+    )?;
+    assert_eq!(
+        consumed.class,
+        ExposureClass::Exposed,
+        "consumed-iterator: {consumed:?}"
+    );
     Ok(())
 }
