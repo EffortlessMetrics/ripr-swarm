@@ -369,7 +369,9 @@ what test is missing and why:
   seam's converted callee carries that call fact as its relation
   (`seam_callee_call`) even when its name or file also matches the owner:
   a captured call outranks name and file proximity for the single emitted
-  reason, while still establishing no reach to the owner itself (#5335)
+  reason, while still establishing no reach to the owner itself (#5335).
+  This precedence applies to diff findings; the repository inventory's
+  related-test matcher does not emit `seam_callee_call`.
 - activate evidence: does any test supply the triggering input?
 - propagate evidence: does the test observe the changed state downstream?
 - observe evidence: does the test assert on the visible sink?

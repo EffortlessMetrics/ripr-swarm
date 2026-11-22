@@ -762,7 +762,7 @@ fn lexical_body_call_names(body: &str) -> BTreeSet<String> {
 /// all. A parseable variant (`Err(Type::Variant)`) means the changed
 /// expression IS the variant identity; the pre-existing variant-bound paths
 /// own attribution there, so this returns `None`.
-fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
+fn wrapper_seam_callee(probe: &Probe) -> Option<(String, Option<String>)> {
     if !matches!(
         probe.family,
         crate::domain::ProbeFamily::ErrorPath | crate::domain::ProbeFamily::ReturnValue
@@ -841,7 +841,11 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
                     if let Some(name_start) = chain[..name_end]
                         .char_indices()
                         .rev()
-                        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_')
+                        // Keep the `::` path so the qualifier is available to
+                        // the namesake check; a `.` or `)` still ends it.
+                        .take_while(|(_, ch)| {
+                            ch.is_ascii_alphanumeric() || *ch == '_' || *ch == ':'
+                        })
                         .map(|(position, _)| position)
                         .last()
                     {
@@ -851,7 +855,7 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
                             .next()
                             .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
                         {
-                            best = Some(name.rsplit("::").next().unwrap_or(name));
+                            best = Some(name);
                         }
                     }
                 }
@@ -862,7 +866,46 @@ fn wrapper_seam_callee(probe: &Probe) -> Option<String> {
         }
         index += 1;
     }
-    best.map(str::to_string)
+    best.map(|name| {
+        let (qualifier, name) = name
+            .rsplit_once("::")
+            .map_or((None, name), |(qualifier, name)| {
+                (Some(qualifier.to_string()), name)
+            });
+        (name.to_string(), qualifier)
+    })
+}
+
+/// Whether a captured call's explicit qualifier conflicts with the wrapper's
+/// qualified callee. A call with no qualifier, or the same qualifier, does
+/// not conflict; a different qualifier names another function (#5335).
+fn call_qualifier_conflicts(text: &str, name: &str, wrapper_qualifier: Option<&str>) -> bool {
+    let Some(wrapper_qualifier) = wrapper_qualifier else {
+        return false;
+    };
+    for (index, _) in text.match_indices(name) {
+        let before = text[..index].chars().next_back();
+        let after = text[index + name.len()..].trim_start();
+        if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_') || !after.starts_with('(') {
+            continue;
+        }
+        let prefix = text[..index].trim_end();
+        if let Some(prefix) = prefix.strip_suffix("::") {
+            let qualifier = prefix
+                .char_indices()
+                .rev()
+                .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+                .map(|(position, _)| position)
+                .last()
+                .map(|start| &prefix[start..]);
+            if let Some(qualifier) = qualifier {
+                if qualifier != wrapper_qualifier {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 #[derive(Clone, Copy)]
@@ -1209,7 +1252,12 @@ fn find_related_tests_with_candidates<'a>(
 
     let candidate_indices = match candidates {
         RelatedTestCandidates::Indexed(candidate_index) => {
-            candidate_index.candidate_indices(probe, owner_fn, helper_chain, seam_callee.as_deref())
+            candidate_index.candidate_indices(
+                probe,
+                owner_fn,
+                helper_chain,
+                seam_callee.as_ref().map(|(name, _)| name.as_str()),
+            )
         }
         #[cfg(test)]
         RelatedTestCandidates::FullScan => (0..index.tests().len()).collect(),
@@ -1501,10 +1549,17 @@ fn find_related_tests_with_candidates<'a>(
             ShadowAuthority::LexicalMaskedBody
         };
         let calls_seam_callee = !calls_owner
-            && seam_callee.as_deref().is_some_and(|callee| {
+            && seam_callee.as_ref().is_some_and(|(callee, qualifier)| {
                 // Lazy gate (#3728 round-3 review, gemini): the shadow scans
                 // run only after a callee-named captured call exists.
-                if !test.calls.iter().any(|call| call.name == callee) {
+                if !test.calls.iter().any(|call| {
+                    call.name == *callee
+                        && !call_qualifier_conflicts(
+                            &call.text,
+                            callee,
+                            qualifier.as_deref(),
+                        )
+                }) {
                     return false;
                 }
                 // Scan the comment-and-string-masked body via the shared
@@ -1532,7 +1587,15 @@ fn find_related_tests_with_candidates<'a>(
                     ),
                 };
                 test.calls.iter().any(|call| {
-                    call.name == callee
+                    call.name == *callee
+                        // A call with an explicit qualifier that differs from
+                        // the wrapper's qualified callee names another
+                        // function, so it is not this seam's callee (#5335).
+                        && !call_qualifier_conflicts(
+                            &call.text,
+                            callee,
+                            qualifier.as_deref(),
+                        )
                         // Defeat only when a shadow PRECEDES the call: fn
                         // items hoist (whole body), `let` bindings are
                         // positional (shadow at or before the call line;
@@ -1914,13 +1977,15 @@ fn find_related_tests_with_candidates<'a>(
             // is a call fact, so it outranks the name and file proximity
             // below; it still never establishes reach to the owner.
             RelationReason::SeamCalleeCall
+        } else if same_test_file {
+            // Test file uses the probe's source stem or one of the canonical
+            // `_test`/`_tests` companion conventions. Checked before the
+            // name-only reason so a test that is both sorts at least as high
+            // as a same-file-only test, matching the priority values.
+            RelationReason::SameTestFile
         } else if owner_name_in_test {
             // Test name contains the owner function name.
             RelationReason::OwnerNamedTest
-        } else if same_test_file {
-            // Test file uses the probe's source stem or one of the canonical
-            // `_test`/`_tests` companion conventions.
-            RelationReason::SameTestFile
         } else {
             // A path or test-name token substring is the broadest, least
             // precise match branch. `same_file_or_named` guarantees that one
@@ -9970,7 +10035,12 @@ mod tests {
         let candidate_index = RelatedTestCandidateIndex::new(&index);
         let seam_callee = wrapper_seam_callee(&probe);
         let candidate_indices =
-            candidate_index.candidate_indices(&probe, Some(&owner), None, seam_callee.as_deref());
+            candidate_index.candidate_indices(
+                &probe,
+                Some(&owner),
+                None,
+                seam_callee.as_ref().map(|(name, _)| name.as_str()),
+            );
 
         assert_eq!(
             candidate_indices.len(),
@@ -17100,6 +17170,11 @@ let r = try_parse_summary();",
         summary
     }
 
+    /// The callee name only, for assertions that predate the qualifier.
+    fn seam_callee_name(probe: &Probe) -> Option<String> {
+        wrapper_seam_callee(probe).map(|(name, _)| name)
+    }
+
     fn wrapper_error_probe(file: &str, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:wrapper".to_string()),
@@ -17175,6 +17250,61 @@ let r = try_parse_summary();",
     }
 
     #[test]
+    fn given_a_namesake_qualified_call_when_wrapper_probe_then_no_seam_callee_call() {
+        // The wrapper converts `strict::decode`; the test calls
+        // `lenient::decode`, a different function with the same terminal
+        // name. The captured call must not outrank the test's proximity
+        // relation (#5335).
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "strict::decode"),
+            ],
+            tests: vec![test_with_call(
+                "src/lib.rs",
+                "parse_summary_rejects_bad_input",
+                "let result = lenient::decode(raw);",
+                "decode",
+            )],
+            ..Default::default()
+        });
+        let probe = wrapper_error_probe("src/lib.rs", "strict::decode(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "{related:?}");
+        assert_ne!(related[0].1, RelationReason::SeamCalleeCall, "{related:?}");
+        assert_eq!(related[0].1, RelationReason::SameTestFile, "{related:?}");
+    }
+
+    #[test]
+    fn given_a_matching_qualified_call_when_wrapper_probe_then_seam_callee_call() {
+        // The same qualifier as the wrapper's callee is the matching path and
+        // keeps the callee-call relation.
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "strict::decode"),
+            ],
+            tests: vec![test_with_call(
+                "src/lib.rs",
+                "parse_summary_rejects_bad_input",
+                "let result = strict::decode(raw);",
+                "decode",
+            )],
+            ..Default::default()
+        });
+        let probe = wrapper_error_probe("src/lib.rs", "strict::decode(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "{related:?}");
+        assert_eq!(related[0].1, RelationReason::SeamCalleeCall, "{related:?}");
+    }
+
+    #[test]
     fn given_owner_named_same_file_test_calling_nothing_relevant_when_wrapper_probe_then_name_relation_stays()
      {
         // Should-stay-negative control for #5335: the same owner-shaped name
@@ -17199,7 +17329,9 @@ let r = try_parse_summary();",
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1, "{related:?}");
-        assert_eq!(related[0].1, RelationReason::OwnerNamedTest, "{related:?}");
+        // The test is both same-file and owner-named; the same-file reason is
+        // checked first so it sorts at least as high as a same-file-only test.
+        assert_eq!(related[0].1, RelationReason::SameTestFile, "{related:?}");
         assert!(!related[0].1.establishes_reach(true), "{related:?}");
     }
 
@@ -18371,7 +18503,7 @@ let r = try_parse_summary(\"x\");",
     #[test]
     fn given_parenthesized_wrapper_when_expecting_callee_then_extracts_callee() {
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "(try_parse_summary(raw)).map_err(Into::into)"
             ))
@@ -18379,7 +18511,7 @@ let r = try_parse_summary(\"x\");",
             Some("try_parse_summary")
         );
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "return (try_parse_summary(raw).map_err(Into::into));"
             ))
@@ -18387,7 +18519,7 @@ let r = try_parse_summary(\"x\");",
             Some("try_parse_summary")
         );
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "{ try_parse_summary(raw).map_err(Into::into) }"
             ))
@@ -18396,7 +18528,7 @@ let r = try_parse_summary(\"x\");",
         );
         // Grouping that does not span the whole expression stays fail-closed.
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "(a) + (try_parse_summary(raw).map_err(Into::into))"
             ))
@@ -18433,7 +18565,7 @@ let r = try_parse_summary(\"x\");",
         // A parseable `Err(V)` construction IS the variant identity; the
         // pre-existing variant-bound paths own attribution there.
         assert!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "return Err(ParseSummaryError::MalformedSource);"
             ))
@@ -18441,7 +18573,7 @@ let r = try_parse_summary(\"x\");",
         );
         // The wrapper seam itself yields the converted callee.
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "try_parse_summary(raw).map_err(Into::into)"
             ))
@@ -18451,7 +18583,7 @@ let r = try_parse_summary(\"x\");",
         // Chained receivers resolve to the last segment; non-call shapes fail
         // closed; `return ` prefixes are stripped.
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "self.client().try_parse_summary(raw) .map_err (Into::into)"
             ))
@@ -18459,7 +18591,7 @@ let r = try_parse_summary(\"x\");",
             Some("try_parse_summary")
         );
         assert!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "value.map_err(Into::into)"
             ))
@@ -18468,7 +18600,7 @@ let r = try_parse_summary(\"x\");",
         // #3714 round-1 review (devin f2 / coderabbit glUM-f0): the
         // return-form display recovers the callee.
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "return try_parse_summary(raw).map_err(Into::into)"
             ))
@@ -18479,7 +18611,7 @@ let r = try_parse_summary(\"x\");",
         // conversion must not be mistaken for the seam conversion — the LAST
         // top-level conversion's receiver is the callee.
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "validate(raw.map_err(wrap)?, other).map_err(Into::into)"
             ))
@@ -18488,7 +18620,7 @@ let r = try_parse_summary(\"x\");",
         );
         // A conversion mentioned inside a string literal is not top-level.
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "report(\"use .map_err(x) here\").map_err(Into::into)"
             ))
@@ -18499,7 +18631,7 @@ let r = try_parse_summary(\"x\");",
         // character literals — the scanner must not swallow the conversion
         // behind them.
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "parse::<View<'_>>(raw).map_err(Into::into)"
             ))
@@ -18507,7 +18639,7 @@ let r = try_parse_summary(\"x\");",
             Some("parse")
         );
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "try_parse_summary::<'a>(raw).map_err(Into::into)"
             ))
@@ -18515,7 +18647,7 @@ let r = try_parse_summary(\"x\");",
             Some("try_parse_summary")
         );
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "'outer: loop { break 'outer; }
 try_parse_summary(raw).map_err(Into::into)"
@@ -18525,7 +18657,7 @@ try_parse_summary(raw).map_err(Into::into)"
         );
         // An escaped-quote character literal is still a char literal.
         assert_eq!(
-            wrapper_seam_callee(&wrapper_error_probe(
+            seam_callee_name(&wrapper_error_probe(
                 "src/lib.rs",
                 "skip('\'');
 try_parse_summary(raw).map_err(Into::into)"
