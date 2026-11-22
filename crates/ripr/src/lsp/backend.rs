@@ -3911,10 +3911,11 @@ impl Backend {
         };
         // The current configuration, not the snapshot's: a configuration
         // change schedules its own refresh.
-        let languages = self
-            .analysis_config()
-            .map(|config| config.repo_config().languages.clone())
-            .unwrap_or_default();
+        let analysis_config = self.analysis_config();
+        let default_languages = crate::config::LanguagesConfig::default();
+        let languages = analysis_config
+            .as_ref()
+            .map_or(&default_languages, |config| &config.repo_config().languages);
         let committed = super::watched_source_drift::CommittedSources {
             root: &snapshot.root,
             consumed: &snapshot.rust_consumed_sources,
@@ -3927,7 +3928,7 @@ impl Backend {
                     .flat_map(|finding| finding.related_tests.iter())
                     .map(|test| test.file.as_path()),
             ),
-            languages: &languages,
+            languages,
         };
         super::watched_source_drift::events_drift_committed_sources(&committed, changes, &|uri| {
             self.quarantine
