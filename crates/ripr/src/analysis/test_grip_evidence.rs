@@ -337,9 +337,15 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
 /// persists or replays the result must not store it when the list is
 /// non-empty: the stand-in is a transient fault of one run, not a property of
 /// the inputs the cache key names (#13340). An undescribable failure is `Err`.
-pub(crate) fn evidence_for_seams_reporting_failure(
+/// Reuses a grip context the seam inventory's field admission already built
+/// for the same index when given one, instead of paying a second whole-index
+/// context build (Wave F2a). The context's memos are keyed and deterministic,
+/// so a seam's evidence does not depend on which pass built the context.
+/// `None` falls back to building a fresh context.
+pub(crate) fn evidence_for_seams_reporting_failure_with_shared_context<'index>(
     seams: &[RepoSeam],
-    index: &RustIndex,
+    index: &'index RustIndex,
+    shared_context: Option<CompactGripContext<'index>>,
 ) -> Result<
     (
         Vec<TestGripEvidence>,
@@ -347,7 +353,7 @@ pub(crate) fn evidence_for_seams_reporting_failure(
     ),
     String,
 > {
-    let pass = EvidencePass::new(index);
+    let pass = EvidencePass::with_shared_context(index, shared_context);
     let evidence = pass.evidence_for(seams);
     cancellation::checkpoint()?;
     let limitations = pass.limitations()?;
@@ -579,10 +585,24 @@ pub(crate) struct EvidencePass<'index> {
 }
 
 impl<'index> EvidencePass<'index> {
+    #[cfg(test)]
     pub(crate) fn new(index: &'index RustIndex) -> Self {
+        Self::with_shared_context(index, None)
+    }
+
+    /// An evidence pass over `shared_context` when the caller already built
+    /// one for this index (seam inventory's field admission, Wave F2a), else
+    /// a fresh context. A shared context is already built, so it is used even
+    /// where a fresh `try_new` would have been discarded on cancellation: the
+    /// per-seam checkpoints in `evidence_for` then yield the same empty
+    /// result a missing context would.
+    pub(crate) fn with_shared_context(
+        index: &'index RustIndex,
+        shared_context: Option<CompactGripContext<'index>>,
+    ) -> Self {
         let context_started = Instant::now();
         trace_latency_phase("evidence_context", "start", Duration::ZERO);
-        let context = CompactGripContext::try_new(index).ok();
+        let context = shared_context.or_else(|| CompactGripContext::try_new(index).ok());
         trace_latency_phase(
             "evidence_context",
             &format!(
@@ -6481,6 +6501,42 @@ pub(crate) fn oracle_semantics_for(
     semantics
 }
 
+/// The returned-struct wording of a field seam's upgrade suggestion.
+const FIELD_CONSTRUCTION_UPGRADE: &str =
+    "assert the specific output field that carries the changed behavior";
+
+/// [`oracle_semantics_for`] for one seam (#11726). A field write in a method
+/// (`self.count += 1`) has no returned struct, so its upgrade suggestion names
+/// where the written field is read instead, through the same
+/// `field_write_read` the hover and the agent packet use.
+pub(crate) fn oracle_semantics_for_seam(
+    kind: &OracleKind,
+    strength: &OracleStrength,
+    seam: &RepoSeam,
+) -> OracleSemantics {
+    let mut semantics = oracle_semantics_for(kind, strength, seam.kind());
+    if semantics.upgrade_suggestion.as_deref() == Some(FIELD_CONSTRUCTION_UPGRADE)
+        && let Some(read) = crate::analysis::field_write_read(seam)
+    {
+        semantics.upgrade_suggestion = Some(field_write_upgrade(read).to_string());
+    }
+    semantics
+}
+
+fn field_write_upgrade(read: crate::analysis::FieldWriteRead) -> &'static str {
+    match read {
+        crate::analysis::FieldWriteRead::Receiver => {
+            "assert the changed field on the value the method was called on"
+        }
+        crate::analysis::FieldWriteRead::CallResult => {
+            "assert the changed field on the value the method call returns"
+        }
+        crate::analysis::FieldWriteRead::Unspecified => {
+            "assert the changed field after the call that writes it"
+        }
+    }
+}
+
 fn oracle_semantics_by_kind(
     kind: &OracleKind,
     strength: &OracleStrength,
@@ -6582,9 +6638,7 @@ fn upgrade_suggestion_for_seam(seam_kind: SeamKind) -> &'static str {
         }
         SeamKind::ErrorVariant => "assert the exact error variant with matches! or assert_matches!",
         SeamKind::ReturnValue => "add an exact returned-value assertion for the changed output",
-        SeamKind::FieldConstruction => {
-            "assert the specific output field that carries the changed behavior"
-        }
+        SeamKind::FieldConstruction => FIELD_CONSTRUCTION_UPGRADE,
         SeamKind::SideEffect => {
             "assert the event, state write, persistence effect, or mock expectation payload"
         }
