@@ -903,13 +903,26 @@ pub(crate) fn probes_for_file_with_relations(
                 } else {
                     canonical_text.clone()
                 };
-                let probe = build_probe(
+                // #15420: a predicate whose `before` stayed the whole old
+                // line carries the old head's condition beside it, when
+                // this line's one head holds `after` as its condition.
+                let before_condition = (shape.family == ProbeFamily::Predicate)
+                    .then(|| {
+                        super::old_condition::old_condition_for_edit(
+                            text,
+                            &after,
+                            before.as_deref()?,
+                        )
+                    })
+                    .flatten();
+                let mut probe = build_probe(
                     &build_context,
                     &canonical_line,
                     shape.family,
                     before,
                     Some(after),
                 );
+                probe.before_condition = before_condition;
                 probes.push(SeededProbe::maybe_with_span(probe, parser_span));
             }
             continue;
@@ -2938,6 +2951,7 @@ fn build_probe(
         delta,
         before,
         after,
+        before_condition: None,
         expression: text.to_string(),
         expected_sinks,
         required_oracles,
@@ -8709,6 +8723,7 @@ mod source_currentness_tests {
         let path = PathBuf::from("src/lib.rs");
         let owner = SymbolId("src/lib.rs::collision".to_string());
         SeededProbe::from_probe(Probe {
+            before_condition: None,
             id: diff_probe_id(&path, &ProbeFamily::Predicate, Some(&owner), expression, 1),
             location: SourceLocation::new(path, 1, 1),
             owner: Some(owner),
@@ -8792,6 +8807,7 @@ mod source_currentness_tests {
             removed_lines: vec![],
         };
         let bare = Probe {
+            before_condition: None,
             id: diff_probe_id(
                 &changed.path,
                 &ProbeFamily::SideEffect,

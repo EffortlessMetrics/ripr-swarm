@@ -127,10 +127,19 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     ),
     (
         // `ripr agent packet --seam-id <id> --json`, the one-seam packet
-        // document. The `--gap-ledger` document and the
-        // `agent-seam-packets-json` check format share the constant but are
+        // document. The `--gap-ledger` document shares the constant but is
         // not covered by this schema yet (#3920).
         "agent-packet",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr check --format agent-seam-packets-json`, the repository-wide
+        // packet document over the same packet definitions.
+        "agent-seam-packets",
         &[producer(
             "crates/ripr/src/app.rs",
             "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
@@ -695,6 +704,17 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["--seam-id", "write_targeted_test"],
+    },
+    // `ripr check --format agent-seam-packets-json`. The fixture is a capture
+    // of a one-packet run with the host's absolute root made portable; the
+    // producer-byte authority is `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-seam-packets.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-seam-packets.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["agent-seam-packets-json", "receipt_after_verify"],
     },
     // `ripr agent status --json`. The fixture is a capture of a finished
     // repair loop with the host's absolute root replaced by `.`; the

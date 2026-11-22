@@ -2213,6 +2213,10 @@ fn installed_candidate_runs_the_admitted_help_harness_outside_its_package() -> R
     )?;
     let owned = fixture.guard.root.join("help harness producer");
     fs::create_dir(&owned).map_err(|error| error.to_string())?;
+    // The freeze below requires the slot's parent to be the canonical owned
+    // root. On Windows the canonical spelling is the verbatim one, so join
+    // the slot onto it, as `capture_fixture_input` does.
+    let owned = owned.canonicalize().map_err(|error| error.to_string())?;
     let archive = AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?;
     // The fixture manifest includes only src/**, so the harness is committed
     // but not packaged: qualification reads it from the admitted source.

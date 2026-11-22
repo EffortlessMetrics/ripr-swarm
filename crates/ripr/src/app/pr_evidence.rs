@@ -252,9 +252,13 @@ fn check_pr_evidence(repo: &Path, options: &PrEvidenceOptions) -> Result<(), Str
     let json_path = repo.join(PR_EVIDENCE_JSON);
     let markdown_path = repo.join(PR_EVIDENCE_MD);
     let text = fs::read_to_string(&json_path)
-        .map_err(|err| format!("missing or unreadable {PR_EVIDENCE_JSON}: {err}"))?;
+        .map_err(|err| format!(
+            "missing or unreadable {PR_EVIDENCE_JSON}: {err}; run `ripr pr-evidence` with the same --base, --head and --root to write it, then rerun with --check"
+        ))?;
     let packet: Value = serde_json::from_str(&text)
-        .map_err(|err| format!("{PR_EVIDENCE_JSON} is not valid JSON: {err}"))?;
+        .map_err(|err| format!(
+            "{PR_EVIDENCE_JSON} is not valid JSON: {err}; regenerate it with `ripr pr-evidence` (same --base, --head and --root), then rerun with --check"
+        ))?;
     if let Some(error) = reject_pr_evidence_error_packet(&packet) {
         return Err(error);
     }
@@ -430,7 +434,7 @@ fn ensure_root_inside_invocation_repo(repo: &Path, root: &str) -> Result<(), Str
         _ => Err(format!(
             "pr-evidence root {root} is not inside the Git work tree of the current directory \
              ({}); pr-evidence reads history and writes target/ripr/pr/ from the current \
-             directory, so run it from the repository that contains the root \
+             directory; run it from the repository that contains the root \
              (for example `cd <repository> && ripr pr-evidence --root <member>`)",
             repo.display()
         )),

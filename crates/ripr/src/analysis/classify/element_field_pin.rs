@@ -1545,6 +1545,7 @@ mod tests {
 
     fn probe() -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src/lib.rs:6:rows".to_string()),
             location: SourceLocation::new("src/lib.rs", 6, 24),
             owner: None,

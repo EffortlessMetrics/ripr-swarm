@@ -60,6 +60,7 @@ mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:include-owner".to_string()),
             location: SourceLocation::new("workspace/src/parser_fragment.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::impl Parser::clamp".to_string())),

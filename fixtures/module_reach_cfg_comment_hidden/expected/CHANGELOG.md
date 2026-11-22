@@ -213,3 +213,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_cfg_comment_hidden (17)
+
+Reason:
+RIPR-SPEC-0153: a mod behind #[cfg(any())] mounts nothing, rustc never compiles its file (#15877)
+
+Command:
+`cargo xtask goldens bless module_reach_cfg_comment_hidden --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

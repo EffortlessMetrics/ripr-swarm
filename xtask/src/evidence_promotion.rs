@@ -3724,6 +3724,15 @@ fn evidence_promotion_report_reads_clean(check_json: &Value, findings: &[Value])
     if evidence_promotion_discloses_no_scope(check_json) {
         return false;
     }
+    // A partial outcome names its own limitations (#15877: a changed file no
+    // Cargo target compiles), so it is not a clean result either.
+    if check_json
+        .pointer("/analysis_outcome/outcome/limitations")
+        .and_then(Value::as_array)
+        .is_some_and(|limitations| !limitations.is_empty())
+    {
+        return false;
+    }
     if check_json
         .get("limitations")
         .and_then(Value::as_array)

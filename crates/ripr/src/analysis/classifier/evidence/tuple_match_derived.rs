@@ -894,6 +894,7 @@ mod tests {
 
     fn probe_at(line: usize, before: Option<&str>, after: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: crate::domain::ProbeId("probe:test".to_string()),
             location: crate::domain::SourceLocation::new("src/lib.rs", line, 1),
             owner: None,

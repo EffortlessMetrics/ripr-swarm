@@ -377,9 +377,9 @@ impl McpSession {
     }
 
     /// Write a batch in immediate succession without awaiting between
-    /// lines, then collect every reply. The transport admits one request
-    /// at a time, so this proves pipelined bytes stay coherent rather
-    /// than overlapping.
+    /// lines, then collect every reply. The transport holds a snapshot or
+    /// repair read written behind a refresh until that refresh replies, so
+    /// this proves pipelined bytes stay coherent rather than overlapping.
     fn call_batch(&mut self, batch: &[(&str, &str, Value)]) -> Result<Vec<Value>, String> {
         for (id, tool, arguments) in batch {
             self.send_call(id, tool, arguments)?;
@@ -1786,12 +1786,14 @@ fn b3c_mcp_pipelined_coherence() -> Result<(), String> {
     let status = tool_success(&reply, "b3c status")?.clone();
     let bound = response_bound(&status)?;
 
-    // One immediate batch with no delay between lines. The transport
-    // admits a single request at a time (`Admission`: one typed request
-    // stays admitted until its reply frame flushes), so `analysis_in_flight`
-    // is unreachable over one stdio connection by design; the executable
-    // property is that pipelined bytes stay sequential and coherent:
-    // refresh completes and every follower binds that snapshot.
+    // One immediate batch with no delay between lines. Beside a running
+    // refresh the transport answers only status, liveness, the catalog and a
+    // repeated refresh (#15983); a snapshot or repair read is held, with
+    // nothing read behind it, until the refresh reply flushes. So for these
+    // followers `analysis_in_flight` stays unreachable over one stdio
+    // connection, and the executable property is that pipelined bytes stay
+    // sequential and coherent: refresh completes and every follower,
+    // including the status behind the held reads, binds that snapshot.
     let replies = session.call_batch(&[
         ("b3c-refresh", "ripr_refresh", json!({})),
         ("b3c-list", "ripr_list_gaps", json!({})),

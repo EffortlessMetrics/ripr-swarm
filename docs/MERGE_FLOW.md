@@ -134,6 +134,25 @@ request for tests. All expected source changes and material review dispositions
 belong before it. The owner still handles ejection, new findings and final
 readback. No resident polling worker is needed while native CI owns the wait.
 
+Keep H (reviewed head), P (historical PR synthetic merge), G (native queue
+composition) and M (actual landed commit/tree) distinct. A green P does not prove
+compatibility with a later base. Bind G to its base, ordered constituent heads,
+actual checkout/tree, selected proof, trusted producer and run/attempt. Squash
+changes commit identity; reconcile the corresponding tested and landed tree.
+
+GitHub requires required contexts before enqueue and again on G. Real cheap PR
+admission may replace expensive PR qualification only after queue-only landing
+is enforced and verified. Never emit unconditional/skipped required success or
+allow cheap admission to authorize a direct merge. Recheck current review and
+eligibility before G's final required result; unchanged H can acquire a blocker.
+
+Start native canaries with build concurrency 1, one-entry landing, squash and
+all entries required to pass. These are bootstrap settings, not a universal
+throughput ceiling. Merge limits do not batch builds. Tune from measured first-G
+pass rate, invalidations, queue age, capacity and cost per accepted change.
+The normal <=20-minute complete-active-qualification target remains; queue delay
+and failed/retried work are accounted separately, not omitted.
+
 ### Enqueue interface
 
 A session with the native route enqueues there (the GitHub UI or the GraphQL
@@ -167,11 +186,39 @@ Do not issue the call while a required result is pending so that the PR lands
 later on its own: that is the armed wait this route excludes, and a finding
 that arrives during the wait would not stop it. Read back that the PR entered
 the queue. The queue entry itself is a GraphQL field; over REST, read the PR
-timeline (`gh api repos/EffortlessMetrics/ripr-swarm/issues/<n>/timeline`) for
-an `added_to_merge_queue` event later than the call. If the PR shows auto-merge
+timeline for an `added_to_merge_queue` event later than the call
+(`gh api "repos/EffortlessMetrics/ripr-swarm/issues/<n>/timeline?per_page=100&page=<k>"`).
+The timeline is oldest first and paged, so read through the last page; the
+first page of a busy PR does not hold recent events. If the PR shows auto-merge
 armed without that event, a requirement
 was not met: disarm it with `-X DELETE` on the same path, verify the readback,
 and reconcile before trying again.
+
+To withdraw a PR that is already in the queue, for example when a material
+finding arrives after enqueue, a REST-only session has no dequeue mutation. Use
+two calls in this order:
+
+```bash
+gh api -X DELETE repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/auto_merge
+gh api -X POST repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/convert_to_draft
+```
+
+The first call disarms auto-merge so nothing re-enqueues the PR; the second
+removes the queue entry, because queue membership does not survive a
+conversion to Draft. Read back `"draft": true` on the PR and, on the last page
+of the PR timeline, a `removed_from_merge_queue` event later than the most
+recent `added_to_merge_queue`; an earlier withdrawal's event does not count.
+The removal event can trail the conversion by several minutes: on #16039 the
+conversion was recorded at 05:56Z on November 22, 2026 and the removal at
+06:02Z. Until it appears, the withdrawal is not confirmed. A queue run that has
+already merged the PR cannot be withdrawn this way; check for a `merged` event
+first.
+
+With the auto-merge request deleted, nothing is left to put the PR back in the
+queue when it returns to Ready. That step was not part of the #16039 receipt,
+so read the timeline once more after marking Ready. After the repair, the
+review, qualification and enqueue conditions above apply again on the new head.
+
 The ruling covers `ripr-swarm` only and changes no setting, required check or
 release authority.
 
@@ -225,24 +272,43 @@ does not start a merge-group run, and the PR is enqueued again after the review
 is repaired and the current PR qualification is confirmed (see
 [qualification recovery](agent-context/convergence-runbook.md)).
 
-Keep H (reviewed head), P (historical PR synthetic merge), G (native queue
-composition) and M (actual landed commit/tree) distinct. A green P does not prove
-compatibility with a later base. Bind G to its base, ordered constituent heads,
-actual checkout/tree, selected proof, trusted producer and run/attempt. Squash
-changes commit identity; reconcile the corresponding tested and landed tree.
+### Result refused at the eligibility recheck
 
-GitHub requires required contexts before enqueue and again on G. Real cheap PR
-admission may replace expensive PR qualification only after queue-only landing
-is enforced and verified. Never emit unconditional/skipped required success or
-allow cheap admission to authorize a direct merge. Recheck current review and
-eligibility before G's final required result; unchanged H can acquire a blocker.
+`Ripr Rust Small Result` re-reads the PR after the child jobs finish. A failure
+whose error line reads `eligibility recheck refused at stage
+review_decision_and_threads` came from that read, not from the Rust jobs. The
+stage refuses when any review thread on the PR is unresolved, including bot
+threads and outdated ones, when the review decision is `CHANGES_REQUESTED`, when
+the head moved, or, in a queue run, when the queue entry no longer matches. A
+failed or malformed GraphQL read reports the same stage, so the stage name
+alone does not prove a review blocker: read the PR's threads and review
+decision before concluding. In a merge group the recheck walks every
+constituent but the error line names the tip PR, so the refusing PR may be an
+earlier constituent. The usual case is a bot reviewer's threads opened after
+the request and still open when Result ran.
 
-Start native canaries with build concurrency 1, one-entry landing, squash and
-all entries required to pass. These are bootstrap settings, not a universal
-throughput ceiling. Merge limits do not batch builds. Tune from measured first-G
-pass rate, invalidations, queue age, capacity and cost per accepted change.
-The normal <=20-minute complete-active-qualification target remains; queue delay
-and failed/retried work are accounted separately, not omitted.
+Do not diagnose it from the routing summary. `runner_query_http` `401` with
+`reason=runner_api_failed` records only that the self-hosted runner inventory
+query was refused and routing fell back to the GitHub-hosted leg; the workflow's
+own warning says the PR is not red for that.
+
+To repair: answer and resolve the threads and confirm the head is unchanged.
+Then start a fresh run by the route that produced the refused one. For a
+`merge-ready` PR run, remove and reapply the label, but not while a current-head
+run is queued or running. For a merge-group run, enqueue the PR again;
+relabelling starts PR qualification, not a new merge group. Re-running the
+failed job cannot pass on either route, because the recheck binds the admitted
+request to the original run attempt (`routed-rust.yml`, `admission_binding`;
+#8858).
+
+To prevent it: after publishing or pushing, give the bot reviewers about five
+minutes, disposition and resolve their threads, and only then apply
+`merge-ready`. `Admit PR Candidate` reads the live threads when its step runs,
+shortly after the request, and refuses the run there if any is unresolved,
+naming them; if that read fails it only warns and leaves the decision to the
+recheck. A thread opened after that read is not seen until Result, so resolve
+it before the child jobs finish; one still open at the recheck costs the whole
+run.
 
 ## Existing implementation owners and cutover order
 

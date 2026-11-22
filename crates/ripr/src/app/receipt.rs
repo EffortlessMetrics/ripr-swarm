@@ -1849,6 +1849,9 @@ mod tests {
 
     const LEGACY_NESTED_GAP: &str = "gap:rust:src/lib.rs:total:predicate:n==0..10";
 
+    // Used only by the Unix tests below; unconfigured elsewhere so the
+    // Windows test build has no dead code under `-D warnings`.
+    #[cfg(unix)]
     fn legacy_nested_base(label: &str) -> Result<PathBuf, String> {
         let base = std::env::temp_dir().join(format!(
             "ripr-receipt-legacy-nested-{label}-{}",

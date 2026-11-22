@@ -580,6 +580,7 @@ mod tests {
             id: format!("probe:{file}:{line}:test_family:aabbccdd"),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(format!("probe:{file}:{line}:test_family:aabbccdd")),
                 location: SourceLocation::new(file, line, 1),
                 owner: Some(SymbolId("owner::fn".to_string())),

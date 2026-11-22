@@ -2142,6 +2142,17 @@ impl WorkspaceKeyContext<'_> {
                 )),
                 None => workspace_manifests_hash,
             };
+        // #16045 review: a symlinked crate root (`src -> real`,
+        // `src/lib.rs -> ../real/lib.rs`) decides which files the repo
+        // inventory lists, and the link can move with no manifest or Rust
+        // file changing (discovery skips links). Fold where each built root
+        // lands into the key. A workspace without linked roots keeps its key.
+        let workspace_manifests_hash = match linked_crate_root_identity(self.workspace_root) {
+            Some(identity) => hash_str(&format!(
+                "{workspace_manifests_hash}:linked-crate-roots:{identity}"
+            )),
+            None => workspace_manifests_hash,
+        };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -4846,6 +4857,39 @@ pub(crate) fn stable_input_hash(bytes: &[u8]) -> String {
 
 pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a_64(bytes))
+}
+
+/// Where every symlinked production root the workspace's manifests build
+/// lands, root-relative, or `None` when no built root is reached through a
+/// link (#16045 review).
+fn linked_crate_root_identity(root: &Path) -> Option<String> {
+    let mut manifests = Vec::new();
+    collect_named_workspace_files(root, root, "Cargo.toml", &mut manifests);
+    let relative = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+    let mut lines = BTreeSet::new();
+    for (manifest, bytes) in manifests {
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
+        let package_dir = match manifest.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => root.join(parent),
+            _ => root.to_path_buf(),
+        };
+        for (file, dir) in super::workspace::linked_production_roots(root, &package_dir, text) {
+            lines.insert(format!(
+                "{}\t{}\t{}",
+                relative(&manifest),
+                relative(&file),
+                relative(&dir)
+            ));
+        }
+    }
+    (!lines.is_empty()).then(|| hash_str(&lines.into_iter().collect::<Vec<_>>().join("\n")))
 }
 
 fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {

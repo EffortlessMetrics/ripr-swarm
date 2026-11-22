@@ -425,7 +425,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
             }
         }
         render_working_tree_disclosure(&mut tail, output);
-        render_preview_language_advisories(&mut tail, output);
+        render_preview_language_advisories(&mut tail, output, config);
         render_language_runs(&mut tail, output);
         push_after_paragraph(&mut out, &tail);
         return out;
@@ -436,7 +436,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     let mut tail = String::new();
     render_all_no_path_disclosure(&mut tail, output);
     render_working_tree_disclosure(&mut tail, output);
-    render_preview_language_advisories(&mut tail, output);
+    render_preview_language_advisories(&mut tail, output, config);
     render_language_runs(&mut tail, output);
     push_after_paragraph(&mut out, &tail);
     out
@@ -498,7 +498,7 @@ pub(crate) fn render_full_with_config_and_navigation(
         // changes were NOT analyzed. An empty result here does NOT mean those changes
         // are covered — they were excluded from the committed-history diff.
         render_working_tree_disclosure(&mut out, output);
-        render_preview_language_advisories(&mut out, output);
+        render_preview_language_advisories(&mut out, output, config);
         render_language_runs(&mut out, output);
         return out;
     }
@@ -573,7 +573,7 @@ pub(crate) fn render_full_with_config_and_navigation(
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
     render_working_tree_disclosure(&mut tail, output);
-    render_preview_language_advisories(&mut tail, output);
+    render_preview_language_advisories(&mut tail, output, config);
     render_language_runs(&mut tail, output);
     push_after_paragraph(&mut out, &tail);
     out
@@ -1495,7 +1495,7 @@ pub(super) fn wrap_human_prose(
 ///   preview adapter is not enabled in `ripr.toml`; the empty result must not
 ///   be read as clean. A copy-paste-ready TOML block is appended so enabling
 ///   the adapter is a single edit.
-fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
+fn render_preview_language_advisories(out: &mut String, output: &CheckOutput, config: &RiprConfig) {
     // One combined snippet per run (#15288): applying a per-language snippet
     // one at a time would switch the other languages back off.
     let snippet_count = enable_snippet_advisories(output).count();
@@ -1531,7 +1531,7 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
                 advisory.file_count, file_label, language,
             ));
             if snippet_count == 1 {
-                out.push_str(&enable_snippet_block(output));
+                out.push_str(&enable_snippet_block(output, config));
             }
             if let Some(hint) = nested_python_root_hint(advisory, &output.root) {
                 out.push_str(&hint);
@@ -1561,7 +1561,7 @@ fn render_preview_language_advisories(out: &mut String, output: &CheckOutput) {
         }
     }
     if snippet_count > 1 {
-        out.push_str(&enable_snippet_block(output));
+        out.push_str(&enable_snippet_block(output, config));
     }
 }
 
@@ -1614,8 +1614,8 @@ fn enable_snippet_advisories(
         })
 }
 
-fn enable_snippet_block(output: &CheckOutput) -> String {
-    let enabled_line = preview_enablement_toml(output);
+fn enable_snippet_block(output: &CheckOutput, config: &RiprConfig) -> String {
+    let enabled_line = preview_enablement_toml(output, config);
     format!("\nTo enable, add to ripr.toml:\n\n[languages]\n{enabled_line}\n")
 }
 
@@ -1666,20 +1666,31 @@ fn nested_python_root_hint(
 /// Names Rust only when the analyzed root has Rust markers or a crate nested
 /// below it (#7648): a root with `backend/Cargo.toml` has its Rust files
 /// analyzed, and a list without `rust` would switch that off.
-fn preview_enablement_toml(output: &CheckOutput) -> String {
-    let rust_detected = crate::domain::enablement_tip_keeps_rust(&output.root);
+///
+/// A configuration that sets `[languages].enabled` is the list being
+/// replaced, so the line starts from it, as the `ripr doctor` tip does
+/// (#15989): a list that leaves `rust` out keeps it out, and a preview
+/// language it enables stays even when this diff has no file of that
+/// language. `config` is the one the analysis ran under, so a candidate-tree
+/// check reads the candidate's list, not the checkout's.
+fn preview_enablement_toml(output: &CheckOutput, config: &RiprConfig) -> String {
+    let explicit = crate::config::languages_enabled_is_explicit(config)
+        .then(|| config.languages().enabled().to_vec());
+    // An explicit list is kept as written, `rust` included; otherwise `rust`
+    // is named only where Rust markers are found.
+    let keep_rust = explicit.is_some() || crate::domain::enablement_tip_keeps_rust(&output.root);
     // Keep the preview languages this diff shows are already on (their
     // advisories say so), then add every language still off, so one edit
-    // enables them all (#15288). A preview language enabled in ripr.toml but
-    // absent from this diff has no advisory and is not listed.
+    // enables them all (#15288).
     let wire_id = |wire: &str| match crate::domain::LanguageId::from_wire(wire) {
         Some(crate::domain::LanguageId::JavaScript) => Some(crate::domain::LanguageId::TypeScript),
         other => other,
     };
-    let mut enabled: Vec<crate::domain::LanguageId> = Vec::new();
-    if rust_detected {
-        enabled.push(crate::domain::LanguageId::Rust);
-    }
+    let mut enabled: Vec<crate::domain::LanguageId> = match explicit {
+        Some(configured) => configured,
+        None if keep_rust => vec![crate::domain::LanguageId::Rust],
+        None => Vec::new(),
+    };
     for advisory in output
         .preview_language_advisories
         .iter()
@@ -1699,7 +1710,7 @@ fn preview_enablement_toml(output: &CheckOutput) -> String {
             None => unknown.push(&advisory.language),
         }
     }
-    let suggestion = crate::domain::enablement_tip_languages(&enabled, rust_detected, to_add);
+    let suggestion = crate::domain::enablement_tip_languages(&enabled, keep_rust, to_add);
     let mut names: Vec<&str> = suggestion
         .iter()
         .map(crate::domain::LanguageId::as_str)
@@ -8875,11 +8886,13 @@ mod tests {
         finding.probe.family = crate::domain::ProbeFamily::Predicate;
         finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
         finding.probe.after = Some("total > 200".to_string());
+        finding.probe.before_condition = Some("total >= 100".to_string());
 
         let rendered = render_finding(&finding);
 
-        assert!(rendered.contains("  before: if total >= 100 { total - 10 } else { total }\n"));
-        assert!(rendered.contains("  after:  total > 200\n"));
+        assert!(rendered.contains(
+            "  before: if total >= 100 { total - 10 } else { total }\n          old condition: total >= 100\n  after:  total > 200\n"
+        ));
         assert!(
             rendered.contains("(condition only; before is the whole old line; open "),
             "a condition-only after row over a whole old line must say so; got:\n{rendered}"
@@ -8920,6 +8933,31 @@ mod tests {
         arm.probe.before = Some("x if a > 1 => { 2 }".to_string());
         arm.probe.after = Some("x if a > 2 =>".to_string());
         assert!(!render_finding(&arm).contains(note));
+
+        // The old condition row (#15420) prints the condition the producer
+        // carried, and only over a whole old line: a line with none carried
+        // keeps the note without a row, and a carried value beside a cut
+        // `before` is not printed.
+        let row = "old condition:";
+        let carried = |before: &str, after: &str, condition: &str| {
+            let mut finding = sample_finding();
+            finding.probe.family = crate::domain::ProbeFamily::Predicate;
+            finding.probe.before = Some(before.to_string());
+            finding.probe.after = Some(after.to_string());
+            finding.probe.before_condition = Some(condition.to_string());
+            render_finding(&finding)
+        };
+        assert!(
+            carried("while n >= 1 { n -= 1 }", "n > 2", "n >= 1")
+                .contains("old condition: n >= 1\n")
+        );
+        let uncarried = predicate("while n >= 1 { n -= 1 }", "n > 2");
+        assert!(uncarried.contains(note) && !uncarried.contains(row));
+        assert!(!carried("total >= 100", "total > 200", "total >= 100").contains(row));
+        let two_heads = predicate("if a > 1 { 1 } else if b > 2 { 2 }", "b > 3");
+        assert!(two_heads.contains(note) && !two_heads.contains(row));
+        let pattern = predicate("if let Shape { side } = shape { side }", "side > 3");
+        assert!(pattern.contains(note) && !pattern.contains(row));
     }
 
     /// The `expr:` fallback is the same rendered fragment reached through a
@@ -9866,6 +9904,7 @@ mod tests {
             normalized_discriminator: "return_value".to_string(),
         });
         finding.probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
             location: SourceLocation::new("lib/My/App.pm", 8, 5),
             owner: Some(SymbolId(
@@ -10295,6 +10334,7 @@ mod tests {
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:sample.rs:7:predicate".to_string()),
                 location: SourceLocation::new("src/sample.rs", 7, 3),
                 owner: None,
@@ -10375,6 +10415,7 @@ mod tests {
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:1:static_unknown".to_string()),
                 location: SourceLocation::new("src/lib.rs", 1, 1),
                 owner: None,

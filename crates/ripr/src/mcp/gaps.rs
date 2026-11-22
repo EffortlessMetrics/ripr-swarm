@@ -995,6 +995,15 @@ fn gap_evidence_core(
     ) {
         object.insert("arm_result".to_string(), Value::from(result));
     }
+    // #15420: a predicate whose `before` is the whole old line also names
+    // the old `if`/`while` condition, at the granularity of `after`. Present
+    // only when read; `before` keeps the whole old line.
+    if let (Some(condition), Some(object)) = (
+        crate::analysis::old_condition_of_whole_line(finding),
+        changed_behavior.as_object_mut(),
+    ) {
+        object.insert("before_condition".to_string(), Value::from(condition));
+    }
     let source_currentness = serde_json::to_value(finding.source_currentness)
         .map_err(|error| format!("serialize source currentness: {error}"))?;
     let static_limitation = finding
@@ -1289,6 +1298,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             normalized_discriminator: "total == 10000".to_string(),
         }),
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:test:1".to_string()),
             location: SourceLocation::new("src/lib.rs", 12, 5),
             owner: Some(crate::domain::SymbolId("symbol:checkout".to_string())),
@@ -3482,6 +3492,36 @@ mod tests {
         let core = gap_evidence_core(&predicate, "gap:test:1", root, &ready_readiness())?;
         if core["changed_behavior"].get("arm_result").is_some() {
             return Err(format!("non-arm probe named: {}", core["changed_behavior"]));
+        }
+        Ok(())
+    }
+
+    /// #15420: `ripr_get_gap` names the old condition when `before` is the
+    /// whole old line and the producer carried one, and leaves the field out
+    /// when `before` is already the condition. `before` is unchanged either way.
+    #[test]
+    fn get_gap_names_the_old_condition_of_a_whole_old_line() -> Result<(), String> {
+        let mut finding = finding()?;
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
+        finding.probe.after = Some("total > 200".to_string());
+        finding.probe.before_condition = Some("total >= 100".to_string());
+        let root = Path::new("repo");
+        let core = gap_evidence_core(&finding, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"]["before_condition"] != "total >= 100"
+            || core["changed_behavior"]["before"] != "if total >= 100 { total - 10 } else { total }"
+        {
+            return Err(format!(
+                "old condition not named: {}",
+                core["changed_behavior"]
+            ));
+        }
+
+        let mut cut = finding;
+        cut.probe.before = Some("total >= 100".to_string());
+        let core = gap_evidence_core(&cut, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"].get("before_condition").is_some() {
+            return Err(format!("cut before named: {}", core["changed_behavior"]));
         }
         Ok(())
     }

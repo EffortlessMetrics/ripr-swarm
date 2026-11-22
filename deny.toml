@@ -16,6 +16,13 @@ targets = [
 
 [advisories]
 yanked = "deny"
+# Report unmaintained advisories for every crate in the graph. cargo-deny
+# 0.22.0 changed this default from `all` to `workspace`, which reports only
+# direct workspace dependencies: the transitive unic rows below would then
+# fail as `advisory-not-detected`, and an unmaintained transitive crate
+# would go unreported. Stating the scope keeps one result across versions
+# (#15945).
+unmaintained = "all"
 # cargo-deny advisory ignore entries accept IDs or `{ id, reason }` metadata,
 # but reject per-entry `until` fields (verified with cargo-deny 0.19.0). Keep
 # expiry metadata in comments and enforce it with `cargo xtask check-dependencies`.

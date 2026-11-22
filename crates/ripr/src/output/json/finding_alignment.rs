@@ -3493,6 +3493,7 @@ mod tests {
             id: probe_id.clone(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(probe_id),
                 location: SourceLocation::new(file, line, 1),
                 owner: None,
