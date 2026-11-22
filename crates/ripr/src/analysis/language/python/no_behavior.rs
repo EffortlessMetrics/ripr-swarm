@@ -440,6 +440,63 @@ pub(super) fn is_python_import_line(line: &str) -> bool {
     trimmed.starts_with("import ") || (trimmed.starts_with("from ") && trimmed.contains(" import"))
 }
 
+/// Import statement line ranges of the candidate file and of the base file,
+/// so a continuation row of a parenthesized import (`    normalize,`) is read
+/// as part of its import.
+pub(super) struct ImportLines<'a> {
+    pub(super) added: &'a [std::ops::RangeInclusive<usize>],
+    pub(super) removed: &'a [std::ops::RangeInclusive<usize>],
+}
+
+/// Drops from `counterparts` the pairs of an added run that holds no code:
+/// every line of the run is comment-only, blank, or part of an `import`
+/// statement.
+/// Such a run replaced nothing. A removed line the diff pairs with one of
+/// its comment or blank lines was deleted, so it keeps its own base-side
+/// record instead of lending its probe shape to the comment text; so does a
+/// removed line an added `import` stands on, unless it was an import itself
+/// (an import that replaces an import re-points a name). A line inside a
+/// multi-line string is content, not a comment; with no `string_lines` (an
+/// unreadable or unlexable file) every pair is kept.
+pub(super) fn unpair_runs_without_code(
+    changed: &super::ChangedFile,
+    string_lines: Option<&[std::ops::RangeInclusive<usize>]>,
+    imports: ImportLines<'_>,
+    counterparts: &mut std::collections::BTreeMap<usize, &ChangedLine>,
+) {
+    let Some(string_lines) = string_lines else {
+        return;
+    };
+    if counterparts.is_empty() {
+        return;
+    }
+    let is_comment_or_blank = |text: &str| {
+        let trimmed = text.trim();
+        trimmed.is_empty() || trimmed.starts_with('#')
+    };
+    let codeless = changed.added_lines_in_quiet_runs(|added| {
+        !super::line_is_in_ranges(added.line, string_lines)
+            && (is_comment_or_blank(&added.text)
+                || is_python_import_line(&added.text)
+                || super::line_is_in_ranges(added.line, imports.added))
+    });
+    if codeless.is_empty() {
+        return;
+    }
+    let comment_or_blank: std::collections::BTreeSet<usize> = changed
+        .added_lines
+        .iter()
+        .filter(|added| codeless.contains(&added.line) && is_comment_or_blank(&added.text))
+        .map(|added| added.line)
+        .collect();
+    counterparts.retain(|added_line, removed| {
+        !codeless.contains(added_line)
+            || (!comment_or_blank.contains(added_line)
+                && (is_python_import_line(&removed.text)
+                    || super::line_is_in_ranges(removed.line, imports.removed)))
+    });
+}
+
 /// For each added line, whether it is `quiet` (no behavior, structural, or an
 /// import) AND its contiguous added run (consecutive new-side lines) holds at
 /// least one line that is not quiet. Such a line never carries a probe: the

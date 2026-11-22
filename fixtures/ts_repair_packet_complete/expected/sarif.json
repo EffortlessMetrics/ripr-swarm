@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.ts:typescript_preview:2396aec1|probe:src_discount.ts:typescript_preview:2396aec1|src/discount.ts"
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.ts:typescript_preview:2396aec1|probe:src_discount.ts:typescript_preview:2396aec1|fixtures/ts_repair_packet_complete/input/src/discount.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/discount.ts"
+                  "uri": "fixtures/ts_repair_packet_complete/input/src/discount.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "Missing check: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator. weakly_exposed static exposure for predicate probe:     if (amount >= threshold) {. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == threshold`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.ts:typescript_preview:2396aec1|probe:src_discount.ts:typescript_preview:2396aec1|src/discount.ts"
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_discount.ts:typescript_preview:2396aec1|probe:src_discount.ts:typescript_preview:2396aec1|fixtures/ts_repair_packet_complete/input/src/discount.ts"
           },
           "properties": {
             "changed_expression": "    if (amount >= threshold) {",

@@ -1588,6 +1588,7 @@ struct RepairPlacement {
     suggested_test_name: String,
     suggested_test_node_id: Option<String>,
     verify_command: String,
+    verify_cwd: Option<String>,
     verify_command_confidence: String,
 }
 
@@ -1608,6 +1609,7 @@ fn repair_placement_from_evidence(finding: &Finding) -> Option<RepairPlacement> 
             "suggested_verify_command_confidence: ",
         )?
         .to_string(),
+        verify_cwd: evidence_value(finding, "suggested_verify_cwd: ").map(ToString::to_string),
     })
 }
 
@@ -1649,6 +1651,9 @@ fn repair_placement_json(out: &mut String, placement: &RepairPlacement, indent: 
         &placement.verify_command,
         true,
     );
+    if let Some(cwd) = &placement.verify_cwd {
+        field(out, indent + 1, "verify_cwd", cwd, true);
+    }
     field(
         out,
         indent + 1,
@@ -1764,6 +1769,9 @@ fn python_repair_card_json(out: &mut String, card: &PythonRepairCard, indent: us
     out.push_str(&format!("{} }},\n", "  ".repeat(indent + 1)));
     out.push_str(&format!("{}\"verify\": {{\n", "  ".repeat(indent + 1)));
     field(out, indent + 2, "command", &card.verify_command, true);
+    if let Some(cwd) = &card.verify_cwd {
+        field(out, indent + 2, "cwd", cwd, true);
+    }
     field(
         out,
         indent + 2,
