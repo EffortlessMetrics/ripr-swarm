@@ -883,6 +883,13 @@ fn call_qualifier_conflicts(text: &str, name: &str, wrapper_qualifier: Option<&s
     let Some(wrapper_qualifier) = wrapper_qualifier else {
         return false;
     };
+    // The call side keeps only the last segment, so compare the wrapper's
+    // last segment too: `crate::strict::decode` and `strict::decode` name the
+    // same terminal module here (#5335).
+    let wrapper_qualifier = wrapper_qualifier
+        .rsplit("::")
+        .next()
+        .unwrap_or(wrapper_qualifier);
     for (index, _) in text.match_indices(name) {
         let before = text[..index].chars().next_back();
         let after = text[index + name.len()..].trim_start();
@@ -17291,6 +17298,77 @@ let r = try_parse_summary();",
 
         assert_eq!(related.len(), 1, "{related:?}");
         assert_eq!(related[0].1, RelationReason::SeamCalleeCall, "{related:?}");
+    }
+
+    #[test]
+    fn given_a_multi_segment_qualified_call_when_wrapper_probe_then_seam_callee_call() {
+        // The wrapper's qualifier is a multi-segment path; the call's
+        // qualifier is the same path. The comparison must reduce both to the
+        // same terminal segment, not treat `crate::strict` and `strict` as
+        // different (#5335).
+        for (wrapper, call) in [
+            (
+                "crate::strict::decode(raw).map_err(Into::into)",
+                "crate::strict::decode(raw)",
+            ),
+            (
+                "super::strict::decode(raw).map_err(Into::into)",
+                "super::strict::decode(raw)",
+            ),
+        ] {
+            let owner = function("src/lib.rs", "parse_summary");
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![
+                    function("src/lib.rs", "parse_summary"),
+                    function("src/lib.rs", "strict::decode"),
+                ],
+                tests: vec![test_with_call(
+                    "src/lib.rs",
+                    "parse_summary_rejects_bad_input",
+                    &format!("let result = {call};"),
+                    "decode",
+                )],
+                ..Default::default()
+            });
+            let probe = wrapper_error_probe("src/lib.rs", wrapper);
+
+            let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+            assert_eq!(related.len(), 1, "{wrapper}: {related:?}");
+            assert_eq!(
+                related[0].1,
+                RelationReason::SeamCalleeCall,
+                "{wrapper}: {related:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn given_a_multi_segment_wrapper_and_a_different_qualifier_when_wrapper_probe_then_no_seam_callee_call()
+     {
+        // A different qualifier still conflicts even when the wrapper's path
+        // has multiple segments.
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "strict::decode"),
+            ],
+            tests: vec![test_with_call(
+                "src/lib.rs",
+                "parse_summary_rejects_bad_input",
+                "let result = other::decode(raw);",
+                "decode",
+            )],
+            ..Default::default()
+        });
+        let probe =
+            wrapper_error_probe("src/lib.rs", "crate::strict::decode(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "{related:?}");
+        assert_ne!(related[0].1, RelationReason::SeamCalleeCall, "{related:?}");
     }
 
     #[test]
