@@ -693,18 +693,32 @@ fn include_spellings_in_the_test_crate_or_library_fail_closed() -> Result<(), St
 fn cfg_on_module_declarations_is_read_from_the_syntax_tree() -> Result<(), String> {
     let qualified_path = spelled("qual_reach::inner::order_discount");
     for lib in [
-        "#[cfg(any())]\npub mod inner;\n",
-        "#[cfg(any())]\n// {\npub mod inner;\n",
-        "#[cfg(any())]\n/* ; } */\npub mod inner;\n",
         "#[cfg(feature = \"alt\")]\n/// note; a doc comment with a semicolon\npub mod inner;\n",
-        "#[doc = \"{\"]\n#[cfg(any())]\npub mod inner;\n",
-        "#[cfg(any())] // pub use other as inner;\npub mod inner;\n",
         "#[cfg_attr(all(), cfg(any()))]\npub mod inner;\n",
         "#[cfg(any())]\npub mod wrapper {\n    pub mod inner {}\n}\npub mod inner;\n",
     ] {
         let package = module_package("src/inner.rs", lib, qualified_path.clone(), vec![]);
         assert_eq!(package.relation()?, None, "{lib}");
         assert_ne!(package.classification()?, "exposed", "{lib}");
+    }
+    // A plain `#[cfg]` no build satisfies, read through comments and other
+    // attributes, mounts nothing: `src/inner.rs` is never compiled, so its
+    // change reports no finding at all (#15877).
+    for lib in [
+        "#[cfg(any())]\npub mod inner;\n",
+        "#[cfg(any())]\n// {\npub mod inner;\n",
+        "#[cfg(any())]\n/* ; } */\npub mod inner;\n",
+        "#[doc = \"{\"]\n#[cfg(any())]\npub mod inner;\n",
+        "#[cfg(any())] // pub use other as inner;\npub mod inner;\n",
+    ] {
+        let package = module_package("src/inner.rs", lib, qualified_path.clone(), vec![]);
+        let outcome = package.outcome();
+        assert!(
+            outcome
+                .as_ref()
+                .is_err_and(|error| error.starts_with("no predicate finding")),
+            "{lib}: {outcome:?}"
+        );
     }
     // An inner cfg in the module's own file.
     let gated_file = Package {

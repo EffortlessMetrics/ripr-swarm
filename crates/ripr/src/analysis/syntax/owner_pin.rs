@@ -1606,14 +1606,16 @@ fn macro_binding_sites_in_tree(
                 .filter(|(wrapper, nested)| {
                     // A nested `proptest::prop_*` call needs the `proptest`
                     // root proved for its own spelling, as an outer one does.
-                    let proptest_root = |external: bool| {
-                        !drop_in_shadowed("proptest", external)
-                            && (external || !plain_import_names().contains("proptest"))
-                            && drop_in_verified("proptest")
+                    let verified_root = |krate: &str, external: bool| {
+                        !drop_in_shadowed(krate, external)
+                            && (external || !plain_import_names().contains(krate))
+                            && drop_in_verified(krate)
                     };
                     !pass_through_names_imported(binding_free)
-                        && (!nested.qualified_relative || proptest_root(false))
-                        && (!nested.qualified_external || proptest_root(true))
+                        && (!nested.qualified_relative || verified_root("proptest", false))
+                        && (!nested.qualified_external || verified_root("proptest", true))
+                        && (!nested.json_relative || verified_root("serde_json", false))
+                        && (!nested.json_external || verified_root("serde_json", true))
                         && match wrapper {
                             PassThroughCall::Qualified { krate, external } => {
                                 !drop_in_shadowed(krate, *external)
@@ -2167,6 +2169,11 @@ struct PassThroughNested {
     qualified_relative: bool,
     /// The same through an absolute `::proptest::prop_*` path.
     qualified_external: bool,
+    /// A nested `serde_json::json!` call: the `serde_json` root needs the
+    /// same proof as a qualified outer call (#14116).
+    json_relative: bool,
+    /// The same through an absolute `::serde_json::json!` path.
+    json_external: bool,
 }
 
 /// Whether `call` is spelled as an audited pass-through wrapper whose
@@ -2193,16 +2200,21 @@ fn audited_pass_through_call(
         .filter(|ch| !ch.is_whitespace())
         .collect();
     let external = path.starts_with("::");
-    let wrapper = match path.trim_start_matches("::") {
-        "proptest::proptest" => PassThroughCall::Qualified {
+    // Each `proptest` wrapper is an audited pass-through on its own too:
+    // `prop_oneof!` building a strategy in a helper outside `proptest!`
+    // pastes its arguments into the same kind of expression (#14116).
+    let proptest_wrapper = |name: &str| PASS_THROUGH_WRAPPERS.contains(&name);
+    let unrooted = path.trim_start_matches("::");
+    let wrapper = match unrooted.split_once("::") {
+        Some(("proptest", name)) if proptest_wrapper(name) => PassThroughCall::Qualified {
             krate: "proptest",
             external,
         },
-        "serde_json::json" => PassThroughCall::Qualified {
+        Some(("serde_json", "json")) => PassThroughCall::Qualified {
             krate: "serde_json",
             external,
         },
-        "proptest" if !external => PassThroughCall::BareProptest,
+        None if !external && proptest_wrapper(unrooted) => PassThroughCall::BareProptest,
         _ => return None,
     };
     if tokens
@@ -2242,6 +2254,16 @@ fn audited_pass_through_call(
             // `dep::prop_assert!` names whatever `dep` exports, not the
             // trusted macro its last segment spells. Only the `proptest` root
             // itself (`proptest::prop_oneof!`) is the audited crate's path.
+            // A group whose tokens name no trusted macro is accepted whatever
+            // its call names, so it adds no root that needs proof.
+            let mentions_known = group
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| known.contains(&token.text().trim_start_matches("r#")));
+            if !mentions_known {
+                return true;
+            }
             let qualifier = pass_through_call_qualifier(before);
             let name = name.text().trim_start_matches("r#");
             let audited = PASS_THROUGH_WRAPPERS.contains(&name);
@@ -2258,15 +2280,19 @@ fn audited_pass_through_call(
                     nested.qualified_external = true;
                     true
                 }
+                // `serde_json::json!` nested in an audited call is the same
+                // expression-only wrapper as an outer one.
+                "serde_json" if name == "json" => {
+                    nested.json_relative = true;
+                    true
+                }
+                "::serde_json" if name == "json" => {
+                    nested.json_external = true;
+                    true
+                }
                 _ => false,
             };
-            qualifier.is_empty() && known.contains(&name)
-                || wrapper
-                || !group
-                    .syntax()
-                    .descendants_with_tokens()
-                    .filter_map(|element| element.into_token())
-                    .any(|token| known.contains(&token.text().trim_start_matches("r#")))
+            qualifier.is_empty() && known.contains(&name) || wrapper
         });
     nested_calls_confined.then_some((wrapper, nested))
 }
@@ -2365,6 +2391,9 @@ fn argument_uses_bind_no_trusted_name(
                     && text != "as"
                     && !known.contains(&text)
                     && !PASS_THROUGH_WRAPPERS.contains(&text)
+                    // An argument import of `serde_json` would take over a
+                    // nested `serde_json::json!` that the call trusts.
+                    && text != "serde_json"
                     && !INERT_PASS_THROUGH_ATTRIBUTES.contains(&text)
             })
         })
