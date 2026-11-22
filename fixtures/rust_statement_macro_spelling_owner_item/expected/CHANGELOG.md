@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_statement_macro_spelling_owner_item (3)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm and field_construction exact-oracle steps add an if-it-does branch naming the unconfirmed observation link; static class unchanged
+
+Command:
+`cargo xtask goldens bless rust_statement_macro_spelling_owner_item --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

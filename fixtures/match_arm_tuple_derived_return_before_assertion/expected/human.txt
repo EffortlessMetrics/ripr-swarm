@@ -18,8 +18,10 @@ Start here:
   Missing check: No assertion was tied to the changed value
   Related test (1 of 3 matched rows): tests/projection.rs:5 request_only_projection_observes_join (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `request_only_projection_observes_join` already asserts an exact
-    value; the gap is not the assertion shape. Check whether a related test's input selects the
-    changed arm. If none does, add one and assert the exact value that arm produces
+    value; the gap is not the assertion shape. Check whether the value that test asserts comes from
+    the changed arm. If it does, the assertion may already notice this change, which ripr could not
+    confirm from the source. If no related input selects the arm, add one and assert the exact value
+    the arm produces
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

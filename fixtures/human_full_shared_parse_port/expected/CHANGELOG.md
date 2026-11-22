@@ -395,3 +395,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (31)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm and field_construction exact-oracle steps add an if-it-does branch naming the unconfirmed observation link; static class unchanged
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -105,8 +105,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The related test `spades_are_black` already asserts an exact value; the gap is not the assertion shape. Check whether a related test's input selects the changed arm. If none does, add one and assert the exact value that arm produces.",
-      "suggested_next_action": "The related test `spades_are_black` already asserts an exact value; the gap is not the assertion shape. Check whether a related test's input selects the changed arm. If none does, add one and assert the exact value that arm produces.",
+      "recommended_next_step": "The related test `spades_are_black` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If no related input selects the arm, add one and assert the exact value the arm produces.",
+      "suggested_next_action": "The related test `spades_are_black` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If no related input selects the arm, add one and assert the exact value the arm produces.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

@@ -281,3 +281,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (22)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm and field_construction exact-oracle steps add an if-it-does branch naming the unconfirmed observation link; static class unchanged
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

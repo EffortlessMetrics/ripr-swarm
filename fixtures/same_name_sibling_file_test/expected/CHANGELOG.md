@@ -334,3 +334,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — same_name_sibling_file_test (27)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm and field_construction exact-oracle steps add an if-it-does branch naming the unconfirmed observation link; static class unchanged
+
+Command:
+`cargo xtask goldens bless same_name_sibling_file_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
