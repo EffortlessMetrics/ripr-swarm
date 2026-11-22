@@ -1895,6 +1895,52 @@ fn literal_keyword_argument_line_takes_the_call_shape() -> Result<(), String> {
         "{finding:?}"
     );
 
+    // Comments on the call's own lines, including after the closing `)`, do
+    // not hide the call.
+    let commented = "import warnings\n\n\ndef headers(env):\n    warnings.warn(  # old API\n        \"deprecated\",\n        DeprecationWarning,\n        stacklevel=3,  # caller's caller\n    )  # removed in 2.0\n    return {\"a\": env}\n";
+    let findings = analyze_with_test(
+        "warn-commented",
+        commented,
+        test,
+        &[8],
+        vec![line(8, 8, "        stacklevel=2,  # caller's caller")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 8)
+        .ok_or_else(|| format!("commented: no finding: {findings:?}"))?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::SideEffect,
+        "commented: {finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        crate::domain::ExposureClass::Exposed,
+        "commented: {finding:?}"
+    );
+
+    // A parameter default in a `def` header is not a call argument: another
+    // default's imported call does not put an import limit on it.
+    let defaults = "import os\n\n\ndef headers(\n    env,\n    limit=3,\n    base=os.getcwd(),\n):\n    return {\"a\": env, \"limit\": limit}\n";
+    let pinned = "from src.cart import headers\n\n\ndef test_headers():\n    assert headers(\"x\") == {\"a\": \"x\", \"limit\": 3}\n";
+    let findings = analyze_with_test(
+        "def-default",
+        defaults,
+        pinned,
+        &[6],
+        vec![line(6, 6, "    limit=2,")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 6)
+        .ok_or_else(|| format!("def default: no finding: {findings:?}"))?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(crate::domain::StaticLimitKind::MissingImportGraph),
+        "def default: {finding:?}"
+    );
+
     // A keyword whose value is not a literal (`stacklevel=level`) or that
     // carries a comparison (`strict=level > 2`) keeps the line's own shape.
     for (label, new, old) in [
