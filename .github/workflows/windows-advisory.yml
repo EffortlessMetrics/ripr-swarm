@@ -498,47 +498,20 @@ jobs:
 
       # A missing status file is `not_run`, never silence: a lane that drops a
       # row it did not execute reads as if nothing was wrong. A part cut by
-      # its deadline (124) or that could not start (127) is `INCOMPLETE`:
+      # its deadline (124) or that could not start (127) is INCOMPLETE:
       # missing evidence, not a test failure (#16036). `nofeatures-test` joins
       # its parts (unit targets, doctests and the three integration parts):
       # FAIL when any part failed, PASS only when every part passed, otherwise
-      # INCOMPLETE. The rows are echoed to the job log as well: the step
-      # summary is not retrievable through the API, and the artifact needs a
-      # separate authenticated download.
+      # INCOMPLETE; `windows-advisory-feature-rows` owns those rules and its
+      # tests. The rows are echoed to the job log as well: the step summary is
+      # not retrievable through the API, and the artifact needs a separate
+      # authenticated download.
       - name: Summarize feature-combination results
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           printf '\n### Feature-combination tests (#2400)\n\n' >> target/windows-verdict.md
-          row() {
-            if [ ! -f "$2" ]; then
-              echo "not_run"; echo "- $1: not_run (no status file)" >&3
-            else
-              code="$(tr -d '[:space:]' < "$2")"
-              case "$code" in
-                0) echo "pass"; echo "- $1: PASS" >&3 ;;
-                124) echo "incomplete"; echo "- $1: INCOMPLETE (cut at its deadline, exit 124; no test verdict)" >&3 ;;
-                127) echo "incomplete"; echo "- $1: INCOMPLETE (command did not start, exit 127)" >&3 ;;
-                ''|*[!0-9]*) echo "incomplete"; echo "- $1: INCOMPLETE (unreadable status \`$code\`)" >&3 ;;
-                *) echo "fail"; echo "- $1: FAIL (exit $code)" >&3 ;;
-              esac
-            fi
-          }
-          {
-            row nofeatures-check target/nofeatures-check.status > /dev/null
-            joined=pass
-            for part in unit doc a-c d-o rest; do
-              case "$part" in unit|doc) file="target/nofeatures-test-$part.status" ;; *) file="target/integration/nofeatures-test-$part.status" ;; esac
-              state="$(row "nofeatures-test-$part" "$file")"
-              if [ "$state" = fail ]; then joined=fail; elif [ "$state" != pass ] && [ "$joined" = pass ]; then joined=incomplete; fi
-            done
-            case "$joined" in
-              pass) echo "- nofeatures-test: PASS (every part passed)" ;;
-              fail) echo "- nofeatures-test: FAIL (a part failed; see its row)" ;;
-              *) echo "- nofeatures-test: INCOMPLETE (no part failed, but a part has no verdict; see its row)" ;;
-            esac
-            row allfeatures-check target/allfeatures-check.status > /dev/null
-          } 3>&1 | tee -a target/windows-verdict.md
+          cargo xtask windows-advisory-feature-rows --join nofeatures-test --row nofeatures-check target/nofeatures-check.status --part nofeatures-test-unit target/nofeatures-test-unit.status --part nofeatures-test-doc target/nofeatures-test-doc.status --part nofeatures-test-a-c target/integration/nofeatures-test-a-c.status --part nofeatures-test-d-o target/integration/nofeatures-test-d-o.status --part nofeatures-test-rest target/integration/nofeatures-test-rest.status --row allfeatures-check target/allfeatures-check.status | tee -a target/windows-verdict.md
           cat target/windows-verdict.md >> "$GITHUB_STEP_SUMMARY"
 
       # Manual, ref-selected isolation for #4377. Broad workspace runs

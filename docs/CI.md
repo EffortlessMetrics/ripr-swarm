@@ -664,8 +664,9 @@ and single-platform CI was the root cause enabling both.
   `--no-default-features` test parts and both workspace runs go through
   `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
   Object on Windows). It streams output to the job log as it arrives and into
-  the log file, ends the whole tree at its own deadline (40 minutes for each
-  `--no-default-features` part, 70 for each workspace run), and on a timeout
+  the log file, ends the whole tree at its own deadline (40 minutes for the
+  `--no-default-features` unit targets and for each integration part, 15 for
+  its doctests, 70 for each workspace run), and on a timeout
   names every test libtest reported as running for over 60 seconds with no
   result, so a stuck run points at a test. It records cargo's exit code in the
   status file (124 when it enforced the deadline, 127 when the command could
@@ -707,12 +708,15 @@ and single-platform CI was the root cause enabling both.
   tests, then only the `a*` to `l*` integration targets). `windows-advisory`
   now runs that feature set's unit targets (`--lib --bins`) and doctests, and
   each `windows-advisory-integration` part runs its third of the `ripr`
-  integration targets after both samples, under its own deadline. The
-  feature-combination section prints one row per part and a joined
-  `nofeatures-test` row: FAIL when a part failed, PASS only when every part
-  passed, and INCOMPLETE when a part was cut at its deadline (124), could not
-  start (127) or left no status. A cut part is missing evidence, not a test
-  failure. The rows stay advisory.
+  integration targets after both samples, under its own deadline. On run
+  45008347596 the parts took 21 minutes (unit), under 1 (doctests), and 27,
+  20 and 34 (`a-c`, `d-o`, `rest`), each with every target reached.
+  `cargo xtask windows-advisory-feature-rows` prints the feature-combination
+  section: one row per part and a joined `nofeatures-test` row that is FAIL
+  when a part failed, PASS only when every part passed, and INCOMPLETE when a
+  part was cut at its deadline (124), could not start (127) or left no
+  status. A cut part is missing evidence, not a test failure. The rows stay
+  advisory.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
