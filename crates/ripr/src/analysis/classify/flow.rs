@@ -578,7 +578,9 @@ fn return_value_sink(
         // call or arithmetic), as its predicate twin on the same line reads
         // it. An expression that spells a value keeps the sink below.
         if let Some(tail) = predicate_as_owner_tail(probe, owner_fn)
-            && owner_fn.is_some_and(|function| operands_are_owner_inputs(&tail.text, function))
+            && is_ordering_comparison(&tail.text)
+            && owner_fn
+                .is_some_and(|function| compares_one_parameter_to_items(&tail.text, function))
         {
             return flow_sink(FlowSinkKind::ReturnValue, tail.text, tail.line, owner);
         }
@@ -597,12 +599,30 @@ fn return_value_sink(
     )
 }
 
-/// Whether every name a comparison tail reads is one a test's call fixes: an
-/// owner parameter the body never rebinds, or an item (`LIMIT`,
-/// `limits::MAX`). A local (`let end = input.rfind(delim).map_or(floor, ..)`)
-/// is computed inside the owner, and no reader here maps a test's arguments to
-/// its value, so a tail over one keeps the unknown sink (RIPR-SPEC-0158).
-fn operands_are_owner_inputs(expression: &str, function: &FunctionSummary) -> bool {
+/// Whether a comparison tail orders its operands (`<`, `<=`, `>`, `>=`). An
+/// ordering has a boundary, and the boundary readers downstream hold a
+/// returned ordering to it: a test far from the boundary stays
+/// `weakly_exposed`. An equality over names has none, so `a == b` rewritten
+/// as `b == a` would be credited by any truth assertion on the owner, such as
+/// a reflexivity loop (verdict-corpus case `grid-equality-property`).
+fn is_ordering_comparison(expression: &str) -> bool {
+    expression.contains(['<', '>'])
+        && !["<<", ">>", "->", "=>", "::<"]
+            .iter()
+            .any(|other| expression.contains(other))
+}
+
+/// Whether a comparison tail sets exactly one owner parameter against items
+/// (`n >= LIMIT`, `n >= limits::MAX`): the shape whose literal twin
+/// (`n >= 1000`) the boundary readers already hold a test to. The parameter
+/// must not be rebound in the body. Everything else keeps the unknown sink:
+/// - a local (`let end = ..; end >= start`) is computed inside the owner, and
+///   no reader here maps a test's arguments to it (RIPR-SPEC-0158);
+/// - two parameters (`width <= limit`) put the boundary where the arguments
+///   meet, and the returned-value readers do not pair them, so far rows would
+///   be credited (verdict-corpus case `macro-table-far-rows`);
+/// - a field (`n >= self.max`) is fixed by state no call argument spells.
+fn compares_one_parameter_to_items(expression: &str, function: &FunctionSummary) -> bool {
     let parameters = super::activation::signature_parameters(function);
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
     let rebinds = |name: &str| {
@@ -613,17 +633,23 @@ fn operands_are_owner_inputs(expression: &str, function: &FunctionSummary) -> bo
             })
         })
     };
-    identifiers(expression).all(|(word, before, after)| {
-        if before == Some('.') || before == Some(':') || after.starts_with("::") {
-            // A field or a path segment is not a binding of its own.
+    let mut parameter_uses = 0usize;
+    let all_read = identifiers(expression).all(|(word, before, after)| {
+        if before == Some('.') {
+            return false;
+        }
+        if before == Some(':') || after.starts_with("::") {
+            // A path segment is not a binding of its own.
             return true;
         }
-        if parameters.iter().any(|parameter| parameter == word) || word == "self" {
+        if parameters.iter().any(|parameter| parameter == word) {
+            parameter_uses += 1;
             return !rebinds(word);
         }
         // What is left is an item when it is spelled like one.
         !word.chars().any(|ch| ch.is_ascii_lowercase()) && !rebinds(word)
-    })
+    });
+    all_read && parameter_uses == 1
 }
 
 /// Each identifier in `text` with the character before it and the text after
@@ -2428,8 +2454,8 @@ mod tests {
                 "n >= LIMIT",
             ),
             (
-                "pub fn same(a: Level, b: Level) -> bool {\n    a == b\n}",
-                "a == b",
+                "pub fn under(n: u32) -> bool {\n    n < limits::MAX\n}",
+                "n < limits::MAX",
             ),
             (
                 "pub fn over_limit(n: u32) -> bool {\n    (n >= LIMIT)\n}",
@@ -2482,12 +2508,38 @@ mod tests {
             assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
             assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}");
         }
+        // Two parameters, a field, or no parameter at all: no reader pairs a
+        // test's arguments to that boundary.
+        for (signature, expression) in [
+            ("width: usize, limit: usize", "width <= limit"),
+            ("n: u32, limits: &Limits", "n < limits.max"),
+            ("&self, n: u32", "n >= self.max"),
+            ("_n: u32", "FLOOR >= LIMIT"),
+        ] {
+            let body = format!("pub fn fits({signature}) -> bool {{\n    {expression}\n}}");
+            let owner = tail_owner(&body);
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, 2),
+                Some(&owner),
+            );
+            assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}");
+        }
+        // An equality over names has no boundary to hold a test to.
+        for expression in ["a == b", "b != a"] {
+            let body = format!("pub fn same(a: &str, b: &str) -> bool {{\n    {expression}\n}}");
+            let owner = tail_owner(&body);
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, 2),
+                Some(&owner),
+            );
+            assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}");
+        }
         // A statement that binds nothing the tail reads changes nothing.
         let owner = tail_owner(
-            "pub fn over_limit(n: u32, limits: &Limits) -> bool {\n    let _guard = enter();\n    n >= limits.max\n}",
+            "pub fn over_limit(n: u32) -> bool {\n    let _guard = enter();\n    n >= LIMIT\n}",
         );
         let sinks = local_flow_sinks(
-            &probe(ProbeFamily::ReturnValue, "n >= limits.max", 3),
+            &probe(ProbeFamily::ReturnValue, "n >= LIMIT", 3),
             Some(&owner),
         );
         assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{sinks:?}");
