@@ -14,11 +14,8 @@
 //! `#[cfg]`) and the items enclosing it. [`ModuleDeclarations`] reads every
 //! such declaration once per run, so a diff that swaps `#[path]` targets or
 //! a `cfg`-gated `mod real;` twin of a test-only `mod fake;` is seen from
-//! the owner's file. It also reads the gates that live outside a `mod`
-//! declaration (#14952): a `cfg` on a `use` that re-exports the owner, a file
-//! reached only through `include!`, and a `macro_rules!` that may emit a
-//! module. The function's own inner attributes (`fn f() { #![cfg(..)] .. }`)
-//! gate it too (#15003).
+//! the owner's file, as are gates outside a `mod` declaration (#14952) and
+//! the function's own inner attributes (#15003).
 
 use super::{ChangedFile, reconstruct_old_lines_with_origins};
 use ra_ap_syntax::{
@@ -74,13 +71,8 @@ pub(crate) struct BaseOwner {
 ///   is unique under that path in the old file;
 /// - no added line falls on an enclosing item's header or on the function's
 ///   attributes or signature;
-/// - `modules` saw no added or removed line on an out-of-line `mod`
-///   declaration (attributes included) named like a component of
-///   `owner_file`'s path, on an inline module or file attribute enclosing
-///   one, on any `#[path]` declaration, on a gated `use` naming the owner or
-///   a module of its chain, on an `include!` naming its file, or on a
-///   `macro_rules!` that may emit a module into its package, and read every
-///   changed file.
+/// - `modules` saw no change to a declaration or gate of `owner_file`'s
+///   chain (see [`ModuleDeclarations`]) and read every changed file.
 ///
 /// Names compare with any `r#` prefix removed.
 pub(crate) fn verified_base_owner(
@@ -374,11 +366,8 @@ fn unraw(name: &str) -> &str {
 
 /// Every component of `file`'s path, extension removed: a superset of the
 /// module names on its default declaration chain.
-/// The module names `function` (in `owner_file`) is reached through: its
-/// file's [`module_chain_names`] and each enclosing inline module's name,
-/// so a gated glob or `self` import of an inline module (`#[cfg(not(test))]
-/// pub use real_impl::*;`) gates its functions as one of a file module does
-/// (#15035 round-7 review).
+/// `owner_file`'s [`module_chain_names`] plus each inline module enclosing
+/// `function`, which a gated glob may name like a file module (#15035).
 fn owner_chain(owner_file: &Path, function: &ast::Fn) -> BTreeSet<String> {
     let mut chain = module_chain_names(owner_file);
     chain.extend(
@@ -428,15 +417,10 @@ fn anchored_components(file: &Path) -> Option<(Vec<String>, usize)> {
     Some((components, anchor))
 }
 
-/// The module path of `file` inside its crate, read from its path under the
-/// last `src` directory (or, with none, the last `tests`, `examples` or
-/// `benches` directory): empty for a crate root (`src/lib.rs`,
-/// `src/main.rs`, a file directly under `src/bin` or `tests`, or such a
-/// directory's `main.rs`), otherwise each directory and the file stem, a
-/// final `mod` dropped. A target directory's `x/mod.rs` is no target of its
-/// own but module `x` of a sibling root (`tests/common/mod.rs` under
-/// `mod common;`, #15035 review). `None` when no such directory is on the
-/// path.
+/// The module path of `file` under its anchor directory (see
+/// [`anchored_components`]): empty for a crate root, otherwise each
+/// directory and the file stem, a final `mod` dropped; the crate-root
+/// layout is in RIPR-SPEC-0001. `None` with no anchor directory.
 fn module_path(file: &Path) -> Option<Vec<String>> {
     let (components, anchor) = anchored_components(file)?;
     let mut rest: Vec<String> = components
@@ -468,8 +452,17 @@ fn module_path(file: &Path) -> Option<Vec<String>> {
         [_, second] => target_dir && second == "main",
         _ => false,
     };
+    // A crate root below another `src` directory (`src/a/src/lib.rs`) may be
+    // a module of the outer crate; it is read as one (fail closed).
+    let nested = components
+        .get(..anchor)
+        .is_some_and(|above| above.iter().any(|component| component == "src"));
     if root {
-        return Some(Vec::new());
+        return Some(if nested {
+            rest.last().cloned().into_iter().collect()
+        } else {
+            Vec::new()
+        });
     }
     if target_dir && !matches!(rest.as_slice(), [_, second] if second == "mod") {
         rest.drain(..1);
@@ -480,11 +473,8 @@ fn module_path(file: &Path) -> Option<Vec<String>> {
     Some(rest)
 }
 
-/// The package directory `file` belongs to: every path component before
-/// its anchor directory (see [`module_path`]), joined with `/` (empty for a
-/// package at the analysis root). Every target of one package shares it,
-/// which over-approximates the crate a file belongs to. `None` when no
-/// anchor directory is on the path.
+/// The package directory of `file`: the path components before its anchor
+/// directory, joined with `/` (shared by every target of the package).
 fn package_scope(file: &Path) -> Option<String> {
     let (components, anchor) = anchored_components(file)?;
     Some(components.get(..anchor)?.join("/"))
@@ -517,10 +507,8 @@ fn same_file(a: &[String], b: &[String]) -> bool {
     !a.is_empty() && !b.is_empty() && (a.ends_with(b) || b.ends_with(a))
 }
 
-/// Where module-emitting macros may emit their modules (#14952 review R1):
-/// the package that defines the macro, or, for an exported macro (a
-/// `#[macro_export]` `macro_rules!`, a `macro` with a visibility) or one in
-/// a file with no package anchor, any package in the workspace.
+/// Where a module-emitting macro may emit modules (#14952 review R1): its
+/// package, or any package when it is exported or has no package anchor.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum MacroScope {
     Workspace,
@@ -566,48 +554,13 @@ fn macro_scope_reaches(scopes: &BTreeSet<MacroScope>, file: &Path) -> bool {
 /// an inline module, a non-literal value) reaches every owner
 /// (#15104).
 ///
-/// Gates that live outside a `mod` declaration are read too (#14952):
-///
-/// - a `use` with a `cfg`/`cfg_attr` of its own, or a `pub` one under a
-///   gated item or file, gates every owner it names (by its last path
-///   segment or its rename, or by a name in the self type or trait of an
-///   `impl` enclosing the owner), and every owner whose path has a
-///   component named like a module the `use` may alias: its last segment
-///   (`use a::imp;`), its rename and the renamed segment (`use real as
-///   imp;`), or any segment of a glob or `self` import (#15035 review F1,
-///   narrowed in round 5). Two kinds
-///   of `use` are not gates. One rooted at a sysroot crate (`std`, `core`,
-///   `alloc`, `proc_macro`, `test`, with or without a leading `::`) cannot
-///   name a workspace module, unless some `extern crate .. as` (in any file,
-///   or in any macro body or call) renames a crate to one of those names: it
-///   then gates like any other root. A private `use super::name;` directly
-///   inside a `#[cfg(test)]` module is not one when nothing else in that
-///   module can bind `name` (no other `use` binding it, no glob but
-///   `super::*`, no item naming it, and no module-level macro call at all,
-///   since a macro may emit the import): either branch of its gate binds
-///   `name` to the parent's item or to nothing. Every other root (`crate`, `self`,
-///   `super`, and any other crate or module name) counts as crate-local,
-///   since telling a third-party crate from a workspace package or a local
-///   module would need the manifests;
-/// - an owner file is gated unless an out-of-line declaration is named like
-///   its module and every directory between it and its crate root is named
-///   by some module (a file reached only through `include!`, however the
-///   macro is spelled, has no declaration);
-/// - an `include!` whose literal path resolves (against the including
-///   file's directory) to the owner file gates that file; a literal that
-///   cannot be resolved (absolute, or climbing above the including path)
-///   gates its file stem by name. An `include!` whose argument is not a
-///   single plain string literal (`concat!(env!(..), "/src/real.rs")`)
-///   gates by name, for one `concat!` call, the stem of the path its
-///   trailing string literals spell when that ends in a `.rs` file name, and
-///   every owner otherwise (any other macro call may expand to any path);
-/// - a `macro_rules!` (or `macro`) whose body may emit an out-of-line module
-///   (`mod` followed by a name and no `{` body), an `include!` or a `#[path]`
-///   (`path =`) gates every owner outside a crate root file of the package
-///   that defines it, or of every package when it is exported.
-///
-/// A diff touching any of these, on either side, counts as a change to the
-/// names, files or packages it gates.
+/// Gates outside `mod` declarations are read too (#14952, #15035; the
+/// rules and limits are in RIPR-SPEC-0001, "Base-owner cfg gates"): a gated
+/// `use` naming the owner or aliasing a module of its chain (sysroot roots
+/// and redundant test imports excepted), an owner file with no declaration,
+/// an `include!` that may name the owner file, and a macro that may emit a
+/// module into its package. A diff touching any of these, on either side,
+/// counts as a change to what it gates.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ModuleDeclarations {
     /// Names of declarations with a `cfg`/`cfg_attr` on themselves, an
@@ -675,6 +628,10 @@ pub(crate) struct ModuleDeclarations {
     qualified_concat_include: bool,
     /// The diff touched such an `include!`.
     changed_qualified_concat_include: bool,
+    /// Some read file binds `core` or `std` itself (a `use` or `mod`).
+    binds_sysroot: bool,
+    /// The diff touched such a binding.
+    changed_binds_sysroot: bool,
     /// A declaring source or a changed Rust file could not be read.
     unreadable: bool,
 }
@@ -709,7 +666,9 @@ impl ModuleDeclarations {
             code.split([';', '{']).any(cfg_runs_into_use)
                 || word_offsets(code, "use").any(|offset| {
                     let before = words_before(offset);
-                    before.ends_with(')') || ends_with_word(before, "pub")
+                    // After any attribute: a `{` inside one (`#[doc =
+                    // stringify!({})]`) splits the `cfg` from its `use`.
+                    before.ends_with([')', ']']) || ends_with_word(before, "pub")
                 })
         };
         // On the raw text and on the blanked code, so a comment between
@@ -730,7 +689,23 @@ impl ModuleDeclarations {
         // `include!` path may be spelled with (#15035 round-7 review); a
         // `#[macro_use] extern crate` is admitted by its `extern`.
         let concat_definition = has_word(source, "concat");
-        gated_use || include || macro_definition || concat_definition || has_word(source, "extern")
+        // `core` or `std` bound by an item (`as core;`, `mod std`), not a
+        // `core::` path.
+        let sysroot_binding = ["core", "std"].into_iter().any(|name| {
+            word_offsets(source, name).any(|offset| {
+                !source
+                    .get(offset + name.len()..)
+                    .unwrap_or_default()
+                    .trim_start()
+                    .starts_with("::")
+            })
+        });
+        gated_use
+            || include
+            || macro_definition
+            || concat_definition
+            || sysroot_binding
+            || has_word(source, "extern")
     }
 
     /// Read `declaring_files` (each workspace file that may declare a module
@@ -787,6 +762,7 @@ impl ModuleDeclarations {
             reading.concat_shadowed |= gates.defines_concat;
             reading.bare_concat_include |= gates.bare_concat;
             reading.qualified_concat_include |= gates.qualified_concat;
+            reading.binds_sysroot |= gates.binds_sysroot;
         }
         for (changed, new_source) in changed_files {
             if changed
@@ -832,13 +808,17 @@ impl ModuleDeclarations {
         }
         // A crate renamed to `core` or `std` may supply the qualified
         // `concat!` such an `include!` names.
-        let renamed = reading.sysroot_shadowed || reading.changed_sysroot_shadow;
+        let renamed = reading.sysroot_shadowed
+            || reading.changed_sysroot_shadow
+            || reading.binds_sysroot
+            || reading.changed_binds_sysroot;
         if renamed && reading.qualified_concat_include {
             reading.retargeted = true;
             reading.retarget_opaque = true;
         }
         if (renamed && reading.changed_qualified_concat_include)
-            || (reading.changed_sysroot_shadow && reading.qualified_concat_include)
+            || ((reading.changed_sysroot_shadow || reading.changed_binds_sysroot)
+                && reading.qualified_concat_include)
         {
             reading.changed_retarget = true;
             reading.retarget_opaque = true;
@@ -937,6 +917,7 @@ impl ModuleDeclarations {
         self.changed_concat_shadow |= gates.defines_concat;
         self.changed_bare_concat_include |= gates.bare_concat;
         self.changed_qualified_concat_include |= gates.qualified_concat;
+        self.changed_binds_sysroot |= gates.binds_sysroot;
     }
 
     /// Record the file each `#[path]` literal on `module` (declared in
@@ -1079,10 +1060,9 @@ fn touches_chain(
     !gated.is_disjoint(names) || !gated.is_disjoint(chain)
 }
 
-/// The names a `use` can swap the owner through: the function's `name`,
-/// every name in the self type and trait of each enclosing `impl`, each
-/// enclosing `trait`'s name, and each enclosing inline module's name (#15035 round-5 review: a gated `pub use
-/// real::Thing;` beside `pub use fake::Thing;` swaps `Thing::ready`).
+/// The names a `use` can swap the owner through: `name`, the names in each
+/// enclosing `impl`'s self type and trait, and each enclosing `trait` and
+/// inline module's name (#15035).
 fn owner_names(function: &ast::Fn, name: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::from([name.to_string()]);
     for ancestor in function.syntax().ancestors().skip(1) {
@@ -1116,8 +1096,15 @@ fn owner_names(function: &ast::Fn, name: &str) -> BTreeSet<String> {
 /// Whether some path in `files` names `owner_file`. An owner path that
 /// cannot be normalized counts as named whenever any file is.
 fn included(files: &BTreeSet<Vec<String>>, owner_file: &Path) -> bool {
+    // Case-insensitively, as `#[path]` targets: a case-insensitive file
+    // system may resolve another spelling to the owner file.
+    let lower = |path: &[String]| -> Vec<String> {
+        path.iter().map(|part| part.to_ascii_lowercase()).collect()
+    };
     match normalized_path(owner_file) {
-        Some(owner) => files.iter().any(|file| same_file(file, &owner)),
+        Some(owner) => files
+            .iter()
+            .any(|file| same_file(&lower(file), &lower(&owner))),
         None => !files.is_empty(),
     }
 }
@@ -1245,11 +1232,7 @@ fn blank_literals_and_comments(source: &str) -> String {
 }
 
 /// Whether some `cfg` in `segment` (blanked code holding no `;` or `{`) is
-/// followed in it by the word `use`: a `use` after the first `cfg` whose
-/// next character is not an identifier character, and whose previous one is
-/// not either or ends that `cfg` itself (`cfguse`, as a scan from a `cfg`'s
-/// end reads it). One pass, so a file of many `cfg`s with no `;` or `{`
-/// between them stays linear (#15035 round-5 review).
+/// followed in it by the word `use`, in one linear pass (#15035).
 fn cfg_runs_into_use(segment: &str) -> bool {
     let Some(first) = segment.find("cfg") else {
         return false;
@@ -1319,6 +1302,8 @@ struct OutsideGates {
     bare_concat: bool,
     /// Some `include!` path was read from a sysroot-qualified `concat!`.
     qualified_concat: bool,
+    /// Some item binds `core` or `std` (see [`binds_sysroot_name`]).
+    binds_sysroot: bool,
     /// Some `macro_rules! concat` or `macro concat` (an item, or macro
     /// tokens spelling one) defines a macro that shadows `concat!`.
     defines_concat: bool,
@@ -1353,6 +1338,7 @@ impl OutsideGates {
         }
         gates.shadows_sysroot = renames_to_sysroot(root, &select);
         gates.defines_concat = defines_concat_macro(root, &select);
+        gates.binds_sysroot = binds_sysroot_name(root, &select);
         gates
     }
 
@@ -1484,19 +1470,10 @@ impl OutsideGates {
     }
 }
 
-/// The path the trailing run of string literals of a `concat!` argument of
-/// `include!` spells, joined (`concat!(env!(..), "/src/re", "al.rs")`
-/// spells `/src/real.rs`, #15035 round-5 review): the literals, separated
-/// only by commas, that end `concat!`'s own arguments. `None` when the
-/// `include!` argument (`arguments`, delimiters and trailing comma removed)
-/// is not one `concat!` call (any other macro, such as a user's
-/// `src_file!("unused.rs")`, may expand to another path, #15035 round-6
-/// review), when its arguments do not end in a literal, a literal has
-/// escapes, or the run follows another argument and spells no `/` (a file
-/// name the preceding argument may prefix). Only a bare `concat!` or one
-/// spelled `core::`/`std::` (with or without a leading `::`) is read; the
-/// flag says it was bare, which a user macro named `concat` may shadow
-/// (#15035 round-7 review; see [`ModuleDeclarations::read`]).
+/// The path the trailing string literals of the one `concat!` call in an
+/// `include!` (`arguments`, delimiters removed) spell, joined, with whether
+/// that `concat!` was bare rather than `core::`/`std::` qualified. `None`
+/// for any other argument, or a run the spec does not trust (#15035).
 fn trailing_literal_path(arguments: &[ra_ap_syntax::SyntaxElement]) -> Option<(String, bool)> {
     let (body, call) = arguments.split_last()?;
     let (bang, path) = call.split_last()?;
@@ -1557,32 +1534,13 @@ fn trailing_literal_path(arguments: &[ra_ap_syntax::SyntaxElement]) -> Option<(S
     (rest.is_empty() || joined.contains('/')).then_some((joined, bare))
 }
 
-/// Whether something `select` keeps may bind a macro named `concat`, which
-/// shadows the built-in `concat!` where it is in scope (#15035 round-7
-/// review): a `macro_rules! concat` or `macro concat`, a rename `as concat`
-/// (an item, or macro tokens spelling one), a `use` leaf binding `concat`
-/// (`use crate::paths::concat;`, `use a::{concat};`), or any `#[macro_use]
-/// extern crate`, whose exported macros are not read.
+/// Whether something `select` keeps may bind a macro named `concat` and
+/// shadow the built-in (#15035): a definition, a rename `as concat`, a
+/// `use` leaf `concat`, or any `#[macro_use] extern crate`.
 fn defines_concat_macro(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool) -> bool {
     let imported = root.descendants().any(|node| {
-        if let Some(item) = ast::Use::cast(node.clone()) {
-            select(&node)
-                && item
-                    .syntax()
-                    .descendants()
-                    .filter_map(ast::UseTree::cast)
-                    .filter(|tree| tree.use_tree_list().is_none() && tree.star_token().is_none())
-                    .any(|leaf| {
-                        if leaf.rename().is_some() {
-                            // `as concat` is read from the tokens below.
-                            return false;
-                        }
-                        let mut path = use_leaf_path(&leaf);
-                        if path.last().is_some_and(|segment| segment == "self") {
-                            path.pop();
-                        }
-                        path.last().is_some_and(|segment| segment == "concat")
-                    })
+        if ast::Use::can_cast(node.kind()) {
+            select(&node) && use_leaf_binds(&node, &["concat"])
         } else if let Some(item) = ast::ExternCrate::cast(node.clone()) {
             select(&node)
                 && ast::HasAttrs::attrs(&item).any(|attr| {
@@ -1596,6 +1554,49 @@ fn defines_concat_macro(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool
         }
     });
     imported || defines_concat_by_tokens(root, select)
+}
+
+/// Whether an unrenamed leaf of the `use` item `node` binds one of `names`
+/// (a rename `as name` is read from tokens).
+fn use_leaf_binds(node: &SyntaxNode, names: &[&str]) -> bool {
+    node.descendants()
+        .filter_map(ast::UseTree::cast)
+        .filter(|tree| tree.use_tree_list().is_none() && tree.star_token().is_none())
+        .filter(|leaf| leaf.rename().is_none())
+        .any(|leaf| {
+            let mut path = use_leaf_path(&leaf);
+            if path.last().is_some_and(|segment| segment == "self") {
+                path.pop();
+            }
+            path.last()
+                .is_some_and(|segment| names.contains(&segment.as_str()))
+        })
+}
+
+/// Whether something `select` keeps binds `core` or `std` in a module
+/// (#15035 round-8 review): a `use` leaf or rename (`use crate::paths as
+/// core;`, also in macro tokens) or a `mod core`/`mod std`, which a
+/// qualified `core::concat!` may then name.
+fn binds_sysroot_name(root: &SyntaxNode, select: &impl Fn(&SyntaxNode) -> bool) -> bool {
+    const NAMES: [&str; 2] = ["core", "std"];
+    let items = root.descendants().any(|node| {
+        select(&node)
+            && (ast::Use::can_cast(node.kind()) && use_leaf_binds(&node, &NAMES)
+                || ast::Module::cast(node.clone())
+                    .and_then(|module| module.name())
+                    .is_some_and(|name| NAMES.contains(&unraw(name.text()))))
+    });
+    let tokens: Vec<_> = root
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    items
+        || tokens.windows(2).any(|pair| {
+            matches!(pair, [keyword, name] if keyword.text() == "as"
+                && NAMES.contains(&unraw(name.text()))
+                && name.parent().is_none_or(|parent| select(&parent)))
+        })
 }
 
 /// The token half of [`defines_concat_macro`]: a `concat` after `macro`,
@@ -1691,11 +1692,8 @@ fn use_leaf_path(leaf: &ast::UseTree) -> Vec<String> {
 
 /// Whether the `use` leaf `leaf` of `item` (full path `path`) is a private
 /// `use super::name;` directly inside a `#[cfg(test)]` module in which
-/// nothing else can bind `name` (#14952 review R2). Its own gate then only
-/// decides whether `name` names the parent's item or nothing, so it cannot
-/// swap the item a test reaches. Anything else in the module that may bind
-/// `name` (see [`scope_may_bind`]; only a `super::*` glob is harmless) keeps
-/// the gate.
+/// nothing else can bind `name` (see [`scope_may_bind`]), so its gate cannot
+/// swap the item a test reaches (#14952 review R2).
 fn redundant_test_import(item: &ast::Use, leaf: &ast::UseTree, path: &[String]) -> bool {
     let [root, name] = path else {
         return false;
@@ -1732,12 +1730,8 @@ fn redundant_test_import(item: &ast::Use, leaf: &ast::UseTree, path: &[String]) 
 }
 
 /// Whether the `use` leaf path `path` of `item` is rooted at a sysroot
-/// crate (`std`, `core`, `alloc`, `proc_macro`, `test`) that no item of the
-/// module scope holding `item` may shadow (#14952 review R3). A bare first
-/// segment of a `use` path names a crate or an item of the current module
-/// (both at once is ambiguous), so with no such item it names the crate,
-/// which cannot hold a workspace function. A `use` in a block, which also
-/// sees its enclosing module's items, is never excluded.
+/// crate that no item of the module holding `item` may shadow (#14952
+/// review R3); a `use` in a block is never excluded.
 fn sysroot_rooted(item: &ast::Use, path: &[String]) -> bool {
     let Some(root) = path.first() else {
         return false;
@@ -1763,11 +1757,8 @@ fn is_sysroot(root: &str) -> bool {
 }
 
 /// Whether some item of `scope` other than `except` may bind `name`: a
-/// `use` leaf binding it (by its last segment or rename), a glob that
-/// `harmless_glob` does not accept, an item or `extern crate` named `name`,
-/// or a macro call: any one when `macro_calls_bind` (#15035 review F2: a
-/// macro may emit an import of `name` without its call naming it), else one
-/// whose tokens mention it.
+/// `use` leaf binding it, a glob `harmless_glob` rejects, an item named
+/// `name`, or a macro call (any one when `macro_calls_bind`, #15035 F2).
 fn scope_may_bind(
     scope: &SyntaxNode,
     except: &SyntaxNode,
@@ -1858,14 +1849,43 @@ fn macro_named(call: &ast::MacroCall, name: &str) -> bool {
 }
 
 /// Whether a macro body may emit an out-of-line module or retarget a file
-/// (#14952 review R1): a `mod` followed by a name (`$m`, `$m:ident` or a
-/// plain one) and anything but a `{` body, or by no name at all
-/// (`mod $($tt)*`); an `include` followed by `!`; or a `path` followed by
-/// `=` (`#[path = ..]`, `cfg_attr(.., path = ..)`). A macro emitting only
-/// inline `mod name { .. }` modules does not.
+/// (#14952 review R1): a `mod` without a `{` body, `include !` or `path =`.
 fn emits_module(body: &ast::TokenTree) -> bool {
-    let tokens: Vec<String> = body
+    // A `macro_rules!` arm's matcher is not emitted: read only the token
+    // trees after each top-level `=>` (#15035 round-8 review), or the whole
+    // body when it has none (a `macro` with its arguments outside).
+    let children: Vec<_> = body
         .syntax()
+        .children_with_tokens()
+        .filter(|element| !element.kind().is_trivia())
+        .collect();
+    let text = |index: Option<usize>| {
+        index
+            .and_then(|index| {
+                children
+                    .get(index)?
+                    .as_token()
+                    .map(|token| token.text().to_string())
+            })
+            .unwrap_or_default()
+    };
+    let transcribers: Vec<SyntaxNode> = children
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| {
+            let back = |by: usize| text(index.checked_sub(by));
+            back(1) == "=>" || (back(1) == ">" && back(2) == "=")
+        })
+        .filter_map(|(_, child)| child.as_node().cloned())
+        .collect();
+    if transcribers.is_empty() {
+        return tokens_emit_module(body.syntax());
+    }
+    transcribers.iter().any(tokens_emit_module)
+}
+
+fn tokens_emit_module(tree: &SyntaxNode) -> bool {
+    let tokens: Vec<String> = tree
         .descendants_with_tokens()
         .filter_map(|element| element.into_token())
         .filter(|token| !token.kind().is_trivia())
@@ -2002,10 +2022,7 @@ fn attr_name(attr: &ast::Attr) -> Option<String> {
 }
 
 /// [`cfg_gated`] for any node: a `cfg`/`cfg_attr` on it, an inner attribute
-/// of its own body or item list (`fn f() { #![cfg(..)] .. }` or
-/// `mod m { #![cfg(..)] .. }`, #15003), an enclosing item or its file.
-/// The enclosing items' bodies and lists are ancestors, so their inner
-/// attributes are read by the walk; the node's own are descendants.
+/// of its own body or item list (#15003), an enclosing item or its file.
 fn cfg_gated_node(node: &SyntaxNode) -> bool {
     node.ancestors()
         .chain(own_inner_attribute_holders(node))
@@ -2949,6 +2966,9 @@ mod tests {
         assert_eq!(path("src/lib.rs"), owned(&[]));
         assert_eq!(path("crates/x/src/main.rs"), owned(&[]));
         assert_eq!(path("work/src/proj/src/real.rs"), owned(&["real"]));
+        // A root below another `src` reads as a module (fail closed).
+        assert_eq!(path("src/a/src/lib.rs"), owned(&["lib"]));
+        assert_eq!(path("work/src/proj/src/bin/tool.rs"), owned(&["tool"]));
         assert_eq!(path("src/a/b/mod.rs"), owned(&["a", "b"]));
         assert_eq!(path("src/bin/tool.rs"), owned(&[]));
         assert_eq!(path("src/bin/tool/main.rs"), owned(&[]));
@@ -3013,6 +3033,7 @@ mod tests {
         for body in [
             "($m:ident) => { mod $m { pub fn f() {} } };",
             "() => { mod inner { fn x() {} } };",
+            "(mod real;) => { fn helper() {} };",
             "() => { fn x() {} };",
             "($p:path) => { $p() };",
             "() => { include_str!(\"x.txt\") };",
@@ -3204,6 +3225,8 @@ mod tests {
             "use crate::src_path as concat;\n",
             "pub(crate) use crate::paths::{concat};\n",
             "#[macro_use]\nextern crate paths;\n",
+            "#[cfg(not(test))]\n#[doc = stringify!({})]\nuse crate::real::ready;\n",
+            "use crate::paths as core;\n",
             "const C: &core::ffi::CStr = cr\"\\\";\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
             "const C: &core::ffi::CStr = cr#\"say \"hi\"\"#;\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
         ] {
@@ -3218,7 +3241,8 @@ mod tests {
                     || !gates.macro_scopes.is_empty()
                     || gates.opaque_include
                     || gates.shadows_sysroot
-                    || gates.defines_concat,
+                    || gates.defines_concat
+                    || gates.binds_sysroot,
                 "fixture premise: no gate in {source}"
             );
             assert!(

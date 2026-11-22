@@ -267,101 +267,83 @@ changed body. The identity reports a gate when any of these holds:
 - a `cfg`/`cfg_attr` on a `mod` declaration named like a component of the
   owner file's path, on an item enclosing one or on its declaring file, or any
   `#[path]` declaration;
-- a `use` written as an item (not emitted by a macro) with its own
-  `cfg`/`cfg_attr`, or a `pub` one under a gated item or file, whose leaf or
-  rename is the owner's name, a name in the self type or trait of an
-  `impl` (or the name of a `trait` or inline module) enclosing the owner
-  (`pub use real::Thing;` beside `pub use fake::Thing;` swaps
-  `Thing::ready`; `pub use real_impl as imp;` swaps an inline `mod
-  real_impl`), or which
-  may alias a module named like a component of the owner file's path: by its
-  last segment, since the leaf may itself be a module (`use a::imp;`), by a
-  rename or the segment it renames (`use real as imp;`, `use
-  crate::{real as imp};`), or by any segment of a glob or `self` import
-  (#14952, #15035). An inline module enclosing the owner counts as a
-  component of its path (`#[cfg(not(test))] pub use crate::real_impl::*;`). An intermediate segment of any other leaf only names the
-  module that leaf lives in, so `#[cfg(test)] use crate::real::Helper;` does
-  not gate `src/real.rs`. A test module's private import gated only by its
-  module's `#[cfg(test)]` is not a gate. Two gated imports are not gates
-  either. One rooted at a sysroot crate (`std`, `core`, `alloc`,
-  `proc_macro`, `test`) in a module whose items cannot shadow that root (no
-  item, `use`, `extern crate`, non-sysroot glob or macro call naming it)
-  names that crate, which
-  holds no workspace function, unless an `extern crate .. as` anywhere in the
-  workspace (an item, or macro tokens spelling one) renames a crate to a
-  sysroot name (`extern crate self as std;`): then it gates like any other
-  root. A private `use super::name;` directly inside a `#[cfg(test)]` module
-  in which nothing else can bind `name` (no other `use` binding it, no glob
-  but `super::*`, no item or `extern crate` naming it, and no module-level
-  macro call at all, since a macro may emit the import) binds `name` to the
-  parent's item or to nothing, so it cannot swap the function a test
-  reaches. Every other root (`crate`,
-  `self`, `super`, a module or any other crate name) counts as crate-local:
-  telling a third-party crate from a workspace package or local module would
-  need the manifests, so the fail-closed reading keeps those gates;
+- a `use` item (not emitted by a macro) with its own `cfg`/`cfg_attr`, or a
+  `pub` one under a gated item or file, whose leaf or rename is the owner's
+  name, a name in the self type or trait of an enclosing `impl`, or an
+  enclosing `trait` or inline module's name (`pub use real::Thing;` beside
+  `pub use fake::Thing;` swaps `Thing::ready`), or which may alias a module
+  named like a component of the owner's path, enclosing inline modules
+  included: by its last segment (`use a::imp;`), a rename or the segment it
+  renames (`use real as imp;`, `use crate::{real as imp};`), or any segment
+  of a glob or `self` import (`pub use crate::real_impl::*;`; #14952,
+  #15035). An intermediate segment of another leaf only names the module
+  that leaf lives in (`#[cfg(test)] use crate::real::Helper;` does not gate
+  `src/real.rs`). Two gated imports are not gates. One rooted at a sysroot
+  crate (`std`, `core`, `alloc`, `proc_macro`, `test`) in a module whose
+  items cannot shadow that root (no item, `use`, `extern crate`, non-sysroot
+  glob or macro call naming it) names that crate, unless an `extern crate ..
+  as` anywhere in the workspace (an item, or macro tokens spelling one)
+  renames a crate to a sysroot name (`extern crate self as std;`). A private
+  `use super::name;` directly inside a `#[cfg(test)]` module in which
+  nothing else can bind `name` (no other `use` binding it, no glob but
+  `super::*`, no item or `extern crate` naming it, and no module-level macro
+  call, which may emit the import) binds `name` to the parent's item or to
+  nothing. Every other root (`crate`, `self`, `super`, a module or any other
+  crate name) counts as crate-local, since telling a third-party crate from a
+  workspace package would need the manifests;
 - the owner file is not a crate root and no out-of-line `mod` declaration is
   named like its module (or no module is named like a directory above it),
-  as for a file reached only through `include!`, however the macro is
-  spelled (#14952). A crate root is `src/lib.rs`, `src/main.rs`, a file
-  directly under `src/bin`, `tests`, `examples` or `benches`, or such a
-  directory's `x/main.rs`; its `x/mod.rs` (`tests/common/mod.rs`) is module
-  `x` of a sibling root, not a root, and a library's `src/bin.rs` is module
-  `bin` (#15035);
-- an `include!` whose literal path, resolved against the including file's
-  directory, is the owner file; a literal that cannot be resolved (absolute,
-  or climbing above the including path) gates the owner file's stem by name.
-  An `include!` whose argument is one `concat!` call
-  (`concat!(env!("CARGO_MANIFEST_DIR"), "/src/real.rs")`) gates, by name, the
-  stem of the path `concat!`'s trailing string literals spell, joined
-  (`"/src/re", "al.rs"` spells `/src/real.rs`), when that ends in a `.rs`
-  file name, and every owner otherwise: when the argument is any other
-  macro call (`include!(src_file!("unused.rs"))`, which may expand to any
-  path), when `concat!`'s arguments do not end in a literal, a literal has
-  escapes, or the run follows another argument and spells no `/` (#15035).
-  A bare `concat!` is trusted only while no workspace file may bind a
-  macro named `concat`: a `macro_rules! concat` or `macro concat`, a rename
-  `as concat` (an item, or macro tokens spelling one), a `use` leaf named
-  `concat`, or any `#[macro_use] extern crate`; a `core::`/`std::`
-  qualified one only while no crate is renamed to a sysroot name.
-  Otherwise the `include!` gates every owner (a glob import that brings in
-  a macro named `concat` is not read). The `include!` is found however it
-  is spelled, a comment between `include` and `!` included;
-- a `macro_rules!` or `macro` body that may emit an out-of-line module (`mod`
+  as for a file reached only through `include!` (#14952). A
+  crate root is `src/lib.rs`, `src/main.rs`, a file directly under `src/bin`,
+  `tests`, `examples` or `benches`, or such a directory's `x/main.rs`; its
+  `x/mod.rs` (`tests/common/mod.rs`) is module `x` of a sibling root, and a
+  library's `src/bin.rs` is module `bin`, and a root below another `src`
+  directory (`src/a/src/lib.rs`) reads as a module (#15035);
+- an `include!` (a call whose macro path ends in `include`, a comment before
+  its `!` included) whose literal path, resolved against the including file's
+  directory, is the owner file (compared case-insensitively); a literal that cannot be resolved (absolute, or climbing above
+  the including path) gates the owner file's stem by name. An `include!` of
+  one `concat!` call gates, by name, the stem of the `.rs` path `concat!`'s
+  trailing string literals spell, joined (`"/src/re", "al.rs"` spells
+  `/src/real.rs`), and every owner otherwise: any other macro argument
+  (`include!(src_file!("unused.rs"))`), arguments not ending in a literal, a
+  literal with escapes, or a run after another argument that spells no `/`
+  (#15035). A bare `concat!` is trusted only while no workspace file may bind
+  a macro named `concat` (`macro_rules! concat`, `macro concat`, `as concat`
+  in an item or macro tokens, a `use` leaf named `concat`, or any
+  `#[macro_use] extern crate`; a glob bringing one in is not read), and a
+  `core::`/`std::` qualified one only while nothing binds `core` or `std`
+  (an `extern crate .. as`, a `use` leaf or rename, or a `mod core`);
+- a `macro_rules!` transcriber or `macro` body that may emit an out-of-line module (`mod`
   followed by a name and no `{` body), an `include!` or a `#[path]`
   (`path =`), and the owner file is not a crate root of the package that
-  defines the macro (the directories above its `src`, `tests`, `examples` or
-  `benches` anchor), or of any package when the macro is exported
-  (`#[macro_export]`, or a `macro` with a visibility). A macro emitting only
-  inline `mod name { .. }` modules is not a gate.
+  defines the macro (the directories above its anchor), or of any package
+  when it is exported (`#[macro_export]`, or a `macro` with a visibility); a
+  macro emitting only inline `mod name { .. }` modules is not a gate.
 
-A diff that adds or removes any of these refuses the identity. A diff
-touching an attribute of an item enclosing a gated `use` or `include!`
-(removing `#[cfg(not(test))]` from a `mod api` whose `pub use` line is
-unchanged) counts as touching that `use` or `include!`. Two changes are
-narrowed to what the unchanged reading would gate: a touched `extern crate
-.. as` sysroot rename refuses only owners a gated sysroot-rooted `use`
-(either side) names, and a touched module-emitting macro does not refuse a
-crate-root owner (#15035). Names
-approximate the module chain, so among these checks a name can only gate more
-owners than the exact chain would, with these exceptions, which are
-name-coincidence limits: a module of the same name in another directory
-satisfies the declaration check for a file reached only through a renamed
-`include!`, or only through a `mod` inside a macro call the reading cannot
-expand (a `cfg_if::cfg_if!` block declaring `mod real;` beside an unrelated
-`mod real;` in another directory credits `src/real.rs`); and a package scope
-is read from the path layout, so a non-exported macro reaches every target of
-its package but no other package. Not read: a module or re-export emitted by
-a procedural macro; a private `use` gated only through its enclosing module;
-a gated `use` that a macro's tokens emit (a `cfg_if::cfg_if!` block holding
-only gated imports or a gated module alias, a `macro_rules!` emitting a gated
-`pub use` in another file, a macro emitting an import in the test module),
-since only `use` items are read; and a gated alias of a module that only
-re-exports the owner (`#[cfg(not(test))] use api as imp;` where `api` holds
-`pub use crate::real::ready;`), since only the owner's own module chain is
-matched (#15037). The unary-tail reading alone keeps its own refusals for
-these (its same-name, rename, `include!` and `macro_rules!` checks above); the
-constant-tail reading has no such second check, so on that path these limits
-can credit.
+A diff that adds or removes any of these refuses the identity; touching an
+attribute of an item enclosing a gated `use` or `include!` (removing
+`#[cfg(not(test))]` from a `mod api` whose `pub use` is unchanged) counts.
+Two changes are narrowed to what the unchanged reading gates: a touched
+sysroot rename refuses only owners a gated sysroot-rooted `use` (either side)
+names, and a touched module-emitting macro does not refuse a crate-root owner
+(#15035). Names approximate the module chain, so a name can only gate more
+owners than the exact chain would, except for these name-coincidence limits:
+a module of the same name in another directory satisfies the declaration
+check for a file reached only through a renamed `include!`, or only through a
+`mod` inside a macro call the reading cannot expand (`cfg_if::cfg_if!`); and
+a package scope is read from the path layout (a non-exported macro reaches
+every target of its package, no other). Not read: a module or
+re-export emitted by a procedural macro; a private `use` gated only through
+its enclosing module; a gated `use` a macro's tokens emit (a
+`cfg_if::cfg_if!` block, a `macro_rules!` emitting a gated `pub use`, an
+import a macro emits in the test module); and a
+gated alias of a module that only re-exports the owner (`#[cfg(not(test))]
+use api as imp;`), since only the owner's own chain is matched (#15037); and
+an `include!` through a renamed macro (`use core::include as inc;`), whose
+owner file is still gated when no `mod` declares it. The
+unary-tail reading keeps its own refusals for these; the constant-tail
+reading has no such second check, so on that path these limits can credit.
 
 ## Required Evidence
 

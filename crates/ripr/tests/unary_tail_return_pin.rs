@@ -1115,17 +1115,11 @@ fn real_f_class(inline: bool, items: &str) -> Result<(ExposureClass, Finding), S
     }
 }
 
-/// #14952 cfg_use: the module is ungated; only the `pub use` re-exporting
-/// the owner is `cfg(not(test))`, and the tests run a stand-in that is not
-/// a function. On the base commit both layouts (and the `cfg_attr` form) read
-/// `weakly_exposed` with a complete propagation witness; the glob form was
-/// already refused by another reading and guards the glob rule. Each shape
-/// must withhold propagation credit and read `propagation_unknown`, or
-/// `no_static_path` where the reach reading finds no test path to `real::f`
-/// at all (the inline glob form, on the reach reading merged from main:
-/// under `cfg(test)` the glob exports nothing and the test's `f` is the
-/// stand-in constant). Both are below any credited class, so neither can be
-/// a false `exposed`.
+/// #14952 cfg_use: only the `pub use` re-exporting the owner is
+/// `cfg(not(test))`, and the tests run a stand-in that is not a function
+/// (the base commit credited these). Each shape withholds propagation credit
+/// and reads `propagation_unknown`, or `no_static_path` where the reach
+/// reading finds no test path to `real::f` (the inline glob form).
 #[test]
 fn a_cfg_gate_on_the_owner_reexport_is_not_exposed() -> Result<(), String> {
     let mut wrong = Vec::new();
@@ -1163,15 +1157,9 @@ fn a_cfg_gate_on_the_owner_reexport_is_not_exposed() -> Result<(), String> {
 }
 
 /// #14952 inc_cfg: `src/real.rs` reaches the crate only through a `cfg`'d
-/// `include!` (here through a renamed macro, so no `include` name is
-/// visible). No `mod real;` declares it, so its gates are unknown and the
-/// shared identity reports a gate. The unary reading's own refusals also
-/// keep this case uncredited without that rule, so it guards the reading
-/// as a whole; `base_owner_cfg_gates.rs` and the identity's unit tests
-/// discriminate the rule itself. The reach reading merged from main finds no
-/// test path to `real::f` here (the test's `f` is the stand-in constant), so
-/// the class is `no_static_path` with reach `no`: below any credited class,
-/// so the conservative answer stands.
+/// `include!` (through a renamed macro). No `mod real;` declares it, so the
+/// identity reports a gate; the reach reading finds no test path to
+/// `real::f`, so the class is `no_static_path` with reach `no`.
 #[test]
 fn an_owner_file_reached_only_through_include_is_not_exposed() -> Result<(), String> {
     let lib = lib_with(&format!(
@@ -1190,13 +1178,10 @@ fn an_owner_file_reached_only_through_include_is_not_exposed() -> Result<(), Str
     Ok(())
 }
 
-/// Controls for the gates above (#14952 pos_plain, pos_unrelated_mod,
-/// pos_unrelated_gated): an ungated declaration and re-export, an unrelated
-/// gated module, a gated re-export of another name, and a test module's own
-/// private import of the owner keep their credit: `weakly_exposed` with
-/// propagation credited through a re-export (the reveal reading of a
-/// re-exported owner, unchanged here), and `exposed` through the test
-/// module's own import.
+/// Controls (#14952 pos_plain, pos_unrelated_mod, pos_unrelated_gated): an
+/// ungated re-export, an unrelated gated module or re-export keep
+/// `weakly_exposed` with propagation credited; the test module's own private
+/// import keeps `exposed`.
 #[test]
 fn ungated_or_unrelated_reexports_keep_their_credit() -> Result<(), String> {
     let mut wrong = Vec::new();
