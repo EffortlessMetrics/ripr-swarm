@@ -2791,6 +2791,23 @@ value on its own line (the #14385 branch probe) is credited by the same per-call
 rule when the diff changes only that line. A chain without a final `else`, a
 branch holding a statement, or code after the chain is outside the subset.
 
+### Manifest-rebound standard assertion roots (#10150)
+
+Owner-pin admission proves a `std::` or `core::` assertion root against the
+manifests before it credits a pin. The test's other assertion consumers read
+the parsed oracle directly, so a constructor called inside
+`std::assert_eq!(Widget::new().read(), 4)` was credited `strongly_gripped`
+even where the test's `Cargo.toml` binds `std` to a token-discarding package
+(`std = { package = "fakestd" }` in a `#![no_std]` crate) or declares a `core`
+dependency. After the index is built, an assertion written through a `std::` or
+`core::` root becomes an `unknown` oracle when the test file's own manifest
+declares a dependency under that name, in any dependency table, or any manifest
+up to the analysis root patches it. The real standard crates are never Cargo
+dependencies, so the declaration alone shows the root is another package. The
+oracle is kept as `unknown` rather than dropped, because that package may still
+assert. A manifest that cannot be read or parsed keeps the parsed oracle, and a
+renamed package under a different key leaves the standard root alone.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`

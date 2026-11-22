@@ -400,7 +400,7 @@ fn verify(root: &Path, directory: &Path, krate: &str) -> bool {
 }
 
 /// Every dependency table of one manifest, including `[target.*]` ones.
-fn dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
+pub(super) fn dependency_tables(manifest: &toml::Table) -> Vec<&toml::Table> {
     let direct = DEPENDENCY_TABLES
         .iter()
         .filter_map(|name| manifest.get(*name).and_then(toml::Value::as_table));

@@ -1,0 +1,2 @@
+crates/ripr/tests/rebound_assertion_root.rs|Command::new|1|rebound-assertion-root|RIPR-SPEC-0197: runs the built ripr binary over a temp two-package workspace to read the constructor's repo-exposure seam; no network or credential operation.
+crates/ripr/tests/rebound_assertion_root.rs|use std::process::Command|1|rebound-assertion-root|RIPR-SPEC-0197: imports Command only for the bounded binary invocation described above.
