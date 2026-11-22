@@ -235,7 +235,14 @@ fn an_unchanged_condition_is_not_paired_with_itself() -> Result<(), String> {
     let old = "if total > 5 { total - 10 } else { total }";
     let new = "if total > 5 { total } else { total - 10 }";
     let findings = TempRepo::create(&source(new), &diff(old, new))?.findings()?;
-    assert!(!findings.is_empty(), "premise: the arm swap is a finding");
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.probe.family == ProbeFamily::Predicate
+                && finding.probe.after.as_deref() == Some("total > 5")
+                && finding.probe.before.as_deref() == Some(old)),
+        "premise: the unchanged condition is a predicate probe over the whole old line, got {findings:?}"
+    );
     for finding in &findings {
         assert_eq!(finding.probe.before_condition, None, "{finding:?}");
     }
@@ -251,8 +258,10 @@ fn a_nested_head_on_the_line_is_not_paired() -> Result<(), String> {
     assert!(
         findings
             .iter()
-            .any(|finding| finding.probe.family == ProbeFamily::Predicate),
-        "premise: a predicate finding, got {findings:?}"
+            .any(|finding| finding.probe.family == ProbeFamily::Predicate
+                && finding.probe.after.as_deref() == Some("total > 200")
+                && finding.probe.before.as_deref() == Some(old)),
+        "premise: the changed outer condition is a predicate probe over the whole old line, got {findings:?}"
     );
     for finding in &findings {
         assert_eq!(finding.probe.before_condition, None, "{finding:?}");
