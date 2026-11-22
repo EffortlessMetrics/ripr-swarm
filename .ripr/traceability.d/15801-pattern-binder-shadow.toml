@@ -1,0 +1,10 @@
+# Registers the value-item and pattern-binder shadow of the syntax-run readings
+# (#15801) under RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::a_value_item_of_the_type_name_shadows_its_constructor",
+  "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::a_pattern_binder_of_the_type_name_shadows_its_call_spelling",
+  "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::a_binder_inside_macro_arguments_is_read_from_the_text",
+  "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::a_file_without_a_clean_parse_is_read_from_the_text",
+]

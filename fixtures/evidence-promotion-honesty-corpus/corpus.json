@@ -21693,6 +21693,78 @@
           "relation_reason": "direct_owner_call"
         }
       ]
+    },
+    {
+      "id": "rust_operator_fn_shadows_constructor",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_operator_fn_shadows_constructor",
+      "vector": "an_operator_on_values_a_same_named_fn_builds_runs_their_types_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_operator_closure_param_shadows_braced_struct",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_operator_closure_param_shadows_braced_struct",
+      "vector": "an_operator_on_a_closure_parameter_named_like_a_braced_struct_runs_that_values_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_operator_tuple_let_shadows_braced_struct",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_operator_tuple_let_shadows_braced_struct",
+      "vector": "an_operator_on_a_tuple_let_binder_named_like_a_braced_struct_runs_that_values_impl",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        }
+      ]
     }
   ]
 }

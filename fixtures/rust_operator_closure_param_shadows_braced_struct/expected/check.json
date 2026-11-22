@@ -1,0 +1,227 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_operator_closure_param_shadows_braced_struct/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:07c9d34baec233481ba4d5081b462dc484d756e75700a2ed0c78f8e086b077f0","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:3d854b26",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.56,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:3d854b26",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "d: self.d + other.d"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling add; tests share only its file or a name token: adds"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: d: self.d + other.d"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach weak: No test is seen calling add; tests share only its file or a name token: adds", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: d: self.d + other.d", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches constructed field: d: self.d + other.d (line 13)", "related test src/lib.rs:30 adds uses no oracle", "source assertion argument value 1 at line 32", "source assertion argument value 2 at line 32", "source assertion argument value 3 at line 32"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"d: self.d + other.d","line":13}
+      ],
+      "evidence": ["Complete propagation witness reaches constructed field: d: self.d + other.d", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No test is seen calling add; tests share only its file or a name token: adds", "Reachable tests can plausibly activate this changed behavior", "assertion not credited: `assert_eq!` in adds at src/lib.rs:32: the assertion is inside a closure ripr cannot see invoked exactly once", "gap_withheld: reachable_unrevealed is not claimed; whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method (rust_implicit_call_unresolved)", "limitation_last_established_edge: reach weak: No test is seen calling add; tests share only its file or a name token: adds", "limitation_first_unresolved_edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "32": "assert_eq!(Celsius(1) + Celsius(2), Kelvin(3));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 32,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 32,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 32,
+            "value": "3",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 32,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 32,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 32,
+          "value": "3",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "adds",
+          "file": "src/lib.rs",
+          "line": 30,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "`adds` (src/lib.rs:30) names `Celsius` and uses it, and the language may call `add` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `add`, so it does not report a gap. Check that an assertion in that test would fail if `add` returned the wrong value; add a test only if none does.",
+      "suggested_next_action": "`adds` (src/lib.rs:30) names `Celsius` and uses it, and the language may call `add` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `add`, so it does not report a gap. Check that an assertion in that test would fail if `add` returned the wrong value; add a test only if none does.",
+      "language": "rust",
+      "static_limit_kind": "rust_implicit_call_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method",
+        "kind": "rust_implicit_call_unresolved",
+        "last_established_edge": "reach weak: No test is seen calling add; tests share only its file or a name token: adds",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:51659dca",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.56,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:51659dca",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "Celsius { d: self.d + other.d }"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling add; tests share only its file or a name token: adds"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: Celsius { d: self.d + other.d }"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"weak","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach weak: No test is seen calling add; tests share only its file or a name token: adds", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Celsius { d: self.d + other.d }", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: Celsius { d: self.d + other.d } (line 13)", "related test src/lib.rs:30 adds uses no oracle", "source assertion argument value 1 at line 32", "source assertion argument value 2 at line 32", "source assertion argument value 3 at line 32"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"Celsius { d: self.d + other.d }","line":13}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: Celsius { d: self.d + other.d }", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No test is seen calling add; tests share only its file or a name token: adds", "Reachable tests can plausibly activate this changed behavior", "assertion not credited: `assert_eq!` in adds at src/lib.rs:32: the assertion is inside a closure ripr cannot see invoked exactly once", "gap_withheld: reachable_unrevealed is not claimed; whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method (rust_implicit_call_unresolved)", "limitation_last_established_edge: reach weak: No test is seen calling add; tests share only its file or a name token: adds", "limitation_first_unresolved_edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method", "limitation_analyzer_route: analysis/classify/gap-admission", "limitation_non_claim: no missing test, no weak oracle, and no test adequacy is established"],
+      "missing": ["A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim."],
+      "assertion_texts": {
+        "32": "assert_eq!(Celsius(1) + Celsius(2), Kelvin(3));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 32,
+            "value": "1",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 32,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 32,
+            "value": "3",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 32,
+          "value": "1",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 32,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 32,
+          "value": "3",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "adds",
+          "file": "src/lib.rs",
+          "line": 30,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "owner_named_test",
+          "relation_confidence": "medium",
+          "miss": "assertion_inert",
+          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+        }
+      ],
+      "stop_reasons": ["gap_evidence_unresolved"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "`adds` (src/lib.rs:30) names `Celsius` and uses it, and the language may call `add` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `add`, so it does not report a gap. Check that an assertion in that test would fail if `add` returned the wrong value; add a test only if none does.",
+      "suggested_next_action": "`adds` (src/lib.rs:30) names `Celsius` and uses it, and the language may call `add` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `add`, so it does not report a gap. Check that an assertion in that test would fail if `add` returned the wrong value; add a test only if none does.",
+      "language": "rust",
+      "static_limit_kind": "rust_implicit_call_unresolved",
+      "static_limitation": {
+        "analyzer_route": "analysis/classify/gap-admission",
+        "first_unresolved_edge": "whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method",
+        "kind": "rust_implicit_call_unresolved",
+        "last_established_edge": "reach weak: No test is seen calling add; tests share only its file or a name token: adds",
+        "non_claim": "no missing test, no weak oracle, and no test adequacy is established"
+      },
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

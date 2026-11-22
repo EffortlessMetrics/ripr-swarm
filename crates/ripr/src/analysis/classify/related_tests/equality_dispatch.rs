@@ -178,7 +178,7 @@ pub(super) fn declares_trait(masked: &str, name: &str) -> bool {
 }
 
 /// Number of whole-word `kw name` declarations (`struct Key`, ...).
-fn count_items(masked: &str, keywords: &[&str], name: &str) -> usize {
+pub(super) fn count_items(masked: &str, keywords: &[&str], name: &str) -> usize {
     let bytes = masked.as_bytes();
     let mut count = 0;
     for keyword in keywords {
@@ -309,6 +309,13 @@ pub(super) fn test_asserts_equality_through_owner(
 
 /// Whether no scope between `test` and the owner's file declares or renames
 /// another `impl_type`, so the name means the owner's impl type there.
+///
+/// #15277 review: a value item of the same name (`fn Key(..) -> Other`,
+/// `const Unit: Other`, also local to a test body) shadows a tuple-struct
+/// constructor or a unit struct's value in its scope without touching the
+/// type namespace, so `Key(1)` there is an `Other`. A `let` binding does
+/// the same for a braced struct, which has no value of its own. Any `fn`,
+/// `const`, `static` or `let` of that name anywhere in the file refuses.
 pub(super) fn type_scope_is_clear(
     test: &TestSummary,
     owner: &FunctionSummary,
@@ -326,7 +333,206 @@ pub(super) fn type_scope_is_clear(
         index,
     ) || file_renames_to(source, impl_type)
         || file_renames_to(source, raw_impl_type.as_str())
-        || parent_chain_shadows_type(test, impl_type, owner_scope, index))
+        || parent_chain_shadows_type(test, impl_type, owner_scope, index)
+        || file_declares_value_named(test, source, impl_type, index))
+}
+
+/// Whether the test file binds `name` as a value: [`declares_value_named`]
+/// over its masked source, or a pattern binder ([`binds_pattern_named`]). A
+/// file whose raw text has no candidate declaration skips the keyword reading
+/// without masking, and the masked copy and the pattern binders are the file
+/// snapshot's memoized ones (the masked copy is the one
+/// `test_module_shadows_type` reads), so no reading re-masks or re-walks a
+/// large test file on every check (#12947).
+fn file_declares_value_named(
+    test: &TestSummary,
+    source: &str,
+    name: &str,
+    index: &RustIndex,
+) -> bool {
+    if name.is_empty() || !source.contains(name) {
+        return false;
+    }
+    // A caller supplying different source bytes must never borrow the
+    // indexed snapshot.
+    let indexed = index
+        .files()
+        .get(&test.file)
+        .filter(|facts| std::ptr::eq(facts.source.as_ref(), source))
+        .and_then(|_| index.source_syntax.get(index, &test.file));
+    let unindexed;
+    let snapshot: &crate::analysis::syntax::SourceSnapshot = match &indexed {
+        Some(snapshot) => snapshot,
+        None => {
+            unindexed = crate::analysis::syntax::SourceSnapshot::new(source);
+            &unindexed
+        }
+    };
+    let masked = || snapshot.masked_source(|| mask_comments_and_strings(source));
+    (may_declare_value_named(source, name) && declares_value_named(masked(), name))
+        || binds_pattern_named(snapshot.pattern_binders(), masked(), name)
+}
+
+/// Whether a pattern may bind `name` as a local value somewhere in the file
+/// (#15801). A braced struct lives only in the type namespace, so a closure
+/// or function parameter, a `for`, `match`, `if let` or `while let` binding,
+/// or a `let` pattern such as `let (a, Name)` or `let ref Name` can carry its
+/// name, and `Name(..)` in that scope then calls the local value.
+///
+/// Parsed code is read exactly: any identifier pattern of that name refuses.
+/// Macro arguments stay tokens, so a binder there is read from the text
+/// ([`binder_like_use`]), as is the whole file when it has no clean parse.
+/// The textual reading is skipped when the file declares a tuple or unit
+/// struct of the name: that struct owns the value name wherever the type is
+/// in scope (a binder of the name is then a compile error), and a unit
+/// struct's bare value (`assert_eq!(a, Name)`) must not read as a binder.
+/// Over-refusal only withholds the relation.
+fn binds_pattern_named(
+    binders: Option<&crate::analysis::syntax::PatternBinders>,
+    masked: &str,
+    name: &str,
+) -> bool {
+    if binders.is_some_and(|binders| binders.names.contains(name)) {
+        return true;
+    }
+    if declares_value_struct(masked, name) {
+        return false;
+    }
+    masked.match_indices(name).any(|(at, _)| {
+        binders.is_none_or(|binders| {
+            let after = binders
+                .macro_ranges
+                .partition_point(|range| range.end <= at);
+            binders
+                .macro_ranges
+                .get(after)
+                .is_some_and(|range| range.start <= at)
+        }) && binder_like_use(masked, at, name)
+    })
+}
+
+/// Whether the masked source declares `struct name(..)` or `struct name;`,
+/// whose constructor or value owns `name` in the value namespace.
+fn declares_value_struct(masked: &str, name: &str) -> bool {
+    masked.match_indices(name).any(|(at, _)| {
+        ident_boundary(masked, at, at + name.len())
+            && masked[..at]
+                .strip_suffix("r#")
+                .unwrap_or(&masked[..at])
+                .trim_end()
+                .strip_suffix("struct")
+                .is_some_and(|head| !head.bytes().last().is_some_and(is_ident_byte))
+            && masked[at + name.len()..]
+                .trim_start()
+                .starts_with(['(', ';'])
+    })
+}
+
+/// Whether the whole-word `name` at `at` in masked text sits where a pattern
+/// could bind it: it is not the head of a call, literal, path, macro or
+/// generic (`Name(`, `Name {`, `Name::`, `Name!`, `Name<`), a field base
+/// (`Name.`) or a generic argument (`.., Name>`), and it follows `|`, `,`,
+/// `(`, `[`, `&`, `mut`, `ref`, `for` or `let`, or is followed by `@`. This
+/// is a superset of the binder shapes a macro argument can hold (`|Name|`,
+/// `|a, Name: T|`, `Some(Name) =>`, `for Name in`, `(a, Name)`, `[Name, ..]`,
+/// `ref Name`, `mut Name`, `Name @ ..`); it also takes a bare value or type
+/// use in the same position, which only over-refuses.
+fn binder_like_use(masked: &str, at: usize, name: &str) -> bool {
+    if !ident_boundary(masked, at, at + name.len()) {
+        return false;
+    }
+    let after = masked[at + name.len()..].trim_start();
+    if after.starts_with('@') {
+        return true;
+    }
+    if after.starts_with(['(', '{', '!', '<', '.', '>']) || after.starts_with("::") {
+        return false;
+    }
+    let before = masked[..at].strip_suffix("r#").unwrap_or(&masked[..at]);
+    let before = before.trim_end();
+    before.ends_with(['|', ',', '(', '[', '&'])
+        || ["mut", "ref", "for", "let"].iter().any(|keyword| {
+            before
+                .strip_suffix(keyword)
+                .is_some_and(|head| !head.bytes().last().is_some_and(is_ident_byte))
+        })
+}
+
+/// Keywords that bind `name` in the value namespace right before it: a `fn`,
+/// `const` or `static` item, or a `let` binding. A `let` binding named like a
+/// braced struct (which lives only in the type namespace) is legal Rust and
+/// makes `Name(..)` call that local value, not a constructor (#15277).
+const VALUE_BINDER_KEYWORDS: [&str; 4] = ["fn", "const", "static", "let"];
+
+/// A raw-text superset of [`declares_value_named`]: some whole-word `name`
+/// (or `r#name`) whose preceding code, past whitespace and an optional
+/// `mut`, ends with `fn`, `const`, `static` or `let`, or with a comment
+/// (`*/`, or a line holding `//`) that masking would turn into whitespace
+/// between the keyword and the name.
+fn may_declare_value_named(raw: &str, name: &str) -> bool {
+    if name.is_empty() || !raw.contains(name) {
+        return false;
+    }
+    raw.match_indices(name).any(|(at, _)| {
+        if !ident_boundary(raw, at, at + name.len()) {
+            return false;
+        }
+        let before = raw[..at].strip_suffix("r#").unwrap_or(&raw[..at]);
+        let before = before.trim_end();
+        let before = match before.strip_suffix("mut") {
+            Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
+            _ => before,
+        };
+        let line = before.rsplit('\n').next().unwrap_or(before);
+        before.ends_with("*/")
+            || line.contains("//")
+            || VALUE_BINDER_KEYWORDS.iter().any(|keyword| {
+                before.strip_suffix(keyword).is_some_and(|head| {
+                    !head
+                        .bytes()
+                        .last()
+                        .is_some_and(|byte| is_ident_byte(byte) || byte == b'#')
+                })
+            })
+    })
+}
+
+/// Whether the masked source binds a `fn`, `const`, `static` or `let` (also
+/// `static mut`, `const fn`, `let mut`) named `name` or `r#name`, at any
+/// depth.
+pub(super) fn declares_value_named(masked: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    masked.match_indices(name).any(|(at, _)| {
+        if !ident_boundary(masked, at, at + name.len()) {
+            return false;
+        }
+        let before = masked[..at].strip_suffix("r#").unwrap_or(&masked[..at]);
+        let before = before.trim_end();
+        let before = match before.strip_suffix("mut") {
+            Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
+            _ => before,
+        };
+        // `let Name(..)` and `let Name { .. }` (also under `if let` or
+        // `while let`) are destructuring patterns that bind nothing named
+        // `Name`.
+        let after = masked[at + name.len()..].trim_start();
+        let destructures = after.starts_with('(') || after.starts_with('{');
+        VALUE_BINDER_KEYWORDS.iter().any(|keyword| {
+            if *keyword == "let" && destructures {
+                return false;
+            }
+            before.strip_suffix(keyword).is_some_and(|head| {
+                // A head ending in `'` is the lifetime `'static`, as in
+                // `&'static Name`, not a `static` item.
+                !head
+                    .bytes()
+                    .last()
+                    .is_some_and(|byte| is_ident_byte(byte) || byte == b'#' || byte == b'\'')
+            })
+        })
+    })
 }
 
 /// Whether the file may bring a different `T` into scope. The owner id
@@ -968,5 +1174,189 @@ mod tests {
             2
         );
         assert_eq!(count_lets("let a = 1;", "a"), 1);
+    }
+
+    #[test]
+    fn a_value_item_of_the_type_name_shadows_its_constructor() {
+        assert!(declares_value_named(
+            "fn Key(v: i32) -> Other { Other(v) }",
+            "Key"
+        ));
+        assert!(declares_value_named(
+            "    const Key: Other = Other(1);",
+            "Key"
+        ));
+        assert!(declares_value_named("static mut Key: u8 = 0;", "Key"));
+        assert!(declares_value_named(
+            "pub const fn Key() -> u8 { 0 }",
+            "Key"
+        ));
+        assert!(declares_value_named("fn r#Key() {}", "Key"));
+        // A `let` binding of the name shadows a braced struct's call
+        // spelling: `Key(1)` then calls the local closure.
+        assert!(declares_value_named("let Key = |x: i32| Other(x);", "Key"));
+        assert!(declares_value_named("let mut Key = make;", "Key"));
+        assert!(may_declare_value_named("let Key = make;", "Key"));
+        assert!(!declares_value_named("letKey = 1;", "Key"));
+        // A destructuring pattern binds nothing named `Key`, and `'static`
+        // is a lifetime, not a `static` item.
+        assert!(!declares_value_named("let Key(v) = k;", "Key"));
+        assert!(!declares_value_named("if let Key(v) = k {}", "Key"));
+        assert!(!declares_value_named("let Key { v } = k;", "Key"));
+        assert!(!declares_value_named("let r: &'static Key = &K;", "Key"));
+        assert!(declares_value_named(
+            "let Key: fn(i32) -> Other = mk;",
+            "Key"
+        ));
+        // A type item, a call, a longer name or another keyword is no value
+        // item of that name.
+        assert!(!declares_value_named("pub struct Key(pub i32);", "Key"));
+        assert!(!declares_value_named("let k = Key(1);", "Key"));
+        assert!(!declares_value_named("fn KeyMaker() {}", "Key"));
+        assert!(!declares_value_named("fn make() -> Key { Key(1) }", "Key"));
+        assert!(!declares_value_named("let myfn Key = 1;", "Key"));
+        // The raw prefilter keeps every masked hit, a comment between the
+        // keyword and the name included, and drops a file with no candidate.
+        assert!(may_declare_value_named("fn /* c */ Key() {}", "Key"));
+        assert!(may_declare_value_named("fn // c\n    Key() {}", "Key"));
+        assert!(may_declare_value_named("static mut Key: u8 = 0;", "Key"));
+        assert!(!may_declare_value_named(
+            "let k = Key(1);\nstruct Key;",
+            "Key"
+        ));
+        assert!(!may_declare_value_named("fn make() {}", "Key"));
+    }
+
+    /// The production reading of one file's text: its pattern binders and
+    /// masked source, as `file_declares_value_named` hands them over.
+    fn pattern_binds(source: &str, name: &str) -> bool {
+        let snapshot = crate::analysis::syntax::SourceSnapshot::new(source);
+        binds_pattern_named(
+            snapshot.pattern_binders(),
+            &mask_comments_and_strings(source),
+            name,
+        )
+    }
+
+    #[test]
+    fn a_pattern_binder_of_the_type_name_shadows_its_call_spelling() {
+        // #15801: every binder shape that is not `fn`/`const`/`static`/`let
+        // Name` refuses, in parsed code.
+        for body in [
+            "let f = |Key: fn(i32) -> Other| { let x: T = Key(1).into(); };",
+            "let f = |a: i32, Key| Key(a);",
+            "for Key in makers { let x: T = Key(1).into(); }",
+            "match maker { Key => { let x: T = Key(1).into(); } }",
+            "match maker { Some(Key) => {} None => {} }",
+            "if let Some(Key) = maker { let x: T = Key(1).into(); }",
+            "while let Some(Key) = makers.pop() {}",
+            "let (a, Key) = pair;",
+            "let ref Key = maker;",
+            "let [Key, ..] = makers;",
+            "let Wrap { maker: Key } = wrap;",
+            "let Wrap { Key } = wrap;",
+            "let r#Key @ _ = maker;",
+            "let Some(Key) = maker else { return; };",
+        ] {
+            let source = format!("struct Key {{ v: i32 }}\nfn t() {{\n    {body}\n}}\n");
+            assert!(pattern_binds(&source, "Key"), "binder not read: {body}");
+        }
+        assert!(pattern_binds(
+            "struct Key { v: i32 }\nfn t(Key: fn(i32) -> Other) { Key(1); }\n",
+            "Key"
+        ));
+        // Uses of the type that bind nothing keep the reading.
+        for body in [
+            "let k = Key { v: 1 };",
+            "let k: Key = make();",
+            "let ks: Vec<(i32, Key)> = Vec::new();",
+            "let f: fn(Key) -> Other = convert;",
+            "let Key { v } = k;",
+            "if let Some(Key { v }) = maybe {}",
+            "let n = keyed(|k: Key| k.v);",
+            "let x = make::<Key>();",
+            "let key = Key::new(1);",
+        ] {
+            let source = format!("struct Key {{ v: i32 }}\nfn t() {{\n    {body}\n}}\n");
+            assert!(!pattern_binds(&source, "Key"), "over-read: {body}");
+        }
+        // A comment or string naming a binder binds nothing.
+        assert!(!pattern_binds(
+            "struct Key { v: i32 }\nfn t() { let s = \"|Key| 1\"; /* for Key in x */ }\n",
+            "Key"
+        ));
+    }
+
+    #[test]
+    fn a_binder_inside_macro_arguments_is_read_from_the_text() {
+        // Macro arguments are tokens to the parser, so the binder is found
+        // by its position.
+        for body in [
+            "assert_eq!(apply(|Key: fn(i32) -> Other| Key(1)), 2);",
+            "assert_eq!(apply(|a, Key| Key(a)), 2);",
+            "assert!(matches!(maker, Some(Key) if Key(1) == 2));",
+            "check!(for Key in makers { run(Key(1)); });",
+            "check!(let (a, Key) = pair);",
+            "check!(let ref Key = maker);",
+            "check!(|mut Key| Key(1));",
+            "check!(match m { [Key, ..] => 1, _ => 2 });",
+            "check!(match m { Key @ _ => 1 });",
+            "check!(|&Key| Key(1));",
+        ] {
+            let source = format!("struct Key {{ v: i32 }}\nfn t() {{\n    {body}\n}}\n");
+            assert!(
+                pattern_binds(&source, "Key"),
+                "macro binder not read: {body}"
+            );
+        }
+        // Heads of a literal, call, path or generic, and a type after `:`,
+        // `->`, `<` or `as`, are no binders.
+        for body in [
+            "assert_eq!(Key { v: 1 }.v, 1);",
+            "assert_eq!(make(1, Key { v: 1 }), 1);",
+            "assert_eq!(Key::new(1).v, 1);",
+            "assert_eq!(apply(|k: Key| k.v), 1);",
+            "assert_eq!(make::<Key>().v, 1);",
+            "assert_eq!(size_of::<Map<u8, Key>>(), 8);",
+            "assert_eq!((|| -> Key { make() })().v, 1);",
+        ] {
+            let source = format!("struct Key {{ v: i32 }}\nfn t() {{\n    {body}\n}}\n");
+            assert!(!pattern_binds(&source, "Key"), "over-read: {body}");
+        }
+        // An attribute's arguments are no macro arguments.
+        assert!(!pattern_binds(
+            "#[derive(Debug, Key)]\nstruct Key { v: i32 }\n",
+            "Key"
+        ));
+        // A tuple or unit struct owns the value name, so its bare value in
+        // a macro argument is the struct, not a binder.
+        assert!(!pattern_binds(
+            "struct Key;\nfn t() { assert_eq!(make(), Key); }\n",
+            "Key"
+        ));
+        assert!(!pattern_binds(
+            "struct Key(i32);\nfn t() { assert_eq!(wrap(1, Key), Key(1)); }\n",
+            "Key"
+        ));
+        assert!(declares_value_struct("pub struct r#Key (i32);", "Key"));
+        assert!(!declares_value_struct("struct Key { v: i32 }", "Key"));
+        assert!(!declares_value_struct("struct KeyRing(i32);", "Key"));
+        // A parsed identifier pattern still refuses beside such a struct.
+        assert!(pattern_binds(
+            "mod a { pub struct Key(i32); }\nfn t() { let f = |Key: fn(i32) -> i32| Key(1); }\n",
+            "Key"
+        ));
+    }
+
+    #[test]
+    fn a_file_without_a_clean_parse_is_read_from_the_text() {
+        let broken = "struct Key { v: i32 }\nfn t() { let f = |Key: fn(i32) -> Other| Key(1); \n";
+        let snapshot = crate::analysis::syntax::SourceSnapshot::new(broken);
+        assert!(snapshot.pattern_binders().is_none());
+        assert!(pattern_binds(broken, "Key"));
+        assert!(!pattern_binds(
+            "struct Key { v: i32 }\nfn t() { let k: Key = make(); \n",
+            "Key"
+        ));
     }
 }

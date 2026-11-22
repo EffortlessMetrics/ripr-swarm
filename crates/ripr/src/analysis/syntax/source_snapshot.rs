@@ -11,7 +11,7 @@ use super::{
 use crate::analysis::facts::MacroGeneratedOrigin;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use ra_ap_syntax::{
-    AstNode, AstPtr, Parse, SourceFile, TextRange,
+    AstNode, AstPtr, Parse, SourceFile, SyntaxKind, TextRange,
     ast::{self, HasAttrs, HasGenericParams, HasName},
 };
 use std::collections::BTreeMap;
@@ -205,6 +205,48 @@ impl SourceSyntaxMemos {
     }
 }
 
+/// Where one file can bind a name as a local value through a pattern
+/// (#15801): a closure or function parameter, a `for`, `match`, `if let` or
+/// `while let` binding, or any `let` pattern.
+pub(crate) struct PatternBinders {
+    /// The unraw name of every identifier pattern in the parsed tree. An
+    /// identifier pattern is the only syntax that binds a local value, so
+    /// this set is exact for parsed code.
+    pub(crate) names: std::collections::BTreeSet<String>,
+    /// Byte ranges of the outermost macro argument groups, in source order.
+    /// The parser keeps macro arguments as tokens, so a binder written
+    /// inside one is not in `names` and needs a textual reading.
+    pub(crate) macro_ranges: Vec<std::ops::Range<usize>>,
+}
+
+impl PatternBinders {
+    fn read(tree: &SourceFile) -> Self {
+        let mut names = std::collections::BTreeSet::new();
+        let mut macro_ranges = Vec::new();
+        for node in tree.syntax().descendants() {
+            if let Some(pattern) = ast::IdentPat::cast(node.clone()) {
+                if let Some(name) = pattern.name() {
+                    names.insert(name.text().trim_start_matches("r#").to_string());
+                }
+            } else if node.kind() == SyntaxKind::TOKEN_TREE
+                && node
+                    .parent()
+                    .is_some_and(|parent| parent.kind() != SyntaxKind::TOKEN_TREE)
+                && !node
+                    .ancestors()
+                    .any(|ancestor| ancestor.kind() == SyntaxKind::ATTR)
+            {
+                let range = node.text_range();
+                macro_ranges.push(usize::from(range.start())..usize::from(range.end()));
+            }
+        }
+        Self {
+            names,
+            macro_ranges,
+        }
+    }
+}
+
 pub(crate) struct SourceSnapshot {
     parse: Option<Parse<SourceFile>>,
     lines: LineIndex,
@@ -217,6 +259,7 @@ pub(crate) struct SourceSnapshot {
     root_shadows: Mutex<BTreeMap<(String, bool), RootShadow>>,
     masked: OnceLock<String>,
     root_impl_lines: OnceLock<Vec<(usize, usize)>>,
+    pattern_binders: OnceLock<Option<PatternBinders>>,
     #[cfg(test)]
     shadow_computations: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
@@ -246,6 +289,7 @@ impl SourceSnapshot {
             root_shadows: Mutex::default(),
             masked: OnceLock::new(),
             root_impl_lines: OnceLock::new(),
+            pattern_binders: OnceLock::new(),
             #[cfg(test)]
             shadow_computations: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
@@ -341,6 +385,14 @@ impl SourceSnapshot {
             Ok(mut memo) => *memo.entry(key).or_insert(answer),
             Err(_) => answer,
         }
+    }
+
+    /// The file's pattern binders, read once per snapshot, or `None` when the
+    /// file has no clean parse.
+    pub(crate) fn pattern_binders(&self) -> Option<&PatternBinders> {
+        self.pattern_binders
+            .get_or_init(|| self.tree().map(|tree| PatternBinders::read(&tree)))
+            .as_ref()
     }
 
     /// The file's comment-and-string-masked source, built once per snapshot.
