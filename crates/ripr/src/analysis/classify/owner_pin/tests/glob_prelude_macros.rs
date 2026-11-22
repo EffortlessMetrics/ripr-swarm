@@ -5,17 +5,48 @@
 
 use super::*;
 
-const CORE_PRELUDE: [&str; 9] = [
-    "assert",
-    "assert_eq",
-    "assert_ne",
-    "debug_assert",
-    "debug_assert_eq",
-    "debug_assert_ne",
-    "matches",
-    "panic",
-    "unreachable",
+use crate::analysis::syntax::CORE_PRELUDE_MACROS as CORE_PRELUDE;
+
+/// Trusted names a glob can still bind: `std`-only prelude macros, which a
+/// `#![no_std]` crate lacks, and crate macros no prelude has.
+const GLOB_BINDABLE: [&str; 16] = [
+    "assert_err",
+    "assert_none",
+    "assert_ok",
+    "assert_ok_eq",
+    "assert_some",
+    "assert_some_eq",
+    "dbg",
+    "eprint",
+    "eprintln",
+    "expect",
+    "expect_file",
+    "format",
+    "json",
+    "print",
+    "println",
+    "vec",
 ];
+
+#[test]
+fn every_trusted_name_is_either_core_prelude_or_glob_bindable() {
+    // A new trusted name must be placed on one side: a `core` macro (rustc
+    // E0659 beside a glob, std and `#![no_std]`) or a glob-bindable one.
+    let names = assertion_context_macros();
+    for name in &names {
+        assert!(
+            CORE_PRELUDE.contains(name) != GLOB_BINDABLE.contains(name),
+            "{name} must be on exactly one side"
+        );
+    }
+    for name in CORE_PRELUDE.iter().chain(&GLOB_BINDABLE) {
+        assert!(names.contains(name), "{name} must be a trusted name");
+    }
+    // The macros the #14116 cohort stopped on beside rmcp's `model::*`.
+    for name in ["env", "concat", "include_str", "write", "todo"] {
+        assert!(CORE_PRELUDE.contains(&name), "{name}");
+    }
+}
 
 fn site_names(source: &str) -> BTreeSet<String> {
     sites_in_widest_context(source, &assertion_context_macros())
@@ -26,10 +57,6 @@ fn site_names(source: &str) -> BTreeSet<String> {
 
 #[test]
 fn a_foreign_glob_reports_no_site_for_a_core_prelude_macro() {
-    let names = assertion_context_macros();
-    for name in CORE_PRELUDE {
-        assert!(names.contains(&name), "{name} must be a trusted name");
-    }
     for source in [
         "use rayon::prelude::*;\n",
         "pub use rmcp::{ErrorData, model::*};\n",
@@ -38,11 +65,11 @@ fn a_foreign_glob_reports_no_site_for_a_core_prelude_macro() {
     ] {
         let sites = site_names(source);
         for name in CORE_PRELUDE {
-            assert!(!sites.contains(name), "{source:?} reported {name}");
+            assert!(!sites.contains(*name), "{source:?} reported {name}");
         }
         // The glob still binds every other trusted name, `vec` and
         // `format` included (a `#![no_std]` prelude lacks them).
-        for name in ["vec", "format", "assert_ok", "json"] {
+        for name in GLOB_BINDABLE {
             assert!(sites.contains(name), "{source:?} lost {name}: {sites:?}");
         }
     }
@@ -132,4 +159,77 @@ fn a_foreign_glob_does_not_refuse_the_standard_assertions() {
             AssertionContextRefusal::MacroBinding(_)
         ))
     ));
+}
+
+#[test]
+fn the_widened_prelude_names_keep_every_non_glob_site() {
+    for name in ["env", "concat", "include_str", "write", "todo"] {
+        // Premise: a foreign glob reports none of them.
+        assert!(!site_names("use rmcp::{ErrorData, model::*};\n").contains(name));
+        for source in [
+            format!("use other::{name};\n"),
+            format!("use other::ignore as {name};\n"),
+            format!("macro_rules! {name} {{ ($($t:tt)*) => {{}} }}\n"),
+            "#![no_implicit_prelude]\nuse other::*;\n".to_string(),
+            "#[macro_use]\nextern crate other;\n".to_string(),
+        ] {
+            assert!(
+                site_names(&source).contains(name),
+                "{source:?} must keep a {name} site"
+            );
+        }
+        // `core` and `std` export each at their root, so with both roots
+        // verified the import names the standard macro itself (#15263);
+        // an unverified root keeps its site.
+        let trusted = assertion_context_macros();
+        let scan = |source: &str, verified: bool| -> BTreeSet<String> {
+            crate::analysis::syntax::macro_binding_scan(source, &BTreeSet::new(), &trusted, &|_| {
+                verified
+            })
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+        };
+        for root in ["std", "core"] {
+            let source = format!("use {root}::{name};\n");
+            assert!(!scan(&source, true).contains(name), "{source:?}");
+            assert!(scan(&source, false).contains(name), "{source:?}");
+        }
+        let other = format!("use other::{name};\n");
+        assert!(scan(&other, true).contains(name), "{other:?}");
+    }
+}
+
+#[test]
+fn a_foreign_glob_does_not_refuse_a_test_reading_env_or_concat() {
+    let plain = "use demo::weight;\n#[test]\nfn weighs() {\n    let _ = concat!(env!(\"CARGO_PKG_NAME\"), \"-bin\");\n    assert_eq!(weight(4), 12);\n}\n";
+    // Fixture premise: the test is credited with no glob anywhere.
+    assert_eq!(weight_refusal(plain, &[]), None);
+    for glob in [
+        "use rayon::prelude::*;\n",
+        "use rmcp::{ErrorData, model::*};\n",
+    ] {
+        assert_eq!(
+            weight_refusal(&format!("{glob}{plain}"), &[]),
+            None,
+            "{glob}"
+        );
+        assert_eq!(
+            weight_refusal(plain, &[("src/server.rs", glob)]),
+            None,
+            "{glob} elsewhere"
+        );
+    }
+    // An explicit import of either name still refuses.
+    for import in ["use other::env;\n", "use other::concat;\n"] {
+        assert!(
+            matches!(
+                weight_refusal(&format!("{import}{plain}"), &[]),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "{import}"
+        );
+    }
 }

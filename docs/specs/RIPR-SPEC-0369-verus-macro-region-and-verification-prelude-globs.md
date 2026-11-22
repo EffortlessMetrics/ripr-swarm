@@ -248,14 +248,23 @@ fails the same way for `#[test]`, and so does a glob that brings a module
 named like an extern-prelude crate for a qualified `pretty_assertions::`
 call.
 
-So in a crate that compiles, a glob cannot silently replace these names at a
-bare call: `assert`, `assert_eq`, `assert_ne`, `debug_assert`,
-`debug_assert_eq`, `debug_assert_ne`, `matches`, `panic` and `unreachable`.
-A foreign glob reports no binding site for them, so it no longer refuses a
-test's standard assertions or makes a standard wrapper call (`assert!`
-around `assert_eq!`) a named wrapper. It still reports every other trusted
-name, including `vec` and `format`, which a `#![no_std]` prelude lacks, the
-claims and expect-test macros, and `json`.
+So in a crate that compiles, a glob cannot silently replace the trusted names
+of `core`'s macro prelude at a bare call: `assert`, `assert_eq`, `assert_ne`,
+`cfg`, `column`, `concat`, `debug_assert`, `debug_assert_eq`,
+`debug_assert_ne`, `env`, `file`, `format_args`, `include_bytes`,
+`include_str`, `line`, `matches`, `module_path`, `option_env`, `panic`,
+`stringify`, `todo`, `unimplemented`, `unreachable`, `write` and `writeln`
+(each checked with rustc beside a glob, std and `#![no_std]`). The list is
+one code constant, `CORE_PRELUDE_MACROS`, and a test requires every trusted
+name to sit either there or on the glob-bindable side. A foreign glob reports
+no binding site for them, so it no longer refuses a test's standard
+assertions, a test that reads `env!` or `concat!`, or makes a standard
+wrapper call (`assert!` around `assert_eq!`) a named wrapper. It still
+reports every other trusted name: `vec`, `format`, `print`, `println`,
+`eprint`, `eprintln` and `dbg`, which a `#![no_std]` prelude lacks, the
+claims and expect-test macros, and `json`. A `use std::NAME;` or
+`use core::NAME;` of one of these names imports the standard macro itself
+and reports no site.
 
 The rule does not reach a scope under `#[no_implicit_prelude]`, where a glob
 does bind the name without error; that attribute reports its own site for

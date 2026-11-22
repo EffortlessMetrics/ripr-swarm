@@ -2908,27 +2908,48 @@ fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
         .any(|glob| segments.iter().map(String::as_str).eq(glob.iter().copied()))
 }
 
-/// Whether `name` is a macro of `core`'s macro prelude, which every crate
+/// The trusted macro names of `core`'s macro prelude, which every crate
 /// that compiles with an implicit prelude has, `#![no_std]` included.
 ///
 /// A glob import cannot rebind a bare call of such a name (#16060): rustc
 /// rejects a call whose name both a glob import and the macro prelude
-/// supply (E0659, every edition). `#[no_implicit_prelude]` lifts that rule,
-/// and it reports its own site. A glob can still bind every other trusted
-/// name, `vec` and `format` too, which a `#![no_std]` prelude lacks.
+/// supply (E0659, every edition since 2018, std and `#![no_std]`; each name
+/// was checked with rustc). `#[no_implicit_prelude]` lifts that rule, and it
+/// reports its own site. A glob can still bind every other trusted name:
+/// `vec`, `format`, `print`, `println`, `eprint`, `eprintln` and `dbg`,
+/// which a `#![no_std]` prelude lacks, and the claims, expect-test and
+/// `json` macros, which no prelude has.
+pub(crate) const CORE_PRELUDE_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "cfg",
+    "column",
+    "concat",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "env",
+    "file",
+    "format_args",
+    "include_bytes",
+    "include_str",
+    "line",
+    "matches",
+    "module_path",
+    "option_env",
+    "panic",
+    "stringify",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "write",
+    "writeln",
+];
+
+/// Whether `name` is in [`CORE_PRELUDE_MACROS`].
 fn is_core_prelude_macro(name: &str) -> bool {
-    matches!(
-        name,
-        "assert"
-            | "assert_eq"
-            | "assert_ne"
-            | "debug_assert"
-            | "debug_assert_eq"
-            | "debug_assert_ne"
-            | "matches"
-            | "panic"
-            | "unreachable"
-    )
+    CORE_PRELUDE_MACROS.contains(&name)
 }
 
 /// Whether a plain `use` names a standard-library macro at its own path

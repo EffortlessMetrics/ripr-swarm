@@ -28,6 +28,8 @@ pub(crate) use fn_cfg_gates::unestablished_cfg_gates_of_fn;
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 #[cfg(test)]
 pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
+#[cfg(test)]
+pub(crate) use owner_pin::CORE_PRELUDE_MACROS;
 pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
