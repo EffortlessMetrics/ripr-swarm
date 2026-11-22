@@ -1,0 +1,6 @@
+crates/ripr/src/app/check.rs|Perl exporter staging cleanup failed at `{}`: {error}; staging retained
+crates/ripr/src/app/check.rs|failed to allocate an exclusive Perl exporter staging directory
+crates/ripr/src/app/check.rs|failed to create Perl exporter staging `{}`: {error}
+crates/ripr/src/app/check.rs|failed to create Perl facts cache dir: {e}
+crates/ripr/src/app/check.rs|failed to name Perl exporter staging: {error}
+crates/ripr/src/app/check.rs|partial packet cleanup failed at `{}`: {error}; staging retained at `{}`

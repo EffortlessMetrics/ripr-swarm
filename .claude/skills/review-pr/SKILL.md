@@ -129,6 +129,7 @@ Perform directed staged review inline in the owning session's main context by de
    - infrastructure failure;
    - not established.
 7. **Post the inspection record on the exact head.** A clean result documents inspected surfaces, risks, invariants, validation, residual assumptions, missing evidence, and disposition. `LGTM` is not a review record.
+   The admission job parses this review ([review marker](../../../docs/MERGE_FLOW.md#review-marker-read-by-admission)). When the result is ready, the review's first line is exactly `SOURCE_REVIEW_READY` or `REVIEW_READY` and no later line carries a `disposition` label or another state token; write the record as prose there, or post the structured record as a Conversation comment. All sessions share one login, so a later refusing review supersedes an earlier admitting one on the same head.
 8. **Handle author self-review honestly.** GitHub does not allow the author to request changes on their own PR. Submit a `COMMENT` review and state whether the current head is blocking or review-ready. Do not treat the platform limitation as an approval.
 9. **Repair through one candidate.** Return valid findings to `build-candidate`; reply to incorrect findings with source-backed evidence; resolve only after repair or reply. Re-enter `review-pr` for dimensions changed by the repair.
 10. **Route the disposition.** Only `REVIEW_READY` proceeds to `finish-pr`. Other outcomes retain the candidate as draft, repair-required, incomplete, or durably in flight.

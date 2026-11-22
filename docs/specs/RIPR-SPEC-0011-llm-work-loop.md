@@ -1169,6 +1169,16 @@ a stray positional argument) under `--json` keeps exit 2 and its stderr prose
 and writes the standalone `cli_refusal` document to stdout (#6834 decision);
 other argv usage errors keep empty stdout.
 
+## Amendment (#15282): continue on a complete attempt prints a short summary
+
+Without `--json`, `ripr continue` on a confirmed-complete attempt prints a
+short summary on stdout instead of the full attempt status page: the attempt
+and its status class, the gap, the receipt, the test-run line, `ripr repair`
+for the next gap, and the `ripr status --attempt` command that prints the full
+page. A command whose PowerShell spelling differs gets a `(PowerShell)` line.
+Exit 0, the stderr already-complete line and the `--json` status document are
+unchanged.
+
 ## Amendment (#13833): line-ending-only files are named, not silently dropped
 
 A path whose before and after states differ only in line endings, on a path
@@ -1369,7 +1379,7 @@ is not decided here.
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_failed_restart_retains_literal_unix_root`
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_open_gap_restart_retains_literal_unix_root`
 - `crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once`
-- `crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory`
+- `crates/ripr/tests/generated_review_workflow/main.rs::generated_status_command_runs_from_a_foreign_working_directory`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots`
 - `editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)`
 - `editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions`

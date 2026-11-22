@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 
 export type TraceSetting = 'off' | 'messages' | 'verbose';
 export type DiagnosticProfile = 'actionable' | 'full';
+export type CheckMode = 'instant' | 'draft' | 'fast' | 'deep' | 'ready';
 
 export interface RiprConfig {
   enabled: boolean;
@@ -10,12 +11,12 @@ export interface RiprConfig {
   autoDownload: boolean;
   serverVersion: string;
   downloadBaseUrl: string;
-  checkMode: 'instant' | 'draft' | 'fast' | 'deep' | 'ready';
   baseRef: string;
-  includeUnchangedTests: boolean;
   // Undefined unless the user set the VS Code setting, so `ripr.toml`
-  // `[lsp]` values still apply. Forwarding the manifest default made the
-  // server treat it as an explicit override (#4717).
+  // `[analysis]` and `[lsp]` values still apply. Forwarding the manifest
+  // default made the server treat it as an explicit override (#4717, #15897).
+  checkMode: CheckMode | undefined;
+  includeUnchangedTests: boolean | undefined;
   seamDiagnostics: boolean | undefined;
   diagnosticProfile: DiagnosticProfile | undefined;
   traceServer: TraceSetting;
@@ -35,9 +36,9 @@ export function getConfig(resource?: vscode.Uri): RiprConfig {
     autoDownload: config.get<boolean>('server.autoDownload', true),
     serverVersion: config.get<string>('server.version', ''),
     downloadBaseUrl: config.get<string>('server.downloadBaseUrl', ''),
-    checkMode: config.get<'instant' | 'draft' | 'fast' | 'deep' | 'ready'>('check.mode', 'draft'),
     baseRef: config.get<string>('baseRef', ''),
-    includeUnchangedTests: config.get<boolean>('includeUnchangedTests', true),
+    checkMode: explicitSetting<CheckMode>(config, 'check.mode'),
+    includeUnchangedTests: explicitSetting<boolean>(config, 'includeUnchangedTests'),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<DiagnosticProfile>(config, 'diagnosticProfile'),
     traceServer: config.get<TraceSetting>('trace.server', 'off')

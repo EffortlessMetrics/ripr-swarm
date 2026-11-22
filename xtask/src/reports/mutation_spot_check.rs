@@ -39,6 +39,7 @@ mod cargo_mutants_diff;
 mod cosmic_ray;
 mod mutmut;
 pub(crate) mod pilot;
+mod python_calibration;
 mod stryker;
 mod synthetic_diff;
 

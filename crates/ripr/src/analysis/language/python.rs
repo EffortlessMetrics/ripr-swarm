@@ -382,11 +382,13 @@ mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+mod math_infinity;
 // The may-reach graph is built and measured by tests and the corpus report
 // only; no verdict reads it yet (#11425), so it is not part of the shipped
 // build.
 #[cfg(test)]
 mod may_reach;
+mod membership_activation;
 mod message_pin;
 mod module_value;
 mod range_activation;
@@ -2518,7 +2520,7 @@ impl PythonAdapter {
         teardown::free_in_background(facts);
         // #13801: the interpreter and confidence of the pytest verify route
         // are decided once here, from static facts at the root.
-        verify_interpreter::PytestVerifyInterpreter::at(&options.root).apply(&mut findings);
+        verify_interpreter::apply_at(&options.root, &mut findings);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -2554,7 +2556,7 @@ impl PythonAdapter {
     ) -> Result<LanguageRepoResult, String> {
         let input = repo::select_repo_input_with_limit(root, working_set_limit);
         let mut evidence = repo::build_repo_evidence(&input, root);
-        verify_interpreter::PytestVerifyInterpreter::at(root).apply(&mut evidence.findings);
+        verify_interpreter::apply_at(root, &mut evidence.findings);
         let partial_reason = repo::partial_disclosure(&evidence);
         let production_files = input.production_files.len();
         let skipped_files = evidence.counts.skipped;
@@ -2639,6 +2641,9 @@ mod unreachable_assertion_tests;
 
 #[cfg(test)]
 mod arm_activation_tests;
+
+#[cfg(test)]
+mod membership_activation_tests;
 
 #[cfg(test)]
 mod nested_result_tests;

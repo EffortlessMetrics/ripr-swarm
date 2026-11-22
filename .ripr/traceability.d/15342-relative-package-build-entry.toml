@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0099"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/directory_specifier_tests.rs::own_package_build_entry_credits_only_the_unique_tracked_source",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/workspace_packages.rs",
+]

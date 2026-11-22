@@ -1,0 +1,47 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/invisible_change_receiver_zero_field/input
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING ./src/lib.rs:7
+  id: probe:src_lib.rs:return_value:0f6bc284
+
+Changed
+  before: self.base * 2
+  after:  self.base * 3
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::impl Acc::double
+  gap id (for scripts): gap:rust:src/lib.rs:impl Acc::double:return_value:return_value:self.base*3
+
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+
+Evidence
+  - reach yes: Related tests appear to reach double: zero_doubles_to_zero
+  - infection weak: Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference
+  - propagation yes: Complete propagation witness reaches returned value: self.base * 3
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator not established (weakly_exposed); related oracle: Strong oracle found: whole-object equality assertion
+  - local flow reaches returned value: self.base * 3 (line 7)
+  - related test tests/double.rs:4 zero_doubles_to_zero uses strong whole object equality oracle: assert_eq!(Acc { base: 0 }.double(), 0);
+  - source assertion argument value 0 at line 5
+
+Next step
+  The related test `zero_doubles_to_zero` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/invisible_change_receiver_zero_field/input --diff <cwd>/fixtures/invisible_change_receiver_zero_field/diff.patch --mode fast probe:src_lib.rs:return_value:0f6bc284
+  ripr context --root <cwd>/fixtures/invisible_change_receiver_zero_field/input --diff <cwd>/fixtures/invisible_change_receiver_zero_field/diff.patch --mode fast --at probe:src_lib.rs:return_value:0f6bc284

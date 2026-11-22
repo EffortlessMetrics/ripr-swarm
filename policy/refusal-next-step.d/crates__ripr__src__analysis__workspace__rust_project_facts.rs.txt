@@ -1,0 +1,1 @@
+crates/ripr/src/analysis/workspace/rust_project_facts.rs|project fact discovery failed for {directory:?}: {error}

@@ -431,6 +431,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             result.uncommitted_source_paths = overlay.dirty_source_paths();
             result.untracked_source_paths = overlay.untracked_source_paths();
             result.ignored_source_paths = overlay.ignored_source_paths();
+            drop_never_analyzed_untracked_paths(&mut result, language_config);
         }
         result.analyzed_revisions = analyzed_revisions;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -634,6 +635,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         let (untracked, ignored) = excluded?;
         result.untracked_source_paths = untracked;
         result.ignored_source_paths = ignored;
+        drop_never_analyzed_untracked_paths(&mut result, language_config);
         result.analyzed_revisions = analyzed;
         bind_effective_base(&mut result, loaded.effective_base)?;
         Ok(result)
@@ -3378,6 +3380,55 @@ fn ripr_artifact_disclosure(
     )
 }
 
+/// Drop untracked paths no adapter would analyze from the working-tree
+/// disclosures (#15902).
+///
+/// An installed `node_modules/` tree that `.gitignore` does not cover shows up
+/// as hundreds of untracked routed files. The adapter's own excluded-path
+/// authority never analyzes them, tracked or not, so naming them as
+/// unanalyzed working-tree source is wrong twice: `git add -N` cannot make
+/// them analyzable, and the "unanalyzed working tree" state it sets withholds
+/// the repair start without a reason. The decision is
+/// [`is_excluded_from_diff_and_workspace_index`]: only a path that neither
+/// the diff loop nor the workspace walk reads is dropped, so a path declared
+/// in `handwritten_files` stays disclosed, and so does an untracked file
+/// under a TypeScript `docs/` directory, which the walk still indexes as
+/// test evidence. Rust has no such authority and keeps every untracked path.
+/// Tracked dirty files are never dropped: `--worktree` does read those.
+fn drop_never_analyzed_untracked_paths(
+    result: &mut AnalysisResult,
+    language_config: &crate::config::LanguagesConfig,
+) {
+    let never_analyzed =
+        never_analyzed_untracked_paths(&result.untracked_source_paths, language_config);
+    if never_analyzed.is_empty() {
+        return;
+    }
+    result
+        .untracked_source_paths
+        .retain(|path| !never_analyzed.contains(path));
+    result
+        .uncommitted_source_paths
+        .retain(|path| !never_analyzed.contains(path));
+}
+
+/// The untracked routed paths their own language adapter refuses to analyze.
+fn never_analyzed_untracked_paths(
+    untracked: &[String],
+    language_config: &crate::config::LanguagesConfig,
+) -> std::collections::BTreeSet<String> {
+    untracked
+        .iter()
+        .filter(|path| {
+            let path = std::path::Path::new(path.as_str());
+            route(path).is_some_and(|language| {
+                is_excluded_from_diff_and_workspace_index(language, path, language_config)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Whether a changed preview-language path is refused by its adapter's own
 /// excluded-path or generated-name authority before counting.
 ///
@@ -3420,17 +3471,52 @@ fn is_excluded_from_typescript_preview_analysis(
     path: &std::path::Path,
     language_config: &crate::config::LanguagesConfig,
 ) -> bool {
+    is_excluded_from_typescript_workspace_index(path, language_config)
+        || (crate::config::is_typescript_docs_site_path(path)
+            && !crate::config::is_declared_handwritten_typescript_path(
+                &language_config.typescript.handwritten_files,
+                path,
+            ))
+}
+
+/// Whether the TypeScript/JS workspace walk also refuses `path`, so it can
+/// supply neither a changed owner nor test evidence. This is the diff-loop
+/// authority without the `docs/` rule, which is diff-only (#13088): the walk
+/// keeps indexing `docs/` because libraries keep tests there.
+fn is_excluded_from_typescript_workspace_index(
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(
             &language_config.typescript.excluded_file_patterns,
             path,
         )
-        || ((crate::config::is_detectable_excluded_typescript_path(path)
-            || crate::config::is_typescript_docs_site_path(path))
+        || (crate::config::is_detectable_excluded_typescript_path(path)
             && !crate::config::is_declared_handwritten_typescript_path(
                 &language_config.typescript.handwritten_files,
                 path,
             ))
+}
+
+/// Whether `path` is read by neither the diff loop nor the workspace walk of
+/// its language adapter (#15902). Narrower than
+/// [`is_excluded_from_preview_analysis`] for TypeScript/JS, where `docs/` is
+/// skipped as changed scope but still indexed. The Python walk applies the
+/// same three authorities as its diff loop, so the two agree there.
+fn is_excluded_from_diff_and_workspace_index(
+    language: LanguageId,
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
+    match language {
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            is_excluded_from_typescript_workspace_index(path, language_config)
+        }
+        LanguageId::Python | LanguageId::Rust | LanguageId::Perl => {
+            is_excluded_from_preview_analysis(language, path, language_config)
+        }
+    }
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -3681,9 +3767,9 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
     })
 }
 
-/// Limitation detail for a well-formed diff with only binary or file-mode
-/// changes; `ripr check --diff` keys its stderr hedge on it.
-pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.";
+// The well-formed binary- or mode-only detail; its owner is
+// `AnalysisLimitation::is_non_text_only` (#15862).
+use crate::analysis_outcome::NON_TEXT_ONLY_DETAIL;
 
 /// True when every git file section is a complete binary or mode-change
 /// section and no `@@` hunk exists: a valid diff that carries nothing ripr
@@ -3691,36 +3777,117 @@ pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but conta
 /// a malformed binary sentinel) keeps the generic malformed-diff wording.
 fn has_only_non_text_changes(diff_text: &str) -> bool {
     let mut sections = 0usize;
-    let mut binary = false;
-    let (mut old_mode, mut new_mode) = (false, false);
+    let mut section: Option<NonTextSection> = None;
     let mut all_ok = true;
-    let mut in_section = false;
     for line in diff_text.lines() {
+        let line = line.trim_end_matches('\r');
         if line.starts_with("@@") {
             return false;
         }
         if line.starts_with("diff --git ") {
-            if in_section {
-                all_ok &= binary || (old_mode && new_mode);
-            }
-            in_section = true;
+            all_ok &= section.is_none_or(|section| section.is_complete());
+            section = Some(NonTextSection::default());
             sections += 1;
-            binary = false;
-            old_mode = false;
-            new_mode = false;
             continue;
         }
-        if !in_section {
-            continue;
+        if let Some(section) = section.as_mut() {
+            section.read(line);
         }
-        binary |= is_binary_sentinel(line) || line == "GIT binary patch";
-        old_mode |= line.starts_with("old mode ");
-        new_mode |= line.starts_with("new mode ");
     }
-    if in_section {
-        all_ok &= binary || (old_mode && new_mode);
-    }
+    all_ok &= section.is_none_or(|section| section.is_complete());
     sections > 0 && all_ok
+}
+
+/// What one `diff --git` section has shown of a non-text change (#15862).
+#[derive(Clone, Copy, Default)]
+struct NonTextSection {
+    sentinel: bool,
+    old_mode: bool,
+    new_mode: bool,
+    patch: BinaryPatchState,
+}
+
+impl NonTextSection {
+    fn read(&mut self, line: &str) {
+        if self.patch == BinaryPatchState::Absent {
+            if line == "GIT binary patch" {
+                self.patch = BinaryPatchState::Header;
+                return;
+            }
+            self.sentinel |= is_binary_sentinel(line);
+            self.old_mode |= is_git_mode_line(line, "old mode ");
+            self.new_mode |= is_git_mode_line(line, "new mode ");
+            return;
+        }
+        self.patch = self.patch.after(line);
+    }
+
+    /// A started binary patch must be complete, whatever mode lines precede
+    /// it; otherwise a sentinel or a full mode pair is required.
+    fn is_complete(self) -> bool {
+        match self.patch {
+            BinaryPatchState::Absent => self.sentinel || (self.old_mode && self.new_mode),
+            state => state == BinaryPatchState::BlockEnd,
+        }
+    }
+}
+
+/// A `git diff --binary` patch: the `GIT binary patch` marker, then one or
+/// more blocks of a `literal <n>` or `delta <n>` line, base85 data lines and a
+/// blank line (#15862). Every data line is checked for shape; any other line
+/// inside the patch makes it invalid, and only a closed block completes it.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum BinaryPatchState {
+    #[default]
+    Absent,
+    Header,
+    Size,
+    Data,
+    BlockEnd,
+    Invalid,
+}
+
+impl BinaryPatchState {
+    fn after(self, line: &str) -> Self {
+        match self {
+            Self::Header | Self::BlockEnd if is_binary_patch_size(line) => Self::Size,
+            Self::Size | Self::Data if is_base85_data_line(line) => Self::Data,
+            Self::Data if line.is_empty() => Self::BlockEnd,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+/// `old mode <m>` / `new mode <m>` with a six-digit octal Git mode (#15862);
+/// `old mode invalid` is not a mode change.
+fn is_git_mode_line(line: &str, prefix: &str) -> bool {
+    line.strip_prefix(prefix)
+        .is_some_and(|mode| mode.len() == 6 && mode.bytes().all(|b| matches!(b, b'0'..=b'7')))
+}
+
+/// One line of Git's base85 binary payload: a length character (`A`-`Z` for
+/// 1-26 bytes, `a`-`z` for 27-52) then exactly `ceil(len / 4) * 5` characters
+/// of Git's base85 alphabet (#15862). The payload is not decoded.
+fn is_base85_data_line(line: &str) -> bool {
+    let Some((&first, encoded)) = line.as_bytes().split_first() else {
+        return false;
+    };
+    let decoded = match first {
+        b'A'..=b'Z' => usize::from(first - b'A') + 1,
+        b'a'..=b'z' => usize::from(first - b'a') + 27,
+        _ => return false,
+    };
+    encoded.len() == decoded.div_ceil(4) * 5
+        && encoded
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&()*+-;<=>?@^_`{|}~".contains(b))
+}
+
+fn is_binary_patch_size(line: &str) -> bool {
+    ["literal ", "delta "].iter().any(|prefix| {
+        line.strip_prefix(prefix)
+            .is_some_and(|size| !size.is_empty() && size.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 /// `Binary files <old> and <new> differ` with a non-empty path on each side.
@@ -5090,9 +5257,43 @@ mod tests {
                 "{sentinel}"
             );
         }
+        // Real `git diff --binary` output is recognized (#15862) ...
+        // A mode change carried with a complete binary patch.
         assert!(has_only_non_text_changes(
-            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n"
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nindex 8352675..1592e5c\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
         ));
+        // A new one-byte file: the forward `literal 1` and reverse `literal 0`
+        // data lines are both base85 lines git emitted.
+        assert!(has_only_non_text_changes(
+            "diff --git a/e b/e\nnew file mode 100644\nindex 0000000..f76dd23\nGIT binary patch\nliteral 1\nIcmZPo000310RR91\n\nliteral 0\nHcmV?d00001\n\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/logo.png b/logo.png\nindex 8352675..1592e5c 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/x b/x\r\nold mode 100644\r\nnew mode 100755\r\n"
+        ));
+        // ... but a bare marker, a payload-less size line and non-octal modes
+        // are not a complete non-text section.
+        for lookalike in [
+            "diff --git a/x b/x\nGIT binary patch\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n\n",
+            "diff --git a/x b/x\nGIT binary patch\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\nnot payload\n",
+            // A started patch must complete even beside a valid mode pair.
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nGIT binary patch\n",
+            // A malformed reverse block, or a forward block never closed.
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nnot payload\n\n",
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQ WCj2L2ml2D\n",
+            "diff --git a/x b/x\nold mode invalid\nnew mode invalid\n",
+            "diff --git a/x b/x\nold mode 100644\nnew mode 10075\n",
+            "diff --git a/x b/x\nold mode 100648\nnew mode 100755\n",
+        ] {
+            assert!(!has_only_non_text_changes(lookalike), "{lookalike}");
+        }
         // Incomplete or mixed sections keep the generic wording.
         assert!(!has_only_non_text_changes(
             "diff --git a/x b/x\nold mode 100644\n"
@@ -5775,7 +5976,10 @@ mod tests {
     }
 
     /// #13894 N3: a preview-language file matching the operator's
-    /// `excluded_file_patterns` is a scope note on a complete outcome.
+    /// `excluded_file_patterns` is a scope note on a complete outcome. The
+    /// Python adapter must be compiled in; the rust-only counterpart is
+    /// `uncompiled_preview_adapter_with_configured_exclusion_stays_partial`.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn preview_excluded_file_pattern_is_a_scope_note_on_a_complete_outcome() -> Result<(), String> {
         let root = temp_root("analysis-outcome-preview-excluded")?;
@@ -5850,6 +6054,7 @@ mod tests {
             .ok_or_else(|| "outcome must be projected".to_string())
     }
 
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     fn assert_configured_scope_note(
         outcome: &crate::analysis_outcome::AnalysisOutcome,
         path: &str,
@@ -5872,6 +6077,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     fn assert_generated_name_stays_partial(outcome: &crate::analysis_outcome::AnalysisOutcome) {
         assert_eq!(
             outcome.kind,
@@ -5889,6 +6095,7 @@ mod tests {
 
     /// #13894 review: a configured `excluded_file_patterns` match wins over the
     /// built-in generated NAME convention (Python), like the Rust branch.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn configured_pattern_wins_over_generated_name_for_python() -> Result<(), String> {
         let enabled = [LanguageId::Rust, LanguageId::Python];
@@ -5921,6 +6128,63 @@ mod tests {
             &unconfigured,
         )?;
         assert_generated_name_stays_partial(&outcome);
+        Ok(())
+    }
+
+    /// #15601 C3: in a binary without the Python adapter, an enabled Python
+    /// language cannot run at all, so a changed Python file is never judged
+    /// by the preview skip rules. Even when the operator's
+    /// `excluded_file_patterns` match it, the outcome stays partial on the
+    /// typed adapter-unavailable limitation; it must not read as a complete
+    /// outcome with a configured scope note, nor as a preview-adapter skip.
+    #[cfg(not(feature = "lang-python"))]
+    #[test]
+    fn uncompiled_preview_adapter_with_configured_exclusion_stays_partial() -> Result<(), String> {
+        let enabled = [LanguageId::Rust, LanguageId::Python];
+        let configured = crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            python: crate::config::PythonLanguageConfig {
+                excluded_file_patterns: vec!["fixtures/**".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = preview_skip_outcome(
+            "preview-excluded-uncompiled",
+            "fixtures/data.py",
+            &enabled,
+            &configured,
+        )?;
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::PartialWithLimitations,
+            "{:?}",
+            outcome.limitations
+        );
+        let unavailable = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+            })
+            .ok_or_else(|| format!("python must be unavailable: {:?}", outcome.limitations))?;
+        assert!(
+            unavailable
+                .bounded_detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("python"),
+            "{unavailable:?}"
+        );
+        assert!(
+            !outcome.limitations.iter().any(|limitation| matches!(
+                limitation.kind,
+                AnalysisLimitationKind::RequestedScopeExcluded
+                    | AnalysisLimitationKind::LanguageScopeUnsupported
+            )),
+            "{:?}",
+            outcome.limitations
+        );
         Ok(())
     }
 
@@ -8358,6 +8622,38 @@ index 0000000..1111111 100644
                 )
             })
             .collect()
+    }
+
+    /// #15902: an untracked file inside a tree the adapter never analyzes
+    /// (an unignored `node_modules/`) is not unanalyzed working-tree source.
+    /// The controls keep the disclosure honest: an untracked hand-written
+    /// source file, a path the repository declared hand-written, a test under
+    /// `docs/` (skipped as changed scope but still indexed as test evidence),
+    /// and a Rust file (Rust has no excluded-path authority) all stay
+    /// disclosed.
+    #[test]
+    fn untracked_paths_the_adapter_never_analyzes_are_not_disclosed_as_source() {
+        let untracked = [
+            "docs/pricing.test.ts",
+            "node_modules/dep/index.ts",
+            "node_modules/dep/lib/util.js",
+            "node_modules/kept/handwritten.ts",
+            "node_modules/tool/build.rs",
+            "src/extra.ts",
+        ]
+        .map(str::to_string);
+        let mut config = crate::config::LanguagesConfig::default();
+        config
+            .typescript
+            .handwritten_files
+            .push("node_modules/kept/handwritten.ts".to_string());
+        let dropped: Vec<String> = never_analyzed_untracked_paths(&untracked, &config)
+            .into_iter()
+            .collect();
+        assert_eq!(
+            dropped,
+            ["node_modules/dep/index.ts", "node_modules/dep/lib/util.js"]
+        );
     }
 
     /// #4372: the enabled preview advisory ("N TypeScript files analyzed under
