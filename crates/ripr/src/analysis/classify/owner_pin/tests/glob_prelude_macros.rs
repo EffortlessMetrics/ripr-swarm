@@ -60,7 +60,7 @@ fn every_other_binding_of_a_core_prelude_name_keeps_its_site() {
         // An included file may hold `macro_rules! assert_eq`, which shadows
         // the prelude macro for the code after it.
         "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
-        "mod inner {\n    std::include!(\"generated.rs\");\n}\n",
+        "mod inner {\n    std::include!(concat!(\"gen\", \"erated.rs\"));\n}\n",
     ] {
         assert!(
             site_names(source).contains("assert_eq"),
@@ -71,7 +71,7 @@ fn every_other_binding_of_a_core_prelude_name_keeps_its_site() {
 
 #[test]
 fn only_an_item_position_include_binds_every_name() {
-    let item = "include!(\"generated.rs\");\n";
+    let item = "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n";
     let sites = sites_in_widest_context(item, &assertion_context_macros());
     assert!(
         sites
@@ -79,7 +79,9 @@ fn only_an_item_position_include_binds_every_name() {
             .any(|(name, site)| name == "assert_eq" && site.kind == MacroBindingKind::Included),
         "{sites:?}"
     );
-    // An expression-position `include!` is a block inside its function.
+    // A literal path names a workspace file the index reads, and an
+    // expression-position `include!` is a block inside its function.
+    assert!(!site_names("include!(\"generated.rs\");\n").contains("assert_eq"));
     let expression = "fn read() -> u8 {\n    include!(\"value.rs\")\n}\n";
     assert!(!site_names(expression).contains("assert_eq"));
     let parsed = ra_ap_syntax::SourceFile::parse(item, ra_ap_syntax::Edition::CURRENT);

@@ -720,11 +720,14 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
 }
 
 /// Whether `call` is an `include!` at item position (a file's top level or
-/// an inline module), whose spliced file may define any macro for the code
-/// after it. The glob rule (#16060) no longer hides this: a glob cannot
-/// rebind a core prelude macro, but an included `macro_rules! assert_eq`
-/// can. Every spelling counts, `std::include!` and a raw `r#include!` too;
-/// an expression-position `include!` stays a block the caller reads.
+/// an inline module) whose path is not one string literal, so the spliced
+/// file (often a build-script output under `OUT_DIR`) is never read and may
+/// define any macro for the code after it. The glob rule (#16060) no longer
+/// hides this: a glob cannot rebind a core prelude macro, but an included
+/// `macro_rules! assert_eq` can. A literal path names a workspace file,
+/// which the index reads and the include resolver composes. Every spelling
+/// counts, `std::include!` and a raw `r#include!` too; an
+/// expression-position `include!` stays a block the caller reads.
 fn item_position_include(call: &ast::MacroCall) -> bool {
     let item_position = call.syntax().parent().is_some_and(|parent| {
         matches!(
@@ -738,6 +741,20 @@ fn item_position_include(call: &ast::MacroCall) -> bool {
             .and_then(|path| path.segment())
             .and_then(|segment| segment.name_ref())
             .is_some_and(|name| name.text().trim_start_matches("r#") == "include")
+        && !call.token_tree().is_some_and(|tree| {
+            let tokens: Vec<_> = tree
+                .syntax()
+                .children_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter(|token| !token.kind().is_trivia())
+                .collect();
+            // `(`, the literal, `)`; a trailing comma is accepted too.
+            matches!(
+                tokens.as_slice(),
+                [_, literal, _] | [_, literal, _, _]
+                    if literal.kind() == ra_ap_syntax::SyntaxKind::STRING
+            )
+        })
 }
 
 /// Whether `item` is the whole `root::*` glob of a top-level `use` whose

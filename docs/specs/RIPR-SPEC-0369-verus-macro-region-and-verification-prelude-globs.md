@@ -264,8 +264,9 @@ every trusted name. An explicit import, a `macro_rules!` definition, a
 crates (unstable, rustc-internal) are not modeled.
 
 An item-position `include!` (at a file's top level or in an inline module,
-any spelling: `std::include!`, `r#include!`) reports a site for every trusted
-name. The included file, often a build-script output read through
+any spelling: `std::include!`, `r#include!`) whose path is not one string
+literal reports a site for every trusted name. A literal path names a
+workspace file, which the index reads and the include resolver composes. The included file, often a build-script output read through
 `concat!(env!("OUT_DIR"), ..)`, may hold `macro_rules! assert_eq`, which
 shadows the prelude macro for the code after it without any ambiguity
 error. Before this rule a foreign glob in the same crate hid that gap (serde's
