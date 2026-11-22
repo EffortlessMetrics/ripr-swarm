@@ -154,16 +154,16 @@ fn removal_gives(new: &[Token], start: usize, end: usize, old: &[Token]) -> bool
 /// A number, `True`, `False`, `None` or one plain (non f-) string, or a
 /// signed number.
 fn is_plain_literal(value: &[Token]) -> bool {
-    match value {
+    matches!(
+        value,
         [(Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }, _)]
-        | [(Tok::True | Tok::False | Tok::None, _)]
-        | [(Tok::String { .. }, _)] => true,
-        [
-            (Tok::Minus | Tok::Plus, _),
-            (Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }, _),
-        ] => true,
-        _ => false,
-    }
+            | [(Tok::True | Tok::False | Tok::None, _)]
+            | [(Tok::String { .. }, _)]
+            | [
+                (Tok::Minus | Tok::Plus, _),
+                (Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }, _),
+            ]
+    )
 }
 
 struct Call<'a> {
