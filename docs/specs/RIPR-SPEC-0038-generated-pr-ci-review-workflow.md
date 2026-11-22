@@ -80,7 +80,7 @@ come from `policy/distribution.toml`, bound by drift tests. The step:
 - stops with an explicit unsupported error on Windows ARM64.
 
 `tests/ripr_check_action.rs` and the archive replays in
-`tests/generated_review_workflow.rs` run that block with the version the
+`tests/generated_review_workflow/main.rs` run that block with the version the
 generated workflow passes. A ripr already on `PATH` is reused only when it
 reports exactly the pinned version.
 
@@ -315,6 +315,10 @@ that generated CI can create tests, edit source, or run provider-backed repair.
 - A configured blocked gate makes `ripr reports ci-packet` exit `3` (the gate's
   decision exit) when no other required step failed; any other required
   failure exits `2`, even when the gate also blocked (docs/EXIT_CODES.md).
+- A pull request file named `a<newline>::error::forged` appears in a
+  `ripr reports ci-packet` child report inside a `::stop-commands::` window, so
+  the runner reads no workflow command from it; child stderr is replayed in
+  the same window on the packet's stdout (#15918).
 - A TypeScript preview packet groups advisory evidence under a preview label,
   includes separately labeled JavaScript preview evidence when present, reports
   actionability and repair-packet-ready counts, and keeps gate impact at none.

@@ -381,6 +381,12 @@ pub(crate) fn render_human_triage(
         "  State: {}\n",
         if all_noticed {
             "no test gap found"
+        } else if triage.selected.is_none()
+            && triage.state == HumanTriageState::NoActionableGap
+            && removal_action::is_removal_only(&triage.omitted)
+        {
+            // #15335: name why nothing is selected for a removal-only run.
+            removal_action::REMOVAL_ONLY_STATE
         } else {
             triage.state.plain_label()
         }
@@ -408,6 +414,10 @@ pub(crate) fn render_human_triage(
             // currentness distinction — `unresolved_subject` is the
             // explicit unknown, not base-side evidence.
             out.push_str(&no_selection_safe_action_line(&triage.omitted));
+            // #15617: a removal-only run also lists what was removed.
+            if let Some(rows) = removal_action::removal_only_rows(&output.root, &triage.omitted) {
+                out.push_str(&rows);
+            }
         }
         NextActionCheckCase::SuppressedByPolicy => {
             // #13819: a run whose findings an owner opt-out withheld names
@@ -894,7 +904,10 @@ pub(crate) fn render_human_triage(
             let mut row = String::new();
             row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
@@ -1121,7 +1134,7 @@ fn grouped_hidden_row(
     let label = if kinds.len() == 1 { "kind" } else { "kinds" };
     Some(format!(
         "    - {}:{} ({}{}); {} changed behaviors{}; {}: {}; reason: {}\n",
-        crate::analysis::finding_location_text(root, &first.probe.location.file),
+        crate::output::path::human_location_text(root, &first.probe.location.file),
         lines,
         first.class.plain_label_with_stage(),
         currentness,

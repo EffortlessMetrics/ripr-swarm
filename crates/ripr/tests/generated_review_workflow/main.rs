@@ -3,7 +3,7 @@ use std::fs;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[path = "common/mod.rs"]
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
@@ -2712,23 +2712,55 @@ fn generated_capture_step_uses_pinned_diff_contract() -> Result<(), Box<dyn Erro
         .nth(1)
         .and_then(|rest| rest.split("\n    fn ").next())
         .ok_or("ci_packet.rs has no capture_pull_request_diff")?;
+    // Since #9365 the capture calls the shared pinned assembly instead of
+    // restating the argv; the pins live in `analysis/diff/load.rs`, and the
+    // behavior under hostile config is proved by
+    // `cli_smoke::diff_ambient_settings::ci_packet_diff_capture_ignores_ambient_git_diff_settings`.
+    for pin in [
+        "crate::analysis::load_ci_packet_diff_bytes(",
+        "\"rev-parse\"",
+        "Sha256::digest",
+    ] {
+        assert!(
+            capture.contains(pin),
+            "capture must use {pin}; got:\n{capture}"
+        );
+    }
+    assert!(
+        !capture.contains("\"--src-prefix=a/\""),
+        "capture must not restate the diff argv; got:\n{capture}"
+    );
+    let loader = fs::read_to_string(manifest_dir.join("src/analysis/diff/load.rs"))?;
+    let body = |name: &str| -> Result<String, String> {
+        loader
+            .split(&format!("fn {name}("))
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn ").next())
+            .and_then(|rest| rest.split("\npub").next())
+            .map(str::to_string)
+            .ok_or(format!("load.rs has no {name}"))
+    };
+    let packet = body("load_ci_packet_diff_bytes")?;
+    for pin in ["run_git_diff_bytes(", "\"--binary\"", "\"3\""] {
+        assert!(
+            packet.contains(pin),
+            "packet capture must pin {pin}; got:\n{packet}"
+        );
+    }
+    let shared = body("run_git_diff_bytes")?;
     for pin in [
         "\"--no-ext-diff\"",
         "\"--no-textconv\"",
         "\"--no-color\"",
         "\"--src-prefix=a/\"",
         "\"--dst-prefix=b/\"",
-        "\"--unified=3\"",
+        "--unified={unified}",
         "\"--inter-hunk-context=0\"",
         "\"core.quotePath=true\"",
-        "\"--binary\"",
-        "\"rev-parse\"",
-        "Sha256::digest",
+        "\"--full-index\"",
+        "\"diff.renameLimit=1000\"",
     ] {
-        assert!(
-            capture.contains(pin),
-            "capture must pin {pin}; got:\n{capture}"
-        );
+        assert!(shared.contains(pin), "shared diff argv must pin {pin}");
     }
 
     fs::remove_dir_all(root)?;
@@ -3712,7 +3744,7 @@ fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
 }
 
 /// The composite action the generated workflow installs through (#5409).
-const RIPR_CHECK_ACTION: &str = include_str!("../../../.github/actions/ripr-check/action.yml");
+const RIPR_CHECK_ACTION: &str = include_str!("../../../../.github/actions/ripr-check/action.yml");
 
 /// The version the generated `Install ripr` step pins. The action tag and
 /// its `version` input must name the same release, and the step runs no
@@ -5312,6 +5344,168 @@ fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), B
         "{stdout}"
     );
     Ok(())
+}
+
+/// The lines of a job log the runner would act on as workflow commands: a
+/// `::name::` line outside every `::stop-commands::TOKEN` … `::TOKEN::`
+/// window, plus the tokens in order. An unterminated window is an error: the
+/// runner would read no later command of the step.
+fn commands_read_by_the_runner(log: &str) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut open: Option<String> = None;
+    let mut read = Vec::new();
+    let mut tokens = Vec::new();
+    for line in log.lines() {
+        match &open {
+            Some(token) if line == format!("::{token}::") => open = None,
+            Some(_) => {}
+            None => match line.strip_prefix("::stop-commands::") {
+                Some(token) => {
+                    tokens.push(token.to_string());
+                    open = Some(token.to_string());
+                }
+                None if line.trim_start().starts_with("::") => read.push(line.to_string()),
+                None => {}
+            },
+        }
+    }
+    match open {
+        Some(token) => Err(format!("window {token} never resumes:\n{log}")),
+        None => Ok((read, tokens)),
+    }
+}
+
+/// A one-commit repository for a `reports ci-packet` step that asks git for
+/// `HEAD`.
+fn ci_packet_window_repo(label: &str) -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let root = replay::unique_temp_dir(label)?;
+    fixture_git_ok(&root, &["init", "--initial-branch=main"])?;
+    fixture_git_ok(&root, &["config", "--local", "user.name", "Window"])?;
+    fixture_git_ok(&root, &["config", "--local", "user.email", "w@example.com"])?;
+    fixture_git_ok(&root, &["config", "--local", "commit.gpgsign", "false"])?;
+    fs::write(root.join(".gitignore"), "/target/\n")?;
+    Ok(root)
+}
+
+const CI_PACKET_WINDOW_ENV: [&str; 8] = [
+    "GITHUB_BASE_REF",
+    "GITHUB_EVENT_NAME",
+    "GITHUB_EVENT_PATH",
+    "RIPR_UPLOAD_SARIF",
+    "RIPR_COMMENT_MODE",
+    "RIPR_GATE_BASELINE",
+    "RIPR_GATE_MODE",
+    "RIPR_PILOT_TIMEOUT_MS",
+];
+
+/// The runner reads a step's stdout and stderr pipes independently, so a
+/// child's last stderr line could reach it after the resume marker on stdout.
+/// The real `reports ci-packet` therefore sends a child's stderr down its own
+/// stdout, inside the `::stop-commands::` window, and gives every window its
+/// own token.
+#[test]
+fn ci_packet_replays_child_stderr_inside_a_stop_commands_window() -> Result<(), Box<dyn Error>> {
+    let root = ci_packet_window_repo("ci-packet-stderr-window")?;
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        fixture_git_ok(&root, &["add", "-A"])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        fs::create_dir_all(root.join("target/ripr/reports"))?;
+        fs::write(
+            root.join("target/ripr/reports/policy-operations.json"),
+            "{}",
+        )?;
+        let step = "Render RIPR policy history";
+        let run = || {
+            replay::ripr_with_env(
+                &root,
+                &["reports", "ci-packet", "--root", ".", "--step", step],
+                &CI_PACKET_WINDOW_ENV,
+                // A pull request event with no payload: no number to pass on.
+                &[("GITHUB_EVENT_NAME", "pull_request")],
+            )
+        };
+        let (first, second) = (run()?, run()?);
+        let stdout = String::from_utf8(first.stdout)?;
+        let stderr = String::from_utf8(first.stderr)?;
+        // The child refuses the empty pull-request number on its stderr.
+        let refusal = "--pr-number requires a non-empty value";
+        assert!(stdout.contains(refusal), "{stdout}\n--\n{stderr}");
+        assert!(!stderr.contains(refusal), "{stderr}");
+        let (read, tokens) = commands_read_by_the_runner(&stdout)?;
+        assert_eq!(
+            read,
+            [format!("::group::{step}"), "::endgroup::".to_string()],
+            "{stdout}"
+        );
+        let [token] = tokens.as_slice() else {
+            return Err(format!("expected one window: {stdout}").into());
+        };
+        let window = stdout
+            .split_once(&format!("::stop-commands::{token}\n"))
+            .and_then(|(_, rest)| rest.split_once(&format!("\n::{token}::\n")))
+            .map(|(window, _)| window)
+            .ok_or_else(|| format!("no window: {stdout}"))?;
+        assert!(window.contains(refusal), "{stdout}");
+        // A token a pull request could predict is one it could print.
+        let (_, again) = commands_read_by_the_runner(&String::from_utf8(second.stdout)?)?;
+        assert!(token.len() >= "ripr-".len() + 32, "{token}");
+        assert_ne!(tokens, again);
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
+}
+
+/// A pull request can name a file `a<newline>::error ...`, and a child's
+/// report quotes that path, so the path's second line starts a job-log line
+/// with a workflow command. The real `reports ci-packet` pilot step prints the
+/// line (the fixture is live) and the runner reads none of it: the only
+/// commands outside a window are the step's own group markers.
+#[cfg(unix)]
+#[test]
+fn ci_packet_child_report_cannot_issue_workflow_commands() -> Result<(), Box<dyn Error>> {
+    let root = ci_packet_window_repo("ci-packet-forged-command")?;
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let forged = "::error title=forged::INJECTED";
+        let source = "pub fn price(x: i32) -> i32 { if x >= 10 { x - 1 } else { x } }\n\
+            #[cfg(test)] mod tests { #[test] fn t() { assert_eq!(super::price(1), 1); } }\n";
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"forged\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        let dir = root.join(format!("src/a\n{forged}\n"));
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join("mod.rs"), source)?;
+        fs::write(
+            root.join("src/lib.rs"),
+            format!("#[path = \"a\\n{forged}\\n/mod.rs\"] pub mod a;\n"),
+        )?;
+        fixture_git_ok(&root, &["add", "-A"])?;
+        fixture_git_ok(&root, &["commit", "-q", "-m", "base"])?;
+        let step = "Generate RIPR pilot packet";
+        let output = replay::ripr_with_env(
+            &root,
+            &["reports", "ci-packet", "--root", ".", "--step", step],
+            &CI_PACKET_WINDOW_ENV,
+            &[],
+        )?;
+        let stdout = String::from_utf8(output.stdout)?;
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(output.status.success(), "{stdout}\n--\n{stderr}");
+        assert!(
+            stdout.lines().any(|line| line == forged),
+            "the pilot report must print the forged line: {stdout}\n--\n{stderr}"
+        );
+        assert!(!stderr.contains("INJECTED"), "{stderr}");
+        let (read, _) = commands_read_by_the_runner(&stdout)?;
+        assert_eq!(
+            read,
+            [format!("::group::{step}"), "::endgroup::".to_string()],
+            "{stdout}"
+        );
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&root);
+    result
 }
 
 /// A pull request from a fork or from Dependabot gets a read-only token, so

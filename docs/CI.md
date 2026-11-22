@@ -418,7 +418,7 @@ remain in their producing workflows.
 | Workflow / artifact | Consumer and retained evidence |
 | --- | --- |
 | `future-clippy.yml` / `ripr-future-clippy` | Maintainer investigation of lint readiness and instrumentation failures. Native status and identity are also printed in the job summary; the scan log is streamed to the job log. |
-| `macos-advisory.yml` / `macos-advisory-logs` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
+| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-tests` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
 | `windows-gate.yml` / `ripr-windows-gate-subset` | Maintainer investigation of the subset logs and statuses. `Ripr Windows Gate Result` consumes job outputs, not the uploaded artifact. |
 | `kani.yml` / `ripr-kani` | Maintainer inspection of the per-harness report. `cargo xtask kani` prints the same report to the job log and judges the run before upload. |
 
@@ -614,7 +614,14 @@ and single-platform CI was the root cause enabling both.
 
 `.github/workflows/windows-advisory.yml` (#2442) closes the gap:
 
-- **Scope.** `cargo test --workspace`, twice. No test or golden `cargo xtask`
+- **Scope.** `cargo test --workspace`, twice. Each sample is split by test
+  target: three `windows-advisory-integration` jobs run every integration
+  target (by first letter of its name, with complementary patterns), and the
+  `windows-advisory` job runs the unit targets and doctests, then joins all
+  parts into one verdict. The summarizer refuses a target two parts both ran
+  and checks each sample against the executables an unsplit
+  `cargo test --workspace --no-run` built, so a target no part selects fails
+  the lane. No test or golden `cargo xtask`
   gates and no blessing — a Windows lane that blessed or checked goldens would
   institutionalize the #2337 drift it exists to catch. There is one required
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
@@ -821,8 +828,15 @@ gating (#8055, #8060), `/var` -> `/private/var` temp paths and APFS case or
 normalization behavior surfaced only on a maintainer's local run.
 
 - **What runs.** On `macos-15`: `cargo clippy -p ripr -p xtask --all-targets
-  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`. The integration
-  suites are not part of this lane.
+  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`, each in its
+  own job (`macos-advisory-clippy`, `macos-advisory-lib-tests`) under the same
+  40-minute limit: as steps of one job they were cancelled by it every night
+  from 2026-11-12, before the tests had finished compiling. Clippy now
+  fits (25 to 30 minutes cold). The library tests do not yet: the `ripr` test
+  build alone takes about 30 minutes and its tests about 14, so that job
+  fails at its 34-minute step deadline as missing evidence until the build
+  and the run are separate jobs (#8391). The integration suites are not part
+  of this lane.
 - **Contract.** Clippy and test outcomes are advisory and appear in the job
   summary. A missing log or exit status, or a library run that executed zero
   tests, fails the job. It is not a required check.
@@ -1613,6 +1627,49 @@ census cannot produce a complete report. The operator can inspect the evidence
 and coordinate with the PR owner. The command has no GitHub write operation
 and the scheduled watchdog does not invoke it (#14705).
 
+### Preview or post one queued conflict notice
+
+From a conflict row in `queue-conflicts.json`, copy the PR number, the observed
+main SHA and the PR head SHA. Use a separate, new output directory for every
+attempt. Preview requires authenticated read access to the repository and its queue.
+
+```sh
+cargo xtask merge-queue conflict-notice <new-output-directory> <pr> <main-sha> <head-sha>
+```
+
+The command checks the live queue entry, fetches just the selected commits and
+reruns the Git comparisons. A preview includes the paths and their verified
+first-parent transitions. Clean heads and incomplete or unattributed
+comparisons produce no advisory. The JSON receipt records the comparison and
+the disposition. The existing private-directory guidance applies.
+
+To publish the previewed observation, repeat the command with the same SHAs,
+a fresh output directory, and `--post`. That mode requires a local operator
+with permission to comment on the PR. It can add one comment. It reads
+existing comments across all pages and checks current main, PR head and native
+entry again immediately before submission. Serialize attempts for the same
+PR. GitHub's comment endpoint has no atomic membership check or unique marker
+constraint. The comment therefore names both observed commits. A later serial
+run suppresses the same trusted marker. The command commits the immutable
+`queue-conflict-notice-pending.json` intent before dispatch and writes the final
+`queue-conflict-notice.json` separately. A failed final membership or comment
+read records `not_submitted`. A transport failure after dispatch records
+`unconfirmed`. If the terminal receipt cannot be committed, the diagnostic
+retains the comment ID or the transport error alongside the storage error.
+After an uncertain submission, copy the first line of the saved intent's
+`body` and look for that exact marker in comments on the original PR:
+
+```bash
+gh api --hostname github.com --paginate repos/EffortlessMetrics/ripr-swarm/issues/<pr>/comments --jq '.[] | [.id, .user.login, .author_association, (.body | split("\n")[0])] | @json'
+```
+
+Compare the first line and confirm the author is the authenticated operator or
+has a MEMBER, OWNER or COLLABORATOR association. This read also works after main
+moves or the PR leaves the queue. A matching comment supplies its ID. An
+incomplete API read leaves delivery uncertain. While the original membership
+and commits still match, a preview in a fresh directory also checks for the
+marker. The scheduled watchdog does not run this command.
+
 ### Issue Staleness Watchdog
 
 Open investigation issues often cite repo-rooted `path:line` evidence that
@@ -2158,6 +2215,14 @@ group named after the step it replaced. `ripr help reports` lists its
 failure rules, and `--step NAME` reruns one step locally. The packet exits
 `3` when the gate blocked and nothing else required failed, and `2` when a
 required step could not complete ([EXIT_CODES.md](EXIT_CODES.md#ci-integration)).
+
+Whatever a child command sends to the job log reaches it on the packet's
+stdout inside a `::stop-commands::` window with a fresh random token: always
+the child's stderr, and its stdout unless the step writes that to a report
+file. A report quotes repository text, and a pull request can name a file
+`x<newline>::error::...`; inside the window the runner reads no line of it as
+a workflow command (#15918). The packet's own group markers, step errors and
+changed-line annotations are printed outside the windows.
 
 When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
 loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see
@@ -3274,8 +3339,9 @@ Advance folds use fold-and-delete batches (`--write --limit 149` so each batch
 PR touches at most 150 changed files including `CHANGELOG.md`);
 `--keep-fragments` is for local inspection only because
 `check-changelog-fragments` rejects fragments duplicating `Unreleased` entries.
-It reuses the `check-changelog-fragments` validator, refuses malformed
-fragments by file name and is not part of `precommit`. `changelog.d/README.md`
+It runs the whole `check-changelog-fragments` check before it folds and
+refuses with nothing written when that fails, refuses malformed fragments by
+file name and is not part of `precommit`. `changelog.d/README.md`
 has the batch procedure.
 
 ## Install Receipt

@@ -672,6 +672,15 @@ keeps exit 0 when the other checks pass, and recommends
 `ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
 never produces the advisory, and a failed prerequisite still outranks it.
 
+When the repository is mid-merge, mid-rebase or mid-cherry-pick (Git's
+operation marker exists), doctor records an advisory `git_operation` check
+naming the operation and its finish and abort commands, and keeps exit 0 when
+the other checks pass. While conflict markers remain, `ripr check` quarantines
+their regions, including regions a zero-context diff splits across hunks,
+records the `unresolved_conflict_markers` limitation and exits 2 instead of
+listing findings from rival source states. An unanswered Git probe never
+produces the advisory.
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text

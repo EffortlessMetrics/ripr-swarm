@@ -416,6 +416,21 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .with_absent_file_limitations(absent_file_limitations)
         .with_evidence_limitations(folded.evidence_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
+    // #15278: a changed spot the inventory reads as gripped may still hold a
+    // gap `ripr check` reports for the changed lines. Check runs only when
+    // such a spot exists, inside what is left of pilot's deadline.
+    let check_reads_open = crate::app::task_first::count_gripped_seams_check_reads_open(
+        &classified,
+        |entry| current_change.touches(entry),
+        || {
+            check_findings_within_deadline(
+                &input.root,
+                &config,
+                spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
+            )
+        },
+    );
+    let current_change = current_change.with_check_reads_open(check_reads_open);
     let budget_started = Instant::now();
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
@@ -784,6 +799,36 @@ fn name_diff_only_files(
         move || Ok(analysis::diff_only_rust_files(&root, &config, &files)),
     ) {
         Ok(PilotAnalysisResult::Complete(named)) => named,
+        Ok(PilotAnalysisResult::TimedOut) | Err(_) => missed(),
+    }
+}
+
+/// The default `ripr check` findings for the #15278 follow-up, under the
+/// `remaining_ms` left of pilot's deadline. A late or failed check yields
+/// `None`, which pilot reports as unconfirmed rather than as agreement. The
+/// miss is reported on stderr even under `--quiet`.
+fn check_findings_within_deadline(
+    root: &Path,
+    config: &RiprConfig,
+    remaining_ms: u64,
+) -> Option<Vec<crate::domain::Finding>> {
+    let missed = || {
+        eprintln!(
+            "ripr pilot: could not run `ripr check` on the current change within its deadline"
+        );
+        None
+    };
+    if remaining_ms == 0 {
+        return missed();
+    }
+    let (root, config) = (root.to_path_buf(), config.clone());
+    match run_pilot_analysis_with_timeout(
+        remaining_ms,
+        None,
+        || {},
+        move || crate::app::task_first::default_check_findings(&root, &config),
+    ) {
+        Ok(PilotAnalysisResult::Complete(findings)) => Some(findings),
         Ok(PilotAnalysisResult::TimedOut) | Err(_) => missed(),
     }
 }
@@ -2364,9 +2409,12 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out must fail".to_string()),
         };
+        // The product renders the path through `human_path` (forward slashes
+        // and no verbatim prefix on Windows).
+        let shown = crate::output::path::human_path(&env.target);
         assert!(
             error.contains(&format!(
-                "--out {out} is an existing file, but --out names the directory"
+                "--out {shown} is an existing file, but --out names the directory"
             )),
             "a file occupying the output directory names the flag and the fix: {error}"
         );

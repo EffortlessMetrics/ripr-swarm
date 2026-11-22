@@ -135,8 +135,7 @@ For Droid workflows:
 - These invariants, including the scheduled security-scan shape (`runs-on:
   ubuntu-latest`, the job's own `github_token`, schedule, scan mode, window and
   thresholds) and explicit `show_full_output: false`, are enforced by
-  `cargo xtask check-droid-review-config`; each has a rejection test that mutates
-  the checked workflow.
+  `cargo xtask check-droid-review-config`; each has a rejection test.
 
 ## Automatic review retirement
 

@@ -643,3 +643,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — ts_cross_package_test (36)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless ts_cross_package_test --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`

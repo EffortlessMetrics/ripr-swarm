@@ -1,4 +1,6 @@
 //! Operator-only comparison of observed PR heads with one pinned main commit.
+pub(super) mod notice;
+
 use super::super::source_promotion::{parse_merge_tree_output, validate_sha};
 use crate::run::{ByteCaptureBudget, capture_bytes_in_dir_with_input_env_budget};
 use serde::Serialize;
@@ -440,6 +442,13 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     };
     let start = Instant::now();
     let out = Path::new(out);
+    with_objects(out, |objects| write_report(out, objects, input, start))
+}
+
+fn with_objects(
+    out: &Path,
+    operation: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
     let mut directory = fs::DirBuilder::new();
     directory.recursive(false);
     #[cfg(unix)]
@@ -449,7 +458,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("{} must be a new output directory: {e}", out.display()))?;
     let objects = out.join("objects.git");
     fs::create_dir(&objects).map_err(|e| e.to_string())?;
-    let result = write_report(out, &objects, input, start);
+    let result = operation(&objects);
     // Both directories were exclusively created by this call. Only the object
     // store is disposable; leave the evidence and any earlier error visible.
     match fs::remove_dir_all(&objects) {

@@ -1046,7 +1046,7 @@ fn committed_changes(
             "--no-textconv",
             // Ambient `diff.ignoreSubmodules=all` would hide a committed
             // gitlink change from the attempt's changed-path set.
-            "--ignore-submodules=none",
+            crate::git::SUBMODULE_POINTERS_ONLY,
             "--name-status",
             "-z",
             baseline_head,
@@ -2163,14 +2163,16 @@ fn canonical_repository_root(root: &Path) -> Result<PathBuf, String> {
 
 fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
     format!(
-        "attempt root {} is not the exact Git top-level {}",
+        "attempt root {} is not the exact Git top-level {}; repair attempts run from the top-level, so rerun `ripr check --root {}` and use the repair command it prints",
         requested.display(),
-        top.display()
+        top.display(),
+        crate::agent::loop_commands::shell_arg(&top.display().to_string())
     )
 }
 
 /// The Git top-level a repair attempt would need when `root` is a proper
-/// subdirectory of its work tree, `None` for the exact top-level or when Git
+/// subdirectory of its work tree, `None` for the exact top-level, for a root
+/// that is its own Cargo project outside the enclosing workspace, or when Git
 /// cannot say (those cases keep the attempt's own refusals). The before-phase
 /// entry uses it to refuse a subdirectory `--root` before writing anything;
 /// surfaces that print a repair start should share it too (#15488). It asks Git exactly as
@@ -2181,7 +2183,111 @@ pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
     let requested = fs::canonicalize(root).ok()?;
     let top = git_text(&requested, &["rev-parse", "--show-toplevel"]).ok()?;
     let top = fs::canonicalize(&top).ok()?;
-    (requested != top).then_some(top)
+    if requested == top {
+        return None;
+    }
+    // A root that is its own Cargo project nested inside another Cargo
+    // project is a standalone repository for repair-start purposes, not a
+    // subdirectory of the enclosing work tree (#15488). Requiring the
+    // enclosing top-level to be a Cargo project too keeps a bare Git repo's
+    // `crate/` subdirectory (no root Cargo.toml) refused, and the monorepo
+    // Python `backend/` (no Cargo.toml) refused, while a fixture `input/`
+    // keeps its start without the harness faking a Git top-level.
+    //
+    // A workspace member is the exception: the enclosing workspace claims it,
+    // so it is still a subdirectory of the work tree the attempt refuses, and
+    // printing its start would offer a command that refuses at the before
+    // phase. Only a project the enclosing workspace does not claim is its own
+    // root.
+    if requested.join("Cargo.toml").is_file()
+        && top.join("Cargo.toml").is_file()
+        && !enclosing_workspace_claims(&top, &requested)
+    {
+        return None;
+    }
+    Some(top)
+}
+
+/// Whether the Cargo workspace rooted at `top` claims `root` as one of its
+/// packages. A nested Cargo project the enclosing workspace does not claim is
+/// a standalone project; one it claims is a member, and a member root is still
+/// a subdirectory of the work tree the attempt refuses (#15488).
+///
+/// Fails closed (`true`) whenever the answer is not positively established: an
+/// unreadable or unparsable manifest, a root outside `top`, or a member
+/// pattern this matcher cannot decide keeps the root a subdirectory root, so
+/// no start is printed that the attempt would refuse.
+fn enclosing_workspace_claims(top: &Path, root: &Path) -> bool {
+    let Ok(manifest) = fs::read_to_string(top.join("Cargo.toml")) else {
+        return true;
+    };
+    let Ok(parsed) = toml::from_str::<toml::Value>(&manifest) else {
+        return true;
+    };
+    let Some(workspace) = parsed.get("workspace") else {
+        // No `[workspace]` table: the enclosing manifest is a single package,
+        // so a nested Cargo project is not part of it.
+        return false;
+    };
+    // A package that names this workspace explicitly joins it even when no
+    // member pattern matches.
+    if let Ok(package) = fs::read_to_string(root.join("Cargo.toml"))
+        && let Ok(package) = toml::from_str::<toml::Value>(&package)
+        && package
+            .get("package")
+            .and_then(|package| package.get("workspace"))
+            .is_some()
+    {
+        return true;
+    }
+    let Ok(relative) = root.strip_prefix(top) else {
+        return true;
+    };
+    let relative = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    let patterns = |key: &str| -> Vec<String> {
+        workspace
+            .get(key)
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    if patterns("exclude")
+        .iter()
+        .any(|pattern| member_pattern_covers(pattern, &relative))
+    {
+        return false;
+    }
+    patterns("members")
+        .iter()
+        .any(|pattern| member_pattern_covers(pattern, &relative))
+}
+
+/// Whether a Cargo `[workspace] members`/`exclude` pattern covers the
+/// workspace-relative `relative` path. Cargo patterns are globs; this matcher
+/// decides the literal and single-trailing-glob shapes the repository uses and
+/// treats any other glob as covering, so an undecidable pattern keeps the root
+/// a subdirectory root rather than printing a start the attempt would refuse.
+fn member_pattern_covers(pattern: &str, relative: &str) -> bool {
+    let pattern = pattern.trim_end_matches('/');
+    if let Some(prefix) = pattern
+        .strip_suffix("/**")
+        .or_else(|| pattern.strip_suffix("/*"))
+    {
+        return relative == prefix || relative.starts_with(&format!("{prefix}/"));
+    }
+    if pattern.contains(['*', '?', '[']) {
+        return true;
+    }
+    relative == pattern
 }
 
 /// The cage's refusal text for a non-top-level attempt root, produced before
@@ -2337,20 +2443,12 @@ fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Re
 /// directory that cannot be read counts as having residue: currentness fails
 /// closed.
 pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        match fs::read_dir(directory) {
-            Ok(entries) => entries.into_iter().any(|entry| match entry {
-                Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
-                Err(_) => true,
-            }),
-            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = directory;
-        false
+    match fs::read_dir(directory) {
+        Ok(entries) => entries.into_iter().any(|entry| match entry {
+            Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
+            Err(_) => true,
+        }),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
 }
 
@@ -2358,34 +2456,24 @@ pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool
 /// refusal can name the file whose removal restores currentness. A directory
 /// that cannot be read yields none: the caller already failed closed on it.
 pub(crate) fn staged_publication_residue_names(directory: &Path) -> Vec<String> {
-    #[cfg(unix)]
-    {
-        let Ok(entries) = fs::read_dir(directory) else {
-            return Vec::new();
-        };
-        let mut names: Vec<String> = entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-            .filter(|name| is_staging_name(name))
-            .collect();
-        names.sort();
-        names
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = directory;
-        Vec::new()
-    }
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|name| is_staging_name(name))
+        .collect();
+    names.sort();
+    names
 }
 
-#[cfg(unix)]
 fn is_staging_name(name: &str) -> bool {
     name.rsplit_once(".tmp-")
         .is_some_and(|(_, tail)| is_staging_suffix(&format!(".tmp-{tail}")))
 }
 
 /// `.tmp-<pid>-<nonce>` with decimal digits only.
-#[cfg(unix)]
 fn is_staging_suffix(rest: &str) -> bool {
     rest.strip_prefix(".tmp-")
         .and_then(|tail| tail.split_once('-'))
@@ -2468,6 +2556,66 @@ fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
     String::from_utf8(bytes)
         .map(|value| value.trim().to_string())
         .map_err(|err| format!("git {args:?} emitted non-UTF-8 output: {err}"))
+}
+
+/// Name the likely cause of an ambiguous baseline when untracked files that
+/// `.gitignore` does not cover exceed the exact-capture budget (#15902).
+///
+/// The cage snapshots untracked, unignored files exactly, bounded by
+/// [`MAX_CAPTURE_FILE_BYTES`] per file and [`MAX_CAPTURE_TOTAL_FILE_BYTES`] in
+/// total. An installed dependency tree such as `node_modules/` that the
+/// repository forgot to ignore runs past that budget, and the attempt can then
+/// never be scored. This is diagnostic text only: it reads sizes after the
+/// baseline was captured, changes no verdict, and returns `None` whenever the
+/// untracked files alone do not explain the ambiguity or Git cannot answer.
+pub(crate) fn oversized_untracked_cause(root: &Path) -> Option<String> {
+    let untracked = git_bytes(root, &["ls-files", "--others", "--exclude-standard", "-z"]).ok()?;
+    let mut total_bytes = 0u64;
+    let mut files = 0usize;
+    // Top-level entry (`dir/` or a root-level file) -> (bytes, largest file).
+    let mut by_entry: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    for record in nul_records(&untracked).take(MAX_CAPTURE_PATHS) {
+        let path = record.ok()?;
+        let Ok(metadata) = std::fs::symlink_metadata(root.join(path)) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        files += 1;
+        total_bytes = total_bytes.saturating_add(metadata.len());
+        let entry = match path.split_once('/') {
+            Some((directory, _)) => format!("{directory}/"),
+            None => path.to_string(),
+        };
+        let (bytes, largest_file) = by_entry.entry(entry).or_default();
+        *bytes = bytes.saturating_add(metadata.len());
+        *largest_file = (*largest_file).max(metadata.len());
+    }
+    // Over the total budget, the entry holding the most bytes is the one to
+    // ignore. Within it, only a single file past the per-file limit can be
+    // the cause, so name the entry that holds that file: ignoring a larger
+    // but harmless directory would leave the baseline ambiguous.
+    let over_total = total_bytes > MAX_CAPTURE_TOTAL_FILE_BYTES;
+    let (entry, _) = by_entry
+        .into_iter()
+        .map(|(entry, (bytes, largest_file))| {
+            (entry, if over_total { bytes } else { largest_file })
+        })
+        .filter(|(_, weight)| over_total || *weight > MAX_CAPTURE_FILE_BYTES)
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))?;
+    const MIB: u64 = 1024 * 1024;
+    let size = format!("{} MiB", total_bytes.div_ceil(MIB));
+    let budget = MAX_CAPTURE_TOTAL_FILE_BYTES / MIB;
+    let per_file = MAX_CAPTURE_FILE_BYTES / MIB;
+    let place = if over_total {
+        format!(", the largest share under `{entry}`")
+    } else {
+        format!(", and `{entry}` holds a file over the per-file limit")
+    };
+    Some(format!(
+        "likely cause of the ambiguous baseline: {files} untracked file(s) that .gitignore does not cover hold {size}{place}. ripr snapshots tracked and untracked files exactly, up to {budget} MiB in total and {per_file} MiB per file, so committing them does not help. To get a scorable attempt, make Git ignore `{entry}`: add it to .git/info/exclude, or commit a .gitignore rule for it (an uncommitted .gitignore edit would itself be refused as a change outside the test). Then run the same --phase before command again."
+    ))
 }
 
 fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
@@ -2925,6 +3073,14 @@ pub(crate) struct EditCagePolicy {
     /// edit must be a pure insertion of new test functions (#8710).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) external_test_file_target: bool,
+    /// The external test-file target is the entry file of a Cargo `[[test]]`
+    /// target the package manifest declares outside the test layouts
+    /// (`[[test]] path = "spec/pricing.rs"`, #15910). The policy constructor
+    /// read the manifest; the baseline capture reads it again. Only ever set
+    /// together with `external_test_file_target`. Absent (false) in every
+    /// other policy, which keeps their serialized form unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) declared_cargo_test_target: bool,
     /// The producer-owned new-test proposal this attempt follows (#13203),
     /// recorded in the retained baseline policy. Absent for an existing-test
     /// repair, which keeps every other policy's serialized form unchanged.
@@ -3396,8 +3552,19 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             "an inline test-module target must be a Rust source file",
         ));
     }
+    if policy.declared_cargo_test_target
+        && (!policy.external_test_file_target
+            || crate::analysis::is_test_surface_path(&selected_path))
+    {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "a manifest-declared test target must be an external test file outside the test layouts",
+        ));
+    }
     if policy.external_test_file_target {
-        if !crate::analysis::is_test_surface_path(&selected_path) {
+        if !crate::analysis::is_test_surface_path(&selected_path)
+            && !policy.declared_cargo_test_target
+        {
             violations.push(invalid_policy_violation(
                 &selected_path,
                 "an external test-file target must be a test-surface path",
@@ -4013,6 +4180,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: true,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         })
     }
@@ -4866,6 +5034,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: false,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         };
         Ok((fixture, policy))
@@ -6225,6 +6394,27 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn staged_publication_residue_is_detected_by_name_on_every_platform() -> Result<(), String> {
+        assert!(is_staging_name("after.check-findings.tmp-441-3"));
+        assert!(!is_staging_name("notes.tmp-x-1"));
+        assert!(!is_staging_name("after.check-findings.json"));
+        let fixture = git_fixture("staged-residue-by-name")?;
+        let dir = fixture.root.join("artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        fs::write(dir.join("after.check-findings.json"), "{}\n")
+            .map_err(|err| format!("write destination: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::write(dir.join("after.check-findings.tmp-441-3"), "{}\n")
+            .map_err(|err| format!("write staging: {err}"))?;
+        assert!(directory_has_staged_publication_residue(&dir));
+        assert_eq!(
+            staged_publication_residue_names(&dir),
+            vec!["after.check-findings.tmp-441-3".to_string()]
+        );
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn staged_publication_residue_is_reported_for_currentness() -> Result<(), String> {
@@ -6917,6 +7107,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: false,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         };
         let verdict = evaluate_edit_cage(
@@ -7140,5 +7331,75 @@ mod tests {
             .collect();
         assert_eq!(paths, vec![PathBuf::from("vendor/lib")]);
         Ok(())
+    }
+
+    /// #15488: a Cargo workspace member is still a subdirectory of the work
+    /// tree the attempt refuses, so its printed start must stay withheld. A
+    /// nested Cargo project the enclosing workspace does not claim is a
+    /// standalone project and keeps its start.
+    #[test]
+    fn a_workspace_member_root_is_still_a_subdirectory_but_an_unclaimed_project_is_not()
+    -> Result<(), String> {
+        let fixture = git_fixture("workspace-member")?;
+        let top = fs::canonicalize(&fixture.root)
+            .map_err(|err| format!("canonicalize fixture: {err}"))?;
+        fs::write(
+            top.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/member\"]\n",
+        )
+        .map_err(|err| format!("write workspace manifest: {err}"))?;
+        let member = top.join("crates/member");
+        fs::create_dir_all(member.join("src")).map_err(|err| format!("create member: {err}"))?;
+        fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"member\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|err| format!("write member manifest: {err}"))?;
+        fs::write(member.join("src/lib.rs"), "pub fn price() {}\n")
+            .map_err(|err| format!("write member source: {err}"))?;
+        let standalone = top.join("fixtures/standalone/input");
+        fs::create_dir_all(standalone.join("src"))
+            .map_err(|err| format!("create standalone: {err}"))?;
+        fs::write(
+            standalone.join("Cargo.toml"),
+            "[package]\nname = \"standalone\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|err| format!("write standalone manifest: {err}"))?;
+        fs::write(standalone.join("src/lib.rs"), "pub fn price() {}\n")
+            .map_err(|err| format!("write standalone source: {err}"))?;
+        git_ok(&top, &["add", "."])?;
+        git_ok(&top, &["commit", "-qm", "workspace"])?;
+
+        assert_eq!(
+            enclosing_git_top_level_above(&member),
+            Some(top.clone()),
+            "a workspace member root must stay a subdirectory root"
+        );
+        assert_eq!(
+            enclosing_git_top_level_above(&standalone),
+            None,
+            "an unclaimed nested Cargo project is its own root"
+        );
+        Ok(())
+    }
+
+    /// The member matcher decides the literal and single-trailing-glob shapes
+    /// Cargo manifests use, and treats any other glob as covering so an
+    /// undecidable pattern keeps the root a subdirectory root.
+    #[test]
+    fn member_patterns_decide_literals_and_trailing_globs() {
+        assert!(member_pattern_covers("crates/ripr", "crates/ripr"));
+        assert!(!member_pattern_covers(
+            "crates/ripr",
+            "crates/ripr-contract"
+        ));
+        assert!(!member_pattern_covers("crates/ripr", "fixtures/x/input"));
+        assert!(member_pattern_covers("crates/*", "crates/ripr"));
+        assert!(!member_pattern_covers("crates/*", "fixtures/x/input"));
+        assert!(member_pattern_covers("tools/**", "tools/repo-policy"));
+        assert!(!member_pattern_covers("tools/**", "fixtures/x/input"));
+        // An undecidable glob covers, so the root stays a subdirectory root.
+        assert!(member_pattern_covers("crates/*/nested", "crates/a/nested"));
+        assert!(member_pattern_covers("*", "fixtures/x/input"));
     }
 }
