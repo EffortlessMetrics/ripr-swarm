@@ -2172,10 +2172,10 @@ fn run_pipeline_for_diff_text_with_language_config(
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
                 format!(
                     "Not analyzed by the {name} preview adapter: {listed}. It skips \
-                     generated files and vendored, dependency, build-output and cache \
-                     directories; if one of these is hand-written, declare its exact \
+                     {skipped_kinds}; if one of these is hand-written, declare its exact \
                      repository-relative path in `[{config_section}] handwritten_files` \
-                     and re-run the analysis."
+                     and re-run the analysis.",
+                    skipped_kinds = excluded_path_skip_kinds(language),
                 ),
             ),
             PreviewSkipClass::GeneratedName => (
@@ -3463,6 +3463,20 @@ fn is_excluded_from_preview_analysis(
     }
 }
 
+/// What the excluded-path limitation says an adapter skips. The TypeScript/JS
+/// adapter also refuses docs sites and tool configuration scripts (#13088,
+/// #15947); the Python adapter applies neither rule, so its sentence must not
+/// name them.
+fn excluded_path_skip_kinds(language: LanguageId) -> &'static str {
+    match language {
+        LanguageId::TypeScript => {
+            "generated files, vendored, dependency, build-output and cache directories, \
+             docs sites and tool configuration scripts"
+        }
+        _ => "generated files and vendored, dependency, build-output and cache directories",
+    }
+}
+
 /// Whether the TypeScript/JS adapter's generated-name and excluded-directory
 /// authorities refuse `path`. The authorities are real in every feature lane
 /// (like the Python ones), so the diff-scope guard measures the same admitted
@@ -3472,7 +3486,7 @@ fn is_excluded_from_typescript_preview_analysis(
     language_config: &crate::config::LanguagesConfig,
 ) -> bool {
     is_excluded_from_typescript_workspace_index(path, language_config)
-        || (crate::config::is_typescript_docs_site_path(path)
+        || (crate::config::is_typescript_non_product_path(path)
             && !crate::config::is_declared_handwritten_typescript_path(
                 &language_config.typescript.handwritten_files,
                 path,
@@ -3481,8 +3495,9 @@ fn is_excluded_from_typescript_preview_analysis(
 
 /// Whether the TypeScript/JS workspace walk also refuses `path`, so it can
 /// supply neither a changed owner nor test evidence. This is the diff-loop
-/// authority without the `docs/` rule, which is diff-only (#13088): the walk
-/// keeps indexing `docs/` because libraries keep tests there.
+/// authority without the `docs/` and tool-config rules, which are diff-only
+/// (#13088, #15947): the walk keeps indexing `docs/` because libraries keep
+/// tests there, and keeps reading tool configs for alias and runner detection.
 fn is_excluded_from_typescript_workspace_index(
     path: &std::path::Path,
     language_config: &crate::config::LanguagesConfig,
@@ -10562,6 +10577,50 @@ index 0000000..1111111 100644
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_excludes_tool_configs_unless_declared_handwritten()
+    -> Result<(), String> {
+        // #15947: the pipeline's admitted-diff measure refuses a runner
+        // config like the adapter does; `app.config.ts` is a near miss.
+        let files = vec![
+            changed_line_file("web/app.ts", 2, 1),
+            changed_line_file("jest.config.ts", 2_001, 0),
+            changed_line_file("web/app.config.ts", 4, 0),
+        ];
+
+        let default_count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if default_count != 7 {
+            return Err(format!(
+                "expected tool-config lines excluded and the near miss counted, got {default_count}"
+            ));
+        }
+
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.typescript.handwritten_files = vec!["jest.config.ts".to_string()];
+        let declared_count = changed_language_line_count(&files, LanguageId::TypeScript, &declared);
+        if declared_count != 2_008 {
+            return Err(format!(
+                "expected the declared handwritten config to count again, got {declared_count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn excluded_path_skip_kinds_name_typescript_only_rules_for_typescript_only() {
+        let typescript = excluded_path_skip_kinds(LanguageId::TypeScript);
+        assert!(typescript.contains("docs sites"));
+        assert!(typescript.contains("tool configuration scripts"));
+        let python = excluded_path_skip_kinds(LanguageId::Python);
+        assert!(!python.contains("docs sites"));
+        assert!(!python.contains("tool configuration"));
+        assert!(python.contains("build-output and cache directories"));
     }
 
     #[test]

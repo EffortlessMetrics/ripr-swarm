@@ -457,6 +457,51 @@ fn docs_site_source_is_disclosed_as_skipped_unless_declared_handwritten() -> Res
 }
 
 #[test]
+fn tool_config_script_is_disclosed_as_skipped_unless_declared_handwritten() -> Result<(), String> {
+    // #15947: repo mode shares the adapter exclusion, so a runner config
+    // leaves the production denominator as a counted skip, a near-miss name
+    // stays production, and a declared hand-written path is analyzed again.
+    let root = ts_unique_tempdir("repo-tool-config")?;
+    ts_write_file(&root.join("jest.config.ts"), TS_SRC)?;
+    ts_write_file(&root.join("src/app.config.ts"), TS_SRC)?;
+    let with_decl = repo::analyze_repo_with_limit(
+        &repo_options(&root),
+        800,
+        ts_workspace_file_limit(),
+        ts_file_read_limit(),
+        ts_workspace_read_budget(),
+        &crate::config::TypescriptLanguageConfig {
+            handwritten_files: vec!["jest.config.ts".to_string()],
+            ..crate::config::TypescriptLanguageConfig::default()
+        },
+    );
+    let without_decl = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let without_decl = without_decl?;
+    assert_eq!(without_decl.production_files, 1);
+    assert_eq!(without_decl.file_accounting.skipped, Some(1));
+    assert_eq!(without_decl.file_accounting.discovered, Some(2));
+    assert!(
+        without_decl
+            .findings
+            .iter()
+            .any(|f| f.probe.location.file == Path::new("src/app.config.ts")),
+        "the near-miss name must still seed findings"
+    );
+    assert!(
+        without_decl
+            .findings
+            .iter()
+            .all(|f| f.probe.location.file != Path::new("jest.config.ts")),
+        "a tool config must not seed findings"
+    );
+    let with_decl = with_decl?;
+    assert_eq!(with_decl.production_files, 2);
+    assert_eq!(with_decl.file_accounting.skipped, Some(0));
+    Ok(())
+}
+
+#[test]
 fn distinct_predicates_of_one_owner_both_survive() -> Result<(), String> {
     let root = ts_unique_tempdir("repo-two-predicates")?;
     ts_write_file(

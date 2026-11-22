@@ -85,9 +85,14 @@ Bun stable-byte review has an opt-in `[profiles.bun_ub]` profile; see the
 Vendored, built, and generated files never count as changed source:
 `node_modules`, `dist`, `build`, `coverage`, `vendor`, `__generated__`,
 `*.generated.*`, minified bundles (`*.min.js`), TypeScript-family files under
-`docs/`, and generated Python such as `*_pb2.py`. Admit hand-written source
-under an excluded directory with `handwritten_files`
-([configuration](CONFIGURATION.md#languages)).
+`docs/`, and generated Python such as `*_pb2.py`. Tool configuration scripts
+are refused the same way: `jest.config.ts`, `vitest.config.*`,
+`eslint.config.js`, `.eslintrc.cjs`, `karma.conf.js` and the like are loaded
+by a runner or bundler, not imported by a test, so a changed field there is
+not reported as code with no test path. Names such as `src/config.ts` and
+`app.config.ts` stay ordinary source. Admit hand-written source under an
+excluded directory, or a config script that carries tested logic, with
+`handwritten_files` ([configuration](CONFIGURATION.md#languages)).
 
 ## Run The Local Preview Loop
 
