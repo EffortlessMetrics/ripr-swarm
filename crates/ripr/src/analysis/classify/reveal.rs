@@ -3613,14 +3613,30 @@ fn analyze_related_assertions(
                         }) || crate::analysis::extract::assertion_observed_operand(&assertion.text)
                             .is_some_and(|operand| is_whole_owner_call(operand.trim(), owner))
                     });
-                let identity = (direct_owner_oracle
-                    && matches!(
-                        reason,
-                        RelationReason::DirectOwnerCall
-                            | RelationReason::HelperOwnerCall
-                            | RelationReason::AssertionTargetAffinity
-                            | RelationReason::OwnerNamedTest
-                    ))
+                let direct_reason = matches!(
+                    reason,
+                    RelationReason::DirectOwnerCall
+                        | RelationReason::HelperOwnerCall
+                        | RelationReason::AssertionTargetAffinity
+                        | RelationReason::OwnerNamedTest
+                );
+                // #13037: an integration test may compare the owner through
+                // the package's own library path (`pkg::owner(..)`), which the
+                // lexical owner-call check above does not read. The reached-tail
+                // pin reads exactly that assertion's single compared owner call,
+                // with the path established by the relation's own-crate
+                // authority, so it binds this assertion to the owner's result.
+                // Asked only when the lexical check fails, under the same
+                // owner-identity defeats.
+                let reached_tail_identity = !direct_owner_oracle
+                    && direct_reason
+                    && matches!(probe.family, ProbeFamily::ReturnValue)
+                    && !import_defeats_owner
+                    && !cross_package_defeats_owner
+                    && !match_context.owner_shadowed
+                    && (return_admission.reached_tail_pin)(test, assertion);
+                let identity = (direct_owner_oracle && direct_reason)
+                    || reached_tail_identity
                     || record_field_identity
                     || owner_return_pin_holds(
                         &assertion_context,
