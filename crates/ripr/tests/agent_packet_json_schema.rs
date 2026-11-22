@@ -1138,10 +1138,12 @@ fn gap_packet_documents() -> Result<[(&'static str, Value); 5], String> {
     source.push_str("// an uncommitted edit\n");
     write(&lib, &source)?;
     let (code, stale) = gap_packet(&root, &ledger, &repairable)?;
-    let _ = std::fs::remove_dir_all(&root);
     if code != Some(0) {
         return Err(format!("dirty-checkout gap packet exited {code:?}"));
     }
+    // Every early return above keeps the fixture for inspection; the
+    // documents are returned by value, so the inputs go once all runs passed.
+    let _ = std::fs::remove_dir_all(&root);
     Ok([
         ("advisory", advisory),
         ("canonical delta", causal),
@@ -1260,7 +1262,7 @@ fn the_gap_packet_schema_shares_the_seam_packet_definitions() -> Result<(), Stri
 fn published_gap_packet_schema_rejects_documents_it_forbids() -> Result<(), String> {
     let schema = published_schema::read(GAP_PACKET_SCHEMA)?;
     let [advisory, _, not_evaluated, _, stale] = gap_packet_documents()?;
-    let cases: [(&str, (&str, &str), Value, Mutation); 15] = [
+    let cases: [(&str, (&str, &str), Value, Mutation); 16] = [
         (
             "an advisory document that counts no packet",
             (".packets_total", "expected const 1"),
@@ -1374,7 +1376,25 @@ fn published_gap_packet_schema_rejects_documents_it_forbids() -> Result<(), Stri
             "a blocked candidate whose states disagree",
             (".blocked_candidate", "matched none of 2 anyOf branches"),
             stale.1.clone(),
-            |doc, _| doc["blocked_candidate"]["staleness_status"] = json!("not_evaluated"),
+            |doc, _| {
+                // The envelope agrees with the candidate's status, so only the
+                // candidate's own queue-state pairing is broken.
+                doc["blocked_candidate"]["staleness_status"] = json!("not_evaluated");
+                doc["source_currentness"]["status"] = json!("not_evaluated");
+                doc["source_currentness"]["queue_state"] = json!("blocked_not_evaluated");
+            },
+        ),
+        (
+            "a blocked candidate that disagrees with its envelope",
+            (
+                "packet[a blocked candidate that disagrees with its envelope]",
+                "matched none of 2 anyOf branches",
+            ),
+            stale.1.clone(),
+            |doc, _| {
+                doc["source_currentness"]["status"] = json!("not_evaluated");
+                doc["source_currentness"]["queue_state"] = json!("blocked_not_evaluated");
+            },
         ),
         (
             "a partial canonical delta on a packet",

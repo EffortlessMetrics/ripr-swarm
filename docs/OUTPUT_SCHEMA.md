@@ -17773,8 +17773,9 @@ ledger's repo-exposure source still matches the checkout
 (`source_currentness.status` `current`, `queue_state` `queued`): the document
 then holds exactly one packet with `assignment.eligible: true`, its verify and
 receipt routes, and `analysis_outcome_status: "not_applicable"`, plus
-`causal_comparison` and the packet's canonical-delta fields when a canonical
-delta artifact is present. Otherwise `status` is `blocked` (`stale` for a dirty
+`causal_comparison` when a canonical delta artifact is present, and the
+packet's canonical-delta fields only when that artifact holds a delta for the
+record's canonical gap. Otherwise `status` is `blocked` (`stale` for a dirty
 checkout or a historical HEAD, `not_evaluated` for a source with no live
 snapshot authority, such as a `--records` ledger): `packets` is empty and a
 review-only `blocked_candidate` carries the record's identity, its currentness

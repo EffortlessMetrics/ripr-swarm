@@ -31,8 +31,8 @@
     },
     "source_currentness": {"$ref": "#/$defs/source_currentness"},
     "analysis_outcome_status": {
-      "description": "A gap-ledger packet projects no AnalysisOutcome.",
-      "const": "not_applicable"
+      "description": "A gap-ledger packet projects no AnalysisOutcome. Written as a one-value enum, not a const, so a blocked document, which omits the field, still matches this schema's top-level constants in the producer sweep.",
+      "enum": ["not_applicable"]
     },
     "analysis_outcome_error": {"type": "null"},
     "analysis_outcome": {"type": "null"},
@@ -81,14 +81,24 @@
       "else": {
         "allOf": [
           {"required": ["blocked_candidate", "must_not_infer"]},
+          {"properties": {"packets_total": {"const": 0}, "packets": {"maxItems": 0}}},
           {
-            "properties": {
-              "packets_total": {"const": 0},
-              "packets": {"maxItems": 0},
-              "source_currentness": {
-                "properties": {"status": {"enum": ["stale", "not_evaluated"]}}
+            "anyOf": [
+              {
+                "properties": {
+                  "source_currentness": {"properties": {"status": {"const": "stale"}}},
+                  "blocked_candidate": {"properties": {"staleness_status": {"const": "stale"}}}
+                }
+              },
+              {
+                "properties": {
+                  "source_currentness": {"properties": {"status": {"const": "not_evaluated"}}},
+                  "blocked_candidate": {
+                    "properties": {"staleness_status": {"const": "not_evaluated"}}
+                  }
+                }
               }
-            }
+            ]
           },
           {
             "not": {
