@@ -528,6 +528,11 @@ fn every_build_disable_needs_a_predicate_false_without_any_atom() {
         ("#[cfg(all(unix, any()))]", true),
         ("#[cfg(all(test, not(all())))]", true),
         ("#[cfg(any(any(), not(all())))]", true),
+        // rustc takes one predicate with an optional trailing comma.
+        ("#[cfg(any(),)]", true),
+        ("#[cfg(any(),,)]", false),
+        ("#[cfg(any(), any())]", false),
+        ("#[cfg(,)]", false),
         // `test` is a build atom here, not a test-build fact.
         ("#[cfg(not(test))]", false),
         ("#[cfg(test)]", false),

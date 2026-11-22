@@ -197,14 +197,12 @@ fn scan_memo_insert(text: &str, scan: &RustModuleTreeScan) {
     }
 }
 
-/// Whether the `mod` item, or an inline module enclosing it, carries a
-/// `#[cfg]` no build satisfies (`#[cfg(any())]`). rustc strips the item
-/// before loading any file for it, so it declares no edge and cannot leave
-/// the scan incomplete (#15877).
-fn module_disabled_in_every_build(module: &ast::Module) -> bool {
-    module
-        .syntax()
-        .ancestors()
+/// Whether `node` is, or sits inside, a `mod` item that carries a `#[cfg]`
+/// no build satisfies (`#[cfg(any())]`). rustc strips the item before
+/// loading any file for it or expanding a macro in it, so nothing there
+/// declares an edge or leaves the scan incomplete (#15877).
+fn module_disabled_in_every_build(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    node.ancestors()
         .filter_map(ast::Module::cast)
         .any(|enclosing| {
             enclosing
@@ -226,7 +224,7 @@ fn scan_module_tree(text: &str) -> RustModuleTreeScan {
         items_complete: true,
     };
     for module in tree.syntax().descendants().filter_map(ast::Module::cast) {
-        if module_disabled_in_every_build(&module) {
+        if module_disabled_in_every_build(module.syntax()) {
             continue;
         }
         let attributes = module
@@ -310,6 +308,9 @@ fn scan_module_tree(text: &str) -> RustModuleTreeScan {
         }
     }
     for macro_call in tree.syntax().descendants().filter_map(ast::MacroCall::cast) {
+        if module_disabled_in_every_build(macro_call.syntax()) {
+            continue;
+        }
         let Some(path) = macro_call.path() else {
             continue;
         };
@@ -687,6 +688,8 @@ mod tests {
              #[cfg(any())]\nmod stripped;\n\
              #[cfg(any())]\n#[path = concat!(\"a\", \".rs\")]\nmod stripped_dynamic;\n\
              #[cfg(not(all()))]\nmod outer { mod nested; #[cfg_attr(unix, path = \"u.rs\")] mod plat; }\n\
+             #[cfg(any(),)]\nmod trailing_comma;\n\
+             #[cfg(any())]\nmod macros { include!(\"frag.rs\"); decl::declare_mod!(generated); }\n\
              #[cfg(feature = \"x\")]\nmod featured;\n",
         );
         assert!(scan.complete, "{scan:?}");

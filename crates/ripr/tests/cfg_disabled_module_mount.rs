@@ -4,7 +4,7 @@
 //! Each case pairs the disabled gate with an unconditional or
 //! feature-gated control that still reports the same change.
 
-use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
+use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, check_workspace};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -67,6 +67,30 @@ impl Fixture {
     }
 }
 
+impl Fixture {
+    /// The exposure class of every finding in `changed`.
+    fn classes(&self, changed: &str) -> Result<Vec<ExposureClass>, String> {
+        let output = check_workspace(CheckInput {
+            root: self.0.clone(),
+            diff_file: Some(self.0.join("diff.patch")),
+            mode: Mode::Draft,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        Ok(output
+            .findings
+            .iter()
+            .filter(|finding| {
+                let file = &finding.probe.location.file;
+                let relative = file.strip_prefix(&self.0).unwrap_or(file);
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                Path::new(relative.trim_start_matches("./")) == Path::new(changed)
+            })
+            .map(|finding| finding.class.clone())
+            .collect())
+    }
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
@@ -122,6 +146,39 @@ fn a_disabled_inline_module_mounts_none_of_its_children() -> Result<(), String> 
     assert!(
         !disabled.reports("src/outer/helper.rs")?,
         "rustc strips the inline module before loading `outer/helper.rs`"
+    );
+    Ok(())
+}
+
+/// A test file mounted only behind a `#[cfg]` no build satisfies never
+/// runs, so it supplies no discriminator; the same test under
+/// `#[cfg(test)]` runs and keeps the credit (#15877).
+#[test]
+fn a_test_file_behind_a_cfg_no_build_satisfies_credits_nothing() -> Result<(), String> {
+    let checks = "use super::bulk;\n\n#[test]\nfn threshold() {\n    assert_eq!(bulk(10), true);\n    assert_eq!(bulk(9), false);\n}\n";
+    let class_for = |gate: &str| -> Result<Vec<ExposureClass>, String> {
+        let lib = format!("{BULK}#[cfg({gate})]\nmod checks;\n");
+        let fixture = Fixture::library(&lib, "src/lib.rs")?;
+        std::fs::write(fixture.0.join("src/checks.rs"), checks)
+            .map_err(|error| format!("write checks: {error}"))?;
+        // `Fixture::library` wrote `BULK` over `src/lib.rs`; restore the
+        // mount after it.
+        std::fs::write(fixture.0.join("src/lib.rs"), &lib)
+            .map_err(|error| format!("write lib: {error}"))?;
+        fixture.classes("src/lib.rs")
+    };
+    let enabled = class_for("test")?;
+    assert!(
+        !enabled.is_empty() && enabled.iter().all(|class| *class == ExposureClass::Exposed),
+        "control: the cfg(test) module's exact test notices the change: {enabled:?}"
+    );
+    let disabled = class_for("any()")?;
+    assert!(
+        !disabled.is_empty()
+            && disabled
+                .iter()
+                .all(|class| *class == ExposureClass::NoStaticPath),
+        "a test no build compiles supplies no path: {disabled:?}"
     );
     Ok(())
 }

@@ -215,9 +215,17 @@ pub(crate) fn attribute_disables_every_build(attr_text: &str) -> bool {
             inner @ ..,
             Token::Punct(')'),
             Token::Punct(']'),
-        ] if cfg == "cfg" && body_is_balanced(inner) => {
-            matches!(availability_predicate_with(inner, 1, None), Ok(Some(false)))
-        }
+        ] if cfg == "cfg" && body_is_balanced(inner) => match availability_arguments(inner) {
+            // rustc accepts one predicate with an optional trailing comma
+            // (`cfg(any(),)`).
+            Ok(parts) if parts.len() == 1 => {
+                matches!(
+                    availability_predicate_with(parts[0], 1, None),
+                    Ok(Some(false))
+                )
+            }
+            _ => false,
+        },
         _ => false,
     }
 }
