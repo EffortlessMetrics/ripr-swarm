@@ -1510,6 +1510,27 @@ where
                     .filter(|dir| !package_dir.starts_with(dir))
                     .map(|dir| (package_dir.clone(), dir)),
             );
+            // Git reports a change where a symlink lands, while Cargo names
+            // the target by the link (#15909, #16045): a `src -> real`
+            // directory or a `src/lib.rs -> ../real/lib.rs` root. Declare the
+            // root where it lands, and the directory its modules load from
+            // (beside the link, resolved), when both stay in the workspace.
+            let candidates = resolved
+                .iter()
+                .cloned()
+                .chain(["lib.rs", "main.rs"].map(|name| package_dir.join("src").join(name)));
+            for target in candidates {
+                let Some((physical_root, physical_dir)) = linked_target(workspace_root, &target)
+                else {
+                    continue;
+                };
+                context
+                    .declared_production_sources
+                    .extend(strip_root(workspace_root, &BTreeSet::from([physical_root])));
+                if !package_dir.starts_with(&physical_dir) {
+                    module_dirs.insert((package_dir.clone(), physical_dir));
+                }
+            }
         }
     }
     // Rust resolves a declared root's out-of-line modules below the root's
@@ -1532,6 +1553,27 @@ where
         }
     }
     context
+}
+
+/// Where a Cargo target path lands through symlinks, as (root file, module
+/// directory), both lexical under `workspace_root`. `None` when nothing on
+/// the path is a link, the path does not resolve, or it leaves the
+/// workspace.
+fn linked_target(workspace_root: &Path, target: &Path) -> Option<(PathBuf, PathBuf)> {
+    let canonical_root = std::fs::canonicalize(workspace_root).ok()?;
+    let land = |path: &Path| -> Option<PathBuf> {
+        let relative = std::fs::canonicalize(path)
+            .ok()?
+            .strip_prefix(&canonical_root)
+            .ok()?
+            .to_path_buf();
+        Some(lexical(&normalize(&workspace_root.join(relative))))
+    };
+    let lexical_target = lexical(&normalize(target));
+    let lexical_dir = lexical_target.parent()?.to_path_buf();
+    let root = land(target)?;
+    let dir = land(&lexical_dir)?;
+    (root != lexical_target || dir != lexical_dir).then_some((root, dir))
 }
 
 /// The package directory that owns `anchored`: the Cargo source-layout

@@ -397,8 +397,9 @@ fn is_repo_automation_subject(path: &Path, role: SourceRole) -> bool {
 /// ([`SourceRoleContext::module_graph_orphans`]) seeds nothing, whatever its
 /// layout (#4435).
 ///
-/// Repo mode keeps all three out of the seam inventory. Registered non-source
-/// directories (`fixtures/`, `target/`, ...) stay evidence even inside
+/// Repo mode keeps build scripts and `xtask/` out of the seam inventory and
+/// lists declared roots outside `src` ([`seeds_repo_seams`]). Registered
+/// non-source directories (`fixtures/`, `target/`, ...) stay evidence even inside
 /// `xtask/`, and other loose non-`src` files (panel subjects under
 /// `metrics/`, for example) are data Cargo never compiles.
 pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> bool {
@@ -410,6 +411,19 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
         role if role.seeds_production_findings() => true,
         _ => diff_only_source(path, context).is_some(),
     }
+}
+
+/// Whether `path` enters the repo seam inventory: a production role, or a
+/// crate root a manifest declares outside `src` and the files that package
+/// owns below it ([`DiffOnlySource::DeclaredOutsideSrc`]). A declared root is
+/// a library or binary target like `src/lib.rs`, so its seams are repairable
+/// from the package's tests, and `ripr check` offers a repair start only for
+/// a spot this inventory lists (#16045). Build scripts and `xtask/` stay out:
+/// no test target exercises them, so a ranked seam there could never be
+/// repaired.
+pub(crate) fn seeds_repo_seams(path: &Path, context: &SourceRoleContext) -> bool {
+    classify_with(path, context).seeds_production_findings()
+        || diff_only_source(path, context) == Some(DiffOnlySource::DeclaredOutsideSrc)
 }
 
 /// The evidence-role shapes [`seeds_diff_probes`] seeds when changed but
@@ -971,11 +985,18 @@ mod tests {
             super::diff_only_source(Path::new("lib/fixtures/sample.rs"), &context),
             None
         );
-        // Repo mode is unchanged: the seam inventory still keys on layout.
+        // The layout role is unchanged; the repo seam inventory lists the
+        // declared root through `seeds_repo_seams` (#16045); a non-source
+        // directory below it stays out.
         assert_eq!(
             classify(Path::new("lib/odd.rs")),
             SourceRole::FixtureOrReceiptEvidence
         );
+        assert!(super::seeds_repo_seams(Path::new("lib/odd.rs"), &context));
+        assert!(!super::seeds_repo_seams(
+            Path::new("lib/fixtures/sample.rs"),
+            &context
+        ));
     }
 
     #[test]

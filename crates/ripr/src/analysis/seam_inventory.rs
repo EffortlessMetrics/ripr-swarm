@@ -225,7 +225,7 @@ pub(crate) fn inventory_seams_at_with_config(
     context.harness_targets = harness_targets_from_config(root, config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
-        .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
+        .filter(|p| workspace::seeds_repo_seams(p, &context))
         .cloned()
         .collect();
 
@@ -1156,7 +1156,7 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     uncached_context.harness_targets = harness_targets_from_config(root, config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
-        .filter(|p| workspace::classify_with(p, &uncached_context).seeds_production_findings())
+        .filter(|p| workspace::seeds_repo_seams(p, &uncached_context))
         .cloned()
         .collect();
     trace_latency_phase("filter_production_files", "ok", filter_started.elapsed());
@@ -1400,7 +1400,7 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     context.harness_targets = harness_targets_from_config(root, config);
     let production_files: Vec<PathBuf> = rust_files
         .iter()
-        .filter(|p| workspace::classify_with(p, &context).seeds_production_findings())
+        .filter(|p| workspace::seeds_repo_seams(p, &context))
         .cloned()
         .collect();
 
@@ -2195,7 +2195,7 @@ fn try_no_impact_fast_path(
     let total_rust_files = rust_files.len();
     let total_production_files = rust_files
         .iter()
-        .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
+        .filter(|path| workspace::seeds_repo_seams(path, &context))
         .count();
     // The corpus may have moved between the scan and this point. A
     // re-stat is cheap (no content reads); any drift declines into the
@@ -4074,7 +4074,7 @@ fn production_files_with_role(root: &Path, config: &RiprConfig, files: &[PathBuf
     let context = production_role_context(root, config, files.iter().map(PathBuf::as_path));
     files
         .iter()
-        .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
+        .filter(|path| workspace::seeds_repo_seams(path, &context))
         .cloned()
         .collect()
 }
@@ -4718,7 +4718,7 @@ pub(crate) fn scoped_file_seams(
     seam_index: &mut Option<FileSeamIndex>,
 ) -> Result<Vec<RepoSeam>, String> {
     let context = production_role_context(root, config, std::iter::once(file));
-    if !workspace::classify_with(file, &context).seeds_production_findings() {
+    if !workspace::seeds_repo_seams(file, &context) {
         return Ok(Vec::new());
     }
     if let Some(index) = seam_index
@@ -4821,7 +4821,7 @@ pub(crate) fn classify_seams_in_file_with_shared_index(
     seam_index: &mut Option<FileSeamIndex>,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     let context = production_role_context(root, config, std::iter::once(file));
-    if !workspace::classify_with(file, &context).seeds_production_findings() {
+    if !workspace::seeds_repo_seams(file, &context) {
         return Ok(Vec::new());
     }
     let mut files = vec![file.to_path_buf()];

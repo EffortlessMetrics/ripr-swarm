@@ -39,7 +39,7 @@ pub(crate) use path_dependencies::{
 pub(crate) use source_role::{
     DiffOnlySource, SourceRole, SourceRoleContext, classify_with, diff_only_source,
     is_declared_cargo_test_surface, is_declared_cargo_test_surface_in, is_test_surface,
-    is_test_surface_path, may_be_diff_only_source, seeds_diff_probes,
+    is_test_surface_path, may_be_diff_only_source, seeds_diff_probes, seeds_repo_seams,
 };
 
 pub(crate) use classify::{normalize_path, package_root};
