@@ -890,8 +890,18 @@ impl ModuleDeclarations {
             return;
         };
         let root = parse.tree().syntax().clone();
+        // Line starts once, so each node's lines are a binary search rather
+        // than a scan of the file (a large test module has many nodes).
+        let newlines: Vec<usize> = source
+            .match_indices('\n')
+            .map(|(offset, _)| offset)
+            .collect();
+        let line_at = |offset: usize| -> Option<usize> {
+            source.get(..offset)?;
+            Some(1 + newlines.partition_point(|&newline| newline < offset))
+        };
         let touches = |start: usize, end: usize| -> bool {
-            match (line_of(source, start), line_of(source, end)) {
+            match (line_at(start), line_at(end)) {
                 (Some(first), Some(last)) => lines.range(first..=last).next().is_some(),
                 _ => true,
             }
