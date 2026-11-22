@@ -4,6 +4,9 @@
 //! pins the next-step clause, so a regression that drops it fails here rather
 //! than only in the looser action-word floor (`refusal_next_step.rs`).
 
+#[path = "common/mod.rs"]
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -28,24 +31,33 @@ fn scratch() -> Result<ScratchDir, String> {
     Ok(ScratchDir(dir))
 }
 
+/// Fixture git goes through the shared helper, which drops inherited `GIT_*`
+/// selectors (for example a hook's `GIT_INDEX_FILE`) so setup cannot touch
+/// the caller's repository.
 fn git(dir: &Path, args: &[&str]) -> Result<(), String> {
-    let status = Command::new("git")
-        .current_dir(dir)
-        .args([
-            "-c",
-            "user.name=ripr",
-            "-c",
-            "user.email=ripr@example.invalid",
-        ])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .status()
-        .map_err(|error| format!("spawn git {args:?}: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("git {args:?} exited with {status}"))
+    let mut full = vec![
+        "-c",
+        "user.name=ripr",
+        "-c",
+        "user.email=ripr@example.invalid",
+        "-c",
+        "commit.gpgsign=false",
+    ];
+    full.extend_from_slice(args);
+    common::fixture_git::fixture_git_ok(dir, &full)
+}
+
+/// `ripr` in `dir` with inherited `GIT_*` selectors removed, so the binary
+/// answers for the scratch directory rather than the caller's repository.
+fn ripr(dir: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(dir).args(args);
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(key);
+        }
     }
+    command
 }
 
 fn committed_repo() -> Result<ScratchDir, String> {
@@ -60,9 +72,7 @@ fn committed_repo() -> Result<ScratchDir, String> {
 
 /// Runs `ripr` in `dir` and returns stderr when the exit code is 2.
 fn refusal(dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(dir)
-        .args(args)
+    let output = ripr(dir, args)
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))?;
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -145,9 +155,7 @@ fn impacted_evidence_check_without_outputs_names_the_command_that_writes_them() 
 }
 
 fn success(dir: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(dir)
-        .args(args)
+    let output = ripr(dir, args)
         .output()
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))?;
     if output.status.success() {
