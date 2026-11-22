@@ -33,33 +33,72 @@ pub fn check_doc_roles() -> Result<(), String> {
         exception_template: None,
     };
 
-    let mut violations = Vec::new();
-
-    for path in collect_proposal_paths()? {
-        let normalized = normalize_path(&path);
-        let text = read_text_lossy(&path)?;
-        for heading in required_proposal_headings() {
-            if !has_heading(&text, heading) {
-                violations.push(format!(
-                    "{normalized} is missing required proposal section `{heading}`"
-                ));
-            }
+    let violations = violations_at(Path::new("."), |dir| {
+        if dir.exists() {
+            collect_files(dir)
+        } else {
+            Ok(Vec::new())
         }
-    }
-
-    for path in collect_adr_paths()? {
-        let normalized = normalize_path(&path);
-        let text = read_text_lossy(&path)?;
-        for heading in required_adr_headings() {
-            if !has_heading(&text, heading) {
-                violations.push(format!(
-                    "{normalized} is missing required ADR section `{heading}`"
-                ));
-            }
-        }
-    }
-
+    })?;
     finish_policy_report(report_spec, &violations)
+}
+
+/// Evaluate the same whole-tree obligation in a materialized candidate revision.
+pub(crate) fn staged_violations(root: &Path) -> Result<Vec<String>, String> {
+    let docs = root.join("docs");
+    match crate::regular_metadata(&docs) {
+        Ok(_) => violations_at(root, crate::collect_regular_files),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(format!("cannot inspect {}: {error}", docs.display())),
+    }
+}
+
+fn violations_at(
+    root: &Path,
+    list_files: impl Fn(&Path) -> Result<Vec<PathBuf>, String>,
+) -> Result<Vec<String>, String> {
+    let mut violations = Vec::new();
+    for dir in ["docs/proposals", "docs/adr"] {
+        let dir = root.join(dir);
+        let mut paths = list_files(&dir)?;
+        paths.sort();
+        for path in paths {
+            let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
+            let Some((kind, headings)) = required_sections(relative) else {
+                continue;
+            };
+            let normalized = normalize_path(relative);
+            let text = read_text_lossy(&path)?;
+            for heading in headings {
+                if !has_heading(&text, heading) {
+                    violations.push(format!(
+                        "{normalized} is missing required {kind} section `{heading}`"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(violations)
+}
+
+pub(crate) fn required_sections(path: &Path) -> Option<(&'static str, &'static [&'static str])> {
+    let name = path.file_name()?.to_str()?;
+    if !name.ends_with(".md") {
+        return None;
+    }
+    let (relative, role, headings) = if let Ok(relative) = path.strip_prefix("docs/proposals") {
+        if !name.starts_with("RIPR-PROP-") {
+            return None;
+        }
+        (relative, "proposal", required_proposal_headings())
+    } else {
+        let relative = path.strip_prefix("docs/adr").ok()?;
+        if name == "README.md" {
+            return None;
+        }
+        (relative, "ADR", required_adr_headings())
+    };
+    (!crate::should_skip_path(&normalize_path(relative))).then_some((role, headings))
 }
 
 fn required_proposal_headings() -> &'static [&'static str] {
@@ -79,46 +118,6 @@ fn required_adr_headings() -> &'static [&'static str] {
         "## Consequences",
         "## Alternatives Considered",
     ]
-}
-
-fn collect_proposal_paths() -> Result<Vec<PathBuf>, String> {
-    let dir = Path::new("docs/proposals");
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    for path in collect_files(dir)? {
-        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        if file_name.starts_with("RIPR-PROP-") && file_name.ends_with(".md") {
-            out.push(path);
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
-fn collect_adr_paths() -> Result<Vec<PathBuf>, String> {
-    let dir = Path::new("docs/adr");
-    if !dir.exists() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    for path in collect_files(dir)? {
-        let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-            continue;
-        };
-        if file_name == "README.md" {
-            continue;
-        }
-        if !file_name.ends_with(".md") {
-            continue;
-        }
-        out.push(path);
-    }
-    out.sort();
-    Ok(out)
 }
 
 fn has_heading(text: &str, heading: &str) -> bool {

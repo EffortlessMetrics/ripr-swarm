@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_account.py:python_preview:c7d70a2d|probe:src_account.py:python_preview:c7d70a2d|src/account.py"
+            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_account.py:python_preview:c7d70a2d|probe:src_account.py:python_preview:c7d70a2d|fixtures/python_adversarial_changed_sink_non_delta_operand/input/src/account.py"
           },
           "level": "note",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/account.py"
+                  "uri": "fixtures/python_adversarial_changed_sink_non_delta_operand/input/src/account.py"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "static_unknown static exposure for return_value probe:         return max(0, self._balance)"
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_account.py:python_preview:c7d70a2d|probe:src_account.py:python_preview:c7d70a2d|src/account.py"
+            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_account.py:python_preview:c7d70a2d|probe:src_account.py:python_preview:c7d70a2d|fixtures/python_adversarial_changed_sink_non_delta_operand/input/src/account.py"
           },
           "properties": {
             "changed_expression": "        return max(0, self._balance)",

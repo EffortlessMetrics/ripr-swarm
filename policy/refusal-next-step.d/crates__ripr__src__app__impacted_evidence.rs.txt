@@ -1,0 +1,4 @@
+crates/ripr/src/app/impacted_evidence.rs|failed to write {IMPACTED_JSON}: {err}
+crates/ripr/src/app/impacted_evidence.rs|failed to write {IMPACTED_MD}: {err}
+crates/ripr/src/app/impacted_evidence.rs|missing or unreadable {IMPACTED_JSON}: {err}
+crates/ripr/src/app/impacted_evidence.rs|missing or unreadable {IMPACTED_MD}: {err}

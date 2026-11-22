@@ -2194,14 +2194,53 @@ pub fn collect_files_inner(
     path: &Path,
     files: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
+    walk_files(root, path, files, &|path| fs::metadata(path))
+}
+
+/// Archive-bound checks must never follow a candidate link outside the staged tree.
+pub(crate) fn collect_regular_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    match regular_metadata(root) {
+        Ok(_) => walk_files(root, root, &mut files, &regular_metadata)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", root.display())),
+    }
+    Ok(files)
+}
+
+pub(crate) fn regular_metadata(path: &Path) -> std::io::Result<fs::Metadata> {
+    let metadata = fs::symlink_metadata(path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(std::io::Error::other(
+                "expected a regular file or directory",
+            ));
+        }
+    }
+    if !(metadata.is_dir() || metadata.is_file()) {
+        return Err(std::io::Error::other(
+            "expected a regular file or directory",
+        ));
+    }
+    Ok(metadata)
+}
+
+fn walk_files(
+    root: &Path,
+    path: &Path,
+    files: &mut Vec<PathBuf>,
+    inspect: &impl Fn(&Path) -> std::io::Result<fs::Metadata>,
+) -> Result<(), String> {
     let normalized = normalize_path(path);
     let relative = path.strip_prefix(root).unwrap_or(path);
     let relative_normalized = normalize_path(relative);
     if should_skip_path(&relative_normalized) {
         return Ok(());
     }
-    let metadata =
-        fs::metadata(path).map_err(|err| format!("failed to inspect {normalized}: {err}"))?;
+    let metadata = inspect(path).map_err(|err| format!("failed to inspect {normalized}: {err}"))?;
     if metadata.is_file() {
         files.push(path.to_path_buf());
         return Ok(());
@@ -2211,7 +2250,7 @@ pub fn collect_files_inner(
             fs::read_dir(path).map_err(|err| format!("failed to read {normalized}: {err}"))?
         {
             let entry = entry.map_err(|err| format!("failed to read {normalized}: {err}"))?;
-            collect_files_inner(root, &entry.path(), files)?;
+            walk_files(root, &entry.path(), files, inspect)?;
         }
     }
     Ok(())

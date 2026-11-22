@@ -245,6 +245,10 @@ pub(crate) struct GapRecord {
     /// Nearest TypeScript `package.json` directory relative to the workspace root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) typescript_package_root: Option<String>,
+    /// Root-relative directory a nested Python project's verify command runs
+    /// from (#15302); absent when it runs from the selected root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) verify_cwd: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -1598,6 +1602,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -1718,6 +1723,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     let verify_command = string_at(card, &["verify", "command"])
         .filter(|command| command_display_is_nonblank(command))
         .map(ToString::to_string);
+    let verify_cwd = string_at(card, &["verify", "cwd"]).map(ToString::to_string);
     let repair_action = string_at(card, &["repair_action"]).unwrap_or("add_or_strengthen_test");
     let repairability = if suggested_test_file.is_some() && verify_command.is_some() {
         "repairable"
@@ -1826,6 +1832,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
             .unwrap_or("preview_advisory_only")
             .to_string(),
         typescript_package_root: None,
+        verify_cwd,
     })
 }
 
@@ -2071,6 +2078,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         typescript_package_root: crate::output::markdown::typescript_package_root_from_gap_record(
             finding,
         ),
+        verify_cwd: None,
     })
 }
 
@@ -2217,6 +2225,7 @@ fn gap_record_from_typescript_not_delegatable_finding(
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -2319,6 +2328,7 @@ fn gap_record_from_typescript_no_action_finding(
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -2481,6 +2491,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
             .unwrap_or("preview_advisory_only")
             .to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
     .filter(|record| {
         record.repair_route.is_some()
@@ -2571,6 +2582,7 @@ fn gap_record_from_python_static_limit_finding(finding: &Value, index: usize) ->
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -2658,6 +2670,7 @@ fn gap_record_from_python_no_action_finding(finding: &Value, index: usize) -> Op
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -2796,6 +2809,7 @@ fn gap_record_from_python_no_repair_card_finding(
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -3188,6 +3202,7 @@ fn gap_record_from_finding_alignment_item(item: &Value, index: usize) -> Option<
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 

@@ -336,9 +336,10 @@ use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist,
     check_cli_exit_contract, check_covered_by, check_doc_roles, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
-    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
+    check_no_panic_family, check_package_content, check_packaged_readme,
+    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
+    check_release_targets, check_static_language, check_text_encoding, check_user_text,
+    check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -21741,6 +21742,8 @@ pub(crate) fn read_file_policy_test_commands(
             (None, entry.covered_by),
             (Some(FilePolicyHost::Unix), entry.covered_by_unix),
             (Some(FilePolicyHost::Windows), entry.covered_by_windows),
+            (Some(FilePolicyHost::Linux), entry.covered_by_linux),
+            (Some(FilePolicyHost::Macos), entry.covered_by_macos),
         ] {
             for command in values.unwrap_or_default() {
                 if is_cargo_test_command(&command) {
@@ -21760,18 +21763,31 @@ impl FilePolicyHost {
     fn parse(family: &str) -> Result<Self, String> {
         match family {
             "unix" => Ok(Self::Unix),
+            "linux" => Ok(Self::Linux),
+            "macos" => Ok(Self::Macos),
             "windows" => Ok(Self::Windows),
             _ => Err(format!("unsupported file-policy host family `{family}`")),
         }
     }
 
     fn current() -> Result<Self, String> {
-        Self::parse(std::env::consts::FAMILY)
+        Self::parse(match std::env::consts::OS {
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => std::env::consts::FAMILY,
+        })
+    }
+
+    /// Whether this declared scope includes the executing host.
+    fn applies_to(self, host: Self) -> bool {
+        self == host || (self == Self::Unix && matches!(host, Self::Linux | Self::Macos))
     }
 
     fn name(self) -> &'static str {
         match self {
             Self::Unix => "unix",
+            Self::Linux => "linux",
+            Self::Macos => "macos",
             Self::Windows => "windows",
         }
     }
@@ -21859,7 +21875,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                     "classification" => entry.classification = Some(scalar()?),
                     "reason" => entry.reason = Some(scalar()?),
                     "generated_by" => entry.generated_by = Some(scalar()?),
-                    "covered_by" | "covered_by_unix" | "covered_by_windows" => {
+                    "covered_by" | "covered_by_unix" | "covered_by_windows"
+                    | "covered_by_linux" | "covered_by_macos" => {
                         let array_error = || {
                             format!(
                                 "{path}:{field_line} non-Rust allowlist `{key}` requires a string array"
@@ -21880,6 +21897,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                         match key {
                             "covered_by_unix" => entry.covered_by_unix = Some(commands),
                             "covered_by_windows" => entry.covered_by_windows = Some(commands),
+                            "covered_by_linux" => entry.covered_by_linux = Some(commands),
+                            "covered_by_macos" => entry.covered_by_macos = Some(commands),
                             _ => entry.covered_by = Some(commands),
                         }
                     }
@@ -21964,6 +21983,8 @@ fn validate_file_policy_allow_entry(
     for (field, commands) in [
         ("covered_by_unix", &entry.covered_by_unix),
         ("covered_by_windows", &entry.covered_by_windows),
+        ("covered_by_linux", &entry.covered_by_linux),
+        ("covered_by_macos", &entry.covered_by_macos),
     ] {
         if let Some(commands) = commands
             && (commands.is_empty() || commands.iter().any(|value| !is_cargo_test_command(value)))

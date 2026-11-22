@@ -1542,16 +1542,26 @@ fn macro_binding_sites_in_tree(
                 }) && proptest_prelude_glob_reaches(&call, &prelude_glob_admitted)
             };
             let confined = audited_pass_through_call(&call, &tree, &tokens, known)
-                .filter(|(wrapper, nested_wrapper)| {
+                .filter(|(wrapper, nested)| {
+                    // A nested `proptest::prop_*` call needs the `proptest`
+                    // root proved for its own spelling, as an outer one does.
+                    let proptest_root = |external: bool| {
+                        !drop_in_shadowed("proptest", external)
+                            && (external || !plain_import_names().contains("proptest"))
+                            && drop_in_verified("proptest")
+                    };
                     !pass_through_names_imported(binding_free)
+                        && (!nested.qualified_relative || proptest_root(false))
+                        && (!nested.qualified_external || proptest_root(true))
                         && match wrapper {
                             PassThroughCall::Qualified { krate, external } => {
                                 !drop_in_shadowed(krate, *external)
                                     && (*external || !plain_import_names().contains(*krate))
                                     && drop_in_verified(krate)
-                                    // A nested `prop_*` call trusted by name
-                                    // must name the audited prelude's macro.
-                                    && (!nested_wrapper || names_the_prelude())
+                                    // A nested bare `prop_*` call trusted by
+                                    // name must name the audited prelude's
+                                    // macro.
+                                    && (!nested.bare_wrapper || names_the_prelude())
                             }
                             PassThroughCall::BareProptest => names_the_prelude(),
                         }
@@ -2038,11 +2048,8 @@ const PASS_THROUGH_WRAPPERS: &[&str] = &[
 /// Argument tokens that let a pasted body bind a name outside the call:
 /// an exported or textual macro definition, a module (whose `#[macro_use]`
 /// or exports leave the body), an `extern crate`, or pasted file text.
-/// A `use` among the arguments can rename another macro to a wrapper or
-/// known name inside the pasted body, where the file's parsed imports never
-/// see it.
-const PASS_THROUGH_BLOCKED_TOKENS: &[&str] =
-    &["macro_rules", "macro", "mod", "extern", "include", "use"];
+/// A `use` among the arguments is read by [`argument_uses_bind_no_trusted_name`].
+const PASS_THROUGH_BLOCKED_TOKENS: &[&str] = &["macro_rules", "macro", "mod", "extern", "include"];
 
 /// Attributes a pass-through wrapper's arguments may carry: built-in
 /// attributes (and proptest's own `proptest_config` header) that run no
@@ -2075,21 +2082,36 @@ enum PassThroughCall {
     BareProptest,
 }
 
+/// What a confined pass-through call's nested macro calls rely on, beyond
+/// the outer spelling, for the caller to establish.
+#[derive(Clone, Copy, Debug, Default)]
+struct PassThroughNested {
+    /// A bare `prop_*` call was trusted by name: those names must reach the
+    /// audited prelude.
+    bare_wrapper: bool,
+    /// A `proptest::prop_*` call was trusted through a path relative to the
+    /// module: the `proptest` root must be the verified registry crate and
+    /// no plain import may take it over.
+    qualified_relative: bool,
+    /// The same through an absolute `::proptest::prop_*` path.
+    qualified_external: bool,
+}
+
 /// Whether `call` is spelled as an audited pass-through wrapper whose
 /// arguments cannot bind a name outside the call's text: no blocked token,
-/// only [`INERT_PASS_THROUGH_ATTRIBUTES`], and every nested macro call
-/// either a single-segment known (trusted) name, a single-segment audited
-/// `prop_*` macro, or one whose own arguments mention no known name. The
-/// second value says whether a nested `prop_*` call was trusted by name, so
-/// the caller must also establish that those names reach the audited
-/// prelude. The caller still checks that the spelling resolves to the
-/// audited crate.
+/// only [`INERT_PASS_THROUGH_ATTRIBUTES`], only `use` items that bind no
+/// trusted name, and every nested macro call either a single-segment known
+/// (trusted) name, an audited `prop_*` macro spelled bare or under the
+/// `proptest` root, or one whose own arguments mention no known name. The
+/// [`PassThroughNested`] value says what the caller must also establish for
+/// the nested calls it trusted by name. The caller still checks that the
+/// outer spelling resolves to the audited crate.
 fn audited_pass_through_call(
     call: &ast::MacroCall,
     tree: &ast::TokenTree,
     tokens: &[ra_ap_syntax::SyntaxToken],
     known: &[&str],
-) -> Option<(PassThroughCall, bool)> {
+) -> Option<(PassThroughCall, PassThroughNested)> {
     let path: String = call
         .path()?
         .syntax()
@@ -2117,10 +2139,12 @@ fn audited_pass_through_call(
     {
         return None;
     }
-    if !arguments_carry_only_inert_attributes(tokens) {
+    if !arguments_carry_only_inert_attributes(tokens)
+        || !argument_uses_bind_no_trusted_name(tokens, known)
+    {
         return None;
     }
-    let mut wrapper_trusted = false;
+    let mut nested = PassThroughNested::default();
     let nested_calls_confined = tree
         .syntax()
         .descendants()
@@ -2144,17 +2168,27 @@ fn audited_pass_through_call(
                 return true;
             };
             // `dep::prop_assert!` names whatever `dep` exports, not the
-            // trusted macro its last segment spells.
-            let single_segment = !before.next().is_some_and(|token| {
-                matches!(
-                    token.kind(),
-                    ra_ap_syntax::SyntaxKind::COLON2 | ra_ap_syntax::SyntaxKind::COLON
-                )
-            });
+            // trusted macro its last segment spells. Only the `proptest` root
+            // itself (`proptest::prop_oneof!`) is the audited crate's path.
+            let qualifier = pass_through_call_qualifier(before);
             let name = name.text().trim_start_matches("r#");
-            let wrapper = single_segment && PASS_THROUGH_WRAPPERS.contains(&name);
-            wrapper_trusted |= wrapper;
-            single_segment && known.contains(&name)
+            let audited = PASS_THROUGH_WRAPPERS.contains(&name);
+            let wrapper = match qualifier.as_str() {
+                "" => {
+                    nested.bare_wrapper |= audited;
+                    audited
+                }
+                "proptest" if audited => {
+                    nested.qualified_relative = true;
+                    true
+                }
+                "::proptest" if audited => {
+                    nested.qualified_external = true;
+                    true
+                }
+                _ => false,
+            };
+            qualifier.is_empty() && known.contains(&name)
                 || wrapper
                 || !group
                     .syntax()
@@ -2162,7 +2196,106 @@ fn audited_pass_through_call(
                     .filter_map(|element| element.into_token())
                     .any(|token| known.contains(&token.text().trim_start_matches("r#")))
         });
-    nested_calls_confined.then_some((wrapper, wrapper_trusted))
+    nested_calls_confined.then_some((wrapper, nested))
+}
+
+/// The path written before a nested call's name, read backwards from the
+/// token before the name: `""` for a bare name, `"proptest"` or
+/// `"::proptest"` for a one-segment qualifier, and the joined text (with `?`
+/// for a `crate`/`self`/`super`/`$crate` segment) for any other path.
+fn pass_through_call_qualifier(before: impl Iterator<Item = ra_ap_syntax::SyntaxToken>) -> String {
+    use ra_ap_syntax::SyntaxKind;
+    let tokens: Vec<_> = before.take(64).collect();
+    // The index after a `::` separator at `at`. Token trees may keep `::` as
+    // one `COLON2` or as two touching `:` tokens; a lone `:` (a field or
+    // type ascription colon, `result: proptest::prop_assert!(..)`) is no
+    // separator and ends the path.
+    let separator = |at: usize| -> Option<usize> {
+        let token = tokens.get(at)?;
+        match token.kind() {
+            SyntaxKind::COLON2 => Some(at + 1),
+            SyntaxKind::COLON => tokens
+                .get(at + 1)
+                .filter(|first| {
+                    first.kind() == SyntaxKind::COLON
+                        && first.text_range().end() == token.text_range().start()
+                })
+                .map(|_| at + 2),
+            _ => None,
+        }
+    };
+    let mut segments = Vec::new();
+    let mut absolute = false;
+    let mut at = 0;
+    while let Some(next) = separator(at) {
+        match tokens.get(next) {
+            Some(segment) if segment.kind() == SyntaxKind::IDENT => {
+                segments.push(segment.text().trim_start_matches("r#").to_string());
+                at = next + 1;
+            }
+            // `crate::`, `self::`, `super::`, `Self::` or `$crate::`: a
+            // module-relative path, never the audited root.
+            Some(segment)
+                if matches!(
+                    segment.kind(),
+                    SyntaxKind::CRATE_KW
+                        | SyntaxKind::SELF_KW
+                        | SyntaxKind::SUPER_KW
+                        | SyntaxKind::SELF_TYPE_KW
+                        | SyntaxKind::DOLLAR
+                ) || segment.text().starts_with('$') =>
+            {
+                segments.push("?".to_string());
+                break;
+            }
+            // A leading `::`: nothing that continues the path precedes it.
+            _ => {
+                absolute = true;
+                break;
+            }
+        }
+    }
+    segments.reverse();
+    let joined = segments.join("::");
+    if absolute {
+        format!("::{joined}")
+    } else {
+        joined
+    }
+}
+
+/// Whether every `use` item among the arguments is a plain, non-renaming,
+/// non-glob import whose path names no known (trusted) macro, audited
+/// wrapper or inert attribute. Such an item, pasted into a generated function
+/// body, binds a trait or item for that body only (`use
+/// std::os::unix::ffi::OsStrExt;`) and cannot redirect a nested call or
+/// attribute the confinement trusts by name. A rename (`use helper as
+/// prop_assert;`) or a glob can, so either keeps the call opaque.
+fn argument_uses_bind_no_trusted_name(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+    known: &[&str],
+) -> bool {
+    use ra_ap_syntax::SyntaxKind;
+    tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| token.text() == "use")
+        .all(|(at, _)| {
+            let Some(length) = tokens[at + 1..]
+                .iter()
+                .position(|token| token.kind() == SyntaxKind::SEMICOLON)
+            else {
+                return false;
+            };
+            tokens[at + 1..at + 1 + length].iter().all(|token| {
+                let text = token.text().trim_start_matches("r#");
+                token.kind() != SyntaxKind::STAR
+                    && text != "as"
+                    && !known.contains(&text)
+                    && !PASS_THROUGH_WRAPPERS.contains(&text)
+                    && !INERT_PASS_THROUGH_ATTRIBUTES.contains(&text)
+            })
+        })
 }
 
 /// Whether every attribute among `tokens` (`#[..]` or `#![..]`) is a
