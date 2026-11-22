@@ -1354,7 +1354,7 @@ impl RiprConfig {
             };
             if let Some(executable) = &perl.executable {
                 if executable.contains('\0') {
-                    return Err("perl.executable must not contain NUL characters"
+                    return Err("perl.executable must not contain NUL characters; set it to the exporter's path, or remove the key to use the default exporter"
                         .to_string()
                         .into());
                 }
@@ -1443,12 +1443,16 @@ fn parse_path_glob_patterns(field: &str, values: &[String]) -> Result<Vec<String
     let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
-            return Err(format!("{field} must not contain control characters"));
+            return Err(format!(
+                "{field} must not contain control characters; remove them from the entry"
+            ));
         }
         let trimmed = value.trim();
         parse_relative_path(field, trimmed)?;
         if trimmed == "." {
-            return Err(format!("{field} must identify a file pattern, not `.`"));
+            return Err(format!(
+                "{field} must identify a file pattern, not `.`; name the generated files, for example `src/generated/**`"
+            ));
         }
         if !seen.insert(trimmed) {
             return Err(format!(
@@ -1470,11 +1474,13 @@ fn parse_handwritten_files(
     let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
-            return Err(format!("{field} must not contain control characters"));
+            return Err(format!(
+                "{field} must not contain control characters; remove them from the entry"
+            ));
         }
         if value.contains(['*', '?', '[', ']']) {
             return Err(format!(
-                "{field} must contain exact file paths, not glob patterns"
+                "{field} must contain exact file paths, not glob patterns; name each file by its repository-relative path"
             ));
         }
         let path = parse_relative_path(field, value)?;
@@ -1483,7 +1489,9 @@ fn parse_handwritten_files(
             .and_then(|extension| extension.to_str())
             .is_none_or(|extension| !extension_ok(extension))
         {
-            return Err(format!("{field} must identify {extension_desc}"));
+            return Err(format!(
+                "{field} must identify {extension_desc}; remove `{value}` or name a file with that extension"
+            ));
         }
         let normalized = path.to_string_lossy().replace('\\', "/");
         if !seen.insert(normalized.clone()) {
@@ -1512,14 +1520,14 @@ fn parse_overrides(
             }
             (Some(_), Some(_)) => {
                 return Err(format!(
-                    "[[overrides]] entry {} must set exactly one of crate or path, not both",
+                    "[[overrides]] entry {} must set exactly one of crate or path, not both; remove one of them, or split the entry in two",
                     index + 1
                 )
                 .into());
             }
             (None, None) => {
                 return Err(format!(
-                    "[[overrides]] entry {} must set crate (Cargo package name) or path (repository-relative glob)",
+                    "[[overrides]] entry {} must set crate (Cargo package name) or path (repository-relative glob); add one of them to the entry",
                     index + 1
                 )
                 .into());
@@ -1541,7 +1549,7 @@ fn parse_overrides(
                 .is_none_or(overrides::PartialOraclePolicy::is_empty)
         {
             return Err(format!(
-                "[[overrides]] entry {} must override severity or oracles",
+                "[[overrides]] entry {} must override severity or oracles; add a severity or oracles table to the entry, or remove it",
                 index + 1
             )
             .into());
@@ -1748,7 +1756,7 @@ fn parse_bun_ub_profile(raw: RawBunUbProfileConfig) -> Result<BunUbProfileConfig
         .test_roots
         .ok_or_else(|| "profiles.bun_ub.test_roots is required".to_string())?;
     if test_roots.is_empty() {
-        return Err("profiles.bun_ub.test_roots must list at least one test root".to_string());
+        return Err("profiles.bun_ub.test_roots must list at least one test root; add the glob for your Bun tests, for example `test/**/*.ts`".to_string());
     }
     let mut parsed_roots = Vec::with_capacity(test_roots.len());
     let mut seen = std::collections::HashSet::with_capacity(test_roots.len());
@@ -2184,11 +2192,15 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
     // Reject them here instead of validating a path that later looks absent
     // (Path::exists) or fails to open. Do not echo the control byte.
     if value.contains('\0') {
-        return Err(format!("{field} must not contain NUL characters"));
+        return Err(format!(
+            "{field} must not contain NUL characters; remove the escaped NUL from the path"
+        ));
     }
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(format!("{field} must not be empty"));
+        return Err(format!(
+            "{field} must not be empty; give a repository-relative path, or remove the entry"
+        ));
     }
     if trimmed.contains('\\') {
         return Err(format!(
@@ -2216,7 +2228,9 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
         .collect::<Vec<_>>()
         .join("/");
     if normalized.is_empty() {
-        return Err(format!("{field} `{value}` must name a path"));
+        return Err(format!(
+            "{field} `{value}` must name a path; give a repository-relative path such as `src/lib.rs`"
+        ));
     }
     let path = PathBuf::from(&normalized);
     if path.components().any(|component| {
@@ -2225,7 +2239,9 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
             Component::ParentDir | Component::RootDir | Component::Prefix(_)
         )
     }) {
-        return Err(format!("{field} `{value}` must stay within the repository"));
+        return Err(format!(
+            "{field} `{value}` must stay within the repository; remove the `..` segments and use a repository-relative path"
+        ));
     }
     Ok(path)
 }
@@ -2270,9 +2286,13 @@ fn parse_test_harness_registrations(
             TestHarnessAdapter::parse(&required_text(&position, "adapter", raw.adapter)?)?;
         if !adapter.supports_kind(kind) {
             return Err(format!(
-                "{position}: adapter `{}` does not support kind `{}`; the mismatch fails closed",
+                "{position}: adapter `{}` does not support kind `{}`; the mismatch fails closed. Use adapter `{}` with kind `{}`, or `{}` with kind `{}`",
                 adapter.as_str(),
-                kind.as_str()
+                kind.as_str(),
+                TestHarnessAdapter::LibtestMimicV1.as_str(),
+                TestHarnessKind::CustomHarnessTarget.as_str(),
+                TestHarnessAdapter::ExactAttributeV1.as_str(),
+                TestHarnessKind::RegisteredAttribute.as_str()
             ));
         }
         let marker = required_text(&position, "marker", raw.marker)?;
@@ -2295,7 +2315,9 @@ fn parse_test_harness_registrations(
 fn required_text(position: &str, field: &str, value: Option<String>) -> Result<String, String> {
     match value {
         Some(text) if !text.trim().is_empty() => Ok(text.trim().to_string()),
-        Some(_) => Err(format!("{position}.{field} must not be empty")),
+        Some(_) => Err(format!(
+            "{position}.{field} must not be empty; set it to a value, or remove the registration"
+        )),
         None => Err(format!("{position}.{field} is required")),
     }
 }

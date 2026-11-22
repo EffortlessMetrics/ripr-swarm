@@ -1,0 +1,6 @@
+# `ripr config validate` refusals for a wrong ripr.toml name their fix (#14163).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/tests/config_refusal_next_step.rs::config_validate_refusals_name_their_fix",
+]
