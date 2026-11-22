@@ -1,0 +1,2 @@
+<!-- section: Docs -->
+- Merge flow: a session limited to REST may enqueue a `ripr-swarm` PR with the auto-merge call once every required result is green on the exact reviewed head and the final review marker is posted; it is an immediate enqueue, never an armed wait. `docs/MERGE_FLOW.md` also states the review-marker form the admission job reads, and the agent instructions name `cargo xtask publish-dry-run` as the crate rehearsal (#15969).

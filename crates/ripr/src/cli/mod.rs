@@ -645,7 +645,7 @@ fn persist_before_repair_attempt(
         )
     })?;
     let mut policy =
-        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+        crate::app::repair_attempt::edit_cage_policy_from_packet_in(root, &packet_text, seam_id)?;
     crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
         &mut policy,
         root,
@@ -830,6 +830,7 @@ fn persist_before_repair_attempt(
         baseline_ambiguous,
         typescript_test_cache_guidance,
         focused_test_command: focused_test_command(root, &packet_text),
+        declared_cargo_test_target: policy.declared_cargo_test_target,
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -859,6 +860,15 @@ fn persist_before_repair_attempt(
             eprintln!(
                 "{}",
                 crate::output::human::terminal_safe(format!("ripr: {line}"))
+            );
+        }
+        // #15902: when unignored untracked files alone exceed the capture
+        // budget, say so and name the fix instead of leaving the generic
+        // "resolve the workspace condition" text as the only guidance.
+        if let Some(cause) = crate::edit_cage::oversized_untracked_cause(root) {
+            eprintln!(
+                "{}",
+                crate::output::human::terminal_safe(format!("ripr: {cause}"))
             );
         }
     } else if options.gap_id.is_some() {
@@ -926,9 +936,11 @@ fn persist_before_repair_attempt(
 fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(packet).ok()?;
     let test = value.pointer("/packets/0/recommended_test")?;
-    let file = test.get("file")?.as_str()?;
+    // The packet spells the file as stable path text; the manifest lookup
+    // compares native names (`spec/discount%.rs`, not `spec/discount%25.rs`).
+    let file = crate::analysis::decode_stable_path_text(test.get("file")?.as_str()?);
     let name = test.get("name")?.as_str()?;
-    crate::app::test_stub::focused_test_run_command(root, file, name)
+    crate::app::test_stub::focused_test_run_command(root, file.to_str()?, name)
 }
 
 #[cfg(test)]
@@ -1391,11 +1403,12 @@ mod tests {
             format_error
         );
         // A switch given a boolean literal stays one token and is refused
-        // as typed, never read as the switch plus a stray value.
+        // as typed, never read as the switch plus a stray value. The refusal
+        // names it as a switch (#15898).
         assert_eq!(
             run(args(&["ripr", "check", "--quiet=false"])),
             Err(CommandError::Failure(
-                "unknown check argument \"--quiet=false\". Run `ripr check --help --all`."
+                "unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: write `--quiet` alone; a switch is on when present and off when absent. Run `ripr check --help --all`."
                     .to_string()
             ))
         );

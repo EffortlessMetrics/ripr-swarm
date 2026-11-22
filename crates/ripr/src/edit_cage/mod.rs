@@ -2453,6 +2453,66 @@ fn git_text(root: &Path, args: &[&str]) -> Result<String, String> {
         .map_err(|err| format!("git {args:?} emitted non-UTF-8 output: {err}"))
 }
 
+/// Name the likely cause of an ambiguous baseline when untracked files that
+/// `.gitignore` does not cover exceed the exact-capture budget (#15902).
+///
+/// The cage snapshots untracked, unignored files exactly, bounded by
+/// [`MAX_CAPTURE_FILE_BYTES`] per file and [`MAX_CAPTURE_TOTAL_FILE_BYTES`] in
+/// total. An installed dependency tree such as `node_modules/` that the
+/// repository forgot to ignore runs past that budget, and the attempt can then
+/// never be scored. This is diagnostic text only: it reads sizes after the
+/// baseline was captured, changes no verdict, and returns `None` whenever the
+/// untracked files alone do not explain the ambiguity or Git cannot answer.
+pub(crate) fn oversized_untracked_cause(root: &Path) -> Option<String> {
+    let untracked = git_bytes(root, &["ls-files", "--others", "--exclude-standard", "-z"]).ok()?;
+    let mut total_bytes = 0u64;
+    let mut files = 0usize;
+    // Top-level entry (`dir/` or a root-level file) -> (bytes, largest file).
+    let mut by_entry: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    for record in nul_records(&untracked).take(MAX_CAPTURE_PATHS) {
+        let path = record.ok()?;
+        let Ok(metadata) = std::fs::symlink_metadata(root.join(path)) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        files += 1;
+        total_bytes = total_bytes.saturating_add(metadata.len());
+        let entry = match path.split_once('/') {
+            Some((directory, _)) => format!("{directory}/"),
+            None => path.to_string(),
+        };
+        let (bytes, largest_file) = by_entry.entry(entry).or_default();
+        *bytes = bytes.saturating_add(metadata.len());
+        *largest_file = (*largest_file).max(metadata.len());
+    }
+    // Over the total budget, the entry holding the most bytes is the one to
+    // ignore. Within it, only a single file past the per-file limit can be
+    // the cause, so name the entry that holds that file: ignoring a larger
+    // but harmless directory would leave the baseline ambiguous.
+    let over_total = total_bytes > MAX_CAPTURE_TOTAL_FILE_BYTES;
+    let (entry, _) = by_entry
+        .into_iter()
+        .map(|(entry, (bytes, largest_file))| {
+            (entry, if over_total { bytes } else { largest_file })
+        })
+        .filter(|(_, weight)| over_total || *weight > MAX_CAPTURE_FILE_BYTES)
+        .max_by(|left, right| left.1.cmp(&right.1).then_with(|| right.0.cmp(&left.0)))?;
+    const MIB: u64 = 1024 * 1024;
+    let size = format!("{} MiB", total_bytes.div_ceil(MIB));
+    let budget = MAX_CAPTURE_TOTAL_FILE_BYTES / MIB;
+    let per_file = MAX_CAPTURE_FILE_BYTES / MIB;
+    let place = if over_total {
+        format!(", the largest share under `{entry}`")
+    } else {
+        format!(", and `{entry}` holds a file over the per-file limit")
+    };
+    Some(format!(
+        "likely cause of the ambiguous baseline: {files} untracked file(s) that .gitignore does not cover hold {size}{place}. ripr snapshots tracked and untracked files exactly, up to {budget} MiB in total and {per_file} MiB per file, so committing them does not help. To get a scorable attempt, make Git ignore `{entry}`: add it to .git/info/exclude, or commit a .gitignore rule for it (an uncommitted .gitignore edit would itself be refused as a change outside the test). Then run the same --phase before command again."
+    ))
+}
+
 fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let output = crate::git::run_git_output_with_deadline_and_limit(
         root,
@@ -2908,6 +2968,14 @@ pub(crate) struct EditCagePolicy {
     /// edit must be a pure insertion of new test functions (#8710).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) external_test_file_target: bool,
+    /// The external test-file target is the entry file of a Cargo `[[test]]`
+    /// target the package manifest declares outside the test layouts
+    /// (`[[test]] path = "spec/pricing.rs"`, #15910). The policy constructor
+    /// read the manifest; the baseline capture reads it again. Only ever set
+    /// together with `external_test_file_target`. Absent (false) in every
+    /// other policy, which keeps their serialized form unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) declared_cargo_test_target: bool,
     /// The producer-owned new-test proposal this attempt follows (#13203),
     /// recorded in the retained baseline policy. Absent for an existing-test
     /// repair, which keeps every other policy's serialized form unchanged.
@@ -3379,8 +3447,19 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             "an inline test-module target must be a Rust source file",
         ));
     }
+    if policy.declared_cargo_test_target
+        && (!policy.external_test_file_target
+            || crate::analysis::is_test_surface_path(&selected_path))
+    {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "a manifest-declared test target must be an external test file outside the test layouts",
+        ));
+    }
     if policy.external_test_file_target {
-        if !crate::analysis::is_test_surface_path(&selected_path) {
+        if !crate::analysis::is_test_surface_path(&selected_path)
+            && !policy.declared_cargo_test_target
+        {
             violations.push(invalid_policy_violation(
                 &selected_path,
                 "an external test-file target must be a test-surface path",
@@ -3996,6 +4075,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: true,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         })
     }
@@ -4849,6 +4929,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: false,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         };
         Ok((fixture, policy))
@@ -6921,6 +7002,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: false,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         };
         let verdict = evaluate_edit_cage(

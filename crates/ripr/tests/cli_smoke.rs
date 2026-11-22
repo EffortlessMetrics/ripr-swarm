@@ -56,6 +56,9 @@ mod common;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_absolute_root.rs"]
 mod diff_absolute_root;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/diff_ambient_settings.rs"]
+mod diff_ambient_settings;
 #[path = "cli_smoke/diff_nothing_analyzed.rs"]
 mod diff_nothing_analyzed;
 #[cfg(feature = "lang-rust")]
@@ -161,6 +164,9 @@ mod python_unittest_selectors;
 mod qualified_owner_observation;
 #[path = "cli_smoke/recall_tradeoff.rs"]
 mod recall_tradeoff;
+#[cfg(unix)]
+#[path = "cli_smoke/receipt_legacy_nested.rs"]
+mod receipt_legacy_nested;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;

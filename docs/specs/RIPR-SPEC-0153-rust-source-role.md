@@ -105,11 +105,17 @@ the CLI reports. Other loose non-`src` files (panel subjects under
 `seeds_diff_probes` also consults module-tree evidence (#4435). A changed
 file seeds only when a Cargo target's module tree reaches it through
 `mod`, `#[path]` or literal `include!` edges, walked from every target
-root (a declared `[lib] path` replaces `src/lib.rs`). `autobins = false`
+root (a declared `[lib] path` replaces `src/lib.rs`). A `#[path]` file owns
+its directory, as in rustc: its `mod child;` resolves to `child.rs` or
+`child/mod.rs` beside it, never under its stem directory (#15877). `autobins = false`
 drops the undiscovered `src/main.rs` and `src/bin/*` roots, and
 `autolib = false` drops `src/lib.rs` unless a `[lib]` table remains; a
 path-less declaration keeps its default path, including edition 2015's
-`src/<name>.rs`, `src/main.rs` and `src/bin/main.rs` fallback (#15877). A
+`src/<name>.rs`, `src/main.rs` and `src/bin/main.rs` fallback (#15877).
+Edition 2015 (an explicit `"2015"` or no `edition` key) turns discovery of
+one kind off when the manifest declares any `[[bin]]`, `[[test]]`,
+`[[bench]]` or `[[example]]` of that kind and leaves its `auto*` key unset;
+an inherited edition keeps discovery on. A
 manifest that leaves no library or binary target (`autobins = false`, no
 `[[bin]]` or `[lib]`, no discoverable `src/lib.rs`) lets a completed walk of
 its test, bench and example roots judge the package. The modules of an
