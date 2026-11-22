@@ -60,13 +60,20 @@ alone:
   the changed call (if it does, the assertion may already notice the change,
   which the static read could not confirm; if not, assert the effect the call
   produces); for `match_arm`, whether the asserted value comes from the
-  changed arm (if it does, the same unconfirmed-observation sentence; if no
-  related input selects the arm, add one and assert the arm's exact value);
+  changed arm (if it does, the same unconfirmed-observation sentence; if an
+  input selects the arm but its result is replaced before the assertion,
+  assert that result where it is still observable or test the arm
+  separately; if no related input selects the arm, add one and assert the
+  arm's exact value);
   for `field_construction`, whether the asserted value includes the changed
   field (if it does, the same sentence; if not, assert that field's exact
   value). Each family states both branches so the reader is never left at a
   dead end. The step claims no observation and the class stays
-  `weakly_exposed`.
+  `weakly_exposed`. A related assertion that compares a value with a copy of
+  itself (`assert_eq!(b.0, b.0.clone())`, up to a trailing `.clone()`,
+  `.to_owned()`, `.to_vec()` or a leading borrow) never takes this step,
+  whatever strength the row carries: it cannot discriminate, so the family
+  template stands.
 - Only reach-establishing rows are eligible: the row's relation reason must
   establish reach to the changed owner
   (`RelationReason::establishes_reach`; `direct_owner_call`,
