@@ -3215,12 +3215,17 @@ mod tests {
             ));
         }
         // #12940: the error and the receipt name the same recovery routes,
-        // `ripr check` on the same base and a narrower diff, at the base the
-        // receipt recorded (this fixture has no Git, so the raw revision).
+        // `ripr check` on the same root and base over committed history, and a
+        // narrower diff, at the base the receipt recorded (this fixture has no
+        // Git, so the raw revision).
         let base = receipt["base_sha"].as_str().unwrap_or_default();
         let head = receipt["head_sha"].as_str().unwrap_or_default();
+        let check_root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.display().to_string()),
+        );
         let route = format!(
-            "run `ripr check --base {base} --json` at the head checkout ({head}) for findings \
+            "run `ripr check --root {check_root} --base {base} --committed --json` at the head \
+             checkout ({head}) for findings \
              without review guidance, or narrow --base/--head to a smaller diff; a larger \
              --timeout-ms restarts canonical_analysis from the beginning"
         );

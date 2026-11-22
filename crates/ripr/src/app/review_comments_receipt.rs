@@ -20,6 +20,10 @@ use std::time::Duration;
 /// Mutable review-comments run receipt with lifecycle orchestration.
 pub(crate) struct ReviewCommentsReceiptRun {
     receipt: ReviewCommentsRunReceipt,
+    /// Shell-ready absolute `--root` for the timeout recovery command. The
+    /// receipt's `root_identity` is a normalized identity, not a replayable
+    /// argument, so the analyzed directory is kept separately.
+    recovery_root: String,
 }
 
 impl Deref for ReviewCommentsReceiptRun {
@@ -68,7 +72,11 @@ impl ReviewCommentsReceiptRun {
         let base_sha = resolve_revision(root, base, remaining(resolve_started.elapsed()));
         let head_sha = resolve_revision(root, head, remaining(resolve_started.elapsed()));
         let reusable_cache_identity = reusable_cache_identity(&root_identity, &base_sha, &head_sha);
+        let recovery_root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.display().to_string()),
+        );
         Self {
+            recovery_root,
             receipt: ReviewCommentsRunReceipt {
                 schema_version: REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
                 status: "in_progress",
@@ -127,16 +135,21 @@ impl ReviewCommentsReceiptRun {
     /// A `canonical_analysis` timeout names the two routes that avoid paying
     /// for the same phase again (#12940): `ripr check` on the same base, which
     /// runs canonical analysis without the review-guidance second stage, and a
-    /// narrower diff. A larger timeout stays listed last because the phase
-    /// restarts from the beginning ([`CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM`]).
+    /// narrower diff. The check command pins the analyzed root (a member-scoped
+    /// run must not widen to the enclosing workspace) and `--committed` (a
+    /// dirty head checkout must not change the reviewed range). A larger
+    /// timeout stays listed last because the phase restarts from the
+    /// beginning ([`CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM`]).
     /// No claim is made that `ripr check` finishes inside the same budget.
     pub(crate) fn timeout_repair_route(&self, active_phase: &str) -> String {
         if active_phase == "canonical_analysis" {
             format!(
-                "run `ripr check --base {base} --json` at the head checkout ({head}) for \
-                 findings without review guidance, or narrow --base/--head to a smaller diff; \
-                 a larger --timeout-ms restarts canonical_analysis from the beginning",
-                base = self.receipt.base_sha,
+                "run `ripr check --root {root} --base {base} --committed --json` at the head \
+                 checkout ({head}) for findings without review guidance, or narrow \
+                 --base/--head to a smaller diff; a larger --timeout-ms restarts \
+                 canonical_analysis from the beginning",
+                root = self.recovery_root,
+                base = crate::agent::loop_commands::shell_arg(&self.receipt.base_sha),
                 head = self.receipt.head_sha,
             )
         } else {
@@ -458,8 +471,15 @@ mod tests {
         let route = value["limitations"][0]["repair_route"]
             .as_str()
             .ok_or("repair_route must be a string")?;
+        let root =
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &std::env::current_dir()
+                    .map_err(|err| err.to_string())?
+                    .display()
+                    .to_string(),
+            ));
         let check_route = format!(
-            "run `ripr check --base {} --json` at the head checkout ({})",
+            "run `ripr check --root {root} --base {} --committed --json` at the head checkout ({})",
             receipt.base_sha, receipt.head_sha
         );
         assert!(route.starts_with(&check_route), "{route}");
