@@ -1266,18 +1266,19 @@ fn classify_change_for_owner_inner<'a>(
     let guarded_arm_gap = (static_limit.is_none()
         && matches!(
             family,
-            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+            ProbeFamily::ReturnValue
+                | ProbeFamily::FieldConstruction
+                | ProbeFamily::Predicate
+                | ProbeFamily::SideEffect
+                | ProbeFamily::ErrorPath
         )
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
             owner_source.and_then(|source| {
-                if matches!(family, ProbeFamily::Predicate) {
-                    // #9184: a conditional expression (`a if c else b`) reads
-                    // as a predicate probe; only its unreached-arm reading
-                    // applies, never the return-value guard walk.
-                    return conditional_expression::python_conditional_expression_gap(
+                if matches!(family, ProbeFamily::Predicate)
+                    && let Some(gap) = conditional_expression::python_conditional_expression_gap(
                         owner,
                         source,
                         line,
@@ -1285,12 +1286,39 @@ fn classify_change_for_owner_inner<'a>(
                         old_line_text,
                         &related_candidates,
                         &focus,
-                    );
+                    )
+                {
+                    // #9184: a conditional expression (`a if c else b`) reads
+                    // as a predicate probe with its own unreached-arm reading.
+                    return Some(gap);
                 }
+                // The enclosing-guard walk asks whether the changed line runs
+                // at all, which does not depend on the line's shape: a local
+                // assignment, a call, or the continuation line of a wrapped
+                // call inside an arm no observed input enters is as
+                // unexecuted as a `return` there, and so is a `raise` whose
+                // message another arm's assertion happens to tell apart.
+                // Those shapes are read only in a function or method body.
+                // This is a conservative scope limit, not a repair: the rows
+                // bind that owner's parameters and a class or module body
+                // has none, and no observed case depends on the refusal.
+                if matches!(
+                    family,
+                    ProbeFamily::Predicate | ProbeFamily::SideEffect | ProbeFamily::ErrorPath
+                ) && owner.owner_kind.is_none()
+                {
+                    return None;
+                }
+                // A continuation line is nested where its statement opens,
+                // not where it is indented.
+                let statement_line = no_behavior
+                    .brackets
+                    .span
+                    .map_or(line, |(open, _)| open.min(line));
                 guard_activation::python_guarded_arm_gap(
                     owner,
                     source,
-                    line,
+                    statement_line,
                     &related_candidates,
                     &focus,
                 )

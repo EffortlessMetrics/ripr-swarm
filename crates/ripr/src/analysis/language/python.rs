@@ -2652,6 +2652,9 @@ mod nested_result_tests;
 mod guard_atoms_tests;
 
 #[cfg(test)]
+mod guarded_statement_tests;
+
+#[cfg(test)]
 mod conditional_expression_tests;
 
 #[cfg(test)]

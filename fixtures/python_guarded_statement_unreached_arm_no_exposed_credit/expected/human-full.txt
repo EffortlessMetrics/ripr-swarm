@@ -1,0 +1,88 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_guarded_statement_unreached_arm_no_exposed_credit/input
+config: <cwd>/fixtures/python_guarded_statement_unreached_arm_no_exposed_credit/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/lib.py:9
+  id: probe:src_lib.py:python_preview:493ba25b
+
+Changed
+  after:          m = 2 * months
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  python:src/lib.py::humanize
+  gap id (for scripts): gap:python:src/lib.py:humanize:predicate_boundary:predicate:m=2*months
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `humanize`
+  - infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input
+  - propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches unknown sink: m = 2 * months (line 9) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test tests/test_lib.py:4 test_just_now uses strong exact value oracle: assert humanize(1, 0) == "just now"
+  - source function argument value diff = 1 at line 5
+  - source function argument value months = 0 at line 5
+
+Weakness
+  - A strong Python oracle reaches `humanize`, but static evidence does not place a related test input inside the guarding arm `months >= 1 and diff < 1000`; every observed input leaves the changed line unexecuted. Add a test input that satisfies the guarding condition
+  - missing discriminator months >= 1 and diff < 1000: no strong related test input satisfies `months >= 1 and diff < 1000`; the changed line never executes under an observed input
+
+Next step
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `months >= 1 and diff < 1000`
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/lib.py:humanize:predicate_boundary:predicate:m=2*months
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: humanize
+  changed behavior: predicate_boundary changed at src/lib.py:9: `m = 2 * months`
+  current test evidence: tests/test_lib.py:4 test_just_now currently has oracle_strength=strong, oracle_kind=exact_value: assert humanize(1, 0) == "just now"
+  missing discriminator: months >= 1 and diff < 1000
+  recommended test shape: Strengthen the existing pytest boundary assertion for `months >= 1 and diff < 1000`.
+  suggested assertion: Assert the owner result or effect at the boundary `months >= 1 and diff < 1000`.
+  suggested file: tests/test_lib.py
+  suggested test: test_just_now
+  pytest node: tests/test_lib.py::test_just_now
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_guarded_statement_unreached_arm_no_exposed_credit/input && python -m pytest tests/test_lib.py::test_just_now) (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/python_guarded_statement_unreached_arm_no_exposed_credit/input --diff <cwd>/fixtures/python_guarded_statement_unreached_arm_no_exposed_credit/diff.patch --mode fast probe:src_lib.py:python_preview:493ba25b
+  ripr context --root <cwd>/fixtures/python_guarded_statement_unreached_arm_no_exposed_credit/input --diff <cwd>/fixtures/python_guarded_statement_unreached_arm_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.py:python_preview:493ba25b
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
