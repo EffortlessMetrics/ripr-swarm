@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_variant_wrapper_foreign_pin/input
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 2 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 1 no test path. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -13,10 +13,9 @@ Start here:
   File: ./src/lib.rs:39
   Static exposure: no path (severity: warning, confidence 0.43)
   Why no path: no related test was found that reaches this change
-  Gap ID (for scripts): gap:rust:src/lib.rs:parse_summary:error_variant:error_path:try_parse_summary_raw_.map_err_into_into
+  Gap ID (for scripts): gap:rust:src/lib.rs:parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
-  Analyzer limit: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
-  Related test (1 of 2 matched rows): tests/errors.rs:4 try_parse_summary_with_foreign_pin (no established call path to the changed code; linked by name only)
+  Related test: tests/errors.rs:4 try_parse_summary_with_foreign_pin (asserts, but not on the changed value)
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
@@ -34,24 +33,18 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_with_foreign_pin (unreferenced in workspace)
     - infection no: No test reaches the changed owner, so no test can activate this change
-    - 7 more detail line(s) in --format human-full
+    - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)
-  ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec
-  ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:error_path:edac60ec
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that observes the changed error variant; follow the Next step above, then rerun `ripr check`
+  ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:call_deletion:07741fa8
+  ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:07741fa8
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: producer-owned test symbol; direct owner relationship; a way to follow the changed value to something a test can check; follow the Next step above, then rerun `ripr check`
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:39 (no path); kind: call_deletion; reason: No relevant oracle was detected
+    - ./src/lib.rs:39 (weak); kind: error_path; reason: The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically…
   Hidden classes:
-    no path = no test path was found
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
-Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
-  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 1 statically linked related
-  test(s). This is not a coverage assessment. A test may already exercise these changes through
-  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
-  none does, add co-located tests that observe the changed behavior.

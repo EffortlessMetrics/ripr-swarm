@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/error_variant_wrapper_foreign_pin/input
 
-Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
   only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
   no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
@@ -58,34 +58,37 @@ Change type
   family: error_path
   delta:  value (changes a computed value)
   owner:  src/lib.rs::parse_summary
-  gap id (for scripts): gap:rust:src/lib.rs:parse_summary:error_variant:error_path:try_parse_summary_raw_.map_err_into_into
 
 Static exposure
-  no_static_path (warning, confidence 0.43)
+  weakly_exposed (warning, confidence 0.66)
 
 Evidence
-  - reach no: No test is seen calling parse_summary; tests share only its file or a name token: try_parse_summary_with_foreign_pin (unreferenced in workspace)
-  - infection no: No test reaches the changed owner, so no test can activate this change
+  - reach weak: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): try_parse_summary_with_foreign_pin
+  - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches error variant: try_parse_summary(raw).map_err(Into::into)
-  - observation no: No test reaches the changed owner, so no test can observe this change
-  - discriminator no: No test reaches the changed owner, so no test can discriminate this change
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches error variant: try_parse_summary(raw).map_err(Into::into) (line 39)
-  - related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses weak broad error oracle: if !matches!(result, Err(_)) { return Err("callee should fail closed".into()); }; misses: no established call path to the changed code; linked by name only
-  - related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: if !matches!(other, Err(OtherError::MalformedSource)) { return Err("foreign pin should observe OtherError::MalformedSource".into()); }; misses
+  - related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses weak broad error oracle: if !matches!(result, Err(_)) { return Err("callee should fail closed".into()); }; misses: assertion too weak to tell the old behavior from the new
+  - related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: if !matches!(other, Err(OtherError::MalformedSource)) { return Err("foreign pin should observe OtherError::MalformedSource".into()); }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source enum variant value OtherError::MalformedSource at line 10
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
 
+Static limitation
+  wrapper_error_binding_unresolved — The changed line converts a callee's error through a boxed wrapper (`map_err(Into::into)`), so whether the wrapper faithfully carries the callee's error variant is not statically established; ripr cannot credit a downcast witness to this conversion.
+  Next: Assert the specific error variant the callee returns (`matches!` or a `match` arm), not only that an error occurred.
+
+Limitation detail
+  last established edge: changed wrapper conversion maps the converted callee's error into the boxed error channel
+  first unresolved edge: whether `Into`/`From` through `Box<dyn Error>` carries the callee's error variant to the wrapper's callers
+  analyzer route: analysis/wrapper-error-binding
+  non-claim: named analyzer limitation only; ripr does not confirm coverage or prescribe a repair test
+
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
+  Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec
   ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:error_path:edac60ec
-
-Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
-  analyzed: 1 changed Rust file(s), 2 changed expression(s), and 1 statically linked related
-  test(s). This is not a coverage assessment. A test may already exercise these changes through
-  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
-  none does, add co-located tests that observe the changed behavior.
