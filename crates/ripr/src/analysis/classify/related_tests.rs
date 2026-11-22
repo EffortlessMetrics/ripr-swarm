@@ -6306,6 +6306,55 @@ pub(in crate::analysis) fn call_site_in_let_closure(masked: &str, at: usize) -> 
         || (initializer.starts_with('|') && initializer[1..].contains('|'))
 }
 
+/// The innermost macro invocation whose delimiters enclose byte `at`, if any.
+fn enclosing_macro_name(masked: &str, at: usize) -> Option<String> {
+    let bytes = masked.as_bytes();
+    let mut stack: Vec<Option<String>> = Vec::new();
+    let mut index = 0usize;
+    while index < at.min(bytes.len()) {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => {
+                let before = masked[..index].trim_end();
+                let name = before.strip_suffix('!').and_then(|head| {
+                    let head = head.trim_end();
+                    let start = head
+                        .rfind(|ch: char| !(ch == '_' || unicode_ident::is_xid_continue(ch)))
+                        .map_or(0, |i| i + 1);
+                    let name = &head[start..];
+                    (!name.is_empty()).then(|| name.to_string())
+                });
+                stack.push(name);
+            }
+            b')' | b']' | b'}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    stack.into_iter().rev().flatten().next()
+}
+
+/// Whether the call of `method` at byte `at` of `masked` sits inside a macro
+/// invocation whose tokens are not evaluated (`stringify!`, `quote!`). Only
+/// the operands of the evaluating assertion macros are executable call sites;
+/// every other macro is treated as opaque, the same fail-closed stance the
+/// grip evidence takes for a macro around an owner call (#13041 review).
+pub(in crate::analysis) fn call_site_in_discarded_macro(masked: &str, at: usize) -> bool {
+    let Some(name) = enclosing_macro_name(masked, at) else {
+        return false;
+    };
+    !matches!(
+        name.as_str(),
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+    )
+}
+
 /// Whether the call of `method` spelled at byte `at` of `text` resolves its
 /// receiver (or its trait-qualified first argument) to `impl_type`, as
 /// [`text_resolves_method_to_type`] reads one site.

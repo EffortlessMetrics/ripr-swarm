@@ -4283,25 +4283,34 @@ fn blanket_impl_type_param(header: &str) -> Option<String> {
 /// Whether a captured call is `self.method(..)` rather than another receiver.
 fn self_method_call(text: &str, method: &str) -> bool {
     text.match_indices("self").any(|(start, keyword)| {
-        // `self` must be a whole identifier: not `myself` or `itself`.
-        let starts_identifier = text
-            .as_bytes()
-            .get(..start)
-            .and_then(|before| before.last())
-            .is_none_or(|byte| !is_ascii_ident_byte(*byte));
-        let Some(rest) = text.get(start + keyword.len()..) else {
+        // `self` must be a whole identifier: not `myself`, `itself`, or a
+        // Unicode identifier that ends in `self` (#13041 review).
+        let starts_identifier = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch == '_' || unicode_ident::is_xid_continue(ch)));
+        let after_self = start + keyword.len();
+        let rest = &text[after_self..];
+        let after_ws = after_self + (rest.len() - rest.trim_start().len());
+        if text.as_bytes().get(after_ws) != Some(&b'.') {
             return false;
-        };
-        let Some(rest) = rest.trim_start().strip_prefix('.') else {
-            return false;
-        };
-        let Some(rest) = rest.trim_start().strip_prefix(method) else {
+        }
+        let after_dot = after_ws + 1;
+        let rest = &text[after_dot..];
+        let method_at = after_dot + (rest.len() - rest.trim_start().len());
+        let Some(rest) = text[method_at..].strip_prefix(method) else {
             return false;
         };
         // The method name is a whole identifier followed by a call (or a
         // turbofish call), not a longer name or a field read.
         let rest = rest.trim_start();
-        starts_identifier && (rest.starts_with('(') || rest.starts_with("::"))
+        starts_identifier
+            && (rest.starts_with('(') || rest.starts_with("::"))
+            // A call inside a closure the entry never runs, or inside a macro
+            // that discards its tokens, is not an executable call site
+            // (#13041 review).
+            && !super::related_tests::call_site_in_let_closure(text, method_at)
+            && !super::related_tests::call_site_in_discarded_macro(text, method_at)
     })
 }
 
@@ -4563,7 +4572,11 @@ fn blanket_impl_entry_reaches_owner<'f>(
     owner: &FunctionSummary,
     functions: impl Iterator<Item = &'f FunctionSummary> + Clone,
 ) -> bool {
-    blanket_impl_body_calls_self_method(entry, owner.name.as_str())
+    // The cheap structural rejection runs first: masking every function body
+    // before the header check made the scan O(tests x functions x body size)
+    // (#13041 review).
+    blanket_impl_header(entry).is_some_and(|header| blanket_impl_type_param(&header).is_some())
+        && blanket_impl_body_calls_self_method(entry, owner.name.as_str())
         && blanket_trait_binding_established(entry, owner, functions)
 }
 
@@ -4583,7 +4596,12 @@ pub(in crate::analysis) fn blanket_proxy_call_names_by_owner(
             continue;
         }
         for call in calls_of(entry) {
-            if self_method_call(&call.text, &call.name) {
+            // Read the whole masked body, the same receiver check the reach
+            // predicate uses: a call fact's text is only its source line, so a
+            // `self` receiver split across lines would be missed here and the
+            // prefilter would drop a relation the full scan accepts
+            // (#13041 review).
+            if blanket_impl_body_calls_self_method(entry, &call.name) {
                 by_owner
                     .entry(call.name.clone())
                     .or_default()
@@ -4634,11 +4652,17 @@ pub(in crate::analysis) fn test_reaches_trait_owner_through_blanket_impl(
                     .and_then(header_trait_path)
                     .and_then(|path| bare_trait_name(&path).map(str::to_string));
                 entry_trait.is_some_and(|entry_trait| {
-                    // A call inside a closure the test never runs is not an
-                    // executable call site (#13041 review).
-                    let executable_call =
-                        super::related_tests::method_call_sites(&masked, entry.name.as_str())
-                            .any(|at| !super::related_tests::call_site_in_let_closure(&masked, at));
+                    // A call inside a closure the test never runs, or inside a
+                    // macro that discards its tokens, is not an executable
+                    // call site (#13041 review).
+                    let executable_call = super::related_tests::method_call_sites(
+                        &masked,
+                        entry.name.as_str(),
+                    )
+                    .any(|at| {
+                        !super::related_tests::call_site_in_let_closure(&masked, at)
+                            && !super::related_tests::call_site_in_discarded_macro(&masked, at)
+                    });
                     executable_call
                         && super::related_tests::method_call_resolves_to_impl_type_and_trait_in(
                             test,
@@ -7968,6 +7992,9 @@ fn real() {}
         // Another receiver is not a self call.
         entry.body = "fn to_text(&self) -> String {\n    other.render()\n}".into();
         assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
+        // A call inside a macro that discards its tokens is not a self call.
+        entry.body = "fn to_text(&self) -> String {\n    stringify!(self.render())\n}".into();
+        assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
     }
 
     #[test]
@@ -8000,6 +8027,44 @@ fn real() {}
             vec![test.clone()],
         );
         assert!(test_reaches_trait_owner_through_blanket_impl(
+            &test,
+            &render_f64,
+            &index,
+        ));
+    }
+
+    /// A call inside `stringify!` is discarded tokens, not an executed call:
+    /// the same blanket hop must not read as reach (#13041 review).
+    #[test]
+    fn a_call_inside_stringify_does_not_establish_blanket_reach() {
+        let render_f64 = make_impl_fn(
+            "render",
+            "impl Render for f64",
+            vec![("is_sign_negative", "self.is_sign_negative()")],
+        );
+        let to_text_blanket = make_impl_fn(
+            "to_text",
+            "impl <T: Render> ToText for T",
+            vec![("render", "self.render()")],
+        );
+        let mut test = make_test("negative_zero", vec!["to_text"]);
+        test.body = "let _ = stringify!((-0.0f64).to_text()); assert_eq!(1, 1);".into();
+        test.calls = vec![CallFact {
+            line: 1,
+            name: "to_text".to_string(),
+            text: "(-0.0f64).to_text()".into(),
+        }]
+        .into();
+        let index = index_with(
+            vec![
+                render_f64.clone(),
+                to_text_blanket,
+                trait_decl("render", "Render"),
+                trait_decl("to_text", "ToText"),
+            ],
+            vec![test.clone()],
+        );
+        assert!(!test_reaches_trait_owner_through_blanket_impl(
             &test,
             &render_f64,
             &index,
@@ -8111,10 +8176,17 @@ fn real() {}
         assert!(self_method_call("let y = (self . render ())", "render"));
         assert!(!self_method_call("itself.render()", "render"));
         assert!(!self_method_call("myself.render()", "render"));
+        // A Unicode identifier that ends in `self` is not the receiver.
+        assert!(!self_method_call("αself.render()", "render"));
         assert!(!self_method_call("other.render()", "render"));
         // A longer method name or a field read is not the call.
         assert!(!self_method_call("self.render_all()", "render"));
         assert!(!self_method_call("self.render", "render"));
+        // A closure the entry never runs is not an executable call.
+        assert!(!self_method_call(
+            "let unused = || self.render(); String::new()",
+            "render"
+        ));
         // A later genuine `self.render()` still counts after a false match.
         assert!(self_method_call(
             "myself.render() + self.render()",
@@ -8195,14 +8267,33 @@ fn real() {}
             "impl <T: Render> ToFree for T",
             vec![("render", "render(self)")],
         );
+        // A blanket impl whose `self` receiver is split across lines: the call
+        // fact's text is only the `.render()` line, so the map must read the
+        // whole body like the reach predicate does (#13041 review).
+        let split_receiver = make_impl_fn(
+            "to_split",
+            "impl <T: Render> ToSplit for T",
+            vec![("render", "self\n    .render()")],
+        );
         let index = index_with(
-            vec![render_f64, to_text, to_label, concrete, free_call],
+            vec![
+                render_f64,
+                to_text,
+                to_label,
+                concrete,
+                free_call,
+                split_receiver,
+            ],
             Vec::new(),
         );
         let map = blanket_proxy_call_names_by_owner(&index);
         assert_eq!(
             map.get("render"),
-            Some(&vec!["to_label".to_string(), "to_text".to_string()]),
+            Some(&vec![
+                "to_label".to_string(),
+                "to_split".to_string(),
+                "to_text".to_string()
+            ]),
             "{map:?}"
         );
         assert!(!map.contains_key("render_inner"), "{map:?}");
