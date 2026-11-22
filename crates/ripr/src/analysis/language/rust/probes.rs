@@ -15,6 +15,8 @@ use crate::analysis::probes::{
 };
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
+mod mask_memo;
+
 /// RIPR-SPEC-0369: a changed line inside a `verus! { .. }` token tree is Verus
 /// syntax, not Rust. The probe seeder already emits one `static_unknown` probe
 /// per region; this names the limitation. It never changes the class, so the
@@ -538,7 +540,15 @@ fn contains_identifier_token(text: &str, ident: &str) -> bool {
         .any(|token| token == ident)
 }
 
+/// `text` with Rust comments and string literals blanked, every byte offset
+/// and newline kept. Answered through a per-thread memo of recent long
+/// texts: every seam of an owner masks the same owner body (#15189).
 pub(crate) fn mask_rust_comments_and_strings(text: &str) -> String {
+    mask_memo::masked(text, scan_rust_comments_and_strings)
+}
+
+/// The uncached masking pass behind [`mask_rust_comments_and_strings`].
+fn scan_rust_comments_and_strings(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut masked = bytes.to_vec();
     let mut index = 0usize;

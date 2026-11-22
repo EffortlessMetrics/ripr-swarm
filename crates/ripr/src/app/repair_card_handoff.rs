@@ -484,9 +484,17 @@ pub(crate) fn assemble_repair_card(
     // blocked by missing/static evidence has no edit to admit; retain that
     // more relevant diagnosis instead of replacing it with a cage error.
     let edit_cage_refusal = if readiness.is_repair_ready() {
-        super::repair_attempt::edit_cage_policy_from_packet(
+        // The card has no workspace root. A manifest-declared test target
+        // is admitted on the producer's recorded answer (#15910); the
+        // attempt's own gate reads the manifest before it builds a cage.
+        // The projection spells the file as stable path text and the cage
+        // asks about the decoded native name, so decode before comparing.
+        let declared = crate::output::agent_seam_packets::declared_test_target_file(entry)
+            .map(|file| crate::analysis::decode_stable_path_text(&file));
+        super::repair_attempt::edit_cage_policy_from_packet_with(
             facts.packet_json,
             entry.seam.id().as_str(),
+            &|path| declared.as_deref() == Some(Path::new(path)),
         )
         .err()
     } else {

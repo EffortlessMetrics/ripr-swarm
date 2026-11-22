@@ -253,7 +253,9 @@ impl McpServer {
             "limit",
             crate::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
         )?;
-        let file = optional_nonempty_string_argument(&arguments, "file")?;
+        let file = optional_nonempty_string_argument(&arguments, "file")?
+            .map(|file| workspace_relative_file_filter(file, self.analysis_root.as_deref()))
+            .transpose()?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
         // An unknown class token would narrow to an empty page that reads like
         // "no such gaps"; name the vocabulary instead (a typo like `weak`).
@@ -856,11 +858,105 @@ fn optional_string_argument(
     match arguments.get(name) {
         None => Ok(None),
         Some(Value::String(value)) => Ok(Some(value.clone())),
-        Some(_other) => Err(ErrorData::invalid_params(
-            format!("{name} must be a string"),
+        Some(other) => Err(ErrorData::invalid_params(
+            wrong_type_message(name, "a string", other),
             Some(serde_json::json!({ "argument": name, "expected": "string" })),
         )),
     }
+}
+
+/// The refusal sentence for a wrongly typed optional argument. Optional
+/// arguments are omittable, not nullable (#7314), and a client that fills
+/// every schema property sends `null` for the ones it has no value for, so the
+/// null refusal names the fix: leave the argument out.
+fn wrong_type_message(name: &str, expected: &str, value: &Value) -> String {
+    if value.is_null() {
+        format!("{name} must be {expected}, not null; omit {name} to use its default")
+    } else {
+        format!("{name} must be {expected}")
+    }
+}
+
+/// The `file` filter as the workspace-relative path items are keyed by.
+///
+/// Items carry paths relative to the repository root, while an agent usually
+/// holds the absolute path its editor or shell gave it. An absolute filter
+/// can never equal, prefix or suffix a relative item path, so it used to
+/// narrow to an empty page that reads like "no gaps in that file". An
+/// absolute path under this workspace root is rewritten to its relative form
+/// (lexically first, then on Unix through the filesystem so a symlinked
+/// spelling of the canonical root still resolves); any other absolute path is refused
+/// with the form to send. The refusal is the same whether or not the path
+/// exists and never echoes a host path.
+fn workspace_relative_file_filter(
+    file: String,
+    root: Option<&std::path::Path>,
+) -> Result<String, ErrorData> {
+    let path = std::path::Path::new(&file);
+    if !path.is_absolute() {
+        return Ok(file);
+    }
+    let refuse = |message: &str| {
+        ErrorData::invalid_params(
+            message.to_string(),
+            Some(serde_json::json!({
+                "argument": "file",
+                "expected": "path relative to the repository root",
+            })),
+        )
+    };
+    let relative = root.and_then(|root| {
+        path.strip_prefix(root)
+            .map(std::path::Path::to_path_buf)
+            .ok()
+            .or_else(|| resolved_below_root(path, root))
+    });
+    // A `..` segment could leave the root again and nothing resolves it here,
+    // so only plain segments below the root count as inside.
+    let relative = relative.filter(|relative| {
+        relative.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    });
+    // Item paths are rendered by the shared stable-path owner (which escapes
+    // a literal `%`), so the filter takes the same rendering to match them.
+    let segments = relative.map(|relative| {
+        crate::analysis::stable_path_text(&relative)
+            .split('/')
+            .filter(|segment| !segment.is_empty() && *segment != ".")
+            .map(str::to_owned)
+            .collect::<Vec<String>>()
+    });
+    match segments {
+        None => Err(refuse(
+            "file is an absolute path that does not resolve below this workspace root; send it relative to the repository root, for example \"src/lib.rs\", or omit file",
+        )),
+        Some(segments) if segments.is_empty() => Err(refuse(
+            "file names the workspace root itself, which narrows nothing; omit file to list every item",
+        )),
+        Some(segments) => Ok(segments.join("/")),
+    }
+}
+
+/// The filesystem spelling of `path` below `root`, for a root reached through
+/// a symlink (macOS `/tmp`). Unix only: on Windows resolving a caller-supplied
+/// path could contact a UNC share before containment is known, so an absolute
+/// filter there is matched lexically or refused.
+#[cfg(unix)]
+fn resolved_below_root(path: &std::path::Path, root: &std::path::Path) -> Option<PathBuf> {
+    let resolved = std::fs::canonicalize(path).ok()?;
+    resolved
+        .strip_prefix(root)
+        .map(std::path::Path::to_path_buf)
+        .ok()
+}
+
+#[cfg(not(unix))]
+fn resolved_below_root(_path: &std::path::Path, _root: &std::path::Path) -> Option<PathBuf> {
+    None
 }
 
 /// The source an omitted `ripr_refresh` `source` selects (#13096): the same
@@ -940,8 +1036,8 @@ fn optional_bool_argument(
     match arguments.get(name) {
         None => Ok(None),
         Some(Value::Bool(value)) => Ok(Some(*value)),
-        Some(_other) => Err(ErrorData::invalid_params(
-            format!("{name} must be a boolean"),
+        Some(other) => Err(ErrorData::invalid_params(
+            wrong_type_message(name, "a boolean", other),
             Some(serde_json::json!({ "argument": name, "expected": "boolean" })),
         )),
     }
@@ -1228,7 +1324,18 @@ fn required_string_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<String, ErrorData> {
-    let value = optional_string_argument(arguments, name)?;
+    // A required argument has no default to fall back to, so its wrong-type
+    // refusal never borrows the optional parser's "omit it" sentence.
+    let value = match arguments.as_ref().and_then(|arguments| arguments.get(name)) {
+        None => None,
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(_other) => {
+            return Err(ErrorData::invalid_params(
+                format!("{name} must be a string"),
+                Some(serde_json::json!({ "argument": name, "expected": "string" })),
+            ));
+        }
+    };
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
         ErrorData::invalid_params(
             format!("{name} is required and must be a non-empty string"),

@@ -40,7 +40,13 @@ checkout can carry one. Every `ripr` git call therefore:
   keeps working. A driver defined only in the repository, such as one from
   `git lfs install --local`, does not run during `ripr` reads, so files it
   filters can show as modified to `ripr`. A repository-defined driver whose
-  name contains `=` cannot be reset, and `ripr` refuses to run git there.
+  name contains `=` cannot be reset, and `ripr` refuses to run git there;
+- passes `--ignore-submodules=dirty` on every diff and status call, so git
+  compares a populated submodule's checked-out commit with the recorded
+  pointer but never examines that submodule's working tree. No git process
+  runs inside a submodule, so programs that the submodule's own configuration
+  names (such as its filter drivers) do not run. Uncommitted edits inside a
+  submodule are therefore not reported; a moved submodule commit still is.
 
 `ripr` also asks Cargo for resolved workspace metadata when it checks the
 identity of a few audited dependencies (such as `serde_json` or `anyhow`).
@@ -53,11 +59,9 @@ configuration) sets `build.rustc`, `build.rustc-wrapper`,
 `TMPDIR`, `RUST_BACKTRACE`, `RUST_LOG`, `RUST_MIN_STACK` or `RUST_TEST_THREADS`.
 A refusal only withholds credit that depends on that identity.
 
-Not covered: a populated submodule is examined by its own `git status`
-child, which reads that submodule's configuration, and its repository-defined
-filter drivers are not reset. Programs that the analyzed project's own build
-or test tooling runs when you ask `ripr` to execute tests are also outside
-these pins. Treat a tree from an untrusted source accordingly.
+Not covered: programs that the analyzed project's own build or test tooling
+runs when you ask `ripr` to execute tests are outside these pins. Treat a
+tree from an untrusted source accordingly.
 
 ## Reporting A Vulnerability
 
