@@ -37,8 +37,9 @@ pub fn python_pytest_verify_display_for(
 }
 
 /// The Python producer's `unittest` display for `qualified` in the file at
-/// `path`. Returns `None` when the path holds a literal dot, since `unittest`
-/// would read it as a module separator and could select a different file.
+/// `path`. Returns `None` when the path, once a trailing `.py` is removed,
+/// still holds a dot, since `unittest` would read it as a module separator and
+/// could select a different file.
 pub fn python_unittest_verify_display(
     path: &str,
     qualified: &str,
@@ -201,8 +202,8 @@ pub struct CommandSpec {
     pub cost_class: CommandCostClass,
     /// Platforms the route supports; must be non-empty.
     pub platforms: Vec<CommandPlatform>,
-    /// The human display string, at most 512 characters. Never execution
-    /// authority. Serialized as `human_display`.
+    /// The human display string: not blank, no NUL, at most 512 characters.
+    /// Never execution authority. Serialized as `human_display`.
     #[serde(rename = "human_display", alias = "display")]
     pub display: String,
     /// The authority the route is limited to; must match `role`.
@@ -280,7 +281,9 @@ pub enum NetworkPolicy {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentPolicy {
-    /// `clean`: start from an empty environment.
+    /// `clean`: start from an empty environment. An executor may still pass a
+    /// disclosed floor of platform variables such as `PATH`; `ripr`'s own
+    /// verifier does.
     Clean,
     /// `declared`: use only the declared variables.
     Declared,
