@@ -288,7 +288,9 @@ official SDK transport:
     base, and without a route the agent reads `not_analyzed` and stops. The
     object carries `why` (the shared saved-worktree cause sentence) and
     `pass_base` (retry `ripr_refresh` with `base` set to a commit before the
-    production change, for example `{"base": "HEAD~1"}`). It is omitted for a
+    production change and the worktree source kept, for example
+    `{"source": "worktree", "base": "HEAD~1"}`; an omitted `source` could
+    select committed input on a checkout with no tracked edits). It is omitted for a
     committed-source snapshot, for `no_scope` and `no_changed_lines`, and for
     any snapshot with items. Like the committed hint it
     is a named suggestion: the server does not detect which commit holds the

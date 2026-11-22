@@ -145,8 +145,11 @@ impl AnalysisOutcomeKind {
     /// #13096 worktree leg: a saved worktree diff with changed lines but no
     /// behavior candidate is most often a tests-only edit made after the
     /// production change was committed onto the base. The route names the
-    /// base retry; the server never infers the base.
-    pub(crate) const EMPTY_SCOPE_MCP_WORKTREE_BASE_RETRY_ROUTE: &str = "if the base already includes the production change (for example only tests changed after it), retry ripr_refresh with `base` set to a commit before that change, for example {\"base\": \"HEAD~1\"}; the server does not infer this base";
+    /// base retry and keeps `source: "worktree"`: with `source` omitted, a
+    /// checkout with no tracked edits would select committed input and
+    /// change what the snapshot's repair cards are bound to. The server
+    /// never infers the base.
+    pub(crate) const EMPTY_SCOPE_MCP_WORKTREE_BASE_RETRY_ROUTE: &str = "if the base already includes the production change (for example only tests changed after it), retry ripr_refresh with the same worktree source and `base` set to a commit before that change, for example {\"source\": \"worktree\", \"base\": \"HEAD~1\"}; the server does not infer this base";
 
     /// #13096: the default-base-resolved-to-analyzed-commit causes exclude
     /// `no_behavioral_candidates`, whose diff was non-empty.
@@ -994,7 +997,7 @@ mod tests {
         );
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_WORKTREE_BASE_RETRY_ROUTE,
-            "if the base already includes the production change (for example only tests changed after it), retry ripr_refresh with `base` set to a commit before that change, for example {\"base\": \"HEAD~1\"}; the server does not infer this base"
+            "if the base already includes the production change (for example only tests changed after it), retry ripr_refresh with the same worktree source and `base` set to a commit before that change, for example {\"source\": \"worktree\", \"base\": \"HEAD~1\"}; the server does not infer this base"
         );
         assert_eq!(
             AnalysisOutcomeKind::EMPTY_SCOPE_MCP_SOURCE_RETRY_ROUTE,
