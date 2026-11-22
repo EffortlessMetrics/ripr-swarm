@@ -868,7 +868,12 @@ fn early_exit_conditions(
         };
         let mut body: Vec<&str> = Vec::new();
         let mut chain_continues = false;
-        for line in &lines[index + 1..] {
+        for (offset, line) in lines[index + 1..].iter().enumerate() {
+            if in_string.get(index + 1 + offset).copied().unwrap_or(false) {
+                // String text is not a statement: a closing line that reads
+                // `return ..."""` neither ends the body nor exits it.
+                continue;
+            }
             let t = line.trim();
             if t.is_empty() || t.starts_with('#') {
                 continue;
@@ -1151,6 +1156,22 @@ pub(super) fn line_rebinds_parameter(line: &str, name: &str) -> bool {
         // ..`, `[total, other] = ..`, `total, other = ..`. Refuse when the
         // line is an assignment.
         if rest.starts_with(',') && line_is_assignment(line) {
+            return true;
+        }
+        // The last target of a bracketed list is followed by its closer
+        // before the operator or the next target: `(other, total) = ..`,
+        // `[other, total] = ..`, `(a, (b, total)), c = ..`. A call argument
+        // on an assignment line (`x = f(g(total), 1)`) over-refuses, which is
+        // the safe fail-open direction.
+        let closed =
+            rest.trim_start_matches(|ch: char| matches!(ch, ')' | ']') || ch.is_whitespace());
+        if closed.len() != rest.len()
+            && (closed.starts_with(',')
+                || closed
+                    .strip_prefix('=')
+                    .is_some_and(|after| !after.starts_with('=')))
+            && line_is_assignment(line)
+        {
             return true;
         }
     }

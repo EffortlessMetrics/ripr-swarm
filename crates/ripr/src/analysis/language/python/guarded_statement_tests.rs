@@ -216,8 +216,10 @@ const CLASS_BODY_TESTS: &str = concat!(
     "    assert Tracker(False).value() == \"X\"\n",
 );
 
-/// Scope control: the gate is not read for a class-body statement, so a
-/// constructor argument named like a module global never excludes the row.
+/// Behavior pin, not a control of the owner-kind refusal: a class-body
+/// statement under a module-global guard is not gated, and a constructor
+/// argument named like that global does not exclude the row. This holds with
+/// the refusal removed too, so it does not show the refusal is needed.
 #[test]
 fn class_body_statement_under_a_module_guard_is_not_gated() -> Result<(), String> {
     let line = 10;
@@ -235,5 +237,139 @@ fn class_body_statement_under_a_module_guard_is_not_gated() -> Result<(), String
         "{:?}",
         finding.missing
     );
+    Ok(())
+}
+
+/// A guard parameter rebound as the last target of a bracketed list.
+const BRACKET_REBIND_PY: &str = concat!(
+    "def scale(n, flag):\n",
+    "    (unit, n) = (flag, 5)\n",
+    "    if n > 3:\n",
+    "        m = 2 * unit\n",
+    "        return m\n",
+    "    return 0\n",
+);
+
+const BRACKET_REBIND_TESTS: &str = concat!(
+    "from src.subject import scale\n",
+    "\n",
+    "\n",
+    "def test_scale():\n",
+    "    assert scale(1, 4) == 8\n",
+);
+
+/// The call passes `n = 1`, which fails `n > 3` as written, but the body
+/// rebinds `n` to 5 first, so the arm runs and the test pins it. The guard
+/// must not be evaluated against the call-time argument.
+#[test]
+fn bracketed_rebind_of_a_guard_parameter_fails_open() -> Result<(), String> {
+    let line = 4;
+    assert_eq!(
+        BRACKET_REBIND_PY.lines().nth(1).map(str::trim),
+        Some("(unit, n) = (flag, 5)")
+    );
+    assert_eq!(
+        BRACKET_REBIND_PY.lines().nth(line - 1).map(str::trim),
+        Some("m = 2 * unit")
+    );
+    let findings = analyze(
+        "bracket-rebind",
+        BRACKET_REBIND_PY,
+        BRACKET_REBIND_TESTS,
+        &[line],
+    )?;
+    let finding = finding_on(&findings, line)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// The `if` body ends in a multi-line string whose closing line reads like a
+/// `return`. It is string text, so the body does not exit.
+const STRING_EXIT_PY: &str = concat!(
+    "NOTES = []\n",
+    "\n",
+    "\n",
+    "def tally(n):\n",
+    "    if n < 10:\n",
+    "        NOTES.append(\"\"\"small\n",
+    "        return early\"\"\")\n",
+    "    total = n * 3\n",
+    "    return total\n",
+);
+
+const STRING_EXIT_TESTS: &str = concat!(
+    "from src.subject import tally\n",
+    "\n",
+    "\n",
+    "def test_tally():\n",
+    "    assert tally(2) == 6\n",
+);
+
+#[test]
+fn string_text_that_reads_like_a_return_is_not_an_early_exit() -> Result<(), String> {
+    let line = 8;
+    assert_eq!(
+        STRING_EXIT_PY.lines().nth(6).map(str::trim),
+        Some("return early\"\"\")")
+    );
+    assert_eq!(
+        STRING_EXIT_PY.lines().nth(line - 1).map(str::trim),
+        Some("total = n * 3")
+    );
+    let findings = analyze("string-exit", STRING_EXIT_PY, STRING_EXIT_TESTS, &[line])?;
+    let finding = finding_on(&findings, line)?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// Two arms raise the same exception type with different messages.
+const GUARDED_RAISE_PY: &str = concat!(
+    "def check(n, limit):\n",
+    "    if n < 0:\n",
+    "        raise ValueError(\"negative value\")\n",
+    "    if n > limit:\n",
+    "        raise ValueError(\"value over the limit\")\n",
+    "    return n\n",
+);
+
+const RAISE: usize = 5;
+
+/// The only raising call takes the `n < 0` arm.
+const OFF_ARM_RAISE_TESTS: &str = concat!(
+    "import pytest\n",
+    "\n",
+    "from src.subject import check\n",
+    "\n",
+    "\n",
+    "def test_negative():\n",
+    "    with pytest.raises(ValueError, match=\"negative value\"):\n",
+    "        check(-1, 10)\n",
+);
+
+const ON_ARM_RAISE_TESTS: &str = concat!(
+    "import pytest\n",
+    "\n",
+    "from src.subject import check\n",
+    "\n",
+    "\n",
+    "def test_over():\n",
+    "    with pytest.raises(ValueError, match=\"value over the limit\"):\n",
+    "        check(11, 10)\n",
+);
+
+/// A `raise` in an arm no call enters is not shown by a message assertion on
+/// the other arm; the same assertion on a call that enters it keeps credit.
+#[test]
+fn raise_in_an_arm_no_input_enters_is_not_exposed() -> Result<(), String> {
+    assert_eq!(
+        GUARDED_RAISE_PY.lines().nth(RAISE - 1).map(str::trim),
+        Some("raise ValueError(\"value over the limit\")")
+    );
+    let off = analyze("raise-off", GUARDED_RAISE_PY, OFF_ARM_RAISE_TESTS, &[RAISE])?;
+    let off = finding_on(&off, RAISE)?;
+    assert_ne!(off.class, ExposureClass::Exposed, "{off:?}");
+    let on = analyze("raise-on", GUARDED_RAISE_PY, ON_ARM_RAISE_TESTS, &[RAISE])?;
+    let on = finding_on(&on, RAISE)?;
+    assert_eq!(on.class, ExposureClass::Exposed, "{on:?}");
     Ok(())
 }

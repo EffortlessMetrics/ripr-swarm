@@ -1222,6 +1222,7 @@ fn classify_change_for_owner_inner<'a>(
                 | ProbeFamily::FieldConstruction
                 | ProbeFamily::Predicate
                 | ProbeFamily::SideEffect
+                | ProbeFamily::ErrorPath
         )
         && boundary_gap.is_none()
         && inactive_term.is_none()
@@ -1247,13 +1248,16 @@ fn classify_change_for_owner_inner<'a>(
                 // at all, which does not depend on the line's shape: a local
                 // assignment, a call, or the continuation line of a wrapped
                 // call inside an arm no observed input enters is as
-                // unexecuted as a `return` there. Those shapes are read only
-                // in a function or method body: the rows bind that owner's
-                // parameters, and a class or module body has none, so a
-                // same-named global in a guard there must not be evaluated
-                // against a constructor argument.
-                if matches!(family, ProbeFamily::Predicate | ProbeFamily::SideEffect)
-                    && owner.owner_kind.is_none()
+                // unexecuted as a `return` there, and so is a `raise` whose
+                // message another arm's assertion happens to tell apart.
+                // Those shapes are read only in a function or method body.
+                // This is a conservative scope limit, not a repair: the rows
+                // bind that owner's parameters and a class or module body
+                // has none, and no observed case depends on the refusal.
+                if matches!(
+                    family,
+                    ProbeFamily::Predicate | ProbeFamily::SideEffect | ProbeFamily::ErrorPath
+                ) && owner.owner_kind.is_none()
                 {
                     return None;
                 }

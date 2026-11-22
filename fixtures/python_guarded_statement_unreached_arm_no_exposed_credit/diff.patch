@@ -1,0 +1,10 @@
+diff --git a/src/lib.py b/src/lib.py
+--- a/src/lib.py
++++ b/src/lib.py
+@@ -7,5 +7,5 @@
+         return "just now"
+     elif months >= 1 and diff < 1000:
+-        m = months
++        m = 2 * months
+         return describe("months", m)
+     return describe("years", diff)
