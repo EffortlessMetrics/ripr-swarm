@@ -507,7 +507,24 @@ fn normalized_path(file: &Path) -> Option<Vec<String>> {
 /// Where a `concat` shadow in `file` reaches: its package, or every package
 /// when `source` mentions `macro_export` at all.
 fn concat_scope(file: &Path, source: &str) -> MacroScope {
-    MacroScope::of(file, source.contains("macro_export"))
+    concat_package(file, source.contains("macro_export"))
+}
+
+/// [`MacroScope::of`], but every package for a path with more than one
+/// `src` component: `src/a/src/imp.rs` may be a module of the root package
+/// (`mod src;` in `src/a.rs`), which a root macro reaches (#15035 round-10
+/// review). A genuinely nested package then over-gates.
+fn concat_package(file: &Path, exported: bool) -> MacroScope {
+    let nested = file
+        .components()
+        .filter(|component| component.as_os_str() == "src")
+        .nth(1)
+        .is_some();
+    if nested {
+        MacroScope::Workspace
+    } else {
+        MacroScope::of(file, exported)
+    }
 }
 
 /// Whether some scope in `a` reaches some scope in `b`.
@@ -780,7 +797,7 @@ impl ModuleDeclarations {
             if gates.bare_concat {
                 reading
                     .bare_concat_include
-                    .insert(MacroScope::of(file, false));
+                    .insert(concat_package(file, false));
             }
             reading.qualified_concat_include |= gates.qualified_concat;
             reading.binds_sysroot |= gates.binds_sysroot;
@@ -956,7 +973,7 @@ impl ModuleDeclarations {
         }
         if gates.bare_concat {
             self.changed_bare_concat_include
-                .insert(MacroScope::of(file, false));
+                .insert(concat_package(file, false));
         }
         self.changed_qualified_concat_include |= gates.qualified_concat;
         self.changed_binds_sysroot |= gates.binds_sysroot;

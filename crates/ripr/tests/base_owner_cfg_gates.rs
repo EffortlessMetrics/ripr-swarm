@@ -968,6 +968,12 @@ fn a_shadowed_concat_include_path_is_opaque() -> Result<(), String> {
         pair("core concat under an import renamed to core",
             lib("src/real.rs", PATHS, GLOB, |_| concat_include("use crate::paths as core;\n", "core::concat")),
             lib("src/real.rs", OWNER_AND_IMP, GLOB, core), [W, PU]),
+        gap("root concat shadow over an include under a nested src module", lib("src/real.rs", "macro_rules! concat {\n    ($($t:tt)*) => {\n        \"../../real.rs\"\n    };\n}\nmod real;\npub use real::ready;\npub mod a;\n", GLOB, |_| vec![
+            ("src/a.rs", "pub mod src;\n".into()),
+            ("src/a/src.rs", "pub mod imp;\n".into()),
+            ("src/a/src/imp.rs", "#[cfg(not(test))]\ninclude!(concat!(\"unused.rs\"));\n".into()),
+            ("src/a/src/unused.rs", "pub fn unused() {}\n".into()),
+        ])),
         row("cast to a type named core elsewhere", lib("src/real.rs", format!("{OWNER_AND_IMP}mod other;\n"), GLOB, |_| {
             let mut files = concat_include("", "core::concat");
             files.push(("src/other.rs", "type core = u8;\npub fn cast(x: u16) -> u8 {\n    x as core\n}\n".into()));
