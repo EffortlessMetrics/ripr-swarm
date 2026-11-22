@@ -102,8 +102,9 @@ An explicit `baseUrl`, own or inherited, anchors the templates exactly as
 before. A config that declares `paths` without `baseUrl` is not
 self-sufficient: an `extends` base the loader cannot follow could supply the
 `baseUrl`, so that chain still fails closed. The map records the config files
-it was compiled from (the selected config and the bases it followed, minus a
-base whose own `paths` were replaced); extraction-gap scoping in
+it was compiled from (the selected config and the bases it followed, minus
+any config whose effective `paths` are not the ones the map states: a base
+whose own `paths` were replaced, or a config that inherits them); extraction-gap scoping in
 `gap_reach.rs` exempts only those, so a sibling `tsconfig.spec.json` or the
 unselected `jsconfig.json` that remaps resolution keeps
 `typescript_test_extraction_partial` disclosed.

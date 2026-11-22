@@ -549,7 +549,7 @@ pub(crate) fn alias_gap_for_unresolved_import(
             let (cause_text, recovery_hint) = match (tsconfig_map, alias_unavailable) {
                 _ if nested_unavailable => (
                     "the importing file's nearest package tsconfig.json/jsconfig.json declares compilerOptions.paths but cannot be followed exactly (an unreadable references entry, a package-name extends form, an unreadable or invalid config, or both tsconfig.json and jsconfig.json declaring paths)".to_string(),
-                    "inline any inherited compilerOptions.paths into that package config for credit".to_string(),
+                    "declare compilerOptions.paths together with compilerOptions.baseUrl in that package config, or extend only relative config files inside the workspace, for credit".to_string(),
                 ),
                 _ if package_dir.is_some() => {
                     let manifest = package_dir
