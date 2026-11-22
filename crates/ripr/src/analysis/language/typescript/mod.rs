@@ -110,6 +110,7 @@ mod fact_prefetch_tests;
 mod fact_store_tests;
 mod field_update_guard;
 mod fixture_receivers;
+mod function_replacement;
 mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;

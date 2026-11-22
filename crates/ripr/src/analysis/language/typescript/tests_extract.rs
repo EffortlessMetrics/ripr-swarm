@@ -323,6 +323,14 @@ fn extract_tests_expanding_suite_factories(
                 test.member_replacements_in_file = replacements.clone();
             }
         }
+        let function_replacements =
+            super::function_replacement::replaced_function_member_names(source);
+        if !function_replacements.is_empty() {
+            let function_replacements: Shared<_> = function_replacements.into();
+            for test in &mut tests {
+                test.function_replacements_in_file = function_replacements.clone();
+            }
+        }
         let loads = dynamic_load_specifiers(source);
         if !loads.is_empty() {
             let loads: Shared<_> = loads.into();
@@ -3515,6 +3523,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
         member_replacements_in_file: Default::default(),
+        function_replacements_in_file: Default::default(),
         dynamic_load_specifiers_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
