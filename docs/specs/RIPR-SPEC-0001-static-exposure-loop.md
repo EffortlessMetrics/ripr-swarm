@@ -269,9 +269,11 @@ changed body. The identity reports a gate when any of these holds:
   `#[path]` declaration;
 - a `use` written as an item (not emitted by a macro) with its own
   `cfg`/`cfg_attr`, or a `pub` one under a gated item or file, whose leaf or
-  rename is the owner's name or a name in the self type or trait of an
-  `impl` (or the name of a `trait`) enclosing the owner (`pub use
-  real::Thing;` beside `pub use fake::Thing;` swaps `Thing::ready`), or which
+  rename is the owner's name, a name in the self type or trait of an
+  `impl` (or the name of a `trait` or inline module) enclosing the owner
+  (`pub use real::Thing;` beside `pub use fake::Thing;` swaps
+  `Thing::ready`; `pub use real_impl as imp;` swaps an inline `mod
+  real_impl`), or which
   may alias a module named like a component of the owner file's path: by its
   last segment, since the leaf may itself be a module (`use a::imp;`), by a
   rename or the segment it renames (`use real as imp;`, `use
@@ -306,13 +308,16 @@ changed body. The identity reports a gate when any of these holds:
 - an `include!` whose literal path, resolved against the including file's
   directory, is the owner file; a literal that cannot be resolved (absolute,
   or climbing above the including path) gates the owner file's stem by name.
-  An `include!` whose argument is not one plain string literal
+  An `include!` whose argument is one `concat!` call
   (`concat!(env!("CARGO_MANIFEST_DIR"), "/src/real.rs")`) gates, by name, the
-  stem of the path its trailing string literals spell, joined
+  stem of the path `concat!`'s trailing string literals spell, joined
   (`"/src/re", "al.rs"` spells `/src/real.rs`), when that ends in a `.rs`
-  file name, and every owner otherwise: when the argument does not end in a
-  literal, a literal has escapes, or the run follows another token and
-  spells no `/` (#15035);
+  file name, and every owner otherwise: when the argument is any other
+  macro call (`include!(src_file!("unused.rs"))`, which may expand to any
+  path), when `concat!`'s arguments do not end in a literal, a literal has
+  escapes, or the run follows another argument and spells no `/` (#15035).
+  The `include!` is found however it is spelled, a comment between
+  `include` and `!` included;
 - a `macro_rules!` or `macro` body that may emit an out-of-line module (`mod`
   followed by a name and no `{` body), an `include!` or a `#[path]`
   (`path =`), and the owner file is not a crate root of the package that

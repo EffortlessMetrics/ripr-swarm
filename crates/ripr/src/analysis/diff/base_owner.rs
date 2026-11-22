@@ -577,8 +577,9 @@ fn macro_scope_reaches(scopes: &BTreeSet<MacroScope>, file: &Path) -> bool {
 ///   cannot be resolved (absolute, or climbing above the including path)
 ///   gates its file stem by name. An `include!` whose argument is not a
 ///   single plain string literal (`concat!(env!(..), "/src/real.rs")`)
-///   gates by name the stem of the path its trailing string literals spell
-///   when that ends in a `.rs` file name, and every owner otherwise;
+///   gates by name, for one `concat!` call, the stem of the path its
+///   trailing string literals spell when that ends in a `.rs` file name, and
+///   every owner otherwise (any other macro call may expand to any path);
 /// - a `macro_rules!` (or `macro`) whose body may emit an out-of-line module
 ///   (`mod` followed by a name and no `{` body), an `include!` or a `#[path]`
 ///   (`path =`) gates every owner outside a crate root file of the package
@@ -657,26 +658,33 @@ impl ModuleDeclarations {
     /// `#[cfg(feature = "x;y")]` or a comment cannot end the attribute,
     /// #15035 review F4), a `cfg` whose attribute runs into a `use` before
     /// the next `;` or `{`, or a `cfg` anywhere beside a `pub` or `pub(..)`
-    /// `use`; an `include!`; an `extern` (a crate rename); or a
+    /// `use`; an `include!` (read on the blanked code too); an `extern` (a
+    /// crate rename); or a
     /// `macro_rules!`/`macro` definition beside a `mod`, `include` or `path`
     /// token. A file holding an out-of-line `mod` declaration is kept by the
     /// caller on its own.
     pub(crate) fn may_hold_outside_gate(source: &str) -> bool {
+        let code = (source.contains("cfg") || source.contains("include"))
+            .then(|| blank_literals_and_comments(source));
+        let code = code.as_deref().unwrap_or_default();
         let gated_use = source.contains("cfg") && {
-            let code = blank_literals_and_comments(source);
             let words_before = |offset: usize| code.get(..offset).unwrap_or_default().trim_end();
             code.split([';', '{']).any(cfg_runs_into_use)
-                || word_offsets(&code, "use").any(|offset| {
+                || word_offsets(code, "use").any(|offset| {
                     let before = words_before(offset);
                     before.ends_with(')') || ends_with_word(before, "pub")
                 })
         };
-        let include = source.match_indices("include").any(|(start, word)| {
-            source
-                .get(start + word.len()..)
-                .unwrap_or_default()
-                .trim_start()
-                .starts_with('!')
+        // On the raw text and on the blanked code, so a comment between
+        // `include` and its `!` (`include /* c */ !("real.rs")`, #15035
+        // round-6 review) does not hide the call.
+        let include = [source, code].into_iter().any(|text| {
+            text.match_indices("include").any(|(start, word)| {
+                text.get(start + word.len()..)
+                    .unwrap_or_default()
+                    .trim_start()
+                    .starts_with('!')
+            })
         });
         let macro_definition = (source.contains("macro_rules")
             || word_offsets(source, "macro").next().is_some())
@@ -982,8 +990,8 @@ fn touches_chain(
 }
 
 /// The names a `use` can swap the owner through: the function's `name`,
-/// and every name in the self type and trait of each enclosing `impl` and
-/// in each enclosing `trait`'s name (#15035 round-5 review: a gated `pub use
+/// every name in the self type and trait of each enclosing `impl`, each
+/// enclosing `trait`'s name, and each enclosing inline module's name (#15035 round-5 review: a gated `pub use
 /// real::Thing;` beside `pub use fake::Thing;` swaps `Thing::ready`).
 fn owner_names(function: &ast::Fn, name: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::from([name.to_string()]);
@@ -1000,9 +1008,15 @@ fn owner_names(function: &ast::Fn, name: &str) -> BTreeSet<String> {
                     .map(|found| unraw(found.text()).to_string())
                     .collect::<Vec<_>>()
             }));
-        } else if let Some(definition) = ast::Trait::cast(ancestor)
+        } else if let Some(definition) = ast::Trait::cast(ancestor.clone())
             && let Some(found) = definition.name()
         {
+            names.insert(unraw(found.text()).to_string());
+        } else if let Some(module) = ast::Module::cast(ancestor)
+            && let Some(found) = module.name()
+        {
+            // An enclosing inline module, which a gated `use real_impl as
+            // imp;` may alias like a file module (#15035 round-6 review).
             names.insert(unraw(found.text()).to_string());
         }
     }
@@ -1334,7 +1348,7 @@ impl OutsideGates {
             _ => None,
         };
         let Some(text) = literal else {
-            let stem = trailing_literal_path(&tree).and_then(|text| {
+            let stem = trailing_literal_path(&arguments).and_then(|text| {
                 let text = text.as_str();
                 text.strip_suffix(".rs")?;
                 Path::new(text)
@@ -1369,36 +1383,56 @@ impl OutsideGates {
     }
 }
 
-/// The path the trailing run of string literals of a non-literal `include!`
-/// argument spells, joined (`concat!(env!(..), "/src/re", "al.rs")` spells
-/// `/src/real.rs`, #15035 round-5 review): the literals, separated only by
-/// commas, that end its tokens before the closing delimiters. `None` when
-/// the tokens do not end in a literal, a literal has escapes, or the run
-/// follows another token and spells no `/` (a file name the preceding
-/// token may prefix).
-fn trailing_literal_path(tree: &ast::TokenTree) -> Option<String> {
-    let tokens: Vec<_> = tree
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| !token.kind().is_trivia())
+/// The path the trailing run of string literals of a `concat!` argument of
+/// `include!` spells, joined (`concat!(env!(..), "/src/re", "al.rs")`
+/// spells `/src/real.rs`, #15035 round-5 review): the literals, separated
+/// only by commas, that end `concat!`'s own arguments. `None` when the
+/// `include!` argument (`arguments`, delimiters and trailing comma removed)
+/// is not one `concat!` call (any other macro, such as a user's
+/// `src_file!("unused.rs")`, may expand to another path, #15035 round-6
+/// review), when its arguments do not end in a literal, a literal has
+/// escapes, or the run follows another argument and spells no `/` (a file
+/// name the preceding argument may prefix).
+fn trailing_literal_path(arguments: &[ra_ap_syntax::SyntaxElement]) -> Option<String> {
+    let (body, call) = arguments.split_last()?;
+    let (bang, path) = call.split_last()?;
+    let (name, qualifier) = path.split_last()?;
+    let concat_call = body.kind() == SyntaxKind::TOKEN_TREE
+        && bang.kind() == SyntaxKind::BANG
+        && name
+            .as_token()
+            .is_some_and(|token| token.text() == "concat")
+        && qualifier.iter().all(|element| {
+            matches!(
+                element.kind(),
+                SyntaxKind::IDENT | SyntaxKind::COLON | SyntaxKind::COLON2
+            )
+        });
+    if !concat_call {
+        return None;
+    }
+    let elements: Vec<_> = body
+        .as_node()?
+        .children_with_tokens()
+        .filter(|element| !element.kind().is_trivia())
         .collect();
-    let mut rest = tokens.as_slice();
+    // The delimiters, then trailing commas.
+    let mut rest = elements.get(1..elements.len().checked_sub(1)?)?;
     while let Some((last, before)) = rest.split_last() {
-        if !matches!(
-            last.kind(),
-            SyntaxKind::R_PAREN | SyntaxKind::R_BRACK | SyntaxKind::R_CURLY | SyntaxKind::COMMA
-        ) {
+        if last.kind() != SyntaxKind::COMMA {
             break;
         }
         rest = before;
     }
     let mut parts = Vec::new();
     while let Some((last, before)) = rest.split_last() {
-        if last.kind() != SyntaxKind::STRING {
+        let Some(token) = last
+            .as_token()
+            .filter(|token| token.kind() == SyntaxKind::STRING)
+        else {
             break;
-        }
-        parts.push(string_literal_value(last.text())?);
+        };
+        parts.push(string_literal_value(token.text())?.to_string());
         rest = before;
         match rest.split_last() {
             Some((comma, before)) if comma.kind() == SyntaxKind::COMMA => rest = before,
@@ -1410,13 +1444,7 @@ fn trailing_literal_path(tree: &ast::TokenTree) -> Option<String> {
     }
     parts.reverse();
     let joined = parts.concat();
-    let opens_argument = rest.last().is_none_or(|token| {
-        matches!(
-            token.kind(),
-            SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY | SyntaxKind::COMMA
-        )
-    });
-    (opens_argument || joined.contains('/')).then_some(joined)
+    (rest.is_empty() || joined.contains('/')).then_some(joined)
 }
 
 /// The value of a plain or raw string literal token with no escapes.
@@ -2996,6 +3024,7 @@ mod tests {
             "cfg_if::cfg_if! {\n    if #[cfg(unix)] {\n        extern crate core as std;\n    }\n}\n",
             "mod imp {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\"));\n}\n",
             "mod imp {\n    include!(env!(\"GENERATED\"));\n}\n",
+            "#[cfg(unix)]\ninclude /* c */ !(\"real.rs\");\n",
             "const C: &core::ffi::CStr = cr\"\\\";\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
             "const C: &core::ffi::CStr = cr#\"say \"hi\"\"#;\n#[cfg(unix)]\nuse crate::real::ready;\nconst D: &str = \"\";\n",
         ] {

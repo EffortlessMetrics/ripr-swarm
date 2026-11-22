@@ -1226,3 +1226,181 @@ fn a_target_directory_mod_file_is_not_a_crate_root() -> Result<(), String> {
     assert!(wrong.is_empty(), "{wrong:#?}");
     Ok(())
 }
+
+/// `lib.rs` items re-exporting the owner, with `src/imp.rs` (no `mod`
+/// keyword, so the caller keeps it only through the outside-gate prefilter)
+/// as a module of its own.
+const OWNER_AND_IMP: &str = "mod real;\npub use real::ready;\npub mod imp;\n";
+
+/// #15035 round-6 review F1: a comment between `include` and its `!`
+/// (`include /* c */ !("real.rs")`) in a file with no `mod` keyword does
+/// not hide the gated `include!` of the owner file from the caller's
+/// prefilter. Control: the same spelling including another file keeps
+/// main's credit.
+#[test]
+fn a_comment_inside_an_include_call_does_not_hide_it() -> Result<(), String> {
+    check_gap_cases(vec![GapCase {
+        name: "gated include of the owner file spelled with a comment",
+        owner: "src/real.rs",
+        items: OWNER_AND_IMP,
+        import: GLOB,
+        extra: |_| {
+            vec![(
+                "src/imp.rs",
+                "#[cfg(not(test))]\ninclude /* real */ !(\"real.rs\");\n".to_string(),
+            )]
+        },
+        control_items: OWNER_AND_IMP,
+        control_import: GLOB,
+        control_extra: |_| {
+            vec![(
+                "src/imp.rs",
+                "#[cfg(not(test))]\ninclude /* other */ !(\"fake.rs\");\n".to_string(),
+            )]
+        },
+        control: [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::PropagationUnknown,
+        ],
+    }])
+}
+
+/// `lib.rs` items for [`a_user_macro_include_path_is_opaque`]: a
+/// `src_file!` macro that expands to the owner file whatever its argument.
+const SRC_FILE_MACRO: &str = "#[macro_use]\nmod paths {\n    macro_rules! src_file {\n        ($name:literal) => {\n            concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/real.rs\")\n        };\n    }\n}\nmod real;\npub use real::ready;\npub mod imp;\n";
+
+/// #15035 round-6 review F2: only `concat!`'s own trailing literals are
+/// trusted as an `include!` path. A user macro's argument
+/// (`include!(src_file!("unused.rs"))`) may expand to any path, here the
+/// owner file, so it is an opaque include that gates every owner. Control:
+/// the same file named through `concat!` keeps main's credit.
+#[test]
+fn a_user_macro_include_path_is_opaque() -> Result<(), String> {
+    check_gap_cases(vec![GapCase {
+        name: "gated include through a user macro",
+        owner: "src/real.rs",
+        items: SRC_FILE_MACRO,
+        import: GLOB,
+        extra: |_| {
+            vec![
+                (
+                    "src/imp.rs",
+                    "#[cfg(not(test))]\ninclude!(src_file!(\"unused.rs\"));\n".to_string(),
+                ),
+                ("src/unused.rs", "pub fn unused() {}\n".to_string()),
+            ]
+        },
+        control_items: SRC_FILE_MACRO,
+        control_import: GLOB,
+        control_extra: |_| {
+            vec![
+                (
+                    "src/imp.rs",
+                    "#[cfg(not(test))]\ninclude!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/src/unused.rs\"));\n"
+                        .to_string(),
+                ),
+                ("src/unused.rs", "pub fn unused() {}\n".to_string()),
+            ]
+        },
+        control: [
+            ExposureClass::WeaklyExposed,
+            ExposureClass::PropagationUnknown,
+        ],
+    }])
+}
+
+/// The class of the changed tail of `ready` written in the inline module
+/// `real_impl` on lines 1-5 of `src/lib.rs` (its tail on line 3), with
+/// `items` after it and a test pinning `ready` through `super::imp::ready`.
+fn inline_module_tail_class(
+    path: TailPath,
+    items: &str,
+) -> Result<(ExposureClass, Finding), String> {
+    let module = |tail: &str| {
+        format!(
+            "pub mod real_impl {{\n    {}\n        {tail}\n    }}\n}}\n",
+            path.signature()
+        )
+    };
+    let call = match path {
+        TailPath::Constant => "assert_eq!(ready(), false);",
+        TailPath::Unary => "assert_eq!(ready(5), 5);",
+    };
+    let lib = format!(
+        "{}{items}#[cfg(test)]\nmod tests {{\n    use super::imp::ready;\n    #[test]\n    fn pins() {{\n        {call}\n    }}\n}}\n",
+        module(path.new_tail())
+    );
+    let patch = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub mod real_impl {{
+     {signature}
+-        {old}
++        {new}
+     }}
+ }}
+",
+        signature = path.signature(),
+        old = path.old_tail(),
+        new = path.new_tail(),
+    );
+    let findings = TempRepo::create(&[("src/lib.rs", lib)], &patch)?.findings()?;
+    let tail = path.new_tail();
+    let mut matching = findings.iter().filter(|finding| {
+        finding.probe.family == ProbeFamily::ReturnValue
+            && finding.probe.location.file.ends_with("src/lib.rs")
+            && finding.probe.location.line == 3
+            && finding.probe.expression.trim() == tail
+    });
+    match (matching.next(), matching.next()) {
+        (Some(finding), None) => Ok((finding.class.clone(), finding.clone())),
+        other => Err(format!(
+            "premise: exactly one return_value finding for `{tail}` in src/lib.rs, got {other:?} in {findings:?}"
+        )),
+    }
+}
+
+/// #15035 round-6 review F3: a gated alias of the owner's inline module
+/// (`#[cfg(not(test))] pub use real_impl as imp;` beside a test-only `pub
+/// use fake_impl as imp;`) swaps which `ready` the test runs, so the
+/// enclosing inline module's name gates like a file module's. Control: the
+/// ungated alias keeps main's credit.
+#[test]
+fn a_gated_alias_of_the_owners_inline_module_is_a_gate() -> Result<(), String> {
+    let twin = |path: TailPath| {
+        format!(
+            "pub mod fake_impl {{\n    {}\n        {}\n    }}\n}}\n#[cfg(not(test))]\npub use real_impl as imp;\n#[cfg(test)]\npub use fake_impl as imp;\n",
+            path.signature(),
+            path.new_tail()
+        )
+    };
+    let mut wrong = Vec::new();
+    for path in [TailPath::Constant, TailPath::Unary] {
+        for (name, items, expected) in [
+            (
+                "gated alias of the inline module",
+                twin(path),
+                ExposureClass::PropagationUnknown,
+            ),
+            (
+                "ungated alias of the inline module",
+                "pub use real_impl as imp;\n".to_string(),
+                ExposureClass::WeaklyExposed,
+            ),
+        ] {
+            let (class, finding) = inline_module_tail_class(path, &items)?;
+            let credited = finding.ripr.propagate.state == StageState::Yes;
+            if class != expected || credited == (expected == ExposureClass::PropagationUnknown) {
+                wrong.push(format!(
+                    "{path:?} {name}: {class:?} {:?}",
+                    finding.ripr.propagate
+                ));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
