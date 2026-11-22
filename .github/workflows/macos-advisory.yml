@@ -111,9 +111,12 @@ jobs:
           echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/clippy.status"
           exit 0
 
+      # This job only builds, so the step may use the job's 40 minutes less
+      # setup and upload. The one `rustc` needs about 14 GB on a 7 GB runner;
+      # observed builds took 28 to over 34 minutes.
       - name: Build the library test executable (advisory outcome)
         if: matrix.check == 'lib-build'
-        timeout-minutes: 34
+        timeout-minutes: 37
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/macos-advisory" "$RUNNER_TEMP/macos-lib-binary"
@@ -243,6 +246,9 @@ jobs:
           chmod +x "$RUNNER_TEMP/macos-lib-binary/ripr-lib-tests"
           export CARGO_MANIFEST_DIR="$GITHUB_WORKSPACE/crates/ripr"
           export CARGO="$(command -v cargo)"
+          # `.cargo/config.toml` `[env]` points the temp directory at `target`.
+          mkdir -p "$GITHUB_WORKSPACE/target"
+          export TEMP="$GITHUB_WORKSPACE/target" TMP="$GITHUB_WORKSPACE/target" TMPDIR="$GITHUB_WORKSPACE/target"
           cd "$CARGO_MANIFEST_DIR"
           set +e
           "$RUNNER_TEMP/macos-lib-binary/ripr-lib-tests" 2>&1 | tee "$RUNNER_TEMP/macos-advisory/lib-tests.log"
