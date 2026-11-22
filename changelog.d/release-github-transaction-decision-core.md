@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Add the decision core of the exact GitHub release transaction: a typed request, classification of observed tag, release, asset and provenance state, and a read-only `cargo xtask release-github-transaction-plan` that names the single next step or a terminal stop. It reads no remote state and writes nothing ([ripr#1644](https://github.com/EffortlessMetrics/ripr/issues/1644)).
