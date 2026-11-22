@@ -12237,7 +12237,7 @@
         },
         {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "exposed"
         },
         {
           "type": "expected_related_test",

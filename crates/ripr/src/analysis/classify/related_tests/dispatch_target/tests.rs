@@ -236,6 +236,36 @@ fn a_receiver_not_established_as_owned_keeps_the_relation() -> Result<(), String
     Ok(())
 }
 
+/// A constructor call is read as an owned receiver only when the type's
+/// indexed constructor returns `Self` by value. `fn new() -> &'static Square`
+/// hands the call a borrowed `Square`, which reaches the trait's `&self`
+/// method first, so the relation stays; the same calls of a `new` returning
+/// `Self` run the inherent by-value twin.
+#[test]
+fn a_constructor_is_owned_only_when_it_returns_self() -> Result<(), String> {
+    let borrowed = by_value_twin().replace(
+        "impl Square {",
+        "impl Square {\n    pub fn new() -> &'static Square { &Square(4) }",
+    );
+    let owned = by_value_twin().replace(
+        "impl Square {",
+        "impl Square {\n    pub fn new() -> Self { Square(4) }",
+    );
+    for body in [
+        "let s = Square::new(); assert_eq!(s.area(), 16);",
+        "assert_eq!(Square::new().area(), 16);",
+    ] {
+        assert!(direct(&borrowed, TRAIT_AREA, body)?, "borrowed: {body}");
+        assert!(!direct(&owned, TRAIT_AREA, body)?, "owned: {body}");
+    }
+    assert!(!direct(
+        &borrowed,
+        TRAIT_AREA,
+        "let s: Square = Square(4); assert_eq!(s.area(), 16);"
+    )?);
+    Ok(())
+}
+
 /// The by-value rule orders every pair of kinds: an inherent `&self` comes
 /// before a trait `&mut self` for an owned receiver, and no inherent kind
 /// comes before a by-value trait method.

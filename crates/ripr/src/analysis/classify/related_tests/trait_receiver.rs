@@ -391,8 +391,7 @@ const STANDARD_TRAIT_METHODS: &[(&str, &[&str])] = &[
 /// (`type Tile = Square;`, `use crate::Square as Tile;`) names the same type.
 fn on_the_same_type(self_ty: &str, impl_type: &str, index: &RustIndex) -> bool {
     compact_impl_type_name(self_ty).is_none_or(|rival| {
-        rival == impl_type
-            || !super::super::implicit_call::workspace_declares_type(&rival, index)
+        rival == impl_type || !super::super::implicit_call::workspace_declares_type(&rival, index)
     })
 }
 

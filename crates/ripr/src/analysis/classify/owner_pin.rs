@@ -17995,7 +17995,7 @@ fn strip_unwrap(initializer: &str) -> (&str, bool) {
 /// associated function must be the type's one inherent definition of that
 /// name, returning `Self` (or the type) directly, or inside
 /// `Result`/`Option` when unwrapped.
-fn constructor_returns_self(
+pub(super) fn constructor_returns_self(
     type_name: &str,
     constructor: &str,
     unwrapped: bool,

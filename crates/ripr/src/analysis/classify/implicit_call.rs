@@ -1390,12 +1390,7 @@ pub(super) struct HiddenImpls {
     /// plain name, read as "", which stands for any type.
     /// The second field is the trait the impl implements or the trait whose
     /// body holds the call ("" for an inherent impl).
-    impl_macro_calls: Vec<(
-        String,
-        String,
-        String,
-        std::collections::BTreeSet<String>,
-    )>,
+    impl_macro_calls: Vec<(String, String, String, std::collections::BTreeSet<String>)>,
     /// Names the workspace declares as a `struct`, `enum` or `union`. Any
     /// other self-type name (an alias, a renamed import, a type a macro
     /// declares) may stand for a declared type.
@@ -1888,8 +1883,7 @@ impl HiddenImpls {
                     // its own body write nothing this receiver runs.
                     (impl_type == self_type
                         || (in_trait != owner_trait
-                            && (impl_type.is_empty()
-                                || !self.declared_types.contains(impl_type))))
+                            && (impl_type.is_empty() || !self.declared_types.contains(impl_type))))
                         && (words.contains(name)
                             || self.macro_may_write_fn(
                                 macro_name,

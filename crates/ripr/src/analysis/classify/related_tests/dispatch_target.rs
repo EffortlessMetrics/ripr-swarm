@@ -203,18 +203,27 @@ pub(super) fn inherent_twin_takes_every_call(
     }
     sites.all(|at| {
         call_site_resolves_to_type(&masked, at, name, &base, None, &masked, &test.body, true)
-            && (at_the_owner_step || receiver_is_an_owned_value(&masked, at, &base, &test.body))
+            && (at_the_owner_step
+                || receiver_is_an_owned_value(&masked, at, &base, &test.body, index))
     })
 }
 
 /// Whether the call at byte `at` of the masked test body `text`, already
 /// resolved to the type `base`, is a path call (`Square::area(..)`, where an
 /// inherent method is found before any trait's) or has a receiver that is an
-/// owned `base`: the unit value, a constructor call or struct literal
-/// written in place, or a `let` binding of one with no reference in its
-/// annotation or initializer. A parenthesised receiver, a borrowed one and
-/// a binding this cannot read are not established as owned.
-fn receiver_is_an_owned_value(text: &str, at: usize, base: &str, scope_body: &str) -> bool {
+/// owned `base`: the unit value, a tuple-struct constructor or struct literal
+/// written in place, a call of an associated function whose one indexed
+/// definition returns `Self`, or a `let` binding of one of those or one
+/// annotated with the type. A parenthesised receiver, a borrowed one, a call
+/// whose return type is not read as owned (`fn new() -> &'static Square`)
+/// and a binding this cannot read are not established as owned.
+fn receiver_is_an_owned_value(
+    text: &str,
+    at: usize,
+    base: &str,
+    scope_body: &str,
+    index: &RustIndex,
+) -> bool {
     let bytes = text.as_bytes();
     if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
         return true;
@@ -233,10 +242,29 @@ fn receiver_is_an_owned_value(text: &str, at: usize, base: &str, scope_body: &st
         return live_let_statement_before(lets, text, scope_body, receiver, at)
             .and_then(|statement| statement.split_once('='))
             .is_some_and(|(pattern, initializer)| {
-                !pattern.contains('&') && !initializer.trim_start().starts_with('&')
+                if pattern.contains('&') {
+                    return false;
+                }
+                if pattern
+                    .split_once(':')
+                    .is_some_and(|(_, annotation)| annotation.trim() == base)
+                {
+                    return true;
+                }
+                let initializer = initializer.trim().trim_end_matches(';').trim_end();
+                initializer == base || ends_in_owned_construction(initializer, base, index)
             });
     }
-    let mut close = at - 1;
+    ends_in_owned_construction(&text[..at - 1], base, index)
+}
+
+/// Whether `text` ends in an expression that builds an owned `base`:
+/// `Square(3)` or `Square { side: 3 }` right after the type's path, or
+/// `Square::with_side(3)` where the type's one indexed `with_side` returns
+/// `Self` or the type by value.
+fn ends_in_owned_construction(text: &str, base: &str, index: &RustIndex) -> bool {
+    let bytes = text.as_bytes();
+    let mut close = text.len();
     while close > 0 && bytes[close - 1].is_ascii_whitespace() {
         close -= 1;
     }
@@ -248,13 +276,27 @@ fn receiver_is_an_owned_value(text: &str, at: usize, base: &str, scope_body: &st
         b'}' => b'{',
         _ => return false,
     };
-    // `Square(3)` and `Square { side: 3 }` open right after a path; a
-    // parenthesised or block expression does not.
-    matching_open(bytes, close, open_byte, bytes[close]).is_some_and(|open| {
-        text[..open]
-            .trim_end()
-            .ends_with(|ch: char| ch.is_alphanumeric() || ch == '_')
-    })
+    let Some(open) = matching_open(bytes, close, open_byte, bytes[close]) else {
+        return false;
+    };
+    // The callee path ends right before the opening bracket; a
+    // parenthesised or block expression has none.
+    let before = text[..open].trim_end();
+    let path_start = before
+        .char_indices()
+        .rev()
+        .find(|&(_, ch)| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
+    let mut segments = before[path_start..].rsplit("::");
+    let Some(last) = segments.next().filter(|segment| !segment.is_empty()) else {
+        return false;
+    };
+    if last == base {
+        return true;
+    }
+    open_byte == b'('
+        && segments.next() == Some(base)
+        && super::super::owner_pin::constructor_returns_self(base, last, false, index)
 }
 
 /// Whether a function or its `impl` block carries a `cfg`-family attribute,
