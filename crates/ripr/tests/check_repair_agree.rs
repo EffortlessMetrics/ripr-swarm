@@ -996,6 +996,161 @@ fn repair_never_says_check_reports_the_same_while_check_reports_a_weak_gap() -> 
     Ok(())
 }
 
+// #15278 item 1: the same disagreement on the explicit surfaces. `a + b` to
+// `a - b` with only `total(0, 0) == 0` is weak for check (the inputs cannot
+// tell the two apart), while the inventory reads the returned value as pinned.
+const SUM_OLD: &str = "pub fn total(a: i32, b: i32) -> i32 {\n    a + b\n}\n";
+const SUM_NEW: &str = "pub fn total(a: i32, b: i32) -> i32 {\n    a - b\n}\n";
+const SUM_TEST: &str =
+    "use ar::total;\n\n#[test]\nfn zero() {\n    assert_eq!(total(0, 0), 0);\n}\n";
+
+/// The id of the one finding `ripr check --format json` reports.
+fn only_finding_id(repo: &Repo) -> Result<String, String> {
+    let json = repo.ripr(&["check", "--format", "json"])?;
+    let (_, tail) = json
+        .split_once("\"id\": \"probe:")
+        .ok_or_else(|| format!("check JSON names no probe finding:\n{json}"))?;
+    let (id, _) = tail
+        .split_once('"')
+        .ok_or_else(|| format!("unterminated finding id:\n{json}"))?;
+    Ok(format!("probe:{id}"))
+}
+
+fn weak_sum_repo() -> Result<Repo, String> {
+    let repo = Repo::create_uncommitted(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: weak"),
+        "precondition, check reports a weak gap on the changed return:\n{check}"
+    );
+    Ok(repo)
+}
+
+#[test]
+fn repair_by_finding_id_never_says_already_checked_while_check_reports_a_weak_gap()
+-> Result<(), String> {
+    let repo = weak_sum_repo()?;
+    let id = only_finding_id(&repo)?;
+    let (code, repair) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("already check it") && !repair.contains("no gap to repair"),
+        "repair must not call check's own weak finding already checked:\n{repair}"
+    );
+    assert!(
+        repair.contains("`ripr check` reads this changed code as weak")
+            && repair.contains("write or strengthen the test by hand"),
+        "repair must name check's reading and the by-hand next step:\n{repair}"
+    );
+    Ok(())
+}
+
+#[test]
+fn stub_never_says_tests_already_discriminate_while_check_reports_a_weak_gap() -> Result<(), String>
+{
+    let repo = weak_sum_repo()?;
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        !stub.contains("existing tests already discriminate it")
+            && !stub.contains("not evidence of a missing discriminator"),
+        "the stub must not call a change check reads as weak already discriminated:\n{stub}"
+    );
+    assert!(
+        stub.contains("`ripr check` reads your changed code there as weak (weakly_exposed)")
+            && stub.contains("this stub is for that gap"),
+        "the stub must name check's reading:\n{stub}"
+    );
+    let json = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+        "--json",
+    ])?;
+    assert!(
+        json.contains("\"grip_class\": \"strongly_gripped\"")
+            && json.contains("\"classification\": \"weakly_exposed\""),
+        "the JSON keeps the inventory class and carries check's class:\n{json}"
+    );
+    Ok(())
+}
+
+#[test]
+fn pilot_never_says_no_test_to_add_while_check_reports_a_weak_gap() -> Result<(), String> {
+    let repo = weak_sum_repo()?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        !pilot.contains("so there is no test to add"),
+        "pilot must not say there is no test to add while check reports a gap:\n{pilot}"
+    );
+    assert!(
+        pilot.contains("but `ripr check` reads your changed code there as a gap or cannot tell")
+            && pilot.contains("Pilot ranked no gap, but `ripr check` reads your changed code")
+            && pilot.contains("run `ripr check --root "),
+        "pilot must point at check's reading of the change:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// Discriminating negative: a change check reads as exposed keeps every
+/// surface's "already checked" wording.
+#[test]
+fn an_exposed_change_keeps_the_already_checked_wording_on_every_surface() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(
+        "pub fn dbl(x: i32) -> i32 {\n    x * 2\n}\n",
+        "pub fn dbl(x: i32) -> i32 {\n    x * 3\n}\n",
+        "use ar::dbl;\n\n#[test]\nfn exact() {\n    assert_eq!(dbl(2), 6);\n}\n",
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: exposed"),
+        "precondition, check reads exposed:\n{check}"
+    );
+    let id = only_finding_id(&repo)?;
+    let (code, repair) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        repair.contains("existing tests already check it")
+            && !repair.contains("`ripr check` reads this changed code as"),
+        "an exposed change stays already checked:\n{repair}"
+    );
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        stub.contains("existing tests already discriminate it")
+            && !stub.contains("`ripr check` reads your changed code"),
+        "an exposed change keeps the strongly gripped disclosure:\n{stub}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("No gap was found, so there is no test to add")
+            && !pilot.contains("but `ripr check` reads"),
+        "an exposed change keeps pilot's no-gap closing line:\n{pilot}"
+    );
+    Ok(())
+}
+
 // Not-ready burn-down (#11111): the closing step of a bare-repair refusal
 // follows what `ripr check` says about the change.
 
@@ -1427,4 +1582,34 @@ fn seam_id_for_expression(repo: &Repo, expression: &str) -> Result<String, Strin
             "expected one seam for `{expression}`, found {other:?}"
         )),
     }
+}
+
+/// #15278 item 4: a field change in a method no test calls. Pilot names the
+/// method a test must call instead of describing oracles that never run it.
+#[test]
+fn pilot_names_the_method_a_test_must_call() -> Result<(), String> {
+    const HEAD: &str = "pub struct Counter {\n    pub count: u32,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count += STEP;\n    }\n}\n";
+    let old = HEAD.replace("STEP", "1");
+    let new = HEAD.replace("STEP", "2");
+    let repo = Repo::create_uncommitted(
+        &old,
+        &new,
+        "use ar::Counter;\n\n#[test]\nfn starts_at_zero() {\n    assert_eq!(Counter::new().count, 0);\n}\n",
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: no path"),
+        "precondition, check finds no test path to the changed field:\n{check}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("why it matters: no test is seen calling `bump`")
+            && pilot.contains("test to add: one that calls `bump`"),
+        "pilot must say a test has to call bump:\n{pilot}"
+    );
+    assert!(
+        !pilot.contains("Strongest oracle") && !pilot.contains("has no test file to use"),
+        "pilot must not describe oracles or a missing test file here:\n{pilot}"
+    );
+    Ok(())
 }

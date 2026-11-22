@@ -1608,25 +1608,11 @@ fn reopen_gripped_that_check_reads_open<'a>(
     };
     for position in gripped {
         let entry = refusals[position].0;
-        let open: Vec<&crate::domain::Finding> = findings
-            .iter()
-            .filter(|finding| {
-                finding.class != crate::domain::ExposureClass::Exposed
-                    && super::repair_card_handoff::finding_names_seam_by_location(
-                        finding, entry, classified,
-                    )
-            })
-            .collect();
         // A gap check names leads over a static limit on the same seam, the
         // way check itself leads with the gap (#14266), so the reason does
         // not depend on the order of check's findings.
-        let lead = open
-            .iter()
-            .find(|finding| !super::gap_bound_repair::finding_is_static_limited(finding))
-            .or_else(|| open.first());
-        if let Some(finding) = lead {
-            refusals[position].1 =
-                Some((RefusalKind::RouteNotReady, check_reads_open_reason(finding)));
+        if let Some(refusal) = check_reading_from_findings(&findings, entry, classified).refusal() {
+            refusals[position].1 = Some(refusal);
         }
     }
     refusals
@@ -2236,12 +2222,167 @@ pub(crate) fn resolve_repair_subject_outcome(
             info.analyzed, info.total
         ));
     }
-    Ok(resolve_repair_subject_in(
+    let outcome = resolve_repair_subject_in(
         &classified,
         AgentBriefPolicy::from_config(&config),
         item,
         RefusalRoot::named(root),
-    ))
+    );
+    // #15278: the inventory reads the whole seam as already gripped, but the
+    // item may sit on changed lines `ripr check` reads as a gap or a limit
+    // (the item is often check's own finding id). "Existing tests already
+    // check it" then contradicts check, so the refusal carries check's
+    // reading, the same as a bare `ripr repair` does.
+    if let RepairSubjectOutcome::Ineligible {
+        seam_id,
+        kind: RefusalKind::AlreadyGripped,
+        ..
+    } = &outcome
+        && let Some(entry) = classified
+            .iter()
+            .find(|entry| entry.seam.id().as_str() == seam_id)
+        && let Some((kind, reason)) =
+            check_reading_of_gripped_seam(root, None, &config, entry, &classified).refusal()
+    {
+        return Ok(RepairSubjectOutcome::Ineligible {
+            seam_id: seam_id.clone(),
+            reason,
+            kind,
+        });
+    }
+    Ok(outcome)
+}
+
+/// What `ripr check` reads on the changed lines of one seam the inventory
+/// reads as already gripped (#15278).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckReadingOfGrippedSeam {
+    /// The live diff does not touch the seam (or no diff is readable), or
+    /// check reads nothing open on it: the inventory's reading stands.
+    Stands,
+    /// Check reads the changed code of this seam as a gap or a limit.
+    Open {
+        /// Check's class for the changed code.
+        class: crate::domain::ExposureClass,
+        /// Why the spot is not ready, in the bare repair's words.
+        reason: String,
+    },
+    /// The seam is on the change, but check could not run, so no claim about
+    /// check is possible.
+    Unavailable,
+}
+
+impl CheckReadingOfGrippedSeam {
+    /// The refusal that replaces "existing tests already check it", if any.
+    /// Only ever opens a refusal: it never makes a seam startable.
+    fn refusal(&self) -> Option<(RefusalKind, String)> {
+        match self {
+            Self::Stands => None,
+            Self::Open { reason, .. } => Some((RefusalKind::RouteNotReady, reason.clone())),
+            Self::Unavailable => Some((
+                RefusalKind::Unverified,
+                CHECK_UNAVAILABLE_REASON.to_string(),
+            )),
+        }
+    }
+}
+
+/// Ask the default `ripr check` about one already-gripped seam. The check
+/// runs only when the diff a bare `ripr check` would read touches the seam.
+/// The finding binds to the seam through the shared location join
+/// ([`finding_names_seam_by_location`]); a gap leads over a static limit on
+/// the same seam, as in [`reopen_gripped_that_check_reads_open`].
+///
+/// [`finding_names_seam_by_location`]: super::repair_card_handoff::finding_names_seam_by_location
+pub(crate) fn check_reading_of_gripped_seam(
+    root: &Path,
+    base: Option<&str>,
+    config: &crate::config::RiprConfig,
+    entry: &crate::analysis::ClassifiedSeam,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> CheckReadingOfGrippedSeam {
+    let touched =
+        live_check_diff_files(root, base).is_some_and(|files| seam_touches_change(entry, &files));
+    if !touched {
+        return CheckReadingOfGrippedSeam::Stands;
+    }
+    let Ok(output) = super::gap_bound_repair::default_check_output(root, base, config) else {
+        return CheckReadingOfGrippedSeam::Unavailable;
+    };
+    check_reading_from_findings(&output.findings, entry, classified)
+}
+
+/// How many strongly gripped seams on the change (`on_change`) the default
+/// `ripr check` reads as a gap or a limit (#15278), for `ripr pilot`.
+/// `check_findings` runs check at most once, and only when such a seam
+/// exists; the caller bounds it by pilot's deadline. `None` when such a seam
+/// exists but check produced no findings (it failed or ran out of time), so
+/// pilot cannot let "already gripped" stand unqualified.
+pub(crate) fn count_gripped_seams_check_reads_open(
+    classified: &[crate::analysis::ClassifiedSeam],
+    on_change: impl Fn(&crate::analysis::ClassifiedSeam) -> bool,
+    check_findings: impl FnOnce() -> Option<Vec<crate::domain::Finding>>,
+) -> Option<usize> {
+    let gripped: Vec<&crate::analysis::ClassifiedSeam> = classified
+        .iter()
+        .filter(|entry| {
+            entry.class == crate::analysis::seams::SeamGripClass::StronglyGripped
+                && on_change(entry)
+        })
+        .collect();
+    if gripped.is_empty() {
+        return Some(0);
+    }
+    let findings = check_findings()?;
+    Some(
+        gripped
+            .into_iter()
+            .filter(|entry| {
+                matches!(
+                    check_reading_from_findings(&findings, entry, classified),
+                    CheckReadingOfGrippedSeam::Open { .. }
+                )
+            })
+            .count(),
+    )
+}
+
+/// The findings of the default human `ripr check` for `root`, as
+/// [`count_gripped_seams_check_reads_open`] reads them.
+pub(crate) fn default_check_findings(
+    root: &Path,
+    config: &crate::config::RiprConfig,
+) -> Result<Vec<crate::domain::Finding>, String> {
+    super::gap_bound_repair::default_check_output(root, None, config).map(|output| output.findings)
+}
+
+/// The reading of [`check_reading_of_gripped_seam`] from check's findings,
+/// for a seam already known to be on the change.
+fn check_reading_from_findings(
+    findings: &[crate::domain::Finding],
+    entry: &crate::analysis::ClassifiedSeam,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> CheckReadingOfGrippedSeam {
+    let open: Vec<&crate::domain::Finding> = findings
+        .iter()
+        .filter(|finding| {
+            finding.class != crate::domain::ExposureClass::Exposed
+                && super::repair_card_handoff::finding_names_seam_by_location(
+                    finding, entry, classified,
+                )
+        })
+        .collect();
+    let lead = open
+        .iter()
+        .find(|finding| !super::gap_bound_repair::finding_is_static_limited(finding))
+        .or_else(|| open.first());
+    match lead {
+        Some(finding) => CheckReadingOfGrippedSeam::Open {
+            class: finding.class.clone(),
+            reason: check_reads_open_reason(finding),
+        },
+        None => CheckReadingOfGrippedSeam::Stands,
+    }
 }
 
 /// The inventory-taking core of [`resolve_repair_subject_outcome`]: resolve

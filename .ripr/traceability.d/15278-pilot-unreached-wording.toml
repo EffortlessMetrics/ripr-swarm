@@ -1,0 +1,9 @@
+# Registers the #15278 items 3 and 4 pilot terminal wording under
+# RIPR-SPEC-0237.
+[[extend]]
+id = "RIPR-SPEC-0237"
+tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_terminal_names_the_function_a_test_must_call_for_an_unreached_gap",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_terminal_keeps_the_reached_gap_wording",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_names_the_method_a_test_must_call",
+]
