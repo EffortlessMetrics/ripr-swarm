@@ -172,6 +172,25 @@ an `added_to_merge_queue` event later than the call. If the PR shows auto-merge
 armed without that event, a requirement
 was not met: disarm it with `-X DELETE` on the same path, verify the readback,
 and reconcile before trying again.
+
+To withdraw a PR that is already in the queue, for example when a material
+finding arrives after enqueue, a REST-only session has no dequeue mutation. Use
+two calls in this order:
+
+```bash
+gh api -X DELETE repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/auto_merge
+gh api -X POST repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/convert_to_draft
+```
+
+The first call disarms auto-merge so nothing re-enqueues the PR; the second
+removes the queue entry, because queue membership does not survive a
+conversion to Draft. Read back a `removed_from_merge_queue` event on the PR
+timeline and `"draft": true` on the PR before treating the landing as
+contained. A queue run that has already merged the PR cannot be withdrawn this
+way; check for a `merged` event first. Returning the PR to Ready does not
+re-enqueue it: after the repair, the review, qualification and enqueue
+conditions above apply again on the new head.
+
 The ruling covers `ripr-swarm` only and changes no setting, required check or
 release authority.
 
