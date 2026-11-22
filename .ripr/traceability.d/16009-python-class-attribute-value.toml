@@ -1,0 +1,8 @@
+# Registers the class-attribute value reader tests (#16009) under RIPR-SPEC-0238.
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/class_attr_reader/tests.rs::class_attribute_value_unread_by_related_tests_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/class_attr_reader/tests.rs::class_attribute_value_stays_exposed_when_a_test_reads_it",
+  "crates/ripr/src/analysis/language/python/class_attr_reader/tests.rs::class_attribute_value_fails_open_when_readers_are_not_all_in_the_class",
+]

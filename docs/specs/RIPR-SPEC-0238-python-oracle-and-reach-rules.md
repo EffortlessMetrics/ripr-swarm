@@ -319,8 +319,21 @@ one changed raise only (#12952); the general class-only table row stays weak.
    assert messages, `!=`, `not in`, two-constant comparisons and statements
    that span lines pin nothing. Otherwise the change is `weakly_exposed`
    with missing discriminator `class attribute <name> text "<new text>"`.
-   A decorated or multi-line constant and a non-string value keep the
-   existing verdict.
+   A decorated or multi-line constant keeps the existing verdict.
+   Class-attribute value (#16009): when the changed line is a one-line
+   `name = value` or `name: T = value` directly in a class body with a
+   non-string value, the change is `exposed` only if a related oracle test
+   reads `name` or calls a method of the class that reads it, directly or
+   through a same-class call (an attribute read `.method` of the test
+   body). Any test that mentions `name`, related to the class or not, also
+   keeps the existing verdict. Otherwise the change is `weakly_exposed` with
+   missing discriminator `class attribute <name> value <new value>`, and the
+   reason lists the reading methods. The rule keeps the existing verdict
+   when the readers cannot be listed from the class alone: the class has a
+   decorator, a base other than `object` or a keyword; the name is a
+   dunder; another class-body statement, a nested class or a dunder method
+   reads the name or a reader; no method reads the name; or code of the
+   same file outside the class mentions the name or a reader.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns
