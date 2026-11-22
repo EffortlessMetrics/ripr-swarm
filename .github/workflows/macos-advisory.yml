@@ -224,6 +224,11 @@ jobs:
           rustc --version
           cargo --version
 
+      # This job compiles nothing, so its Cargo home starts empty; tests that
+      # resolve the workspace's own locked versions offline need them fetched.
+      - name: Prepare locked workspace dependencies
+        run: cargo fetch --locked
+
       - name: Prepare locked fallible-literal owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
 
