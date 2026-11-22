@@ -131,3 +131,23 @@ fn a_block_scoped_glob_leaves_standard_calls_outside_the_block_transparent() {
         "{named:?}"
     );
 }
+
+#[test]
+fn a_transcriber_call_reads_a_glob_scoped_to_its_invocation() {
+    // A `macro_rules!` transcriber call runs where the macro is invoked: the
+    // glob in `nested`'s body reaches it although the definition sits outside
+    // that body.
+    let invoked = "pub fn check(f: impl FnOnce() -> bool) -> bool {\n    f()\n}\n\nmacro_rules! register {\n    () => {\n        assert!(check(|| {\n            assert_eq!(1, 1);\n            true\n        }))\n    };\n}\n\n#[test]\nfn nested() {\n    use foreign::*;\n    register!();\n}\n";
+    // Fixture admission: the definition sits at file scope and the glob only
+    // in the invoking test's body.
+    assert!(invoked.starts_with("pub fn check"));
+    assert!(invoked.contains("fn nested() {\n    use foreign::*;\n    register!();"));
+    let files = [(NESTED, invoked), (LIB, GATE), (TESTS, PINS)];
+    let named = named_site(&files, "assert_eq");
+    assert!(
+        matches!(&named, Some((path, site)) if path == Path::new(NESTED)
+            && site.line == 7
+            && matches!(&site.kind, MacroBindingKind::MacroArgument(wrapper) if wrapper == "assert")),
+        "{named:?}"
+    );
+}

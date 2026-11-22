@@ -1920,6 +1920,7 @@ fn macro_binding_sites_in_tree(
     }
     loop {
         let before = bound.len();
+        let all_names = bound.names();
         for (path, tree, node, call) in &sites {
             let tokens = || -> Vec<_> {
                 tree.syntax()
@@ -1933,15 +1934,24 @@ fn macro_binding_sites_in_tree(
             // call receives the arguments through fragments (`vec!($n)`), so
             // the scan of that call never sees the name it may define.
             let body_bound = call.as_ref().is_some_and(|call| {
-                wrapper_body_calls_bound(binding_free, call, &bound.names())
+                wrapper_body_calls_bound(binding_free, call, &all_names)
                     && binding_free_local_wrapper(binding_free, call, &tokens(), known)
             });
-            if !body_bound
-                && (!bound.binds_at(
-                    path.trim_start_matches("r#"),
-                    node.text_range().start().into(),
-                ) || !is_trusted_macro(path, known))
-            {
+            // A call inside a `macro_rules!` transcriber runs at each
+            // invocation, wherever that is, so its own position says nothing
+            // about which scoped binding reaches it: any binding of the name
+            // counts there.
+            let name = path.trim_start_matches("r#");
+            let in_transcriber = node.ancestors().any(|ancestor| {
+                ast::MacroRules::can_cast(ancestor.kind())
+                    || ast::MacroDef::can_cast(ancestor.kind())
+            });
+            let name_bound = if in_transcriber {
+                all_names.contains(name)
+            } else {
+                bound.binds_at(name, node.text_range().start().into())
+            };
+            if !body_bound && (!name_bound || !is_trusted_macro(path, known)) {
                 continue;
             }
             let tokens = tokens();
