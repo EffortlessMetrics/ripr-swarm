@@ -101,7 +101,25 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
             }
         }
     }
-    let root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let root_explicit = root.is_some();
+    let mut root = root.map_or_else(|| PathBuf::from("."), PathBuf::from);
+    // #15304: diagnose the root `ripr check` would analyze from here. Without
+    // `--root`, check widens to the enclosing workspace, package or Git top
+    // level (#4610, #8767), so a doctor that stayed at the invocation
+    // directory detected languages and suggested an `enabled` list for a
+    // tree check never analyzes. The shared resolver prints the same stderr
+    // disclosure as check; `--root .` still diagnoses this directory alone.
+    if let Err(error) = super::check::resolve_implicit_command_root(&mut root, root_explicit) {
+        // Doctor diagnoses rather than refuses: report on the current
+        // directory, whose own checks name what is wrong with it.
+        eprintln!(
+            "{}",
+            crate::output::human::terminal_safe(format!(
+                "ripr: could not resolve the root `ripr check` would analyze ({error}); diagnosing the current directory"
+            ))
+        );
+        root = PathBuf::from(".");
+    }
     // #8540: one clock for the whole run, shared by both surfaces, so the
     // total the human screen prints is the total the JSON document carries.
     let run_started = std::time::Instant::now();
@@ -263,7 +281,7 @@ impl DoctorEnvironment {
         language_detection_elapsed: std::time::Duration,
     ) -> Self {
         let loaded = config.as_ref().ok();
-        let preview_enablement = preview_languages_to_enable(detected, config);
+        let preview_enablement = preview_languages_to_enable(root, detected, config);
         // #8540 follow-up: each expensive computation is timed where it runs
         // and named after itself, so the segment list can explain the run
         // total alongside the timed checks and probes.
@@ -326,10 +344,7 @@ fn detected_language_entries(
     enabled: Option<&[LanguageId]>,
     auto_defaulted: bool,
 ) -> Vec<output::doctor::DoctorDetectedLanguage> {
-    use crate::domain::language_availability::{
-        AutoDetectionPolicy, ConfiguredIntent, LanguageAvailabilityInput,
-        resolve_language_availability,
-    };
+    use crate::domain::language_availability::availability_report_for_detected;
     detected
         .iter()
         .map(|id| {
@@ -338,37 +353,18 @@ fn detected_language_entries(
             // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
-            let enabled = enabled.map(|list| list.contains(&config_entry(*id)));
-            let auto_enabled = auto_defaulted
-                && enabled == Some(true)
-                && matches!(
-                    config_entry(*id),
-                    LanguageId::Python | LanguageId::TypeScript
-                );
-            let report = resolve_language_availability(&LanguageAvailabilityInput {
-                project_detected: true,
-                configured: match enabled {
-                    Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
-                    Some(false) => ConfiguredIntent::Disabled,
-                    _ => ConfiguredIntent::Unspecified,
-                },
-                auto_policy: if auto_enabled {
-                    AutoDetectionPolicy::WhenDetected
-                } else {
-                    AutoDetectionPolicy::Never
-                },
-                ..LanguageAvailabilityInput::for_language(*id)
-            });
+            let enabled_in_config = enabled.map(|list| list.contains(&config_entry(*id)));
+            let report = availability_report_for_detected(*id, 0, enabled, auto_defaulted);
             output::doctor::DoctorDetectedLanguage {
                 language: id.as_str().to_string(),
                 status: language_status(*id),
                 adapter_available: id.is_available(),
-                enabled,
+                enabled: enabled_in_config,
                 // Unloaded configuration leaves enablement unknown; the resolver
                 // has no unknown state, so publish none rather than a definite
                 // `not_enabled` plus an enable step the config may already satisfy.
-                availability_state: enabled.map(|_| report.state.as_str()),
-                remediation: if enabled.is_some() {
+                availability_state: enabled_in_config.map(|_| report.state.as_str()),
+                remediation: if enabled_in_config.is_some() {
                     report.remediation
                 } else {
                     Vec::new()
@@ -1376,6 +1372,14 @@ where
             probe(tool)
         };
         let probe_elapsed = probe_started.elapsed();
+        // Evidence that already names the exact install command for the verify
+        // interpreter replaces the generic static hint (one message, not two).
+        let hint =
+            if language == "python" && tool == "pytest" && evidence.contains("install it with `") {
+                ""
+            } else {
+                hint
+            };
         // A language runtime is an analysis capability, not a prerequisite
         // for building RIPR from source: the source-build profile keeps the
         // probe visible but never lets it decide that profile's status.
@@ -1395,10 +1399,12 @@ where
     ok
 }
 
-/// The pytest probe describes the command the verify route prints: PATH
-/// `python -m pytest` (#13617; project-venv selection at the producer is
-/// #13801). The project virtualenv is inspected statically (never executed)
-/// only to explain a PATH failure.
+/// The pytest probe describes the interpreter the printed verify command
+/// uses. With a project virtualenv the producer names `<venv>/bin/python`
+/// (#13801), so doctor reads that same interpreter's static pytest fact
+/// (`project_venv_pytest`, never executing checkout code) instead of probing
+/// PATH `python` (#13617). Without a venv the verify route is PATH
+/// `python -m pytest` and the injected PATH probe decides.
 fn python_pytest_runtime_probe<F>(
     root: &Path,
     probe: &mut F,
@@ -1407,36 +1413,47 @@ where
     F: FnMut(&str) -> (output::doctor::DoctorStatus, String),
 {
     use analysis::python_env::{VenvPytest, project_venv_pytest, project_venv_python};
-    let (status, evidence) = probe(PYTHON_PYTEST_PROBE);
-    if status == output::doctor::DoctorStatus::Pass {
-        return (status, format!("{evidence} (PATH `python -m pytest`)"));
-    }
-    let venv = project_venv_python(root).unwrap_or(".venv/bin/python");
-    // `venv/bin/python` -> `venv/bin/activate`: name the detected directory.
-    let activate_rel = venv.strip_suffix("python").map_or_else(
-        || ".venv/bin/activate".to_string(),
-        |bin| format!("{bin}activate"),
-    );
-    // With `--root` elsewhere the hint must still paste from the caller's
-    // directory, so join the root and quote it for the host shell.
-    let activate = if root.as_os_str().is_empty() || root == Path::new(".") {
-        activate_rel
-    } else {
-        crate::agent::loop_commands::shell_arg(&root.join(&activate_rel).to_string_lossy())
+    let Some(venv) = project_venv_python(root) else {
+        let (status, evidence) = probe(PYTHON_PYTEST_PROBE);
+        if status == output::doctor::DoctorStatus::Pass {
+            return (status, format!("{evidence} (PATH `python -m pytest`)"));
+        }
+        return (status, evidence);
     };
-    let note = match project_venv_pytest(root) {
-        VenvPytest::Present(_) => format!(
-            "pytest is installed in the project virtualenv ({venv}) but `python` on PATH lacks it; activate the venv (source {activate}) before running the printed verify command"
+    match project_venv_pytest(root) {
+        VenvPytest::Present(version) => {
+            let version = version.map_or_else(String::new, |v| format!(" {v}"));
+            (
+                output::doctor::DoctorStatus::Pass,
+                format!("pytest{version} (project virtualenv `{venv} -m pytest`)"),
+            )
+        }
+        VenvPytest::Missing => {
+            // Paste from the caller's directory even with `--root` elsewhere.
+            let interpreter = if root.as_os_str().is_empty() || root == Path::new(".") {
+                venv.to_string()
+            } else {
+                crate::agent::loop_commands::shell_arg(&root.join(venv).to_string_lossy())
+            };
+            let uv = root.join("uv.lock").exists();
+            let install = if uv {
+                format!("uv pip install --python {interpreter} pytest")
+            } else {
+                format!("{interpreter} -m pip install pytest")
+            };
+            (
+                output::doctor::DoctorStatus::Fail,
+                format!(
+                    "pytest is not installed in the project virtualenv ({venv}), which the printed verify command runs; install it with `{install}`"
+                ),
+            )
+        }
+        VenvPytest::Unknown | VenvPytest::NoVenv => (
+            output::doctor::DoctorStatus::Fail,
+            format!(
+                "a project virtualenv ({venv}) exists but pytest there is not verified (layout not statically readable); the printed verify command runs {venv}, not PATH `python`"
+            ),
         ),
-        VenvPytest::Unknown => format!(
-            "a project virtualenv ({venv}) exists but pytest there is not verified (layout not statically readable)"
-        ),
-        VenvPytest::Missing | VenvPytest::NoVenv => String::new(),
-    };
-    if note.is_empty() {
-        (status, evidence)
-    } else {
-        (status, format!("{evidence}; {note}"))
     }
 }
 
@@ -1530,10 +1547,17 @@ fn language_runtime_probe_display_line(probe: &output::doctor::DoctorRuntimeProb
     let evidence = display_text(&probe.evidence);
     let hint = display_text(&probe.hint);
     if probe.status == output::doctor::DoctorStatus::Fail && !probe.required {
-        format!(
-            "- {} verify-route runtime: {} — optional; {}",
-            probe.language, evidence, hint
-        )
+        if hint.is_empty() {
+            format!(
+                "- {} verify-route runtime: {} — optional",
+                probe.language, evidence
+            )
+        } else {
+            format!(
+                "- {} verify-route runtime: {} — optional; {}",
+                probe.language, evidence, hint
+            )
+        }
     } else {
         language_runtime_probe_line(&probe.language, probe.status, &evidence, &hint)
     }
@@ -1717,7 +1741,7 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
     // enabled that belong in this repo: a per-language `["typescript"]`
     // snippet would disable Python in a mixed repository, so following one
     // tip would produce the other. Default `rust` is kept only when Rust is
-    // actually detected (#7648).
+    // actually detected (#7648) or the user enabled it explicitly (#15304).
     let names = gaps
         .iter()
         .map(|gap| gap.label.as_str())
@@ -1739,6 +1763,7 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
 /// are not enabled. `None` when there is nothing to suggest or the config
 /// cannot be loaded (fail closed: no tip).
 fn preview_languages_to_enable(
+    root: &Path,
     detected: &[LanguageId],
     config: &Result<RiprConfig, String>,
 ) -> Option<PreviewEnablement> {
@@ -1798,12 +1823,36 @@ fn preview_languages_to_enable(
     if gaps.is_empty() {
         return None;
     }
+    // #15304 review: only the built-in default `rust` is dropped when no Rust
+    // marker is found (#7648). A `rust` the user wrote into
+    // `[languages].enabled` is their selection, and the replacement list must
+    // keep it. So must a root whose crate is nested (`backend/Cargo.toml`):
+    // `ripr check` analyzes that Rust, and a list without `rust` stops it.
+    let keep_rust = detected.contains(&LanguageId::Rust)
+        || crate::domain::enablement_tip_keeps_rust(root)
+        || languages_enabled_is_explicit(config);
     let suggestion = crate::domain::enablement_tip_languages(
         &enabled,
-        detected.contains(&LanguageId::Rust),
+        keep_rust,
         gaps.iter().map(|gap| gap.entry),
     );
     Some(PreviewEnablement { gaps, suggestion })
+}
+
+/// Whether the loaded `ripr.toml` sets `[languages].enabled` itself, rather
+/// than leaving the built-in default in place. Reads the exact text the
+/// config was parsed from, so a config-free run and a `[languages]` table
+/// without `enabled` both read as the default.
+fn languages_enabled_is_explicit(config: &RiprConfig) -> bool {
+    config
+        .source_text()
+        .and_then(|text| toml::from_str::<toml::Value>(text).ok())
+        .is_some_and(|document| {
+            document
+                .get("languages")
+                .and_then(|languages| languages.get("enabled"))
+                .is_some()
+        })
 }
 
 /// The `[languages].enabled` entries a doctor tip may add, each paired with the
@@ -4032,10 +4081,10 @@ mod tests {
 
     #[cfg(not(windows))]
     #[test]
-    fn pytest_probe_reports_path_python_and_uses_venv_only_as_a_hint() -> std::io::Result<()> {
-        let make = |name: &str, site: &[&str]| -> std::io::Result<std::path::PathBuf> {
-            let root = std::env::temp_dir()
-                .join(format!("ripr-doctor-venv-{name}-{}", std::process::id()));
+    fn pytest_probe_follows_the_verify_route_interpreter() -> std::io::Result<()> {
+        let make = |tag: &str, site: &[&str]| -> std::io::Result<std::path::PathBuf> {
+            let root =
+                std::env::temp_dir().join(format!("ripr-doctor-venv-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             let site_dir = root.join(".venv/lib/python3.13/site-packages");
             std::fs::create_dir_all(&site_dir)?;
@@ -4047,73 +4096,103 @@ mod tests {
             Ok(root)
         };
         let calls = std::cell::RefCell::new(Vec::<String>::new());
-        let mut path_fail = |tool: &str| {
+        // PATH python HAS pytest; the venv (what the verify route runs) does not.
+        let mut path_pass = |tool: &str| {
             calls.borrow_mut().push(tool.to_string());
-            (
-                output::doctor::DoctorStatus::Fail,
-                "python -m pytest --version failed (exit status: 1): No module named pytest"
-                    .to_string(),
-            )
-        };
-        let with = make("with", &["pytest-9.2.0.dist-info", "pytest"])?;
-        let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_fail);
-        assert_eq!(status, output::doctor::DoctorStatus::Fail);
-        assert!(evidence.contains("No module named pytest"), "{evidence}");
-        let expected = crate::agent::loop_commands::shell_arg(
-            &with.join(".venv/bin/activate").to_string_lossy(),
-        );
-        assert!(
-            evidence.contains(&format!("source {expected}")),
-            "root-joined activate path: {evidence}"
-        );
-        assert_eq!(*calls.borrow(), ["python -m pytest"]);
-        // Negative control: venv without pytest gives no activation advice.
-        let without = make("without", &["pip"])?;
-        let (status, evidence) = python_pytest_runtime_probe(&without, &mut path_fail);
-        assert_eq!(status, output::doctor::DoctorStatus::Fail);
-        assert!(!evidence.contains("activate"), "{evidence}");
-        // A `venv/` (not `.venv/`) project is told to activate `venv/`.
-        let plain =
-            std::env::temp_dir().join(format!("ripr-doctor-venv-plain-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&plain);
-        std::fs::create_dir_all(plain.join("venv/bin"))?;
-        std::fs::write(plain.join("venv/bin/python"), "")?;
-        std::fs::create_dir_all(
-            plain.join("venv/lib/python3.13/site-packages/pytest-9.2.0.dist-info"),
-        )?;
-        let (_, evidence) = python_pytest_runtime_probe(&plain, &mut path_fail);
-        let expected = crate::agent::loop_commands::shell_arg(
-            &plain.join("venv/bin/activate").to_string_lossy(),
-        );
-        assert!(
-            evidence.contains(&format!("source {expected}")),
-            "{evidence}"
-        );
-        assert!(!evidence.contains(".venv/bin/activate"), "{evidence}");
-        // A `.` root keeps the bare relative hint.
-        let (_, evidence) = python_pytest_runtime_probe(Path::new("."), &mut path_fail);
-        assert!(!evidence.contains("source /"), "{evidence}");
-        let _ = std::fs::remove_dir_all(&plain);
-        // PATH python with pytest passes and says which command was probed,
-        // regardless of the venv.
-        let (status, evidence) = python_pytest_runtime_probe(&with, &mut |_: &str| {
             (
                 output::doctor::DoctorStatus::Pass,
                 "pytest 9.1.1".to_string(),
             )
-        });
+        };
+        let without = make("without", &["pip"])?;
+        let (status, evidence) = python_pytest_runtime_probe(&without, &mut path_pass);
+        assert_eq!(status, output::doctor::DoctorStatus::Fail);
+        assert!(
+            evidence.contains("not installed in the project virtualenv"),
+            "{evidence}"
+        );
+        let interp = crate::agent::loop_commands::shell_arg(
+            &without.join(".venv/bin/python").to_string_lossy(),
+        );
+        assert!(
+            evidence.contains(&format!("`{interp} -m pip install pytest`")),
+            "{evidence}"
+        );
+        // A uv project gets the uv install command.
+        std::fs::write(without.join("uv.lock"), "")?;
+        let (_, evidence) = python_pytest_runtime_probe(&without, &mut path_pass);
+        assert!(
+            evidence.contains(&format!("`uv pip install --python {interp} pytest`")),
+            "{evidence}"
+        );
+        // The PATH interpreter is not what the verify route runs.
+        assert!(calls.borrow().is_empty(), "{:?}", calls.borrow());
+        // Venv with pytest passes without consulting PATH python.
+        let with = make("with", &["pytest-9.2.0.dist-info", "pytest"])?;
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_pass);
         assert_eq!(status, output::doctor::DoctorStatus::Pass);
-        assert_eq!(evidence, "pytest 9.1.1 (PATH `python -m pytest`)");
+        assert_eq!(
+            evidence,
+            "pytest 9.2.0 (project virtualenv `.venv/bin/python -m pytest`)"
+        );
+        assert!(calls.borrow().is_empty());
         // Unknown venv layout is surfaced as not verified, not as a pass.
         std::fs::write(
             with.join(".venv/pyvenv.cfg"),
             "include-system-site-packages = true\n",
         )?;
-        let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_fail);
+        let (status, evidence) = python_pytest_runtime_probe(&with, &mut path_pass);
         assert_eq!(status, output::doctor::DoctorStatus::Fail);
         assert!(evidence.contains("not verified"), "{evidence}");
+        // No venv: PATH probe decides and is labelled.
+        let none = std::env::temp_dir().join(format!("ripr-doctor-novenv-{}", std::process::id()));
+        std::fs::create_dir_all(&none)?;
+        let (status, evidence) = python_pytest_runtime_probe(&none, &mut path_pass);
+        assert_eq!(status, output::doctor::DoctorStatus::Pass);
+        assert_eq!(evidence, "pytest 9.1.1 (PATH `python -m pytest`)");
+        assert_eq!(*calls.borrow(), ["python -m pytest"]);
         let _ = std::fs::remove_dir_all(with);
         let _ = std::fs::remove_dir_all(without);
+        let _ = std::fs::remove_dir_all(none);
+        Ok(())
+    }
+
+    // The pytest probe is only registered with the Python adapter compiled in.
+    #[cfg(all(not(windows), feature = "lang-python"))]
+    #[test]
+    fn venv_missing_pytest_gives_one_install_message_with_unchanged_severity() -> Result<(), String>
+    {
+        let root = unique_command_test_dir("pytest-venv-missing");
+        std::fs::create_dir_all(root.join(".venv/bin")).map_err(|e| format!("mkdir: {e}"))?;
+        std::fs::create_dir_all(root.join(".venv/lib/python3.13/site-packages/pip"))
+            .map_err(|e| format!("mkdir: {e}"))?;
+        std::fs::write(root.join(".venv/bin/python"), "").map_err(|e| format!("write: {e}"))?;
+        std::fs::write(root.join("pyproject.toml"), "[tool.pytest.ini_options]\n")
+            .map_err(|e| format!("write: {e}"))?;
+        let mut report = output::doctor::DoctorReport::new(&root.display().to_string());
+        let ok = add_language_runtime_probes(
+            &root,
+            &[LanguageId::Python],
+            &[LanguageId::Rust],
+            &mut report,
+            false,
+            |_| (output::doctor::DoctorStatus::Pass, "ok".to_string()),
+        );
+        // Same severity as the PATH-missing case: a failed, non-required probe.
+        assert!(ok);
+        let probe = report
+            .runtime_probes
+            .iter()
+            .find(|p| p.tool == "pytest")
+            .ok_or_else(|| "missing pytest probe".to_string())?;
+        assert_eq!(probe.status, output::doctor::DoctorStatus::Fail);
+        assert!(!probe.required);
+        assert!(probe.hint.is_empty(), "{}", probe.hint);
+        let line = language_runtime_probe_display_line(probe);
+        assert!(line.contains("install it with `"), "{line}");
+        assert_eq!(line.matches("install it with").count(), 1, "{line}");
+        assert!(!line.contains("optional;"), "{line}");
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 
@@ -8814,7 +8893,11 @@ mod tests {
     /// computes them, so a test exercises the shared probe rather than a
     /// second derivation.
     fn test_preview_enablement(root: &Path) -> Option<PreviewEnablement> {
-        preview_languages_to_enable(&detect_languages(root), &crate::config::load_for_root(root))
+        preview_languages_to_enable(
+            root,
+            &detect_languages(root),
+            &crate::config::load_for_root(root),
+        )
     }
 
     fn test_enablement_suggestions(root: &Path) -> Vec<String> {
@@ -8857,6 +8940,42 @@ mod tests {
         assert!(
             !after.iter().any(|line| line.contains("typescript")),
             "{after:?}"
+        );
+        Ok(())
+    }
+
+    /// A mixed repository keeps its crate under `backend/`: the root has no
+    /// Rust marker, `ripr check` analyzes the Rust all the same, and the list
+    /// the tip prints must keep `rust`. The control drops the crate.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn doctor_tip_keeps_rust_for_a_crate_nested_below_the_root() -> Result<(), String> {
+        let dir = unique_command_test_dir("suggest-keeps-nested-rust");
+        std::fs::create_dir_all(dir.join("backend/src"))
+            .map_err(|err| format!("create dir: {err}"))?;
+        std::fs::create_dir_all(dir.join("scripts")).map_err(|err| format!("create dir: {err}"))?;
+        for (path, text) in [
+            ("backend/Cargo.toml", "[package]\nname = \"backend\"\n"),
+            ("backend/src/lib.rs", "pub fn f() {}\n"),
+            ("scripts/pyproject.toml", "[project]\nname = \"tools\"\n"),
+        ] {
+            std::fs::write(dir.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+        }
+        let nested = test_enablement_suggestions(&dir);
+        std::fs::remove_dir_all(dir.join("backend")).map_err(|err| format!("remove: {err}"))?;
+        let control = test_enablement_suggestions(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            nested
+                .iter()
+                .any(|line| line.contains("`enabled = [\"rust\", \"python\"]`")),
+            "{nested:?}"
+        );
+        assert!(
+            control
+                .iter()
+                .any(|line| line.contains("`enabled = [\"python\"]`")),
+            "{control:?}"
         );
         Ok(())
     }
@@ -8938,7 +9057,11 @@ mod tests {
     /// A mixed repository must get one snippet that keeps the languages
     /// already enabled: a `["rust", "typescript"]` snippet would switch off
     /// Python, and the next doctor run would then suggest `["rust",
-    /// "python"]`, undoing the first edit.
+    /// "python"]`, undoing the first edit. The `rust` written in
+    /// `[languages].enabled` is kept too, though no Rust marker is found:
+    /// markers are shallow, and dropping an explicit entry would switch off
+    /// Rust in a repository that keeps it below `rust/` (#15304). Only the
+    /// built-in default is left out (#7648).
     #[cfg(all(feature = "lang-typescript", feature = "lang-python"))]
     #[test]
     fn doctor_enable_tip_keeps_already_enabled_languages() -> Result<(), String> {
@@ -8965,13 +9088,8 @@ mod tests {
             suggestions[0]
         );
         assert!(
-            suggestions[0].contains(r#"enabled = ["python", "typescript"]"#),
-            "the snippet must keep python and omit undetected rust; got:\n{}",
-            suggestions[0]
-        );
-        assert!(
-            !suggestions[0].contains(r#""rust""#),
-            "no Rust markers means the tip must not name rust; got:\n{}",
+            suggestions[0].contains(r#"enabled = ["rust", "python", "typescript"]"#),
+            "the snippet must keep the explicitly enabled rust and python; got:\n{}",
             suggestions[0]
         );
         assert_eq!(

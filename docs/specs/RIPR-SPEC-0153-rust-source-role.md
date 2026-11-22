@@ -105,9 +105,29 @@ the CLI reports. Other loose non-`src` files (panel subjects under
 `seeds_diff_probes` also consults module-tree evidence (#4435). A changed
 file seeds only when a Cargo target's module tree reaches it through
 `mod`, `#[path]` or literal `include!` edges, walked from every target
-root (a declared `[lib] path` replaces `src/lib.rs`). The modules of an
+root (a declared `[lib] path` replaces `src/lib.rs`). A `#[path]` file owns
+its directory, as in rustc: its `mod child;` resolves to `child.rs` or
+`child/mod.rs` beside it, never under its stem directory (#15877). `autobins = false`
+drops the undiscovered `src/main.rs` and `src/bin/*` roots, and
+`autolib = false` drops `src/lib.rs` unless a `[lib]` table remains; a
+path-less declaration keeps its default path, including edition 2015's
+`src/<name>.rs`, `src/main.rs` and `src/bin/main.rs` fallback (#15877).
+Edition 2015 (an explicit `"2015"` or no `edition` key) turns discovery of
+one kind off when the manifest declares any `[[bin]]`, `[[test]]`,
+`[[bench]]` or `[[example]]` of that kind and leaves its `auto*` key unset;
+an inherited edition keeps discovery on. A
+`mod` item behind a `#[cfg]` no build satisfies (`any()`, `not(all())`),
+directly or through an enclosing inline module, declares no edge, because
+rustc strips it before loading a file for it; a feature, target or `test`
+gate keeps the edge (#15877). A
+manifest that leaves no library or binary target (`autobins = false`, no
+`[[bin]]` or `[lib]`, no discoverable `src/lib.rs`) lets a completed walk of
+its test, bench and example roots judge the package. The modules of an
 external root (`[lib] path = "../shared/lib.rs"`) seed, and every member
-package that compiles that root keeps its tests in Draft scope. A changed
+package that compiles that root keeps its tests in Draft scope. A file
+outside the layout directories that the owning package's production root
+mounts (`#[path = "../impl/price.rs"]` from `src/lib.rs`) seeds too (#15264);
+one only a test, bench or example root mounts stays evidence. A changed
 file no target reaches seeds nothing; when the layout rule would have
 seeded it, the run records one `language_scope_unsupported` limitation
 naming it, but only when every
@@ -462,7 +482,14 @@ fields between a `FunctionFact` and its paired executable `TestFact` via generat
   `tests/data` source, record the limitation; a module only a replaced
   default `src/lib.rs` declares seeds nothing; an external root's module seeds and relates the tests of
   every declaring package; `#[path]`, `include!`, nested inline and
-  raw-identifier edges seed; an unknown tree (`cfg_if!`) keeps seeding;
+  raw-identifier edges seed; a `#[path]` module outside `src/` that the
+  production root mounts seeds while an unmounted sibling and a file only a
+  test target mounts do not (#15264); an undeclared `src/main.rs` (and the
+  module it mounts), `src/bin/*.rs` or `src/lib.rs` under `autobins` or
+  `autolib = false` seeds nothing while the discovered or declared control
+  seeds (#15877); a module mounted only behind `#[cfg(any())]` or a
+  `cfg(any())` inline module seeds nothing while the unconditional and
+  feature-gated controls seed (#15877); an unknown tree (`cfg_if!`) keeps seeding;
   the LSP partition drops the same anchors. Each walk regression pairs a
   reached file with a true orphan so neither direction goes unpinned.
 - Unbuilt tests (#6965): a test in a file no `mod` declares (unchanged,

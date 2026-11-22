@@ -5218,7 +5218,7 @@ fn in_use_item(before: &str) -> bool {
 
 /// The standard assertion and formatting macros whose expansion cannot
 /// call the owner.
-const READ_MACROS: &[&str] = &[
+pub(super) const READ_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
     "assert_ne",
@@ -9997,6 +9997,12 @@ fn owner_row_argument_values(
     scope: super::argument_fold::FoldScope<'_>,
 ) -> Vec<String> {
     if let Some(value) = scope.property_argument(argument) {
+        return vec![value];
+    }
+    // RIPR-SPEC-0158: `level("12")` through the file's one closed parse helper
+    // is the number it parses to. The helper call is no literal-carrying
+    // argument, so this reads first.
+    if let Some(value) = super::argument_fold::folded_parse_argument(&test.body, argument, scope) {
         return vec![value];
     }
     let values = owner_argument_values_in(test, argument, text_cells);

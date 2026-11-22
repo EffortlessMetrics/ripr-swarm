@@ -1,12 +1,13 @@
 #[cfg(unix)]
 use super::measure::linked_target;
 use super::measure::{
-    CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL,
-    PasteVerdict, Probe, WARM_CHECK_MODE, admit_check_document, builds_ripr_from_source,
-    check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
-    extract_commands, git_path_text, hostile_outcome, parse_test_result, permissive_json_exit_zero,
-    probe_result, record_warm_check, repo_exposure_contradictions, rss_sample,
-    scan_check_contradictions, warm_check_args, warm_check_envs, warm_check_subject,
+    CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, DECLARED_PARTIAL_WARM_JSON,
+    OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL, PasteVerdict, Probe, WARM_CHECK_MODE,
+    admit_check_document, builds_ripr_from_source, check_args_without_explicit_mode,
+    check_contradictions, classify_replay, contradiction_outcome, extract_commands, git_path_text,
+    hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result, record_warm_check,
+    repo_exposure_contradictions, rss_sample, scan_check_contradictions, warm_check_args,
+    warm_check_envs, warm_check_subject,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
@@ -1473,6 +1474,392 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
             return Err(format!("accepted pilot scored {scored}"));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn strict_recall_of_missed_is_informational_and_flagged_carries_the_target() -> Result<(), String> {
+    // The 0.8 bar belongs only to flagged-or-unknown recall; strict ungripped
+    // recall is informational (target 0, regression floor only), so its
+    // ~11% checked-in value is never reported as below target (#12900).
+    let config = load_config(&committed_config())?;
+    let metric = |id: &str| {
+        config
+            .metric
+            .iter()
+            .find(|metric| metric.id == id)
+            .ok_or_else(|| format!("{id} missing from scoreboards.toml"))
+    };
+    let strict = metric("trust.mutation_recall_of_missed")?;
+    assert!(
+        strict.target.abs() < f64::EPSILON,
+        "strict recall must carry no target bar, got {}",
+        strict.target
+    );
+    assert!(
+        strict.title.contains("informational"),
+        "strict recall title must note it is informational: {}",
+        strict.title
+    );
+    assert!((strict.regression_floor - 0.05).abs() < 1e-9);
+    let flagged = metric("trust.mutation_recall_flagged_or_unknown")?;
+    assert!((flagged.target - 0.8).abs() < 1e-9);
+    assert!((flagged.regression_floor - 0.05).abs() < 1e-9);
+    Ok(())
+}
+
+#[test]
+fn mutation_spot_check_receipt_generates_recall_and_no_seam_rows() -> Result<(), String> {
+    // Small fixture mirroring the checked-in receipt's shape (#12900): the
+    // rows must be computed from counts, so removing or miscomputing the
+    // generation changes these exact values and fails.
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+        "recall_of_missed": {
+            "missed_total": 322,
+            "ungripped_missed": 34,
+            "ungripped_share_of_missed": 0.106,
+            "flagged_or_unknown_missed": 189,
+            "flagged_or_unknown_share_of_missed": 0.587,
+        },
+        "seam_coverage": {
+            "mutants_total": 1745,
+            "no_containing_seam": 843,
+            "no_containing_seam_share": 0.483,
+        },
+    });
+    let input = mutation_spot_check_to_input(&receipt)?;
+    let value = |id: &str| {
+        input["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == Some(id)))
+            .and_then(|row| row["value"].as_f64())
+    };
+    assert!(
+        value("trust.mutation_recall_of_missed").is_some_and(|v| (v - 34.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_recall_flagged_or_unknown")
+            .is_some_and(|v| (v - 189.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_no_seam_share").is_some_and(|v| (v - 843.0 / 1745.0).abs() < 1e-9),
+        "{input}"
+    );
+    let evidence_of = |id: &str| {
+        input["metrics"].as_array().and_then(|rows| {
+            rows.iter()
+                .find(|row| row["id"].as_str() == Some(id))
+                .and_then(|row| row["evidence"].as_str().map(str::to_string))
+        })
+    };
+    assert!(
+        evidence_of("trust.mutation_recall_of_missed")
+            .is_some_and(|e| e.contains("34 of 322 runtime-missed mutants flagged ungripped")),
+        "{input}"
+    );
+    assert!(
+        evidence_of("trust.mutation_no_seam_share")
+            .is_some_and(|e| e.contains("843 of 1745 mutants have no containing static seam")),
+        "{input}"
+    );
+
+    // The generated rows must be declared metrics: ingest admits them.
+    let config = load_config(&committed_config())?;
+    let samples = parse_ingest(&receipt, &config)?;
+    assert_eq!(samples.len(), 6, "{samples:?}");
+    for id in [
+        "trust.mutation_recall_of_missed",
+        "trust.mutation_recall_flagged_or_unknown",
+        "trust.mutation_no_seam_share",
+    ] {
+        assert!(samples.iter().any(|s| s.metric == id), "{id}: {samples:?}");
+    }
+
+    // A stored share that disagrees with the counts is hand-derived drift.
+    let mut drifted = receipt.clone();
+    drifted["recall_of_missed"]["ungripped_share_of_missed"] = json!(0.5);
+    assert!(
+        mutation_spot_check_to_input(&drifted).is_err_and(|err| err.contains("disagrees with"))
+    );
+    let mut drifted = receipt.clone();
+    drifted["seam_coverage"]["no_containing_seam"] = json!(2000);
+    assert!(
+        mutation_spot_check_to_input(&drifted)
+            .is_err_and(|err| err.contains("counts 2000 of only 1745"))
+    );
+    let mut missing = receipt.clone();
+    missing["recall_of_missed"]
+        .as_object_mut()
+        .map(|map| map.remove("ungripped_missed"));
+    assert!(
+        mutation_spot_check_to_input(&missing)
+            .is_err_and(|err| err.contains("needs ungripped_missed"))
+    );
+
+    // Older receipts without the sections simply omit the rows.
+    let mut older = receipt.clone();
+    older
+        .as_object_mut()
+        .map(|map| map.remove("recall_of_missed"));
+    older.as_object_mut().map(|map| map.remove("seam_coverage"));
+    let rows = mutation_spot_check_to_input(&older)?;
+    assert!(rows["metrics"].as_array().is_some_and(|rows| {
+        rows.iter().all(|row| {
+            !matches!(
+                row["id"].as_str(),
+                Some(
+                    "trust.mutation_recall_of_missed"
+                        | "trust.mutation_recall_flagged_or_unknown"
+                        | "trust.mutation_no_seam_share"
+                )
+            )
+        })
+    }));
+    // A zero denominator claims no figure.
+    let mut empty = receipt.clone();
+    empty["recall_of_missed"]["missed_total"] = json!(0);
+    empty["recall_of_missed"]["ungripped_missed"] = json!(0);
+    empty["recall_of_missed"]["flagged_or_unknown_missed"] = json!(0);
+    empty["recall_of_missed"]["ungripped_share_of_missed"] = json!(null);
+    empty["recall_of_missed"]["flagged_or_unknown_share_of_missed"] = json!(null);
+    let rows = mutation_spot_check_to_input(&empty)?;
+    assert!(rows["metrics"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .all(|row| row["id"] != "trust.mutation_recall_of_missed")
+    }));
+    // A positive numerator over a zero denominator is impossible, not a
+    // figure to omit: 0/0 above is omitted, 1/0 must fail ingest.
+    let mut impossible = receipt.clone();
+    impossible["recall_of_missed"]["missed_total"] = json!(0);
+    impossible["recall_of_missed"]["ungripped_missed"] = json!(1);
+    assert!(
+        mutation_spot_check_to_input(&impossible)
+            .is_err_and(|err| err.contains("counts 1 of only 0"))
+    );
+    let mut impossible = receipt.clone();
+    impossible["seam_coverage"]["mutants_total"] = json!(0);
+    impossible["seam_coverage"]["no_containing_seam"] = json!(1);
+    assert!(
+        mutation_spot_check_to_input(&impossible)
+            .is_err_and(|err| err.contains("counts 1 of only 0"))
+    );
+    Ok(())
+}
+
+#[test]
+fn genre_keys_do_not_change_mutation_spot_check_ingest() -> Result<(), String> {
+    // Additive-v2 genre retention: a v2 receipt with genre cross-tabs ingests
+    // to exactly the same input (and samples) as the same receipt without them.
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+    });
+    let mut with_genre = receipt.clone();
+    with_genre["outcomes_by_disposition_and_genre"] =
+        json!({"canonical_precise": {"BinaryOperator": {"caught": 2}}});
+    with_genre["outcomes_by_grip_class_and_genre"] =
+        json!({"strongly_gripped": {"BinaryOperator": {"caught": 2}}});
+    with_genre["genre_outcomes_by_language"] = json!({"rust": {
+        "outcomes_by_disposition_and_genre": with_genre["outcomes_by_disposition_and_genre"].clone(),
+        "outcomes_by_grip_class_and_genre": with_genre["outcomes_by_grip_class_and_genre"].clone(),
+    }});
+    with_genre["repos"][0]["outcomes_by_disposition_and_genre"] =
+        json!({"canonical_precise": {"BinaryOperator": {"caught": 2}}});
+    with_genre["repos"][0]["outcomes_by_grip_class_and_genre"] =
+        json!({"strongly_gripped": {"BinaryOperator": {"caught": 2}}});
+    with_genre["synthetic_diff_verdict"] = json!({
+        "outcomes_by_disposition_and_genre": {"canonical_precise": {"EqualityOperator": {"caught": 1}}},
+        "outcomes_by_grip_class_and_genre": {"strongly_gripped": {"EqualityOperator": {"caught": 1}}},
+    });
+    assert_eq!(
+        mutation_spot_check_to_input(&with_genre)?,
+        mutation_spot_check_to_input(&receipt)?
+    );
+    let config = load_config(&committed_config())?;
+    let without = parse_ingest(&receipt, &config)?;
+    let with = parse_ingest(&with_genre, &config)?;
+    assert_eq!(with.len(), without.len());
+    for (a, b) in with.iter().zip(&without) {
+        assert_eq!(a.metric, b.metric);
+        assert_eq!(a.detail, b.detail);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_receipt_counting_more_ungripped_than_flagged_or_unknown_fails_ingest() {
+    // The producer's flagged-or-unknown class includes ungripped, so this
+    // receipt is contradictory even though each ratio is internally
+    // consistent (#12900).
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+        "recall_of_missed": {
+            "missed_total": 10,
+            "ungripped_missed": 2,
+            "ungripped_share_of_missed": 0.2,
+            "flagged_or_unknown_missed": 1,
+            "flagged_or_unknown_share_of_missed": 0.1,
+        },
+        "seam_coverage": {
+            "mutants_total": 1745,
+            "no_containing_seam": 843,
+            "no_containing_seam_share": 0.483,
+        },
+    });
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|error| error.contains("counts 2 ungripped of 1 flagged-or-unknown"))
+    );
+}
+
+#[test]
+fn a_non_object_spot_check_section_fails_with_its_name() {
+    // A present-but-malformed section must name itself. Indexing a string
+    // yields Null, which would otherwise report a missing integer key and
+    // hide that the section itself is the problem.
+    let receipt = json!({
+        "schema_version": "ripr-mutation-spot-check-v2",
+        "scored_families": {
+            "claims_discriminator": {"agreement_rate": 1.0, "mutants_scored": 14},
+            "claims_no_discriminator": {"agreement_rate": 0.043, "mutants_scored": 23},
+        },
+        "repos": [
+            {"name": "atuin", "revision": "90f590b9", "cargo_mutants_version": "27.1.0",
+             "mutant_set_sha256": "aa", "cargo_mutants_args": null,
+             "pairings": {"canonical_precise": 2, "records_total": 86},
+             "calibration_metrics": {"mutants_total": 86}},
+        ],
+        "recall_of_missed": "n/a",
+    });
+    assert!(
+        mutation_spot_check_to_input(&receipt)
+            .is_err_and(|err| err.contains("`recall_of_missed` must be a JSON object")),
+        "a non-object section must name itself"
+    );
+}
+
+#[test]
+fn mutation_spot_check_checked_in_receipt_generates_issue_12900_values() -> Result<(), String> {
+    // Pin the generation against the real checked-in receipt: 34/322 strict
+    // recall (~11%), 189/322 flagged-or-unknown, 843/1745 no-seam (~48%).
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../metrics/public-proof/mutation-spot-check.json");
+    let text = fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let receipt: Value =
+        serde_json::from_str(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    let input = mutation_spot_check_to_input(&receipt)?;
+    let value = |id: &str| {
+        input["metrics"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"].as_str() == Some(id)))
+            .and_then(|row| row["value"].as_f64())
+    };
+    assert!(
+        value("trust.mutation_recall_of_missed").is_some_and(|v| (v - 34.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_recall_flagged_or_unknown")
+            .is_some_and(|v| (v - 189.0 / 322.0).abs() < 1e-9),
+        "{input}"
+    );
+    assert!(
+        value("trust.mutation_no_seam_share").is_some_and(|v| (v - 843.0 / 1745.0).abs() < 1e-9),
+        "{input}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_config_without_the_generated_rows_still_loads_the_checked_in_receipt() -> Result<(), String> {
+    // #12900 added three trust rows. A `--config` written before them never
+    // declared them, and ingest rejects an undeclared metric, so the
+    // projection must drop exactly those three and keep every other row
+    // strict: an undeclared pre-#12900 metric still fails.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../metrics/public-proof/mutation-spot-check.json");
+    let text = fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let receipt: Value =
+        serde_json::from_str(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+    let mut config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    config
+        .metric
+        .retain(|metric| !GENERATED_RECALL_ROWS.contains(&metric.id.as_str()));
+    let samples = parse_ingest(&receipt, &config)?;
+    let ids: Vec<&str> = samples
+        .iter()
+        .map(|sample| sample.metric.as_str())
+        .collect();
+    for id in GENERATED_RECALL_ROWS {
+        assert!(
+            !ids.contains(&id),
+            "{id} persisted through a config that never declared it: {ids:?}"
+        );
+    }
+    assert!(
+        ids.contains(&"trust.discriminator_claim_agreement"),
+        "the pre-#12900 rows must still load: {ids:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn checked_in_spot_check_receipt_still_yields_its_recorded_figures() -> Result<(), String> {
+    let receipt: Value = serde_json::from_str(include_str!(
+        "../../../../metrics/public-proof/mutation-spot-check.json"
+    ))
+    .map_err(|err| err.to_string())?;
+    assert_eq!(receipt["schema_version"], "ripr-mutation-spot-check-v2");
+    // Genre keys are additive in v2: whether the checked-in receipt has
+    // been refreshed to carry them or not, its recorded figures stand.
+    assert_eq!(receipt["recall_of_missed"]["ungripped_missed"], 34);
+    assert_eq!(receipt["recall_of_missed"]["missed_total"], 322);
+    assert_eq!(
+        receipt["recall_of_missed"]["flagged_or_unknown_missed"],
+        189
+    );
+    assert_eq!(receipt["seam_coverage"]["no_containing_seam"], 843);
+    assert_eq!(receipt["seam_coverage"]["mutants_total"], 1745);
+    // It still ingests, and adding genre keys changes no ingested metric.
+    let plain = mutation_spot_check_to_input(&receipt)?;
+    let mut with_genre = receipt.clone();
+    with_genre["outcomes_by_disposition_and_genre"] =
+        json!({"canonical_precise": {"BinaryOperator": {"caught": 1}}});
+    assert_eq!(mutation_spot_check_to_input(&with_genre)?, plain);
     Ok(())
 }
 
@@ -3605,6 +3992,7 @@ fn measured_checkout_uses_the_pin_not_cached_worktree_inputs() -> Result<(), Str
     fs::create_dir_all(&source).map_err(|err| err.to_string())?;
     let git = |args: &[&str]| super::measure::git(Some(&source), args);
     git(&["init", "--quiet"])?;
+    git(&["config", "core.autocrlf", "false"])?;
     fs::write(source.join(".gitignore"), "ripr.toml\ntarget/\n").map_err(|err| err.to_string())?;
     fs::write(source.join("subject.rs"), "pinned\n").map_err(|err| err.to_string())?;
     git(&["add", "."])?;
@@ -5822,17 +6210,122 @@ fn an_expected_partial_warm_check_is_a_value_that_trust_does_not_scan() -> Resul
     if !warm.detail.contains("expected partial outcome") || !warm.detail.contains(limit) {
         return Err(format!("the row must read as partial, got {}", warm.detail));
     }
-    if contradictions.is_some() || !missing.contains(&"warm check JSON") {
+    if contradictions.is_some() || missing != [DECLARED_PARTIAL_WARM_JSON] {
         return Err(format!(
             "a partial document must not be scanned: {contradictions:?} {missing:?}"
         ));
     }
-    // The same document on a row that did not declare it stays incomplete.
-    let (samples, _, _) = record_with_subject(&admission_subject(), Ok(run()), Ok(vec![run()]));
+    // The same document on a row that did not declare it stays incomplete,
+    // and its unscanned document is an ordinary missing source.
+    let (samples, _, missing) =
+        record_with_subject(&admission_subject(), Ok(run()), Ok(vec![run()]));
     let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
     if !matches!(warm.outcome, SampleOutcome::Incomplete(_)) {
         return Err(format!("expected incomplete, got {:?}", warm.outcome));
     }
+    if missing != ["warm check JSON"] {
+        return Err(format!(
+            "an undeclared partial is a missing source: {missing:?}"
+        ));
+    }
+    // A declared row whose measured run was not admitted is not out of
+    // scope: the document is missing, so the sample stays incomplete.
+    let mut rejected = run();
+    rejected.output.stdout = "{}".to_string();
+    let (_, _, missing) = record_with_subject(&subject, Ok(run()), Ok(vec![rejected]));
+    if missing != ["warm check JSON"] {
+        return Err(format!("a rejected run is a missing source: {missing:?}"));
+    }
+    Ok(())
+}
+
+/// The contradiction sample of a declared expected partial row is out of
+/// scope, not stopped short, so a new such row is not a lost completion
+/// (#10809, nightly 44478861915: `vscode-typescript`, `typescript-compiler`).
+/// A contradiction the pilot found, or any other missing document, keeps it
+/// incomplete and so still fails a new row closed.
+#[test]
+fn a_declared_partial_contradiction_sample_is_out_of_scope_not_incomplete() -> Result<(), String> {
+    let (outcome, detail) =
+        contradiction_outcome(Some((0, Vec::new())), &[DECLARED_PARTIAL_WARM_JSON]);
+    assert!(matches!(outcome, SampleOutcome::NotMeasured), "{outcome:?}");
+    assert!(
+        detail.contains("declared expected partial outcome"),
+        "{detail}"
+    );
+    let (outcome, _) = contradiction_outcome(
+        Some((1, vec!["seam x".to_string()])),
+        &[DECLARED_PARTIAL_WARM_JSON],
+    );
+    assert!(matches!(outcome, SampleOutcome::Incomplete(n) if (n - 1.0).abs() < 1e-9));
+    let (outcome, _) = contradiction_outcome(
+        Some((0, Vec::new())),
+        &[DECLARED_PARTIAL_WARM_JSON, "pilot repo-exposure.json"],
+    );
+    assert!(
+        matches!(outcome, SampleOutcome::Incomplete(_)),
+        "{outcome:?}"
+    );
+    // A declared partial row whose pilot document was not scanned has no
+    // count at all; that is stopped short, so it stays incomplete.
+    let (outcome, _) = contradiction_outcome(
+        None,
+        &["pilot repo-exposure.json", DECLARED_PARTIAL_WARM_JSON],
+    );
+    assert!(
+        matches!(outcome, SampleOutcome::Incomplete(_)),
+        "{outcome:?}"
+    );
+    // An undeclared row with nothing to scan keeps its earlier reading.
+    let (outcome, _) = contradiction_outcome(None, &["pilot repo-exposure.json"]);
+    assert!(matches!(outcome, SampleOutcome::NotMeasured), "{outcome:?}");
+
+    // The gate: a new repository whose sample is out of scope passes, while
+    // the same repository read as incomplete fails. The completion-loss rule
+    // is the same for every per-repository metric; MINIMAL configures one.
+    let config = parse_config(MINIMAL)?;
+    let metric = "speed.warm_check_ms";
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &[sample(metric, Some("a"), SampleOutcome::Value(0.0))],
+        &pinned_context("r", &["a"]),
+        None,
+        false,
+    );
+    let run = |new: SampleOutcome| {
+        build_report(
+            &config,
+            &all_boards(),
+            &[
+                sample(metric, Some("a"), SampleOutcome::Value(0.0)),
+                sample(metric, Some("c"), new),
+            ],
+            &pinned_context("r", &["a", "c"]),
+            Some(&baseline),
+            true,
+        )
+    };
+    let scoped = run(SampleOutcome::NotMeasured);
+    assert_ne!(
+        scoped["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        scoped["gate"]
+    );
+    assert_eq!(
+        scoped["gate"]["regressions"],
+        json!([]),
+        "{}",
+        scoped["gate"]
+    );
+    let incomplete = run(SampleOutcome::Incomplete(0.0));
+    assert_eq!(incomplete["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&incomplete).contains("c: new in this run and did not complete"),
+        "{}",
+        gate_failure_message(&incomplete)
+    );
     Ok(())
 }
 

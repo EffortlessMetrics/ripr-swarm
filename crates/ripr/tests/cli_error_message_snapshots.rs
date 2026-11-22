@@ -50,6 +50,34 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: first-action requires at least one explicit artifact input; pass one, for example `--pr-guidance PATH` (run `ripr help first-action` for the list)\n",
     },
+    // #15985: the two agent refusals that named no source for the id.
+    Case {
+        args: &["agent", "start"],
+        exit: 2,
+        stderr: "ripr: agent start requires --seam-id; add `--seam-id <id>`. Use an id that `ripr pilot --root <dir>` lists, or the spot id on the `ripr repair` line that `ripr check` prints; a `probe:...` finding id is not accepted here\n",
+    },
+    Case {
+        args: &["agent", "brief"],
+        exit: 2,
+        stderr: "ripr: agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev> --json` to brief the changes since that revision, or `--seam-id <id> --json` for one seam. Use an id that `ripr pilot --root <dir>` lists, or the spot id on the `ripr repair` line that `ripr check` prints; a `probe:...` finding id is not accepted here\n",
+    },
+    // #15985: an empty command name is named as empty, not echoed as `""`.
+    Case {
+        args: &[""],
+        exit: 2,
+        stderr: "ripr: the command name is empty, which usually means an unset shell variable. Run `ripr --help` to list commands.\n",
+    },
+    // #15985: a word after the version flag is refused, never discarded.
+    Case {
+        args: &["--version", "extra"],
+        exit: 2,
+        stderr: "ripr: usage: ripr --version (this route accepts no other arguments, and \"extra\" follows it); drop \"extra\" to print the version, or run `ripr --help` to list commands\n",
+    },
+    Case {
+        args: &["-V", "check"],
+        exit: 2,
+        stderr: "ripr: usage: ripr --version (this route accepts no other arguments, and \"check\" follows it); drop \"check\" to print the version, or run `ripr --help` to list commands\n",
+    },
     Case {
         args: &["reports", "ts-limitations"],
         exit: 2,
@@ -184,7 +212,7 @@ const CASES: &[Case] = &[
     Case {
         args: &["evidence-health", "--root", "/ripr-missing-root"],
         exit: 2,
-        stderr: "ripr: evidence-health root /ripr-missing-root does not exist or is not a directory; pass `--root <dir>` naming the workspace directory\n",
+        stderr: "ripr: evidence-health root /ripr-missing-root is not a directory; pass the directory that contains the workspace (for a Cargo.toml path, its parent directory)\n",
     },
     // An option typed before the command. The `ripr check` example may only
     // name a spelling `check` accepts: `ripr -q check` used to be told to run
@@ -229,12 +257,50 @@ const CASES: &[Case] = &[
         exit: 2,
         stderr: "ripr: unknown check argument \"--al\". Run `ripr check --help --all`.\n",
     },
+    // #15898: a switch given a value names a flag that exists, so the refusal
+    // says it is a switch and which spellings work.
+    Case {
+        args: &["check", "--quiet=false"],
+        exit: 2,
+        stderr: "ripr: unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: write `--quiet` alone; a switch is on when present and off when absent. Run `ripr check --help --all`.\n",
+    },
+    Case {
+        args: &["cache", "status", "--json=true"],
+        exit: 2,
+        stderr: "ripr: unknown cache status argument \"--json=true\". `--json` is a switch and takes no value: write `--json` alone; a switch is on when present and off when absent. Run `ripr cache status --help`.\n",
+    },
+    // A sibling's switch in a shared help body is not offered: `baseline
+    // diff` has no `--dry-run`. Its owner, `baseline create`, is told.
+    Case {
+        args: &["baseline", "diff", "--dry-run=true"],
+        exit: 2,
+        stderr: "ripr: unknown baseline diff argument \"--dry-run=true\". Run `ripr baseline diff --help`.\n",
+    },
+    Case {
+        args: &["baseline", "create", "--dry-run=true"],
+        exit: 2,
+        stderr: "ripr: unknown baseline create argument \"--dry-run=true\". `--dry-run` is a switch and takes no value: write `--dry-run` alone; a switch is on when present and off when absent. Run `ripr baseline create --help`.\n",
+    },
+    // A value-taking flag still splits at `=` and reaches its own validation.
+    Case {
+        args: &["pilot", "--format=yaml"],
+        exit: 2,
+        stderr: "ripr: unknown format \"yaml\". Accepted: human, json.\n",
+    },
     Case {
         args: &["-x", "check"],
         exit: 2,
         stderr: "ripr: unknown command \"-x\"; options go after the command, and `ripr check` has no `-x` option. Run `ripr --help`.\n",
     },
 ];
+
+/// The built binary, run from `dir`. Shared by the cases that need more
+/// than fixed arguments in an empty directory.
+fn ripr_in(dir: &std::path::Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(dir);
+    command
+}
 
 #[test]
 fn argument_refusals_name_the_exact_next_command() -> Result<(), String> {
@@ -267,9 +333,8 @@ fn argument_refusals_name_the_exact_next_command() -> Result<(), String> {
     // pr-evidence outside a git repository: the refusal names the directory,
     // so it is assembled here rather than listed in `CASES`. It must not show
     // git's argv or tell the reader to check a ref spelling.
-    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+    let output = ripr_in(&dir)
         .args(["pr-evidence", "--base", "main", "--head", "HEAD"])
-        .current_dir(&dir)
         // The scratch directory can sit inside a checkout (the workspace
         // points TMPDIR at `target`), so stop git's upward discovery at its
         // parent to make this a real non-repository run.
@@ -303,6 +368,96 @@ fn argument_refusals_name_the_exact_next_command() -> Result<(), String> {
         failures.push(format!(
             "refusals wrote into the working directory: {leftovers:?}"
         ));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+/// #15898: a `ripr.toml` value of the wrong TOML shape. `ripr config
+/// validate` names the shape in TOML terms and gives one line on how to write
+/// it; the deserializer's own words (`usize`, `a sequence`, an internal
+/// `struct` name) do not appear. The same next step reaches `ripr doctor`,
+/// whose config line carries no source excerpt.
+#[test]
+fn wrong_shape_config_values_say_what_to_write() -> Result<(), String> {
+    const CONFIGS: &[(&str, &str, &str)] = &[
+        (
+            "[reports]\nmax_related_tests = \"five\"\n",
+            "invalid type: string \"five\", expected a whole number of 1 or more",
+            "write a whole number of 1 or more with no quotes, for example `5`",
+        ),
+        (
+            "[languages]\nenabled = \"rust\"\n",
+            "invalid type: string \"rust\", expected a list",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
+        ),
+        (
+            "analysis = 5\n",
+            "invalid type: integer `5`, expected a table",
+            "write it as a table header on its own line, for example `[analysis]`, with its keys on the lines below",
+        ),
+    ];
+    let dir = std::env::temp_dir().join(format!("ripr-config-shape-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|error| format!("create scratch: {error}"))?;
+    let ceiling = dir.parent().unwrap_or(dir.as_path()).to_path_buf();
+    let mut failures = Vec::new();
+    for (config, reason, next) in CONFIGS {
+        std::fs::write(dir.join("ripr.toml"), config)
+            .map_err(|error| format!("write ripr.toml: {error}"))?;
+        let validate = ripr_in(&dir)
+            .args(["config", "validate"])
+            .env("GIT_CEILING_DIRECTORIES", &ceiling)
+            .output()
+            .map_err(|error| format!("run ripr config validate: {error}"))?;
+        let stderr = String::from_utf8_lossy(&validate.stderr);
+        let lines: Vec<&str> = stderr.lines().collect();
+        let reason_at = lines.iter().position(|line| line == reason);
+        let followed = reason_at.is_some_and(|at| lines.get(at + 2) == Some(next));
+        let jargon = ["usize", "a sequence", "struct ", "Raw"]
+            .iter()
+            .any(|word| stderr.contains(word));
+        if validate.status.code() != Some(2) || !followed || jargon {
+            failures.push(format!(
+                "config validate for {config:?}: exit {:?}\n{stderr}",
+                validate.status.code()
+            ));
+        }
+        // The JSON refusal carries the same next step in its message.
+        let json = ripr_in(&dir)
+            .args(["check", "--root", ".", "--json"])
+            .env("GIT_CEILING_DIRECTORIES", &ceiling)
+            .output()
+            .map_err(|error| format!("run ripr check --json: {error}"))?;
+        let document = String::from_utf8_lossy(&json.stdout);
+        let escaped = next.replace('"', "\\\"");
+        if json.status.code() != Some(2) || !document.contains(&escaped) {
+            failures.push(format!(
+                "check --json for {config:?}: exit {:?}\n{document}",
+                json.status.code()
+            ));
+        }
+        let doctor = ripr_in(&dir)
+            .args(["doctor", "--root", "."])
+            .env("GIT_CEILING_DIRECTORIES", &ceiling)
+            .output()
+            .map_err(|error| format!("run ripr doctor: {error}"))?;
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&doctor.stdout),
+            String::from_utf8_lossy(&doctor.stderr)
+        );
+        let named = report
+            .lines()
+            .any(|line| line.contains("TOML parse error at line ") && line.ends_with(next));
+        if !named {
+            failures.push(format!(
+                "doctor for {config:?} lost the next step:\n{report}"
+            ));
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
     if failures.is_empty() {

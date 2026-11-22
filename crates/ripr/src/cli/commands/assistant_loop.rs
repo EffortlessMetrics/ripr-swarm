@@ -65,6 +65,7 @@ fn assistant_loop_proof(args: &[String]) -> Result<(), String> {
         .gate_decision
         .as_ref()
         .map(|path| output::test_oracle_assistant_proof::display_path(path));
+    let mut reads = super::SuppliedInputReads::default();
     let input = output::test_oracle_assistant_proof::TestOracleAssistantProofInput {
         root: options.root,
         pr_guidance_path,
@@ -78,15 +79,15 @@ fn assistant_loop_proof(args: &[String]) -> Result<(), String> {
         pr_guidance_json: options
             .pr_guidance
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR guidance", path)),
+            .map(|path| reads.read("--pr-guidance", "PR guidance", path)),
         agent_packet_json: options
             .agent_packet
             .as_ref()
-            .map(|path| read_optional_text_for_report("agent packet", path)),
+            .map(|path| reads.read("--agent-packet", "agent packet", path)),
         before_json: options
             .before
             .as_ref()
-            .map(|path| read_optional_text_for_report("before evidence", path)),
+            .map(|path| reads.read("--before", "before evidence", path)),
         after_json: options
             .after
             .as_ref()
@@ -118,7 +119,7 @@ fn assistant_loop_proof(args: &[String]) -> Result<(), String> {
     write_text_file(&options.out_md, &rendered_md)?;
     println!("Wrote {}", output::path::human_path(&options.out));
     println!("Wrote {}", output::path::human_path(&options.out_md));
-    Ok(())
+    reads.finish("assistant-loop proof")
 }
 
 fn assistant_loop_health(args: &[String]) -> Result<(), String> {

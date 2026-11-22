@@ -709,3 +709,114 @@ fn directory_members_are_inputs_and_missing_inputs_are_not() -> Result<(), Strin
     }
     Ok(())
 }
+
+/// `--out-jsonl` follows the same filesystem-identity rule as `--out` (#14352):
+/// an absolute spelling or a symlink to an evidence input is refused, and the
+/// input is left intact. `policy history --history h --out-jsonl h` is the
+/// intended append flow and must not hit the refusal.
+#[test]
+fn out_jsonl_naming_an_input_by_absolute_path_or_symlink_is_refused() -> Result<(), String> {
+    let dir = scratch("out-jsonl")?;
+    let absolute = dir.join("art").join("in.json").display().to_string();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("in.json", dir.join("art/link.json"))
+        .map_err(|error| format!("symlink: {error}"))?;
+    let mut spellings = vec![absolute];
+    #[cfg(unix)]
+    spellings.push("art/link.json".to_string());
+    let mut failures = Vec::new();
+    for spelling in &spellings {
+        let ledger = run(
+            &dir,
+            &[
+                "pr-ledger",
+                "record",
+                "--pr-number",
+                "1",
+                "--base",
+                "a",
+                "--head",
+                "b",
+                "--gap-ledger",
+                "art/in.json",
+                "--out-jsonl",
+                spelling,
+            ],
+        )?;
+        let history = run(
+            &dir,
+            &[
+                "policy",
+                "history",
+                "--current",
+                "art/in.json",
+                "--out-jsonl",
+                spelling,
+            ],
+        )?;
+        for (label, output) in [("pr-ledger record", ledger), ("policy history", history)] {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let after = fs::read_to_string(dir.join("art/in.json")).unwrap_or_default();
+            if output.status.code() != Some(2)
+                || !stderr.contains(&format!("{label} --out-jsonl must not be the same path as"))
+                || after != SENTINEL
+            {
+                failures.push(format!(
+                    "{label} --out-jsonl {spelling}: exit {:?}; stderr: {stderr}; input {after:?}",
+                    output.status.code()
+                ));
+            }
+        }
+    }
+    // Control: `--history` equal to `--out-jsonl` is the append flow for both
+    // commands. Run each twice with the absolute spelling so the second run names
+    // an existing history file by a different spelling: the canonical check
+    // must still let it append rather than refuse it as an input.
+    for (label, file, args) in [
+        (
+            "policy history",
+            "h.jsonl",
+            &["policy", "history", "--current", "art/in.json"][..],
+        ),
+        (
+            "pr-ledger record",
+            "ledger.jsonl",
+            &[
+                "pr-ledger",
+                "record",
+                "--pr-number",
+                "1",
+                "--base",
+                "a",
+                "--head",
+                "b",
+                "--gap-ledger",
+                "art/in.json",
+            ][..],
+        ),
+    ] {
+        let relative = format!("art/{file}");
+        let absolute = dir.join("art").join(file).display().to_string();
+        for run_index in 1..=2 {
+            let mut argv = args.to_vec();
+            argv.extend(["--history", &relative, "--out-jsonl", &absolute]);
+            let append = run(&dir, &argv)?;
+            let append_stderr = String::from_utf8_lossy(&append.stderr).to_string();
+            let lines = fs::read_to_string(dir.join(&relative))
+                .map(|text| text.lines().count())
+                .unwrap_or(0);
+            if append.status.code() != Some(0) || lines != run_index {
+                failures.push(format!(
+                    "{label} history append run {run_index}: exit {:?}; {lines} history line(s); stderr: {append_stderr}",
+                    append.status.code()
+                ));
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n\n"))
+    }
+}

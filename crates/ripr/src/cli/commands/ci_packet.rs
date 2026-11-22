@@ -1180,7 +1180,7 @@ impl PacketRun {
                     GATE_DECISION,
                     "--receipts-dir",
                     "target/ripr/receipts",
-                    "--out-dir",
+                    "--output-dir",
                     REPORTS,
                 ]))
             },
@@ -1373,26 +1373,10 @@ impl PacketRun {
         let head_sha = crate::git::run_git(&self.root, &["rev-parse", "--verify", "HEAD^{commit}"])
             .map_err(|err| format!("ripr: cannot resolve HEAD: {err}; run inside a git checkout that has at least one commit"))?;
         let range = format!("{base_sha}...{head_sha}");
-        let diff = git_bytes(
-            &self.root,
-            &[
-                "-c",
-                "core.quotePath=true",
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                // Ambient `diff.ignoreSubmodules=all` (or `.gitmodules`
-                // `ignore = all`) would silently empty a gitlink bump (#8209).
-                "--ignore-submodules=none",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-                "--unified=3",
-                "--inter-hunk-context=0",
-                &range,
-            ],
-        )
+        // The shared assembly owns the pinned argv (#9365): no restated
+        // flags here, so an ambient rename limit, diff algorithm or
+        // abbreviation cannot change the recorded bytes.
+        let diff = crate::analysis::load_ci_packet_diff_bytes(&self.root, &range)
         .map_err(|err| format!("ripr: git diff failed for {range}: {err}; fetch the base ref (in CI, check out with full history), then rerun"))?;
         crate::output::file_write::write(&self.path("target/ripr/reports/pr.diff"), &diff)
             .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}; check you can write under target/ripr, then rerun"))?;
@@ -1421,7 +1405,7 @@ impl PacketRun {
                     "core.quotePath=true",
                     "diff",
                     "--name-only",
-                    "--ignore-submodules=none",
+                    crate::git::SUBMODULE_POINTERS_ONLY,
                     "-z",
                     &range,
                 ],
@@ -2307,7 +2291,7 @@ mod tests {
             "ripr assistant-loop health --root . --proof target/ripr/reports/test-oracle-assistant-proof.json --out target/ripr/reports/assistant-loop-health.json --out-md target/ripr/reports/assistant-loop-health.md",
             "ripr first-action --root . --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md --pr-guidance target/ripr/review/comments.json --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json --ledger target/ripr/reports/pr-evidence-ledger.json --baseline-delta target/ripr/reports/baseline-debt-delta.json --receipt target/ripr/reports/agent-receipt.json --gate-decision target/ripr/reports/gate-decision.json --coverage-frontier target/ripr/reports/coverage-grip-frontier.json --editor-context target/ripr/workflow/evidence-context.json",
             "ripr pr-review front-panel --root . --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md --pr-guidance target/ripr/review/comments.json --first-action target/ripr/reports/first-useful-action.json --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json --assistant-health target/ripr/reports/assistant-loop-health.json --ledger target/ripr/reports/pr-evidence-ledger.json --baseline-delta target/ripr/reports/baseline-debt-delta.json --zero-status target/ripr/reports/ripr-zero-status.json --gate-decision target/ripr/reports/gate-decision.json --recommendation-calibration target/ripr/reports/recommendation-calibration.json --mutation-calibration target/ripr/reports/mutation-calibration.json --coverage-frontier target/ripr/reports/coverage-grip-frontier.json --receipt target/ripr/reports/agent-receipt.json",
-            "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
+            "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports",
             "ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md",
             "ripr agent status --root . --json > target/ripr/workflow/agent-status.json",
             "ripr agent status --root . > target/ripr/workflow/agent-status.md",

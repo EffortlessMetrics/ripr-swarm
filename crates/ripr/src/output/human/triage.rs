@@ -24,6 +24,8 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
+mod removal_action;
+
 /// A changed Python predicate that holds several relational comparisons, as
 /// the boundary analysis names it in the Missing check (`The changed predicate
 /// `rate < 0 or rate >= 1` holds 2 relational comparisons; ...`). #13790 only
@@ -379,6 +381,12 @@ pub(crate) fn render_human_triage(
         "  State: {}\n",
         if all_noticed {
             "no test gap found"
+        } else if triage.selected.is_none()
+            && triage.state == HumanTriageState::NoActionableGap
+            && removal_action::is_removal_only(&triage.omitted)
+        {
+            // #15335: name why nothing is selected for a removal-only run.
+            removal_action::REMOVAL_ONLY_STATE
         } else {
             triage.state.plain_label()
         }
@@ -479,8 +487,15 @@ pub(crate) fn render_human_triage(
                     Some(finding)
                         if let Some(blocker) = typescript_dynamic_blocker_for(finding) =>
                     {
+                        let advice = if blocker.contains("expects `undefined`") {
+                            "check by hand that the test covers this change"
+                        } else if blocker.contains("contains variables") {
+                            "pin the member values as literals, or check by hand that the test covers this change"
+                        } else {
+                            "replace that expected value with a literal, or check by hand that the test covers this change"
+                        };
                         out.push_str(&format!(
-                            "  Safe next action: {blocker}; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
+                            "  Safe next action: {blocker}; {advice}, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
                         ));
                     }
                     // #7384: TypeScript named limitations deliberately leave
@@ -550,7 +565,10 @@ pub(crate) fn render_human_triage(
                     ));
                 }
             } else if let Some(base) = output.base.as_deref()
-                && head_is_on_branch(&output.root, base)
+                && (head_is_on_branch(&output.root, base)
+                    // #15326: a clone's `origin/<branch>` base at HEAD's own
+                    // commit, under the shared #7644 identity rule.
+                    || crate::analysis::base_is_checked_out_head(&output.root, base, None))
             {
                 // #13036: when HEAD has a parent, the usual intent is "check the
                 // last commit", so print that command instead of leaving it to
@@ -882,7 +900,10 @@ pub(crate) fn render_human_triage(
             let mut row = String::new();
             row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
@@ -1109,7 +1130,7 @@ fn grouped_hidden_row(
     let label = if kinds.len() == 1 { "kind" } else { "kinds" };
     Some(format!(
         "    - {}:{} ({}{}); {} changed behaviors{}; {}: {}; reason: {}\n",
-        crate::analysis::finding_location_text(root, &first.probe.location.file),
+        crate::output::path::human_location_text(root, &first.probe.location.file),
         lines,
         first.class.plain_label_with_stage(),
         currentness,
@@ -1892,6 +1913,9 @@ fn no_selection_hidden_line(omitted: &[&Finding]) -> String {
 
 /// The safe-next-action line for a run where nothing was candidate-actionable.
 fn no_selection_safe_action_line(omitted: &[&Finding]) -> String {
+    if let Some(line) = removal_action::removal_only_safe_action_line(omitted) {
+        return line;
+    }
     match no_selection_mix(omitted) {
         NoSelectionMix::AllBaseSide => {
             "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n".to_string()
@@ -2648,37 +2672,29 @@ pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
         && weak_assertion_row(finding).is_some()
 }
 
-/// The first contributing related-test row whose oracle is too weak to tell
-/// the old value from the new (`weak` or `smoke`). Selected on the row's oracle
-/// strength, never on `miss`, which is display-only. A row related to the
-/// finding by file or module proximity alone (`same_test_file`, `same_module`,
-/// `weak_token_substring`) is not bound to the changed owner, so an unrelated
-/// weak test beside a reach-limited finding does not make it open (#12058); a
-/// row with no recorded relation keeps the earlier behavior.
-///
-/// "Bound" here is deliberately narrower than
-/// [`crate::domain::RelationReason::establishes_reach`]. A finding behind
-/// `rust_transitive_reach_unresolved` is one whose reach the producer could not
-/// establish, while `establishes_reach` is true only for relations that capture
-/// a path to the owner (direct call, helper call, re-export chain, and
-/// `assertion_target_affinity` for a non-function owner). Keying on it would
-/// make `open=` fire for almost no reach-limited finding, defeating #11825. So
-/// only the three file/module proximity relations are excluded;
-/// `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
-/// `seam_callee_call` and `assertion_target_affinity` still count as bound to
-/// the owner here. This is a reasoned choice, not measured against a corpus.
+/// The first contributing related-test row with a weak or smoke oracle.
+/// Behind a Rust transitive-reach limit, require a relation that ties the
+/// row to the changed function. A file, a name or a call to the seam's
+/// callee alone cannot support the open advisory (#12058).
 ///
 /// Among the bound weak rows, the first of the best shared
 /// [`crate::domain::RelatedTest::observation_tier`] is named (#14483), so a
 /// listed-first row with no call path never names the test to open while a
-/// weak row that reaches the change is listed. Whether a row exists is
-/// unchanged.
+/// weak row that reaches the change is listed.
 pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
+    let requires_owner_binding =
+        finding.static_limit_kind == Some(StaticLimitKind::RustTransitiveReachUnresolved);
     let bound_weak = finding.related_tests.iter().filter(|test| {
-        test.is_contributing()
-            && !test
+        let bound = if requires_owner_binding {
+            test.relation_reason
+                .is_some_and(|reason| reason.establishes_reach(true))
+        } else {
+            !test
                 .relation_reason
                 .is_some_and(crate::domain::RelationReason::is_proximity_only)
+        };
+        test.is_contributing()
+            && bound
             && matches!(
                 test.oracle_strength,
                 crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
@@ -2788,7 +2804,7 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    fn test_finding(id: &str) -> Finding {
+    pub(super) fn test_finding(id: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
             confidence_basis: Vec::new(),

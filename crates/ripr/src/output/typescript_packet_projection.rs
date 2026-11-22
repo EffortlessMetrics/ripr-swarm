@@ -1597,6 +1597,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         authority_boundary: TS_AUTHORITY_BOUNDARY.to_string(),
         typescript_package_root: evidence_value(finding, "typescript_package_root: ")
             .map(ToString::to_string),
+        verify_cwd: None,
     };
     // Receipt command (RIPR-SPEC-0079 `canonical_receipt_command` field rule):
     // the canonical `ripr receipt write …` form built by the shared receipt-write
@@ -1691,14 +1692,26 @@ pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<
             "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at ",
         )
     })?;
-    let matcher = finding.evidence.iter().find_map(|line| {
-        let why = line.strip_prefix(
+    let why = finding.evidence.iter().find_map(|line| {
+        line.strip_prefix(
             "typescript_limitation_why: typescript_dynamic_assertion_unresolved \u{2014} the matcher `.",
-        )?;
-        why.split_once("(...)`").map(|(name, _)| name.to_string())
+        )
     });
+    let matcher = why.and_then(|why| why.split_once("(...)`"));
     Some(match matcher {
-        Some(name) => format!(
+        Some((name, rest)) if rest.starts_with(" expects `undefined`") => format!(
+            "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` expects `undefined`, which ripr does not read as a fixed expected value",
+            sample.trim()
+        ),
+        Some((name, rest))
+            if rest.starts_with(" receives an object or array literal that contains variables") =>
+        {
+            format!(
+                "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` expects an object or array literal that contains variables, so the expected value is not fixed",
+                sample.trim()
+            )
+        }
+        Some((name, _)) => format!(
             "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` compares against a variable or computed value, not a literal",
             sample.trim()
         ),

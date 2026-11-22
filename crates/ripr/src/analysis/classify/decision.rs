@@ -141,6 +141,7 @@ pub(in crate::analysis) fn missing_evidence(
     // generic line; the typed shape, not a `==` string match, decides.
     if matches!(probe.family, ProbeFamily::Predicate)
         && infect.state != StageState::Yes
+        && !super::infection::is_opaque_boundary_input(infect)
         && !activation.missing_discriminators.iter().any(|fact| {
             matches!(
                 fact.shape,
@@ -706,6 +707,35 @@ mod kani_proofs;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+        #[test]
+        fn rust_gating_projection_and_modeled_oracle_upgrade(
+            states in proptest::collection::vec(0usize..6, 5),
+            static_unknown in proptest::bool::ANY,
+        ) {
+            use crate::analysis::classification_properties::{exposure_matches, oracle_upgrade};
+            let result: Result<(), String> = (|| {
+                let vocabulary = [StageState::Yes, StageState::No, StageState::Weak,
+                    StageState::Unknown, StageState::Opaque, StageState::NotApplicable,
+                ];
+                let stages: Vec<_> = states.iter().map(|i| stage(vocabulary[*i].clone())).collect();
+                let p = probe(if static_unknown { ProbeFamily::StaticUnknown } else { ProbeFamily::ReturnValue }, "value + 1");
+                let class = classify(&stages[0], &stages[1], &stages[2], &stages[3], &stages[4], &p);
+                exposure_matches(&class, !static_unknown
+                    && [0, 1, 2, 4].iter().all(|i| stages[*i].state == StageState::Yes)
+                    && stages[3].state != StageState::No)?;
+                let yes = stage(StageState::Yes);
+                let p = probe(ProbeFamily::ReturnValue, "value + 1");
+                let before = classify(&yes, &yes, &yes, &stages[3], &stages[4], &p);
+                let after = classify(&yes, &yes, &yes, &yes, &yes, &p);
+                exposure_matches(&after, true)?;
+                oracle_upgrade(&before, &after)
+            })();
+            proptest::prop_assert!(result.is_ok(), "{:?}", result);
+        }
+    }
 
     #[test]
     fn classify_maps_reachable_but_unobserved_probe_to_reachable_unrevealed() {

@@ -2078,6 +2078,65 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
 }
 
 #[test]
+fn same_line_match_arms_use_parser_spans_for_ambiguity() -> Result<(), String> {
+    const SOURCE: &str = "pub fn classify(n: u8) -> u8 {\n    match n {\n        10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 => 1, _ => 0,\n    }\n}\n";
+    let control = SOURCE.replace("1, _ =>", "1,\n        _ =>");
+    let scratch = kind_refusal_crate(&control)?;
+    let result = (|| {
+        let root = &scratch.directory;
+        let at = "src/lib.rs:3";
+        let selected = run_bounded(
+            kind_refusal_command(root, at, Some("match_arm")),
+            root,
+            "single-match-arm",
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            selected.status.success(),
+            "{}",
+            String::from_utf8_lossy(&selected.stderr)
+        );
+        let ready: serde_json::Value =
+            serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(ready["state"], "ready");
+        assert_eq!(ready["owner"], "src/lib.rs::classify");
+        assert_eq!(ready["test_name"], "classify_match_arm_discriminator");
+        assert_eq!(ready["written"], false);
+
+        std::fs::write(root.join("src/lib.rs"), SOURCE).map_err(|error| error.to_string())?;
+        let before = fixture_files(root)?;
+        let mut command = kind_refusal_command(root, at, Some("match_arm"));
+        command.arg("--write");
+        let refused = run_bounded(command, root, "ambiguous-seams", Duration::from_mins(2))?;
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        let stdout = String::from_utf8_lossy(&refused.stdout);
+        assert_eq!(refused.status.code(), Some(3), "{stdout}{stderr}");
+        let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
+        assert_selector_refusal(&envelope, "selector_ambiguous");
+        let reason = envelope["refusal"]["reason"]
+            .as_str()
+            .ok_or("missing refusal reason")?;
+        assert!(
+            reason.starts_with("src/lib.rs:3 holds more than one match_arm seam"),
+            "{reason}"
+        );
+        let ids = reason
+            .split("--seam-id ")
+            .skip(1)
+            .map(|id| id.trim_end_matches(", "))
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
+        let control_id = ready["seam_id"].as_str().ok_or("missing control seam ID")?;
+        assert!(ids.contains(&control_id), "{reason}");
+        assert_eq!(fixture_files(root)?, before);
+        Ok(())
+    })();
+    let cleanup = scratch.cleanup();
+    result.and(cleanup)
+}
+
+#[test]
 fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), String> {
     let scratch = kind_refusal_crate(KIND_REFUSAL_SOURCE)?;
     let root = &scratch.directory;
@@ -3217,6 +3276,8 @@ fn existing_target_scratch(
 /// `[[test]]` exists, so the file is not a registered target and no command is
 /// offered; edition 2018+ still auto-discovers, and `autotests = true` restores
 /// discovery in 2015. The human output says the file is not a registered target.
+/// #15877: Cargo never builds the undiscovered `tests/discount.rs`, so it is not
+/// a related test and the stub proposes a new file, which is equally unregistered.
 #[test]
 fn legacy_edition_discovery_fails_closed_and_controls_register() -> Result<(), String> {
     let other = "\n[[test]]\nname = \"other\"\npath = \"tests/other.rs\"\n";
@@ -3249,13 +3310,20 @@ fn legacy_edition_discovery_fails_closed_and_controls_register() -> Result<(), S
             let text = String::from_utf8_lossy(&out.stdout).to_string();
             assert!(
                 out.status.success()
-                    && text.contains("tests/discount.rs is not a registered cargo test target"),
+                    && text.contains(
+                        "tests/discount_boundary.rs is not a registered cargo test target"
+                    ),
                 "{edition}: {text}"
             );
         }
         let document = stub_json(root, "src/lib.rs:2")?;
         let case = format!("{edition} {tail}: {document}");
-        assert_eq!(document["placement"]["file"], "tests/discount.rs", "{case}");
+        let placed = if registered {
+            "tests/discount.rs"
+        } else {
+            "tests/discount_boundary.rs"
+        };
+        assert_eq!(document["placement"]["file"], placed, "{case}");
         if registered {
             let run = document["run_command"].as_str().ok_or(case.clone())?;
             assert!(run.contains("--test discount "), "{case}");

@@ -259,7 +259,7 @@ fn omitted_base_resolution(
 }
 
 /// Print the side-effect and cost disclosure for the *resolved* invocation, so
-/// `--check` (validate-only) and custom `--out-dir` runs report their actual
+/// `--check` (validate-only) and custom `--output-dir` runs report their actual
 /// write behavior rather than always claiming the defaults. Rendered after
 /// `parse_options` and before any filesystem write.
 fn print_side_effect_disclosure(repo: &Path, options: &FirstPrOptions) {
@@ -336,7 +336,7 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
         None => render_start_here_packet(&root, options),
     };
     let out_dir = resolve_path(output_root, &options.out_dir);
-    crate::output::file_write::create_output_dir(&out_dir, "--out-dir")?;
+    crate::output::file_write::create_output_dir(&out_dir, "--output-dir")?;
     let json_path = out_dir.join(START_HERE_JSON);
     let markdown_path = out_dir.join(START_HERE_MD);
     let json_text = serde_json::to_string_pretty(&packet)
@@ -526,7 +526,7 @@ fn first_pr_write_command(options: &FirstPrOptions, out_dir: &Path, base_require
         parts.push("--gap-ledger".to_string());
         parts.push(shell_arg(&options.gap_ledger));
     }
-    parts.push("--out-dir".to_string());
+    parts.push("--output-dir".to_string());
     parts.push(shell_arg(&display_path(out_dir)));
     parts.join(" ")
 }
@@ -3574,8 +3574,8 @@ mod tests {
         assert!(err.contains("it does not create one"));
         assert!(err.contains("Missing:\n  /repo/target/ripr/foo/reports/start-here.json"));
         assert!(err.contains("--check-output target/ripr/foo/check.json"));
-        assert!(err.contains("--out-dir /repo/target/ripr/foo/reports"));
-        assert!(!err.contains("--out-dir target/ripr/foo/reports"));
+        assert!(err.contains("--output-dir /repo/target/ripr/foo/reports"));
+        assert!(!err.contains("--output-dir target/ripr/foo/reports"));
         assert!(!err.trim_end().ends_with(" --check"));
     }
 
@@ -3655,8 +3655,8 @@ mod tests {
         // Mixed-case anchored path: proves the resolved directory renders
         // verbatim (no CWD-relative fallback, no separator or case folding).
         let rendered = first_pr_write_command(&options, Path::new("/Repo/out/Reports"), false);
-        assert!(rendered.contains("--out-dir /Repo/out/Reports"));
-        assert!(!rendered.contains("--out-dir target/ripr/reports"));
+        assert!(rendered.contains("--output-dir /Repo/out/Reports"));
+        assert!(!rendered.contains("--output-dir target/ripr/reports"));
     }
 
     #[test]
@@ -4875,9 +4875,10 @@ mod tests {
         let repo = write_temp_root(&env::temp_dir(), "first-pr-python-package-json")?;
         fs::write(repo.join("package.json"), "{}")
             .map_err(|err| format!("write package.json: {err}"))?;
-        fs::write(repo.join("app.py"), "def f():\n    return 1\n")
+        fs::create_dir_all(repo.join("scripts")).map_err(|err| format!("mkdir scripts: {err}"))?;
+        fs::write(repo.join("scripts/app.py"), "def f():\n    return 1\n")
             .map_err(|err| format!("write app.py: {err}"))?;
-        init_git_repo_with_initial_files(&repo, &["package.json", "app.py"])?;
+        init_git_repo_with_initial_files(&repo, &["package.json", "scripts/app.py"])?;
         let doctor_languages = crate::config::language_detection::detect_languages(&repo);
         assert!(
             doctor_languages.contains(&LanguageId::Python),
@@ -9106,7 +9107,7 @@ mod tests {
             root.to_string(),
             "--base".to_string(),
             "HEAD".to_string(),
-            "--out-dir".to_string(),
+            "--output-dir".to_string(),
             out.to_string(),
         ]
     }
@@ -9129,15 +9130,15 @@ mod tests {
             Err(error) => error,
             Ok(()) => {
                 return Err(
-                    "unwritable --out-dir must fail while creating the output directory"
+                    "unwritable --output-dir must fail while creating the output directory"
                         .to_string(),
                 );
             }
         };
         assert!(error.contains(&format!("create {out} failed:")), "{error}");
         assert!(
-            error.contains("write elsewhere with --out-dir PATH"),
-            "first-pr must name --out-dir PATH, got {error}"
+            error.contains("write elsewhere with --output-dir PATH"),
+            "first-pr must name --output-dir PATH, got {error}"
         );
         assert!(
             !error.contains("write elsewhere with --out PATH"),
@@ -9155,18 +9156,21 @@ mod tests {
         let out = OutputDirFixture::path_arg(&env.target)?;
         let error = match first_pr(&first_pr_args(root, out)) {
             Err(error) => error,
-            Ok(()) => return Err("file occupying --out-dir must fail".to_string()),
+            Ok(()) => return Err("file occupying --output-dir must fail".to_string()),
         };
+        // The product renders the path through `human_path` (forward slashes
+        // and no verbatim prefix on Windows).
+        let shown = crate::output::path::human_path(&env.target);
         assert!(
             error.contains(&format!(
-                "--out-dir {out} is an existing file, but --out-dir names the directory"
+                "--output-dir {shown} is an existing file, but --output-dir names the directory"
             )),
             "a file occupying the output directory names the flag and the fix: {error}"
         );
         assert!(!error.contains("os error"), "{error}");
         assert!(
             !error.contains("write elsewhere"),
-            "a file occupying --out-dir is not a not-writable tree: {error}"
+            "a file occupying --output-dir is not a not-writable tree: {error}"
         );
         Ok(())
     }

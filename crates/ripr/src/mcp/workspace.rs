@@ -157,10 +157,7 @@ impl GapListFilter {
     }
 
     fn excludes_exposed_by_default(&self, item: &GapItem) -> bool {
-        self.class.is_none()
-            && item.class() == crate::domain::ExposureClass::Exposed.as_str()
-            && item.repair_readiness.ineligibility
-                == Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED)
+        self.class.is_none() && item.is_closed_gap()
     }
 
     /// Items the default exposure exclusion removed: they satisfy every
@@ -1381,9 +1378,41 @@ impl WorkspaceSession {
                 .map(|limitation| limitation.kind.as_str())
                 .collect::<Vec<_>>(),
         });
-        // #13280: a committed zero-item no-scope snapshot examined no behavior;
-        // say so beside the typed kind so zero items never read as clean.
-        if snapshot_analyzed_no_behavior(snapshot) {
+        // Closed gap: every selected item is an `exposed` item the shared seam
+        // gate refused as already gripped, so the default listing is empty
+        // because nothing remains to do. The typed `kind` stays
+        // `complete_with_findings` (findings exist, all already pinned); the
+        // label must not say "findings below" over an empty list.
+        if snapshot.outcome.kind == AnalysisOutcomeKind::CompleteWithFindings
+            && scope.exposed_omitted > 0
+            // Fail closed: an overflowed budget omits items this list cannot
+            // see, and a narrowed list says nothing about the rest.
+            && selection.omitted.is_empty()
+            // An owner opt-out withholds a finding no item serves and no test
+            // was shown to grip, so the snapshot is not all-clear.
+            && snapshot.withheld.is_empty()
+            && snapshot.items.len() == selection.selected.len()
+            && scope.filter.file.is_none()
+            && scope.filter.language.is_none()
+            && scope.filter.repair_ready.is_none()
+            && scope.filter.class.is_none()
+            && snapshot
+                .items
+                .iter()
+                .filter(|item| {
+                    selection
+                        .selected_ids()
+                        .any(|id| id == item.canonical_id.as_str())
+                })
+                .all(|item| GapListFilter::default().excludes_exposed_by_default(item))
+        {
+            outcome["label"] =
+                json!("no test gap found: every finding is already gripped by existing tests");
+        }
+        // #13280: a zero-item no-scope snapshot examined no behavior, from
+        // either capture source (#13096); say so beside the typed kind so
+        // zero items never read as clean.
+        if snapshot_examined_no_behavior(snapshot) {
             outcome["analysis_status"] = json!("not_analyzed");
             outcome["clean"] = json!(false);
         }
@@ -1601,10 +1630,11 @@ impl WorkspaceSession {
                 "total_items": snapshot.selection.total_canonical_items,
             });
             // #13096: the status session block is the other primary place an
-            // agent reads `finding_count: 0`; a committed empty-scope snapshot
-            // examined no behavior, so say so beside the count, using the same
-            // predicate as the refresh and gap-list surfaces.
-            if snapshot_analyzed_no_behavior(snapshot) {
+            // agent reads `finding_count: 0`; an empty-scope snapshot from
+            // either source examined no behavior, so say so beside the
+            // count, using the same predicate as the refresh and gap-list
+            // surfaces.
+            if snapshot_examined_no_behavior(snapshot) {
                 summary["analysis_status"] = json!("not_analyzed");
                 summary["clean"] = json!(false);
             }
@@ -2000,6 +2030,16 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
     summary
 }
 
+/// A zero-item snapshot whose outcome kind says no behavior was examined
+/// (`no_scope`, `no_changed_lines`, `no_behavioral_candidates`), whatever
+/// its capture source. The `analysis_status`/`clean` fields on the refresh,
+/// gap-list and status surfaces describe this outcome, not the source
+/// (#13096, #13280): a complete-clean result and a filtered or past-end page
+/// over a nonempty snapshot never qualify.
+fn snapshot_examined_no_behavior(snapshot: &Snapshot) -> bool {
+    snapshot.outcome.kind.is_empty_scope() && snapshot.items.is_empty()
+}
+
 /// #14138: the refresh and status snapshot summaries carry `finding_count`
 /// (the producer count, withheld findings included) beside `total_items`
 /// (served items only). Name the difference, and say a snapshot whose every
@@ -2013,15 +2053,13 @@ fn disclose_owner_opt_outs(summary: &mut Value, snapshot: &Snapshot) {
     }
 }
 
-/// A committed, zero-item snapshot whose outcome kind says no behavior was
-/// examined (`no_scope`, `no_changed_lines`, `no_behavioral_candidates`). One
-/// owner for the refresh disclosure and the gap-list outcome (#13096, #13280):
-/// a complete-clean result, a filtered or past-end page over a nonempty
-/// snapshot, and a worktree snapshot never qualify.
+/// The committed variant of `snapshot_examined_no_behavior`: only a committed
+/// capture carries the
+/// `empty_scope_hint`, whose cause sentence and base/source retry wording
+/// describe a committed diff. A worktree snapshot gets the primary fields
+/// but never that hint.
 fn snapshot_analyzed_no_behavior(snapshot: &Snapshot) -> bool {
-    snapshot.outcome.kind.is_empty_scope()
-        && snapshot.items.is_empty()
-        && snapshot.source == RefreshSource::Committed
+    snapshot_examined_no_behavior(snapshot) && snapshot.source == RefreshSource::Committed
 }
 
 /// #11213: a committed snapshot that analyzed nothing (`no_scope`,
@@ -2066,7 +2104,6 @@ fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
 
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
-    let empty_scope = empty_scope_hint(session).is_some();
     let snapshot = session.last_good.as_ref().map(|snapshot| {
         let mut summary = json!({
             "snapshot_id": snapshot.snapshot_id,
@@ -2077,10 +2114,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
         });
         // #13096: an empty-scope snapshot completed without examining any
-        // behavior. Say so in the primary fields an agent reads first, not
-        // only in the later `empty_scope_hint`, so zero findings never read
-        // as a clean result.
-        if empty_scope {
+        // behavior, from either capture source. Say so in the primary
+        // fields an agent reads first, not only in the later
+        // `empty_scope_hint` (which stays committed-only), so zero
+        // findings never read as a clean result.
+        if snapshot_examined_no_behavior(snapshot) {
             summary["analysis_status"] = json!("not_analyzed");
             summary["clean"] = json!(false);
         }
@@ -3642,12 +3680,14 @@ mod tests {
         Ok(())
     }
 
-    /// #13280: a committed zero-item snapshot that examined no behavior says
-    /// `not_analyzed` and not clean in the gap list too; complete-clean,
-    /// worktree and nonempty-but-filtered-to-zero lists never do.
+    /// #13280: a zero-item snapshot that examined no behavior says
+    /// `not_analyzed` and not clean in the gap list too, whatever its source;
+    /// complete-clean and nonempty-but-filtered-to-zero lists never do. The
+    /// fields describe the outcome kind, not the capture source: the
+    /// committed-specific explanation stays in `empty_scope_hint`, which a
+    /// worktree snapshot still never carries (#13096 worktree leg).
     #[test]
-    fn gap_list_says_not_analyzed_only_for_a_committed_empty_scope_snapshot() -> Result<(), String>
-    {
+    fn gap_list_says_not_analyzed_for_an_empty_scope_snapshot() -> Result<(), String> {
         let list = |session: &WorkspaceSession, filter: &GapListFilter| {
             session
                 .list_gaps(
@@ -3696,18 +3736,22 @@ mod tests {
                 "{kind:?} list must say not_analyzed: {document}"
             );
             assert_eq!(document["outcome"]["clean"], json!(false), "{document}");
-            // Control: the same zero-item snapshot from a worktree source
-            // keeps the pre-existing outcome shape.
+            // #13096 worktree leg: the same zero-item snapshot from a
+            // worktree source examined no saved behavior either, so the
+            // source-neutral fields apply to it as well. Only the
+            // committed-specific `empty_scope_hint` stays withheld (pinned
+            // in the refresh test below).
             let mut worktree = Snapshot::from_output(&empty, Some("root:sha256:test"))
                 .map_err(|failure| failure.detail)?;
             worktree.source = RefreshSource::Worktree;
             session.last_good = Some(Arc::new(worktree));
             let document = list(&session, &GapListFilter::default())?;
-            assert!(
-                document["outcome"].get("analysis_status").is_none()
-                    && document["outcome"].get("clean").is_none(),
-                "a worktree snapshot must not be labeled committed-empty: {document}"
+            assert_eq!(
+                document["outcome"]["analysis_status"],
+                json!("not_analyzed"),
+                "{kind:?} worktree list must say not_analyzed: {document}"
             );
+            assert_eq!(document["outcome"]["clean"], json!(false), "{document}");
         }
         // Control: a complete-clean zero-item snapshot is a decision, not an
         // unexamined scope.
@@ -3738,6 +3782,165 @@ mod tests {
         assert_eq!(analyzed_language_label(&no_language), "source");
         Ok(())
     }
+    /// Closed gap: when every selected item is an already-gripped `exposed`
+    /// item the empty default list says "no test gap found", not "findings
+    /// below"; one open (non-exposed) item keeps the original label.
+    #[test]
+    fn closed_gap_list_label_says_no_test_gap_found() -> Result<(), String> {
+        let list_with = |all_exposed: bool,
+                         budget_omission: bool,
+                         ineligibility: &'static str,
+                         withheld: bool,
+                         filter: GapListFilter|
+         -> Result<Value, String> {
+            let mut session = session_with_findings(2)?;
+            let snapshot = session
+                .last_good
+                .as_mut()
+                .and_then(Arc::get_mut)
+                .ok_or("fixture snapshot must be uniquely owned")?;
+            for (index, item) in snapshot.items.iter_mut().enumerate() {
+                if all_exposed || index == 0 {
+                    item.class = crate::domain::ExposureClass::Exposed.as_str().to_string();
+                    item.repair_readiness.ineligibility = Some(ineligibility);
+                }
+            }
+            if budget_omission {
+                snapshot
+                    .selection
+                    .omitted
+                    .push(crate::lsp::diagnostic_budget::OmittedDiagnosticItem {
+                    canonical_id: "gap:test:budget-omitted".to_string(),
+                    reason:
+                        crate::lsp::diagnostic_budget::OmittedDiagnosticReason::DocumentItemLimit,
+                });
+            }
+            if withheld {
+                snapshot.withheld.push(WithheldItem {
+                    canonical_id: "gap:test:owner-opted-out".to_string(),
+                    finding_id: "finding:test:owner-opted-out".to_string(),
+                    owner: Some("skipped_owner".to_string()),
+                });
+            }
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow::default(),
+                    &filter,
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let list = |all_exposed: bool, budget_omission: bool, filter: GapListFilter| {
+            list_with(
+                all_exposed,
+                budget_omission,
+                crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+                false,
+                filter,
+            )
+        };
+        let closed = list(true, false, GapListFilter::default())?;
+        assert_eq!(closed["items"], json!([]), "{closed}");
+        assert_eq!(closed["exposed_omitted"], json!(2), "{closed}");
+        assert!(
+            closed["outcome"]["label"]
+                .as_str()
+                .is_some_and(|label| label.starts_with("no test gap found")),
+            "{closed}"
+        );
+        let keeps_label =
+            |document: &Value| document["outcome"]["label"] == json!("findings below");
+        // Negative control: one open item keeps the typed outcome's label.
+        let open = list(false, false, GapListFilter::default())?;
+        assert_eq!(open["exposed_omitted"], json!(1), "{open}");
+        assert!(keeps_label(&open), "{open}");
+        // Exposed but refused for another cause: listed as open, never closed.
+        let truncated = list_with(
+            true,
+            false,
+            crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
+            false,
+            GapListFilter::default(),
+        )?;
+        assert!(keeps_label(&truncated), "{truncated}");
+        assert_eq!(
+            truncated["items"].as_array().map(Vec::len),
+            Some(2),
+            "{truncated}"
+        );
+        // Budget-omitted items are unseen and may be open: never an all-clear.
+        let overflow = list(true, true, GapListFilter::default())?;
+        assert_eq!(overflow["exposed_omitted"], json!(2), "{overflow}");
+        assert!(keeps_label(&overflow), "{overflow}");
+        // An owner opt-out withholds a finding the list never serves: every
+        // served item closed is still not an all-clear, and the disclosure stays.
+        let opted_out = list_with(
+            true,
+            false,
+            crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            true,
+            GapListFilter::default(),
+        )?;
+        assert_eq!(opted_out["items"], json!([]), "{opted_out}");
+        assert_eq!(opted_out["exposed_omitted"], json!(2), "{opted_out}");
+        assert!(keeps_label(&opted_out), "{opted_out}");
+        assert!(
+            opted_out.to_string().contains("\"withheld\":1"),
+            "owner opt-out disclosure must stay: {opted_out}"
+        );
+        // A narrowed list says nothing about the rest of the snapshot.
+        let by_file = list(
+            true,
+            false,
+            GapListFilter {
+                file: Some("src/module0.rs".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(by_file["exposed_omitted"], json!(1), "{by_file}");
+        assert!(keeps_label(&by_file), "{by_file}");
+        let by_language = list(
+            true,
+            false,
+            GapListFilter {
+                language: Some("rust".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert!(
+            by_language["exposed_omitted"]
+                .as_u64()
+                .is_some_and(|n| n > 0),
+            "{by_language}"
+        );
+        assert!(keeps_label(&by_language), "{by_language}");
+        // An explicit class lists the exposed items and omits none.
+        let by_class = list(
+            true,
+            false,
+            GapListFilter {
+                class: Some("exposed".to_string()),
+                ..Default::default()
+            },
+        )?;
+        assert!(keeps_label(&by_class), "{by_class}");
+        let by_ready = list(
+            true,
+            false,
+            GapListFilter {
+                repair_ready: Some(true),
+                ..Default::default()
+            },
+        )?;
+        assert!(
+            by_ready["exposed_omitted"].as_u64().is_some_and(|n| n > 0),
+            "{by_ready}"
+        );
+        assert!(keeps_label(&by_ready), "{by_ready}");
+        Ok(())
+    }
+
     /// #14327: with no `class` filter the list leaves out `exposed` items the
     /// shared seam gate refused as `seam_already_gripped` and discloses them as
     /// `exposed_omitted`. An `exposed` item refused for limited evidence (a
@@ -6360,11 +6563,40 @@ mod tests {
                 return Err(format!("{kind:?} must not carry a hint: {document}"));
             }
         }
+        // #13096 worktree leg: a worktree-source empty-scope snapshot gets
+        // the same source-neutral primary fields, but never the
+        // committed-specific hint (its base/source retry wording describes
+        // a committed capture).
+        let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        empty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            Default::default(),
+            Vec::new(),
+        )?);
+        let mut worktree = Snapshot::from_output(&empty, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        worktree.source = RefreshSource::Worktree;
+        let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        session.last_good = Some(Arc::new(worktree));
+        let document = refresh_document(&session);
+        if document["snapshot"]["analysis_status"] != json!("not_analyzed")
+            || document["snapshot"]["clean"] != json!(false)
+        {
+            return Err(format!(
+                "worktree empty-scope snapshot must say not_analyzed and not clean: {document}"
+            ));
+        }
+        if document.get("empty_scope_hint").is_some() {
+            return Err(format!(
+                "worktree snapshot must not carry the committed hint: {document}"
+            ));
+        }
         Ok(())
     }
 
     /// #13096: the `ripr_workspace_status` session block must not present a
-    /// committed zero-item empty-scope snapshot as a bare `finding_count: 0`.
+    /// zero-item empty-scope snapshot as a bare `finding_count: 0`.
     #[test]
     fn session_last_completed_snapshot_says_not_analyzed_for_an_empty_scope() -> Result<(), String>
     {
@@ -6419,6 +6651,30 @@ mod tests {
             || completed.get("clean").is_some()
         {
             return Err(format!("complete-clean must stay undisclosed: {completed}"));
+        }
+        // #13096 worktree leg: the same empty scope captured from the
+        // worktree is disclosed in the status block too.
+        let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+        empty.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::NoScope,
+            Default::default(),
+            Default::default(),
+            Vec::new(),
+        )?);
+        let mut worktree = Snapshot::from_output(&empty, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        worktree.source = RefreshSource::Worktree;
+        let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        session.last_good = Some(Arc::new(worktree));
+        let document = session.session_document(&SessionProfile::built_in());
+        let completed = &document["last_completed_snapshot"];
+        if completed["analysis_status"] != json!("not_analyzed")
+            || completed["clean"] != json!(false)
+            || completed["finding_count"] != json!(0)
+        {
+            return Err(format!(
+                "worktree empty-scope status must say not_analyzed: {completed}"
+            ));
         }
         Ok(())
     }

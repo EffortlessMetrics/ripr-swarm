@@ -2,7 +2,7 @@ use crate::app::CheckOutput;
 use crate::config::RiprConfig;
 use crate::domain::{ExposureClass, Finding, LanguageId, LanguageStatus};
 use crate::output::next_step::reconcile_next_step;
-use crate::output::path::repository_display_path;
+use crate::output::path::CheckoutAnchor;
 use crate::output::perl_preview_card::perl_preview_card;
 use crate::output::preview_actionability::preview_actionability_for;
 use crate::output::python_repair_card::python_repair_card;
@@ -21,6 +21,17 @@ pub fn render(output: &CheckOutput) -> String {
 }
 
 pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
+    render_with_config_anchored(output, config, &CheckoutAnchor::unknown())
+}
+
+/// [`render_with_config`] with each `file=` resolved from the checkout top
+/// level through `anchor`, the spelling `GITHUB_WORKSPACE` resolves. An
+/// unknown anchor keeps the root-relative spelling.
+pub(crate) fn render_with_config_anchored(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    anchor: &CheckoutAnchor,
+) -> String {
     let mut annotations = String::new();
     let mut per_level = std::collections::BTreeMap::<&'static str, usize>::new();
     // Findings suppressed by an explicit `--suppression-policy` (#1441) are
@@ -49,7 +60,7 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     let mut withheld = 0usize;
     let mut not_current = 0usize;
     let mut folded = 0usize;
-    let same_line = same_line_folds(output, &suppressed_ids, &withheld_ids);
+    let same_line = same_line_folds(output, anchor, &suppressed_ids, &withheld_ids);
     for (index, finding) in output.findings.iter().enumerate() {
         if suppressed_ids.contains(finding.id.as_str()) {
             suppressed += 1;
@@ -131,7 +142,13 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             message.push_str(&card.suggested_test_file);
             message.push_str("`; verify `");
             message.push_str(&card.verify_command);
-            message.push_str("` (preview advisory).");
+            if let Some(cwd) = &card.verify_cwd {
+                message.push_str("` from `");
+                message.push_str(cwd);
+                message.push_str("/` (preview advisory).");
+            } else {
+                message.push_str("` (preview advisory).");
+            }
         } else if let Some(no_action) = python_no_action_annotation(finding) {
             message.push_str(&no_action);
         }
@@ -208,9 +225,9 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
             0 => String::new(),
             line => format!(",line={line}"),
         };
-        // `file` arrives via `repository_display_path` (stable text, `%`
-        // pre-encoded); `title` is raw text.
-        let display_path = repository_display_path(&output.root, &finding.probe.location.file);
+        // `file` arrives via the anchored `repository_display_path` (stable
+        // text, `%` pre-encoded); `title` is raw text.
+        let display_path = anchor.display_path(&output.root, &finding.probe.location.file);
         let (placement, message) = if stable_path_has_non_utf8_marker(&display_path) {
             // `%XX` is not decoded by the runner, so `file=` would name a
             // different file (#13961). Omit placement; name the path.
@@ -674,6 +691,7 @@ enum SameLine<'a> {
 /// reorder never changes it); unlocated (line 0) findings never fold.
 fn same_line_folds<'a>(
     output: &'a CheckOutput,
+    anchor: &CheckoutAnchor,
     suppressed_ids: &std::collections::BTreeSet<&str>,
     withheld_ids: &std::collections::BTreeSet<&str>,
 ) -> std::collections::BTreeMap<usize, SameLine<'a>> {
@@ -694,7 +712,7 @@ fn same_line_folds<'a>(
         groups
             .entry((
                 finding.class.as_str(),
-                repository_display_path(&output.root, &finding.probe.location.file),
+                anchor.display_path(&output.root, &finding.probe.location.file),
                 line,
             ))
             .or_default()
@@ -883,14 +901,16 @@ fn non_empty(value: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::render;
+    use super::{render, render_with_config_anchored};
     use crate::app::{CheckOutput, Mode};
+    use crate::config::RiprConfig;
     use crate::domain::{
         Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding, FindingCanonicalGap,
         LanguageId, LanguageStatus, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
         ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
         StageEvidence, StageState, StaticLimitKind, StopReason, Summary, SymbolId,
     };
+    use crate::output::path::CheckoutAnchor;
     use std::path::PathBuf;
 
     #[test]
@@ -1571,6 +1591,28 @@ mod tests {
         let nested_rendered = render(&nested);
 
         assert!(nested_rendered.contains("file=fixtures/boundary_gap/input/src/lib.rs,line=13"));
+    }
+
+    #[test]
+    fn anchored_github_file_names_a_member_root_file_from_the_checkout_top_level() {
+        // `--root "$GITHUB_WORKSPACE/crates/app"` (or `--root .` inside the
+        // member) used to annotate `file=src/lib.rs`, which GitHub resolves
+        // against the workspace top level, so the annotation missed the file.
+        let member_root = std::env::temp_dir()
+            .join("ripr_github_anchor_test")
+            .join("crates/app");
+        let mut output = output_with_unknown_finding();
+        output.root = member_root.clone();
+        output.findings[0].probe.location.file = member_root.join("src/lib.rs");
+        let anchor = CheckoutAnchor::below_top_level(PathBuf::from("crates/app"));
+
+        let anchored = render_with_config_anchored(&output, &RiprConfig::default(), &anchor);
+        assert!(
+            anchored.contains("file=crates/app/src/lib.rs,line=13"),
+            "{anchored}"
+        );
+        // Control: the unanchored render keeps the root-relative spelling.
+        assert!(render(&output).contains("file=src/lib.rs,line=13"));
     }
 
     #[test]
@@ -2989,6 +3031,7 @@ mod tests {
 
     fn stage(state: StageState, reason: &str) -> StageEvidence {
         StageEvidence {
+            static_limit_kind: None,
             state,
             confidence: Confidence::Low,
             summary: reason.to_string(),

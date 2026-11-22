@@ -1,0 +1,8 @@
+crates/ripr/src/analysis/seam_cache/store.rs|classified seam cache encoded shard ceiling must be positive
+crates/ripr/src/analysis/seam_cache/store.rs|classified seam cache store limit must be positive
+crates/ripr/src/analysis/seam_cache/store.rs|create cache dir failed: {err}
+crates/ripr/src/analysis/seam_cache/store.rs|create sharded cache dir failed: {err}
+crates/ripr/src/analysis/seam_cache/store.rs|create sharded cache generation dir failed: {err}
+crates/ripr/src/analysis/seam_cache/store.rs|park competing single classified cache entry failed: {err}
+crates/ripr/src/analysis/seam_cache/store.rs|read sharded cache manifest before parking failed: {err}
+crates/ripr/src/analysis/seam_cache/store.rs|sharded classified cache publication requires at least one shard

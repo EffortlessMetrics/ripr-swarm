@@ -684,3 +684,56 @@ fn well_tested_change_lists_nothing_and_the_gate_passes() -> Result<(), String> 
     }
     Ok(())
 }
+
+#[test]
+fn unrelated_assertion_matches_the_review_card_honesty_corpus() -> Result<(), String> {
+    let base = "pub fn admitted(n: i32) -> bool {
+    n > 4
+}
+
+pub fn quoted(n: i32) -> i32 { n }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn observes_value() {
+        assert_eq!(super::quoted(9), 9);
+    }
+}
+";
+    let fixture = build_repo_from_source("unrelated-oracle", base, "n > 4", "n >= 5")?;
+    let live = review_comments(&fixture.0)?;
+    let expected = read_json(&Path::new(env!("CARGO_MANIFEST_DIR")).join(
+        "../../fixtures/evidence-promotion-honesty-corpus/reports/rust-review-card-unrelated-oracle.json"
+    ))?;
+    for lane in ["comments", "summary_only"] {
+        let cards = live[lane]
+            .as_array()
+            .ok_or("missing live review card lane")?;
+        let projected = cards
+            .iter()
+            .map(|card| {
+                serde_json::json!({
+                    "seam_id": card.get("seam_id"),
+                    "seam": card.get("seam"),
+                    "oracle_kind": card.get("oracle_kind"),
+                    "oracle_strength": card.get("oracle_strength"),
+                    "suggested_test": {
+                        "near_test": card.pointer("/suggested_test/near_test"),
+                        "related_test": card.pointer("/suggested_test/related_test")
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        if cards.iter().any(|card| {
+            card.pointer("/suggested_test/near_test").is_none()
+                || card.pointer("/suggested_test/related_test").is_none()
+        }) || expected.get(lane) != Some(&Value::Array(projected))
+        {
+            return Err(format!(
+                "live {lane} differs from the retained review-card projection: {cards:?}"
+            ));
+        }
+    }
+    Ok(())
+}

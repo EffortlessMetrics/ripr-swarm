@@ -29,9 +29,9 @@ fn git(root: &Path, args: &[&str]) -> Result<(), String> {
         .ok_or_else(|| format!("git {args:?} failed"))
 }
 
-/// A Python project with one committed `>` to `>=` boundary edit on a feature
-/// branch, in a repository whose global excludes are empty so the result does
-/// not depend on the machine running the test.
+/// A no-config Python layout outside the detector's supported roots, with one
+/// committed `>` to `>=` boundary edit on a feature branch. The repository's
+/// global excludes are empty so the result does not depend on the test host.
 fn project(label: &str) -> Result<Scratch, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
@@ -54,18 +54,27 @@ fn project(label: &str) -> Result<Scratch, String> {
             excludes.to_str().ok_or("non-utf8 excludes path")?,
         ],
     )?;
-    std::fs::write(root.join("m.py"), "def f(a, t):\n    return a > t\n")
-        .map_err(|error| error.to_string())?;
+    // Keep this no-config fixture outside the supported flat-Python layout:
+    // these checks exercise ignore handling, not Python analysis.
+    std::fs::create_dir(root.join("unsupported")).map_err(|error| error.to_string())?;
     std::fs::write(
-        root.join("test_m.py"),
+        root.join("unsupported/m.py"),
+        "def f(a, t):\n    return a > t\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("unsupported/test_m.py"),
         "from m import f\n\n\ndef test_f():\n    assert f(1, 2) is False\n",
     )
     .map_err(|error| error.to_string())?;
-    git(&root, &["add", "m.py", "test_m.py"])?;
+    git(&root, &["add", "unsupported"])?;
     git(&root, &["commit", "-q", "-m", "base"])?;
     git(&root, &["checkout", "-q", "-b", "feat"])?;
-    std::fs::write(root.join("m.py"), "def f(a, t):\n    return a >= t\n")
-        .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("unsupported/m.py"),
+        "def f(a, t):\n    return a >= t\n",
+    )
+    .map_err(|error| error.to_string())?;
     git(&root, &["commit", "-q", "-am", "change"])?;
     Ok(scratch)
 }

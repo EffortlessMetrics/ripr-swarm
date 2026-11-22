@@ -30,6 +30,77 @@ use ra_ap_syntax::{AstNode, ast};
 
 mod bound_result;
 
+/// A whole returned comparison with a sibling gate needs an observed call on
+/// which the old and new Boolean results differ. Read both results from the
+/// same asserted operands so another call cannot lend its input or oracle.
+pub(in crate::analysis) fn unpaired_return_gate(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    tests: &[&TestSummary],
+    index: &RustIndex,
+    admitted: impl Fn(&TestSummary, &OracleFact) -> bool,
+) -> Option<String> {
+    use super::owner_pin::short_circuit::ShortCircuitTail;
+    if probe.family != ProbeFamily::ReturnValue
+        || !(probe.expression.contains("&&") || probe.expression.contains("||"))
+    {
+        return None;
+    }
+    let after = ShortCircuitTail::parse(&owner.body, &probe.expression)?;
+    let before = after.with_chain(probe.before.as_deref()?)?;
+    let change = after.comparison_gate(&before)?;
+    let paired = tests.iter().any(|test| {
+        test.assertions.iter().any(|assertion| {
+            if !(test.start_line..=test.end_line).contains(&assertion.line)
+                || !admitted(test, assertion)
+                || !super::call_identity::boundary_owner_calls_resolve(
+                    index,
+                    owner,
+                    test,
+                    &assertion.text,
+                    assertion.line,
+                )
+            {
+                return false;
+            }
+            let bare = assertion_comparison_operands(&assertion.text).is_none();
+            asserted_result_operands(test, &assertion.text, owner)
+                .iter()
+                .any(|operand| {
+                    let bound = super::owner_pin::let_bound_owner_call(
+                        test,
+                        assertion,
+                        operand,
+                        "",
+                        &owner.name,
+                        true,
+                        bare,
+                    );
+                    let (call, line) = match bound {
+                        Some(call) => {
+                            // The initializer is a borrowed slice of this test's body.
+                            let offset = call.as_ptr() as usize - test.body.as_ptr() as usize;
+                            let line = test.start_line
+                                + test.body[..offset]
+                                    .bytes()
+                                    .filter(|ch| *ch == b'\n')
+                                    .count();
+                            (call, line)
+                        }
+                        None => (operand.as_str(), assertion.line),
+                    };
+                    super::owner_pin::is_whole_free_owner_call(call, &owner.name)
+                        && super::call_identity::boundary_owner_calls_resolve(
+                            index, owner, test, call, line,
+                        )
+                        && call_arguments(call, &owner.name)
+                            .is_some_and(|args| change.witnessed_by(test, &args, line, &owner.name))
+                })
+        })
+    });
+    (!paired).then(|| format!("Propagation unknown: no observed call establishes a changed return through the Boolean gate `{}`", change.gate_name))
+}
+
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.
 pub(in crate::analysis) const SAME_TEST_PAIRING_MISSING: &str = "same_test_pairing_missing";
@@ -328,7 +399,7 @@ fn assertion_names_one_entry_call(
                     })
         })
         && owner_call_count(&assertion.text, entry) == 1
-        && owner_call_count(&assertion.text, &owner.name) == 0
+        && !mentions_owner_call(&assertion.text, &owner.name)
 }
 
 /// `Some(prefix)` when `subject` is one whole call `a::b::name(..)` through a
@@ -359,6 +430,14 @@ fn owner_call_count(text: &str, name: &str) -> usize {
     owner_call_argument_lists(text, name).len()
 }
 
+/// Whether `text` may hold any call of `name`: a plain call, or a turbofish
+/// or macro spelling the plain argument reader cannot see (#15277 review).
+/// It can only overcount, so the "no direct owner call" refusals read it.
+fn mentions_owner_call(text: &str, name: &str) -> bool {
+    owner_call_count(text, name) > 0
+        || super::owner_pin::closure_adaptor::call_count(text, name) > 0
+}
+
 /// Activation already recorded a boundary `==` row bound down the chain
 /// from this assertion's line (the transferred row carries the entry call's
 /// text). Callers check `assertion_names_one_entry_call` first, before
@@ -380,7 +459,7 @@ fn assertion_observes_boundary_entry_call(
             && fact.value.contains(" == ")
             && call_line.contains(&assertion.text)
             && owner_call_count(call_line, entry) == 1
-            && owner_call_count(call_line, &owner.name) == 0
+            && !mentions_owner_call(call_line, &owner.name)
     })
 }
 
@@ -650,7 +729,28 @@ fn whole_owner_call_operands(
     assertion_text: &str,
     owner: &FunctionSummary,
 ) -> Vec<Vec<String>> {
-    let operands: Vec<String> = match assertion_comparison_operands(assertion_text) {
+    asserted_result_operands(test, assertion_text, owner)
+        .iter()
+        .filter_map(|operand| {
+            let operand = operand.trim();
+            let lists = owner_call_argument_lists(operand, &owner.name);
+            let [(_, arguments)] = lists.as_slice() else {
+                return None;
+            };
+            (operand.starts_with(&format!("{}(", owner.name))
+                && delimited_contents_at(operand, owner.name.len())
+                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
+            .then(|| arguments.clone())
+        })
+        .collect()
+}
+
+fn asserted_result_operands(
+    test: &TestSummary,
+    assertion_text: &str,
+    owner: &FunctionSummary,
+) -> Vec<String> {
+    match assertion_comparison_operands(assertion_text) {
         // An expected side that reaches the owner again compares the owner
         // with itself (`assert_eq!(pos(&[0]), pos(&[0]))`): nothing pairs.
         Some(compared) => {
@@ -680,21 +780,7 @@ fn whole_owner_call_operands(
                     .to_string(),
             ]
         }
-    };
-    operands
-        .iter()
-        .filter_map(|operand| {
-            let operand = operand.trim();
-            let lists = owner_call_argument_lists(operand, &owner.name);
-            let [(_, arguments)] = lists.as_slice() else {
-                return None;
-            };
-            (operand.starts_with(&format!("{}(", owner.name))
-                && delimited_contents_at(operand, owner.name.len())
-                    .is_some_and(|contents| contents.len() + owner.name.len() + 2 == operand.len()))
-            .then(|| arguments.clone())
-        })
-        .collect()
+    }
 }
 
 /// Whether an activation value (`input == 10`, or a conjunction such as
@@ -878,6 +964,49 @@ fn assertion_observes_boundary_owner_call(
             },
             &test.file,
         )
+}
+
+/// Argument lists of the free-owner calls that an assertion on `line`
+/// directly observes, read the way the probe path pairs a boundary input
+/// with its assertion on a multi-occurrence line (#13373). The seam path
+/// uses it to credit a second same-line call only when an assertion observes
+/// that call's result (#14487): a call under an operator, inside another
+/// call's arguments, or outside any assertion lends no input. Only the
+/// test's own discriminating assertions count: an assertion credited from a
+/// check helper on another file or line never shares the call's line, and a
+/// weak or relational assertion (`assert!(ok(11))`, which the probe admits
+/// only through its owner-return pin) does not add a row, so this reading is
+/// never looser than the probe's pairing.
+///
+/// The assertion's whole text must sit on `line_text`, the call's captured
+/// physical line: a multi-line assertion's continuation lines hold calls the
+/// caller's line-scoped identity guard never read.
+pub(in crate::analysis) fn observed_owner_call_rows_on_line(
+    test: &TestSummary,
+    line: usize,
+    line_text: &str,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Vec<Vec<String>> {
+    if !(test.start_line..=test.end_line).contains(&line) {
+        return Vec::new();
+    }
+    test.assertions
+        .iter()
+        .filter(|assertion| {
+            let text = assertion.text.trim();
+            assertion.line == line
+                && assertion_is_discriminating(assertion)
+                && !text.is_empty()
+                && !text.contains('\n')
+                && line_text.contains(text)
+        })
+        .flat_map(|assertion| {
+            let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
+                .unwrap_or_else(|| assertion.text.clone());
+            observed_free_owner_call_sites(&assertion_subject(&operands), owner, index)
+        })
+        .collect()
 }
 
 /// Directly observed free-owner returns in a multi-occurrence assertion.
@@ -4573,6 +4702,52 @@ mod tests {
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         }
+    }
+
+    #[test]
+    fn mentions_owner_call_sees_a_turbofish_owner_call() {
+        // #15277 review: the #6780 "assertion holds no direct owner call"
+        // refusal must see `owner::<u8>(3)`, while the exact `!= 1` helper
+        // counts keep reading plain calls only.
+        assert!(mentions_owner_call(
+            "assert_eq!(wrapper(10), owner::<u8>(3));",
+            "owner"
+        ));
+        assert!(mentions_owner_call(
+            "assert_eq!(wrapper(10), owner(3));",
+            "owner"
+        ));
+        assert!(!mentions_owner_call("assert_eq!(wrapper(10), 3);", "owner"));
+        assert_eq!(owner_call_count("owner::<u8>(2)", "owner"), 0);
+    }
+
+    #[test]
+    fn a_turbofish_block_tail_meets_the_local_binding_refusal() {
+        // #15277: `gate::<u8>(5)` is the same bare call as `gate(5)`, so a
+        // test-local `gate` that could capture it refuses the block tail. A
+        // module-path call cannot be captured by a local binding.
+        let mut owner = gate_owner();
+        owner.item.container = crate::analysis::facts::FunctionContainer::Free;
+        let shadowed = "fn t() { let gate = |x: u32| x > 3; let n = { gate::<u8>(5) }; }";
+        let clean = "fn t() { let n = { gate::<u8>(5) }; }";
+        assert!(
+            bound_result::boundary_call("let n = { gate::<u8>(5) }", &owner, shadowed).is_none(),
+            "a turbofish block tail beside a local `gate` must not bind the owner result"
+        );
+        assert!(
+            bound_result::boundary_call("let n = { gate::<u8>(5) }", &owner, clean)
+                .is_some_and(|result| result.block_tail && result.text == "gate::<u8>(5)"),
+            "a turbofish block tail with no local `gate` binds the owner result"
+        );
+        assert!(
+            bound_result::boundary_call(
+                "let n = { m::gate(5) }",
+                &owner,
+                "fn t() { let gate = |x: u32| x > 3; let n = { m::gate(5) }; }",
+            )
+            .is_some_and(|result| result.block_tail),
+            "a module-path block tail is not captured by a local `gate`"
+        );
     }
 
     fn call(name: &str, text: &str) -> CallFact {

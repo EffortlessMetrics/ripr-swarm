@@ -157,7 +157,9 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      a non-string `state`, `confidence` or `summary`) is a violation rather than
      an empty read that compares equal on both sides. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
-     regenerable subject fails (#12144).
+     regenerable subject fails (#12144). A committed capture selected for
+     regeneration must carry `source_subject.corpus.cache_schema_version` so
+     the gate can decide whether to judge its summaries (#14765).
      Every committed report under `reports/` that carries
      `source_subject.corpus.cache_schema_version` must record the analyzer's
      current `CACHE_SCHEMA_VERSION`, read from `seam_cache.rs`; an older
@@ -182,6 +184,19 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      carries a digest and is not listed fails, and a missing or non-array
      `report_digest_required` is a violation rather than a disabled guard
      (#12816).
+     Against the accepted base, removing a required entry while its original
+     report path still exists fails. Removing the entry together with deleting
+     the report is allowed (#12856); the other corpus checks still apply.
+     Qualification uses the admission-verified first parent; legacy runs use
+     HEAD's first parent read from Git objects (the event payload base can be
+     stale once the base branch moves): a PR run must be on the two-parent
+     merge checkout and a queue run on the single-parent squash (in a batched
+     group that parent is the previous entry), and local runs use the Git
+     merge base. Missing or malformed base evidence
+     fails closed. This path comparison does not detect relocation and is not
+     an authenticity check. Candidate-controlled validator changes require
+     independent review; the current gate does not provide trusted-base
+     matcher enforcement or validate the legacy PR integration's second parent.
      Scope of the guarantee: the digest is recomputed from the file's own
      bytes, so anyone who can recompute it can bless an edit. The check
      detects a stale or hand-edited capture. It is not a tamper-proof seal and
@@ -510,6 +525,15 @@ points and must name the upstream repository, command template, exact 40-hex
 commit, checked-in patch, runtime budget, and artifact-size budget before the
 gate will accept them.
 
+A pure case's corpus `language` label must match a finding language in its
+own report or golden — derived from the findings' probe owner prefixes and
+probe file extensions and from `changed_files_by_language` entries with a
+non-zero file count. When a finding language can be derived and the label is
+none of them, the gate fails closed and names the case; a case whose report
+carries no derivable finding language (for example an empty or repo-seam
+report) leaves its label unconstrained. Relabeling a case never changes its
+assertions or classifications.
+
 The corpus summary envelope is the canonical result/failure projection for this
 corpus runner. The older `evidence-promotion-honesty.md` and
 `evidence-promotion-pinned-external.{json,md}` reports remain detailed
@@ -648,6 +672,16 @@ ripr check --perl-facts fixtures/evidence-promotion-honesty-corpus/perl-packets/
 Run it in a checkout whose diff against `origin/main` is non-empty. On a
 clean checkout the command exits 2 with "analysis outcome NoScope requires
 every count to be zero". This note stands until that defect is fixed.
+
+The `perl_return_without_concrete_discriminator` case uses the existing
+`fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json`
+packet with `patches/14842-perl-return.diff`. Its report retains the return
+finding and advisory guidance. Capture it with the Perl-enabled command above
+using `--diff` for that patch, then make the checkout paths in navigation
+commands repository-relative. The companion fixture test
+`perl_actionability_proptest_fixture_is_actionable` exercises the same
+unmodified packet in the private strict mapper and checks both concrete
+discriminator channels as positive controls.
 
 The packet is the input (the tempting wrong relation or boundary is encoded
 there); the report is the byte-pinned consumer output the gate enforces.
@@ -826,6 +860,9 @@ private-member extraction without accepting a complete empty re-bless.
 
 | Test | Spec control |
 |---|---|
+| `pre_label_requires_exact_ordered_published_parents` | The published composition has the advertised target and PR head as its ordered parents |
+| `published_composition_checks_all_reports_and_reasoned_pins` | The pre-label command accepts current reports and valid historical pins and refuses stale compositions, stale reports and malformed pins |
+| `batch_binds_each_record_even_for_repeated_oids_and_embedded_newlines` | The Git batch reader checks each blob identity, type, size and terminator |
 | `nested_private_corpus_rejects_lost_partial_outcome_despite_preview_advisory` | Typed partial outcome and limitation mutations fail despite the retained generic advisory |
 | `partial_analysis_assertion_requires_every_identity_and_count_field` | Missing typed limitation identity or count is rejected |
 | `cargo run -p xtask -- check-evidence-promotion-honesty` | End-to-end gate pass |
@@ -897,6 +934,7 @@ private-member extraction without accepting a complete empty re-bless.
 
 | Component | Location |
 |---|---|
+| Pre-label composition and report checks | `xtask/src/evidence_promotion/pre_label.rs::check` |
 | Corpus manifest | `fixtures/evidence-promotion-honesty-corpus/corpus.json` |
 | First external patch | `fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff` |
 | Gate implementation | `xtask/src/main.rs::check_evidence_promotion_honesty` |

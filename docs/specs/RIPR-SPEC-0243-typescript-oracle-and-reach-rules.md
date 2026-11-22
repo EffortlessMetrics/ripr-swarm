@@ -128,6 +128,18 @@ normative.
 
 ### Verdict ladder
 
+For #12951, a whole-file single-line replacement of one decimal safe-integer
+return in a straight-line switch can keep the weak-oracle verdict when one
+related direct Vitest test selects that unique literal-string case and its
+direct `toBeLessThan` assertion passes for both values. The function module,
+switch arms, imports, test registration, call and assertion must satisfy the
+bounded AST witness; a changed case label, a competing related test, a
+shadowed binding, a failing or distinguishing threshold, or an unresolved
+selector keeps the existing conservative verdict. This exception does not
+populate a positive infection stage: the generic TypeScript preview infection
+stage remains unknown. Repair readiness remains subject to the shared packet
+validator and the available package and runner evidence.
+
 `classifier.rs` decides the class in this order; the first match wins:
 
 1. no related test: `no_static_path`; reach, observe and discriminate are
@@ -355,6 +367,23 @@ Evaluated inline ordinary
 function constructors and tags retain body registration notices; their parameter
 shadows and uncalled function values remain separate from runner registrations.
 
+Deno registrations (#15622). `Deno.test(name, fn)`, `Deno.test(name, options,
+fn)`, `Deno.test({ name, fn })` (with `fn` a method, arrow or function value),
+`Deno.test(options, fn)`, `Deno.test(function named() {})` and `Deno.test.only`
+each register one test. An options object whose `ignore` is anything but a
+literal `false`, or that has a spread or computed key, registers nothing, and
+so does `Deno.test.ignore`. A declaration, import or registration-scope name
+`Deno` shadows the runtime namespace, so its `.test` calls register nothing.
+Assertion collection and the unused-closure reach mask read the same resolved
+callback. Deno's standard assertions bind only from `@std/assert`,
+`jsr:@std/assert[@range][/subpath]` or `https://deno.land/std[@version]/...`
+(`/assert/` or `/testing/asserts.ts`): `assertEquals` reads as
+`deepStrictEqual`, `assertStrictEquals` as `strictEqual`, `assert` as the
+truthy `ok` call (it has no node-style members), and `assertThrows` /
+`assertRejects` as the broad `throws` / `rejects`. Other exports, namespace
+imports, look-alike specifiers and same-named local helpers stay unbound.
+`t.step` bodies are not walked for assertions.
+
 ### Assertion collection
 
 - Only the test callback's own statement list is walked, through blocks,
@@ -565,12 +594,21 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | Matcher | Kind / strength |
 | --- | --- |
 | `toBe`, `toEqual`, `toStrictEqual` | `exact_value` / strong |
+| Jasmine `toBeTrue()`, `toBeFalse()` (no argument; expected value `true` / `false`, as `toBe(true)` / `toBe(false)`) | `exact_value` / strong |
 | `toThrow`, `toThrowError` without an exact payload | `broad_error` / weak |
 | `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium (strong for a literal inline snapshot, RIPR-SPEC-0247 rule 3, or a named committed entry, RIPR-SPEC-0258) |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
-| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
+| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, Jasmine `toHaveSize`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
 | any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` (a same-file strict-equality `expect.extend` matcher reads `exact_value` / strong, RIPR-SPEC-0262) |
+
+Jasmine-only names are also common names for home-grown matchers, so
+`toBeTrue`, `toBeFalse` and `toHaveSize` read `unknown` / unknown in a file
+that mentions `extend` or `addMatchers`, with `.rejects`, or (for the
+boolean pair) with an argument (#15627). Negated, they cap like `.not.toBe`. The
+mention check is textual (comments and strings count, which only refuses
+more); a registration in another file, such as a setup or helper file, is
+not seen, the same limit `toBe` has.
 
 `.resolves` uses the same table. For an unshadowed `expect` import from
 `vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
@@ -733,7 +771,9 @@ the `rejects` exact-error override, so neither re-raises it. Owner:
   strong, or `relational_check` / weak under `not`; `throw`, `throws` and
   `Throw` are `broad_error` / weak, except as rule 10 states; `include`,
   `match`, `above`, `below`, `least`, `most`, `lengthOf` and the like are
-  `relational_check` / weak; the property terminals `true`, `false`, `ok`,
+  `relational_check` / weak. The `empty` property also reads as relational:
+  it observes emptiness of the receiver, leaving its element values and order
+  open (#15342). The property terminals `true`, `false`, `ok`,
   `null`, `undefined` and `exist` are `smoke_only` / smoke. Any other
   chain word or terminal yields no assertion.
 
@@ -1048,8 +1088,36 @@ Mocks and spies: `vi.` or `jest.` with `mock`, `doMock`,
 `node:test`, are mocks at any depth. A non-string specifier counts as an
 owner-module mock (fail closed). `spyOn(x, "owner")` with
 `.mockReturnValue`, `.mockImplementation`, `.mockResolvedValue` or
-`.mockRejectedValue` removes the trusted relation and adds
+`.mockRejectedValue`, their `*Once` forms, `.mockReturnThis` or a Jasmine
+`.and.` strategy (`returnValue`, `returnValues`, `callFake`, `throwError`,
+`resolveTo`, `rejectWith`) removes the trusted relation and adds
 `typescript_spy_fabricated_observer`; a bare `spyOn` still relates.
+
+Replaced owner function (#15939): a function owner is not related through a
+test file that replaces it on its module object, wherever in the file the
+replacement sits (the test body, a hook, the top level, a sibling test). The
+replacements read are `stub(x, "owner")`, a three-argument
+`replace(x, "owner", fake)`, `replaceProperty` and `defineProperty` naming the
+owner, `mock.method(x, "owner", fake)` (or with two arguments when the file
+mentions `mockImplementation`), a `spyOn(x, "owner")` fabricated anywhere in
+the file, directly or through the variable it is bound to (with or without a
+type annotation), and a member assignment `x.owner = ...`. The target `x`
+counts when it is rooted at a local the file imports (a plain identifier, a
+dotted path, a cast), at a local the test body binds with
+`const x = await import(...)`, or is not rooted at an identifier at all (a call result such as `require("./m")`); a
+global or a body-local object (`console`, `Date`, a fixture) is not the
+owner's module. A whole-object stub `stub(x)` or a member name that is not a
+plain string literal replaces every member of `x`. A default-exported owner
+is also named by `"default"`. The finding carries
+`typescript_spy_fabricated_observer`. `spy(x, "owner")`, a two-argument
+`mock.method` with no `mockImplementation` in the file, a `mock.method` whose
+third argument is an options object literal (`{ times: 1 }`), a
+`defineProperty` whose descriptor literal supplies no `value`, `get` or `set`,
+a two-argument `replace` (`String.prototype.replace`), a replacement naming
+another member and a replacement on a line that is a comment still relate. Not read: `Object.assign(x, { owner: fake })`, a
+replacement made by a helper in another file, and a restore before a sibling
+test's call (that sibling loses its relation). The fact is text-level and can
+only withhold.
 
 **Rule 5. A default import anchors only a default-exported owner.** A bare
 call `local(` through `import local from "<owner module>"` has a declaration
@@ -1110,6 +1178,20 @@ file-level code included), so an alias (`const m = local.name`), a reassignment,
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.
+
+JSX render reach (#15295): in a `.tsx` or `.jsx` test, a JSX element
+`<Local .../>` or `<Local>` whose tag is a capitalized bare import local
+counts as a call of that import for `ImportedOwnerCall`, through the same
+import-source, shadow and mock guards as `Local(`. Intrinsic tags (`<div>`),
+member tags (`<Ns.Item>`), type arguments (`Array<Local>`, `useState<Local>`),
+type parameter lists (`<Local extends X>`, `<Local = X>`), comments and
+same-line strings do not count. A render proves reach only; oracle strength
+still comes from the test's assertions, and a render beside an unrelated
+assertion is not `exposed`. Known limits, all fail-closed: same-file
+components, re-export chains, member tags, explicit type arguments on the tag
+(`<Local<T> />`) and a tag directly after JSX text (`Count<Local />`) are not
+credited. A component owner with only heuristic links is advised to render
+`<Local .../>`, not to add a direct owner call.
 
 ### Observation guard
 
@@ -1739,13 +1821,56 @@ unconfirmed, not `exposed`. A read that names either changed field
 (`f().retries`, `f().verbose`), a path that reads through a changed field
 (`f().retries.n`) and a whole-result assertion (`expect(f()).toEqual(...)`)
 keep the existing credit. This is the two-value shape; the single-field
-sibling rule (#14814) covers exactly one changed value. A compound assertion
+sibling rule (#14814) covers exactly one changed value. Both rules read the
+field off the owner's result directly (`f().timeout`) or through a one-hop
+local alias of the owner call (`const cfg = f(); cfg.timeout`, #14856): the
+alias form is affirmatively not observing, not merely unconfirmed. A
+whole-result assertion on the alias and the changed field through the alias
+(`cfg.retries`) keep their credit; a foreign or mutated local is not the
+owner's result. A compound assertion
 subject is not a field projection of the owner's result: in
 `expect(f() ?? defaults.config)` the trailing `config` belongs to the
 fallback while the assertion receives the whole object `f()` returns, so it
-keeps its credit. A key-list change, a
+keeps its credit. A plain projection is a base with no top-level operator,
+or a call or member-access chain that a small grammar accepts (#14928): a
+postfix non-null assertion (`f()!.timeout`), optional chaining, a prefix
+negation (`!f().enabled`) and a balanced generic call (`f<string>()`) are all
+projections of the owner's result, so an untouched field read through any of
+them drops to `weakly_exposed` too (a generic call is not yet resolved as an
+owner call, so it already reads `weakly_exposed`). A key-list change, a
 shorthand or spread member, a computed key and a literal of fewer than two
-fields are not this shape and keep their old reading.
+fields are outside this multi-value rule.
+
+For the two-member form `return { retries: 5, verbose };`, a change between
+decimal integer literals on the explicit field cannot change the unchanged
+shorthand binding. A direct assertion on `config().verbose` therefore reads
+`weakly_exposed`, while `config().retries` keeps its exact-field credit. This
+case requires the same two distinct names in the same positions and a bare
+zero-argument owner call. An expression that could write to `verbose` while
+building the object remains outside this rule.
+
+**Rule 25. A read of an unchanged child of a changed field is not witnessed
+(#14858).** When a changed field's new value is an object literal of simple
+`key: value` members whose values are plain literals (a number, a string,
+`true`, `false`, `null`, `undefined`) and none of which is `__proto__`, the
+children the change moves are those whose value differs from the old literal's
+same key, plus any key the change drops. A member with an effect
+(`n: (counter = 5)`) or a prototype entry keeps the existing credit, since it can
+move a child whose text is unchanged. When
+the old value is a number or boolean literal, every new child is moved, and so
+is every member the old primitive answered through its prototype (`toFixed`,
+`valueOf`); any other old value (a string, an array, `null`, an expression)
+keeps the existing credit, since its members (`.length`) or behavior (a throw)
+are not modeled. A strong assertion whose path is
+`<owner call>.<changed field>.<child>`, with the changed field read directly off
+the owner's result, and names a child the
+change does not move (`f().retries.other` while `retries: 3` becomes
+`retries: { n: 5 }`) observes a value the change never alters: the finding
+drops to `weakly_exposed`, not `exposed`. A read of a moved child
+(`f().retries.n`), the whole field and a changed value
+that is not an object literal keep the existing credit. The alias
+form of the sibling rule (`const cfg = f(); expect(cfg.verbose)`, #14856) reads
+`weakly_exposed` and its changed-field control (`cfg.retries`) stays `exposed`.
 
 **Rule 8. A mocked dependency on the changed line is `static_unknown`.**
 When the changed line calls a symbol imported (`imported_symbol_call`)
@@ -2474,6 +2599,25 @@ keys); do not take the next number.
 
 ## Test Mapping
 
+- #15939 (replaced owner function):
+  `crates/ripr/tests/typescript_replaced_owner_function.rs` runs the binary over
+  each replacement call in the test body, in a hook and at the top level, the
+  hook-bound spy fabricated in the test, the named-import call beside a stubbed
+  namespace, the `require` binding, the `default` member, and the call-through,
+  other-member and other-target controls; `tests/function_replacement_tests.rs`
+  pins the recorded entry forms;
+  `fixtures/typescript_adversarial_stubbed_namespace_owner` and its control
+  `fixtures/typescript_namespace_owner_call_through_spy` pin the rendered
+  findings.
+
+- #15622 (Deno registrations and `@std/assert`):
+  `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs` pins
+  each registration shape, the ignored/spread/unreadable refusals, the
+  shadowed-namespace refusal, the unused-closure reach mask for every callback
+  position, the std assertion grades and the look-alike, namespace, local and
+  member-call refusals; `crates/ripr/tests/typescript_no_config_detection.rs`
+  pins a zero-config `deno.json` run linking the `Deno.test`.
+
 - #13592 (module-level `const` reached through a reader): `tests/module_value_read_tests.rs`
   pins the read-only allowlist, the shadowed, aliased, passed-along, `let`/`var`,
   assigned and module-mutated refusals, the unused and uncalled-reader controls
@@ -2630,6 +2774,13 @@ keys); do not take the next number.
   reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
   rebound parameter, helper or member call, file-level call, CRLF, deleted
   line) keeps the ladder verdict.
+  For a single literal message edit in a final `throw new Error(...)`, a
+  one-parameter function can also exclude the throw with a preceding
+  `if (b !== 0) return b;`. When every related call supplies a numeric
+  literal that takes that return, the finding is `reachable_unrevealed` with
+  infection `no`. The adapter test `isolated_throw_message_after_a_nonzero_return`
+  pairs this case with a zero input checking the message and a zero input
+  checking only that an error is thrown.
   The `guard_entry_guard.rs` unit tests (`reads_then_else_if_and_else_arms`,
   `comments_before_if_do_not_shift_the_condition_text`,
   `mock_module_loaders_and_call_result_chains_are_unreadable`,
@@ -2671,6 +2822,83 @@ keys); do not take the next number.
   and `a_switch_clause_no_test_input_selects_withdraws_exposed` and
   `a_switch_clause_some_test_input_can_select_keeps_exposed` are the
   production-path positive and negative.
+- #15306: a changed one-line `return <literal>` whose owner returns only
+  distinct scalar literals (a switch or if-chain lookup) is credited only when
+  some strong related assertion expects the arm's old or new literal (either
+  distinguishes the versions when the call takes the arm). When another arm
+  also returns the new literal, an exact assertion expecting it counts as that
+  arm's result only when its call's literal inputs provably leave the changed
+  arm closed (the #8569 condition reader) and the owner's module names it
+  once (no recursion or re-export); otherwise it keeps the verdict. The rule
+  applies only to a lone one-for-one line replacement in the file. The changed
+  line is located, and its selector read, from the owner text's own first
+  line (an arrow after `export const dir =` starts one line later), and the
+  text must hold the changed line there. Argument slots skip commas inside comments; an unterminated comment
+  or string leaves them unreadable. A `return undefined` with an `undefined`
+  binding in scope, and a BigInt literal (`5n !== 5`), are refused.
+  When every strong assertion on a direct owner call expects another arm's
+  readable literal, the change is not observed: the existing literal-return reading makes it
+  `infection_unknown`, with a line naming the unpinned arm result.
+  A duplicated old literal, any non-literal or multi-line return, a generator
+  or concise-arrow owner, a non-direct relation, and a snapshot, structural,
+  dynamic or table-row expected side on a direct owner call, and any strong
+  assertion whose expected text spells the old or new literal (alone or inside an
+  object, array or expression), keep the verdict.
+  `tests/literal_arm_return_tests.rs` pins the reader
+  (`a_switch_arm_literal_return_is_located_with_its_old_value` and its
+  refusals) and the production path:
+  `an_arm_no_assertion_expects_is_not_exposed_and_names_the_arm`,
+  `an_assertion_expecting_the_arms_old_result_keeps_exposed`,
+  `an_assertion_expecting_the_arms_new_result_keeps_exposed`,
+  `a_shared_new_result_is_credited_only_on_the_selected_arm`,
+  `a_recursive_owner_keeps_a_shared_new_result`,
+  `a_reentrant_owner_keeps_the_verdict_for_a_shared_new_result`,
+  `an_arrow_owner_whose_text_starts_on_a_later_line_locates_the_return`,
+  `an_arrow_on_the_next_line_locates_the_changed_return`,
+  `a_multiline_arrow_reads_the_changed_arms_own_selector`,
+  `a_source_that_starts_after_the_owner_line_or_binds_undefined_is_refused`,
+  `a_bigint_return_is_not_a_readable_scalar`,
+  `an_unreadable_expected_side_keeps_the_verdict` and
+  `a_lookup_that_is_not_all_distinct_literals_keeps_exposed`.
+- #15393: an edit that changes only one default parameter value of the owner
+  (on a one-line signature or its own parameter line) is not observed when
+  every call of every direct, aliased or barrel-followed related test passes
+  a value at that position that cannot be `undefined` (a literal, object,
+  array, function, template or whole `new` expression, under any trailing
+  `as T`, `satisfies T` or `!` cast). Every owner call elsewhere in a related
+  test file, and in the owner's own module (its own body included), must fill
+  the position the same way, and no other workspace file may name the owner
+  outside a pure re-export. It reads `reachable_unrevealed` with infection
+  `no` (`default_not_applied`), naming the parameter and the observed calls.
+  The verdict stands on: an omitted argument; `undefined`, an identifier or a
+  spread argument; a relation through a wrapper or entry; another caller; a
+  default export or renaming re-export; an import that renames a binding or
+  has code after it on its line; a namespace import, `require`, dynamic
+  `import()`, `requireActual` or `importActual` of the owner's module or
+  of a barrel that re-exports it (its file stem, or its directory for an
+  `index` file) in another file; an import or re-export line with code after
+  its specifier; a loader or computed
+  key; an owner reference whose call arguments the reader cannot parse (a
+  comment before the parenthesis, an unbalanced argument); and a truncated
+  scan or a skipped symlink. The advice asks for a test call that omits the
+  argument.
+  Scope limit: the scan reads the TypeScript adapter's default handwritten
+  workspace files and ignores configured handwritten overrides, so callers
+  in pruned build directories, generated or minified files,
+  non-TS sources (`.vue`, `.svelte`, `.mdx`) or outside the workspace root
+  are not seen. `tests/unused_default_tests.rs` pins the reader
+  (`only_a_lone_default_value_edit_is_located`,
+  `only_arguments_that_cannot_be_undefined_fill_a_default`) and the
+  production path (`a_default_every_call_fills_is_not_exposed`,
+  `a_call_that_may_use_the_default_keeps_the_verdict`,
+  `a_call_the_argument_reader_drops_keeps_the_verdict`,
+  `a_caller_the_scan_cannot_resolve_keeps_the_verdict`,
+  `a_describe_titled_with_the_owner_name_is_not_a_caller`,
+  `a_multi_line_import_is_not_a_caller_but_a_renaming_one_refuses`,
+  `a_barrel_import_under_the_owner_name_is_followed`,
+  `code_after_an_import_and_a_namespace_import_keep_the_verdict`); the
+  honesty corpus case `typescript_vitest_unused_default_parameter` rejects
+  promotion independently.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -2784,6 +3012,14 @@ keys); do not take the next number.
   reads the enclosing conditions and evaluates literal call inputs;
   `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
   `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
+- #15306: `crates/ripr/src/analysis/language/typescript/literal_arm_return_guard.rs`
+  reads the owner's literal returns and the related assertions' expected
+  values; `classify_resolved_owner` in `classifier.rs` withholds
+  `observation_confirmed` when the changed arm is unpinned.
+- #15393: `crates/ripr/src/analysis/language/typescript/unused_default_guard.rs`
+  locates the changed default and reads call arguments; `ts_unused_default`
+  in `classifier.rs` applies it in `ts_apply_post_ladder_rules` and the
+  infection stage, withdrawing credit only on proof.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 

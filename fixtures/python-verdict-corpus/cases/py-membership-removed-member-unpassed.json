@@ -1,0 +1,44 @@
+{
+  "case_id": "py-membership-removed-member-unpassed",
+  "subject_id": "authored-py-pytest-membership",
+  "diff": "cases/py-membership-removed-member-unpassed.diff",
+  "anchor": {
+    "file": "truthy/convert.py",
+    "line": 9
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_parametrized_table",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.18, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if val in (True, \"true\", \"t\", \"yes\", \"on\", \"1\", 1):",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: to_bool(\"y\") raises ValueError instead of returning True (no parametrize row passes \"y\")"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 34: the edit removes \"y\" from the truthy collection, and no parametrize row passes \"y\" (rows use true, t, yes, on, 1), so no test input reaches the removed member (#15632).",
+  "labeling_observation": {
+    "ripr_commit": "b1dd0b51",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

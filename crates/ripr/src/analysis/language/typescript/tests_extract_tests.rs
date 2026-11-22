@@ -2043,6 +2043,175 @@ fn skipped_suite_bindings_keep_control_flow_function_values_dormant() {
         }
     }
 }
+/// #9187: only tap's named test binding establishes this bounded profile.
+#[test]
+fn tap_named_test_binding_registers_callback_equal_assertions() {
+    for prelude in [
+        "const { test } = require('tap');",
+        "const test = require('tap').test;",
+        "import { test } from 'tap';",
+    ] {
+        let source = format!(
+            "{prelude} test('x', function (ctx) {{ ctx.equal(stringify({{a: 1}}), '{{\"a\":1}}'); ctx.end(); }});"
+        );
+        let tests = extract_tests(Path::new("test.js"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert_eq!(tests[0].assertions.len(), 1, "{source}: {tests:?}");
+        assert_eq!(tests[0].assertions[0].oracle_kind, OracleKind::ExactValue);
+        assert_eq!(
+            tests[0].assertions[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_eq!(
+            tests[0].assertions[0].observed_expression.as_deref(),
+            Some("stringify({a: 1})")
+        );
+    }
+}
+
+#[test]
+fn tap_registration_keeps_namespace_and_binding_refusals() {
+    for prelude in [
+        "const test = require('tap');",
+        "import test from 'tap';",
+        "import * as test from 'tap';",
+        "const { same: test } = require('tap');",
+        "const { test } = require('unrelated');",
+        "const test = () => {};",
+        "let { test } = require('tap'); test = () => {};",
+        "function require() { return { test() {} }; } const { test } = require('tap');",
+    ] {
+        let source = format!(
+            "{prelude} test('x', t => {{ t.equal(stringify({{a: 1}}), '{{\"a\":1}}'); t.end(); }});"
+        );
+        assert!(
+            extract_tests(Path::new("test.js"), &source).is_empty(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn tap_callback_assertion_profile_keeps_completion_and_receiver_fences() {
+    for body in [
+        "t = { equal() {}, end() {} }; t.equal(value(), 1); t.end();",
+        "t.equal = () => {}; t.equal(value(), 1); t.end();",
+        "{ const t = { equal() {} }; t.equal(value(), 1); } t.end();",
+        "const other = { equal() {} }; other.equal(value(), 1); t.end();",
+        "setTimeout(() => t.equal(value(), 1), 0); t.end();",
+        "t.end(); t.equal(value(), 1);",
+        "t.equal(value(), 1);",
+        "t.same(value(), 1); t.end();",
+        "t.equal(value(), 1, {skip: true}); t.end();",
+        "t.plan(0); t.equal(value(), 1); t.end();",
+        "eval('t.equal = () => {}'); t.equal(value(), 1); t.end();",
+        "const replace = (_strings, context) => { context.equal = () => true; }; replace`${t}`; t.equal(value(), 1); t.end();",
+        "`${eval('t.equal = () => true')}`; t.equal(value(), 1); t.end();",
+        "with ({ t: { equal() {} } }) { t.equal(value(), 1); } t.end();",
+        "expect(value()).toBe(1); t.end();",
+    ] {
+        let source = format!("const {{ test }} = require('tap'); test('x', t => {{ {body} }});");
+        let tests = extract_tests(Path::new("test.cjs"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert!(tests[0].assertions.is_empty(), "{source}: {tests:?}");
+    }
+    for registration in [
+        "test.only('x', t => { t.equal(value(), 1); t.end(); });",
+        "test.each([1])('x', t => { t.equal(value(), 1); t.end(); });",
+        "test('x', { skip: true }, t => { t.equal(value(), 1); t.end(); });",
+        "test('x', { todo: true }, t => { t.equal(value(), 1); t.end(); });",
+        "test('x', t => { t.skip(); t.equal(value(), 1); t.end(); });",
+    ] {
+        let source = format!("const {{ test }} = require('tap'); {registration}");
+        assert!(
+            extract_tests(Path::new("test.js"), &source).is_empty(),
+            "{source}"
+        );
+    }
+    let source = "const { test } = require('tap'); test('x', async t => { await Promise.resolve(); t.equal(value(), 1); });";
+    let tests = extract_tests(Path::new("test.js"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
+
+#[test]
+fn tap_callback_parameter_initializers_and_patterns_refuse_authority() {
+    for params in [
+        "t, ignored = (t.equal = () => true)",
+        "t, ignored = eval('t.equal = () => true')",
+        "t = { equal() {}, end() {} }",
+        "t, { a = (t.equal = () => true) }",
+        "t, ...rest",
+        "{ equal, end }",
+    ] {
+        let source = format!(
+            "const {{ test }} = require('tap'); test('x', ({params}) => {{ t.equal(value(), 1); t.end(); }});"
+        );
+        let tests = extract_tests(Path::new("test.cjs"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert!(tests[0].assertions.is_empty(), "{source}: {tests:?}");
+    }
+    // Positive control: plain identifier parameters keep strong credit.
+    let source = "const { test } = require('tap'); test('x', (t, extra) => { t.equal(value(), 1); t.end(); });";
+    let tests = extract_tests(Path::new("test.cjs"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
+
+#[test]
+fn tap_renamed_binding_and_local_shadow_have_distinct_authority() {
+    let source = "const { test: check } = require('tap'); check('x', t => { t.equal(value(), 1); t.end(); }); { const check = () => {}; check('shadow', t => { t.equal(value(), 1); t.end(); }); }";
+    let tests = extract_tests(Path::new("test.js"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].local_name, "x");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
+
+#[test]
+fn tap_retains_explicit_assertion_imports_without_borrowing_globals() {
+    let source = "const { test } = require('tap'); const assert = require('node:assert/strict'); test('x', t => { assert.strictEqual(value(), 1); t.end(); });";
+    let tests = extract_tests(Path::new("test.js"), source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions[0].oracle_kind, OracleKind::ExactValue);
+    assert_eq!(
+        tests[0].assertions[0].oracle_strength,
+        OracleStrength::Strong
+    );
+}
+
+#[test]
+fn tap_options_aliases_do_not_credit_skipped_callbacks() {
+    let prefix = "const { test } = require('tap'); ";
+    for registration in [
+        "test('x', async t => { t.equal(value(), 1); }, async t => {});",
+        "test('x', {__proto__: {skip: true}}, async t => { t.equal(value(), 1); });",
+        "let name = 'x'; test(name, async t => { t.equal(value(), 1); });",
+        "test(name, async t => { t.equal(value(), 1); }); const name = 'x';",
+        "const name = {name: 'x', skip: true}; test(name, async t => { t.equal(value(), 1); });",
+        "const name = {name: 'x', todo: true}; test(name, async t => { t.equal(value(), 1); });",
+        "const options = {skip: true}; test('x', async t => { t.equal(value(), 1); }, options);",
+    ] {
+        let source = format!("{prefix}{registration}");
+        let tests = extract_tests(Path::new("test.js"), &source);
+        assert_eq!(tests.len(), 1, "{source}: {tests:?}");
+        assert!(
+            tests.iter().all(|test| test.assertions.is_empty()),
+            "{source}: {tests:?}"
+        );
+    }
+    // Lexical blocks are outside the extraction walk: this is an empty
+    // registration preservation control, not proof that the tap guard ran.
+    let shadow = format!(
+        "{prefix} const name = 'x'; {{ const name = {{skip:true}}; test(name, async t => {{ t.equal(value(), 1); }}); }}"
+    );
+    assert!(extract_tests(Path::new("test.js"), &shadow).is_empty());
+    let source =
+        format!("{prefix} const name = 'x'; test(name, async t => {{ t.equal(value(), 1); }});");
+    let tests = extract_tests(Path::new("test.js"), &source);
+    assert_eq!(tests.len(), 1, "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{tests:?}");
+}
 
 /// #14083 T6: each dynamic-load callee is read on its own. The class-level
 /// test for `requireActual` / `importActual` stays withheld with either callee
@@ -2074,4 +2243,219 @@ fn every_dynamic_load_callee_records_its_literal_specifier() {
     for load in ["require(name)", "jest.requireMock('../src/a')"] {
         assert!(specifiers_of(load).is_empty(), "{load}");
     }
+}
+
+fn deno_tests(source: &str) -> Vec<TypeScriptTest> {
+    extract_tests(Path::new("pricing.test.ts"), source)
+}
+
+#[test]
+fn deno_test_registration_forms_each_register_one_test() {
+    let header = "import { assertEquals } from \"jsr:@std/assert\";\n";
+    for (label, body, name) in [
+        (
+            "name and fn",
+            "Deno.test(\"rate\", () => { assertEquals(rate(1), 2); });",
+            "rate",
+        ),
+        (
+            "object",
+            "Deno.test({ name: \"rate\", fn() { assertEquals(rate(1), 2); } });",
+            "rate",
+        ),
+        (
+            "object with fn arrow",
+            "Deno.test({ name: \"rate\", fn: async () => { assertEquals(rate(1), 2); } });",
+            "rate",
+        ),
+        (
+            "options then fn",
+            "Deno.test(\"rate\", { permissions: { read: true } }, () => { assertEquals(rate(1), 2); });",
+            "rate",
+        ),
+        (
+            "named function",
+            "Deno.test(function rate() { assertEquals(rate(1), 2); });",
+            "rate",
+        ),
+        (
+            "t.step",
+            "Deno.test(\"rate\", async (t) => { await t.step(\"inner\", () => { assertEquals(rate(1), 2); }); });",
+            "rate",
+        ),
+        (
+            "only",
+            "Deno.test.only(\"rate\", () => { assertEquals(rate(1), 2); });",
+            "rate",
+        ),
+    ] {
+        let tests = deno_tests(&format!("{header}{body}\n"));
+        assert_eq!(tests.len(), 1, "{label}");
+        assert_eq!(tests[0].name, name, "{label}");
+        assert!(tests[0].body_text.contains("rate(1)"), "{label}");
+        if label != "t.step" {
+            assert_eq!(tests[0].assertions.len(), 1, "{label}");
+            assert_eq!(tests[0].assertions[0].matcher, "deepStrictEqual", "{label}");
+        }
+    }
+}
+
+#[test]
+fn ignored_or_unreadable_deno_tests_register_nothing() {
+    for body in [
+        "Deno.test({ name: \"rate\", ignore: true, fn() { assertEquals(rate(1), 2); } });",
+        "Deno.test({ name: \"rate\", ...opts, fn() { assertEquals(rate(1), 2); } });",
+        "Deno.test(\"rate\", { ignore: Deno.build.os === \"windows\" }, () => { assertEquals(rate(1), 2); });",
+        "Deno.test(\"rate\");",
+        "Deno.other(\"rate\", () => { assertEquals(rate(1), 2); });",
+        "Deno.test(\"rate\", someFunction);",
+        "Deno.test(\"rate\", { ignore: true }, () => { assertEquals(rate(1), 2); });",
+        "Deno.test({ name: \"rate\", \"ignore\": true, fn() { assertEquals(rate(1), 2); } });",
+        "Deno.test({ name: \"rate\", ignore, fn() { assertEquals(rate(1), 2); } });",
+        "Deno.test.ignore(\"rate\", () => { assertEquals(rate(1), 2); });",
+    ] {
+        assert!(deno_tests(&format!("{body}\n")).is_empty(), "{body}");
+    }
+}
+
+#[test]
+fn deno_std_assertions_map_to_their_node_counterparts() {
+    use crate::domain::{OracleKind, OracleStrength};
+    for (module, import, call, kind, strength) in [
+        (
+            "@std/assert",
+            "assertEquals",
+            "assertEquals(rate(1), 2)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "jsr:@std/assert@^1",
+            "assertStrictEquals",
+            "assertStrictEquals(rate(1), 2)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "https://deno.land/std@0.224.0/assert/mod.ts",
+            "assertEquals",
+            "assertEquals(rate(1), 2)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        ),
+        (
+            "jsr:@std/assert",
+            "assert",
+            "assert(rate(1))",
+            OracleKind::SmokeOnly,
+            OracleStrength::Smoke,
+        ),
+        (
+            "jsr:@std/assert",
+            "assertThrows",
+            "assertThrows(() => rate(1))",
+            OracleKind::BroadError,
+            OracleStrength::Weak,
+        ),
+    ] {
+        let source = format!(
+            "import {{ {import} }} from \"{module}\";\nDeno.test(\"t\", () => {{ {call}; }});\n"
+        );
+        let tests = deno_tests(&source);
+        assert_eq!(tests.len(), 1, "{call}");
+        assert_eq!(tests[0].assertions.len(), 1, "{call}");
+        let got = &tests[0].assertions[0];
+        assert_eq!(
+            (&got.oracle_kind, &got.oracle_strength),
+            (&kind, &strength),
+            "{call}"
+        );
+    }
+    // A same-named local helper, an unrelated module, a look-alike std
+    // specifier, a namespace import, or a node-style member call on Deno's
+    // plain `assert` function earns no credit.
+    for source in [
+        "import { assertEquals } from \"./helpers.ts\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "function assertEquals(a, b) {}\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "import { assertEquals } from \"@std/assertx\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "import { assertEquals } from \"https://deno.land/stdlib/assert/mod.ts\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "import { assertEquals } from \"https://deno.land/x/fork/assert/mod.ts\";\nDeno.test(\"t\", () => { assertEquals(rate(1), 2); });\n",
+        "import * as asserts from \"jsr:@std/assert\";\nDeno.test(\"t\", () => { asserts.assertEquals(rate(1), 2); });\n",
+        "import { assert } from \"jsr:@std/assert\";\nDeno.test(\"t\", () => { assert.equal(rate(1), 2); });\n",
+    ] {
+        let tests = deno_tests(source);
+        assert_eq!(tests.len(), 1);
+        assert!(tests[0].assertions.is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn deno_ignore_false_and_aliased_std_assertions_still_register() {
+    for source in [
+        "import { assertEquals } from \"jsr:@std/assert\";\nDeno.test({ name: \"rate\", ignore: false, fn() { assertEquals(rate(1), 2); } });\n",
+        "import { assertEquals as eq } from \"jsr:@std/assert/equals\";\nDeno.test(\"rate\", () => { eq(rate(1), 2); });\n",
+    ] {
+        let tests = deno_tests(source);
+        assert_eq!(tests.len(), 1, "{source}");
+        assert_eq!(tests[0].name, "rate", "{source}");
+        assert_eq!(tests[0].assertions.len(), 1, "{source}");
+        assert_eq!(
+            tests[0].assertions[0].matcher, "deepStrictEqual",
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn a_shadowed_deno_namespace_registers_no_test() {
+    let header = "import { assertEquals } from \"jsr:@std/assert\";\n";
+    for shadow in [
+        "const Deno = { test(name, callback) {} };\n",
+        "import { Deno } from \"./fake_deno.ts\";\n",
+        "function Deno() {}\n",
+    ] {
+        let source = format!(
+            "{header}{shadow}Deno.test(\"rate\", () => {{ assertEquals(rate(1), 2); }});\n"
+        );
+        assert!(deno_tests(&source).is_empty(), "{shadow}");
+    }
+    // The unshadowed control registers.
+    let source = format!("{header}Deno.test(\"rate\", () => {{ assertEquals(rate(1), 2); }});\n");
+    assert_eq!(deno_tests(&source).len(), 1);
+}
+
+#[test]
+fn an_unused_closure_in_a_deno_callback_is_masked_for_reach() {
+    for (label, body) in [
+        (
+            "object fn",
+            "Deno.test({ name: \"rate\", fn() { const unused = () => rate(1); } });",
+        ),
+        (
+            "object fn arrow",
+            "Deno.test({ name: \"rate\", fn: () => { const unused = () => rate(1); } });",
+        ),
+        (
+            "named function",
+            "Deno.test(function rate_test() { const unused = () => rate(1); });",
+        ),
+        (
+            "options then fn",
+            "Deno.test(\"rate\", { permissions: {} }, () => { const unused = () => rate(1); });",
+        ),
+    ] {
+        let tests = deno_tests(&format!("{body}\n"));
+        assert_eq!(tests.len(), 1, "{label}");
+        let reach = tests[0].reach_body_text.as_deref();
+        assert!(
+            reach.is_some_and(|text| !text.contains("rate(1)")),
+            "{label}: {reach:?}"
+        );
+    }
+    // A closure the callback calls keeps the ordinary reach text.
+    let tests = deno_tests(
+        "Deno.test({ name: \"rate\", fn() { const used = () => rate(1); used(); } });\n",
+    );
+    assert_eq!(tests.len(), 1);
+    assert!(tests[0].reach_body_text.is_none());
 }

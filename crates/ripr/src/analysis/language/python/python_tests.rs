@@ -867,6 +867,36 @@ fn cli_output_discriminators_cover_echo_streams_and_exit_codes() {
 }
 
 #[test]
+fn appended_value_discriminator_names_contents_not_length() {
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(msg.upper())").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("self.buf.append(msg)").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(python_output_or_call_discriminator("buf.append()"), None);
+    // A literal argument keeps the literal-based shapes below it.
+    assert_eq!(
+        python_output_or_call_discriminator("print(\"queued\")").as_deref(),
+        Some("output contains \"queued\"")
+    );
+    // A literal append keeps its concrete discriminator; the placeholder
+    // contents shape applies only when no string literal names the value.
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(\"queued\")").as_deref(),
+        Some("call includes \"queued\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append('queued')").as_deref(),
+        Some("call includes 'queued'")
+    );
+    // `.push(` is not a Python list append and names no discriminator.
+    assert_eq!(python_output_or_call_discriminator("buf.push(msg)"), None);
+}
+
+#[test]
 fn extract_tests_records_vararg_and_kwarg_pytest_fixtures() -> Result<(), String> {
     let tests = extract_tests(
         Path::new("tests/test_fixtures.py"),
@@ -2394,6 +2424,7 @@ fn same_stem_related_handles_missing_stems() {
     let test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4313,6 +4344,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4341,6 +4373,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let bare = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4367,6 +4400,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let clean = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5124,6 +5158,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
     let alias_test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5224,6 +5259,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         activation_controls: Vec::new(),
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5275,6 +5311,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let alias_test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),

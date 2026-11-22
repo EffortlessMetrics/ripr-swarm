@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr policy preview-promote --class` refuses values that are not a plain label (letters, digits, `_`, `-`), so `--class ../../zz` no longer writes a report outside `target/ripr/reports`; `ripr agent start --out` refuses a path that escapes `--root` (parent traversal, an absolute or drive-relative path outside it, or a symlink inside it that points outside); and the `agent repair --store` traversal refusal now names `--store` and a working example (#15258).

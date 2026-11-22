@@ -76,7 +76,10 @@ fn parse_gap_class(
     if trimmed.starts_with("gap:rust:") || trimmed.starts_with("gap:pr:") {
         return Ok(CanonicalItemId(trimmed.to_string()));
     }
-    // Content-hash canonical gaps: `gap:` + 16 lowercase hex digits.
+    // Content-hash canonical gaps: `gap:` + 16 hex digits. The producer
+    // (`ripr::analysis::canonical_gap`) writes lowercase; uppercase is still
+    // accepted and kept as given, so a hand-copied id is never refused and
+    // never silently rewritten (#14070).
     let digest = trimmed.strip_prefix("gap:").unwrap_or("");
     if digest.len() == 16 && digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
         return Ok(CanonicalItemId(trimmed.to_string()));
@@ -162,5 +165,20 @@ mod tests {
                 "{refused:?}"
             );
         }
+    }
+
+    #[test]
+    fn content_hash_gap_accepts_either_hex_case_and_keeps_the_spelling() {
+        for accepted in ["gap:67f9714ba37b3967", "gap:67F9714BA37B3967"] {
+            assert_eq!(
+                CanonicalItemId::from_canonical_gap_id(accepted).map(|id| id.0),
+                Ok(accepted.to_string()),
+                "{accepted:?}"
+            );
+        }
+        assert_ne!(
+            CanonicalItemId::from_canonical_gap_id("gap:67F9714BA37B3967"),
+            CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967"),
+        );
     }
 }
