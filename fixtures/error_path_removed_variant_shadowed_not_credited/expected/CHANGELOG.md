@@ -56,3 +56,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — error_path_removed_variant_shadowed_not_credited (6)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm exact-oracle step names an arm whose result is replaced before the assertion; static class unchanged
+
+Command:
+`cargo xtask goldens bless error_path_removed_variant_shadowed_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`

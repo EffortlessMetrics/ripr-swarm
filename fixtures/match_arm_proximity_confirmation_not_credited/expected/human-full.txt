@@ -47,7 +47,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  The related test `seconds_total` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If no related input selects the arm, add one and assert the exact value the arm produces
+  The related test `seconds_total` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If an input selects the arm but its result is replaced before the assertion, assert that result where it is still observable or test the arm separately. If no related input selects the arm, add one and assert the exact value the arm produces
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/match_arm_proximity_confirmation_not_credited/input --diff <cwd>/fixtures/match_arm_proximity_confirmation_not_credited/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f

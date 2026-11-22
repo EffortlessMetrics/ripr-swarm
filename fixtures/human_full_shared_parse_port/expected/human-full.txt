@@ -20,7 +20,7 @@ Shared evidence and guidance
   E5 [findings 1, 4, 6, 7]: related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E6 [findings 1, 4, 6, 7]: source assertion argument value 8080 at line 15
   E7 [findings 1, 4, 6, 7]: source function argument value input = "8080" at line 15
-  N1 [findings 1, 7]: The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If no related input selects the arm, add one and assert the exact value the arm produces
+  N1 [findings 1, 7]: The related test `parses_valid_port` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If an input selects the arm but its result is replaced before the assertion, assert that result where it is still observable or test the arm separately. If no related input selects the arm, add one and assert the exact value the arm produces
   E8 [findings 2, 5]: reach yes: Related tests appear to reach parse_port: parses_valid_port
   E9 [findings 2, 5]: infection yes: Reachable tests can plausibly activate this changed behavior
   E10 [findings 2, 5]: observation yes: A related test observes a value or effect near the changed behavior

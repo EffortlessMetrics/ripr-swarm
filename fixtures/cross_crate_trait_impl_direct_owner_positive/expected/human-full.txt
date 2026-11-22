@@ -48,7 +48,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - The related test `size_hint_caps_at_remaining` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If no related input selects the arm, add one and assert the exact value the arm produces
+  - The related test `size_hint_caps_at_remaining` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If an input selects the arm but its result is replaced before the assertion, assert that result where it is still observable or test the arm separately. If no related input selects the arm, add one and assert the exact value the arm produces
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/cross_crate_trait_impl_direct_owner_positive/input --diff <cwd>/fixtures/cross_crate_trait_impl_direct_owner_positive/diff.patch --mode fast probe:util_src_stream_take.rs:match_arm:6d8e610d

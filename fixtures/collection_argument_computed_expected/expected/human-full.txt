@@ -42,7 +42,7 @@ Evidence
 Weakness
   - No strong discriminator was detected
 Next step
-  - The related test `records_into_the_bag` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts depends on the changed call. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If it does not, assert the effect the call produces
+  - Strengthen the related assertion so it discriminates the changed behavior
 Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/collection_argument_computed_expected/input --diff <cwd>/fixtures/collection_argument_computed_expected/diff.patch --mode fast probe:src_lib.rs:call_deletion:1f64eda5

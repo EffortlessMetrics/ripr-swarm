@@ -20,8 +20,9 @@ Start here:
   Next step: The related test `size_hint_caps_at_remaining` already asserts an exact value; the gap
     is not the assertion shape. Check whether the value that test asserts comes from the changed
     arm. If it does, the assertion may already notice this change, which ripr could not confirm from
-    the source. If no related input selects the arm, add one and assert the exact value the arm
-    produces
+    the source. If an input selects the arm but its result is replaced before the assertion, assert
+    that result where it is still observable or test the arm separately. If no related input selects
+    the arm, add one and assert the exact value the arm produces
   Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
