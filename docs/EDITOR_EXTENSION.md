@@ -209,9 +209,10 @@ The extension passes `ripr.baseRef`, `ripr.check.mode`,
 `ripr.includeUnchangedTests`, `ripr.seamDiagnostics`, and
 `ripr.diagnosticProfile` to the language server as initialization options, and
 serves those five plus `ripr.gitTimeoutMs` and `ripr.refreshDeadlineMs` through
-`workspace/configuration`. `ripr.seamDiagnostics` and `ripr.diagnosticProfile` are
-forwarded only when a user, workspace or folder setting sets them, so
-`ripr.toml` `[lsp]` values apply when they are unset. Changing
+`workspace/configuration`. `ripr.check.mode`, `ripr.includeUnchangedTests`,
+`ripr.seamDiagnostics` and `ripr.diagnosticProfile` are forwarded only when a
+user, workspace or folder setting sets them, so `ripr.toml` `[analysis]` and
+`[lsp]` values apply when they are unset. Changing
 `ripr.enabled`, `ripr.server.*`, `ripr.check.mode`, or `ripr.baseRef` restarts
 the client so the next diagnostic refresh uses the new configuration.
 `ripr.trace.server` applies live. The server re-reads the other keys without a
@@ -557,7 +558,8 @@ guidance instead of `cargo install ripr`.
 
 When the download never reached its host (no DNS answer, a refused or dropped
 connection, or the 30-second fetch timeout), the message says so and names the
-offline route: check the network connection or proxy and retry, or set
+offline route: check the network connection and retry (behind a proxy, set VS Code
+`http.proxy` and keep `http.proxySupport` on), or set
 `ripr.server.path` to a `ripr` binary already on the machine
 (`ripr.server.downloadBaseUrl` for a mirror).
 

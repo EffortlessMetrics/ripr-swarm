@@ -1,18 +1,32 @@
 # Golden Output Changes
 
-## Pending - corpus cache generation 1.187 for one-hop blanket-impl reach and explicit harness identity (#6732, #15846)
+## Pending — corpus cache generation 1.188 for one-hop blanket-impl reach (#6732)
 
 A test reaching a trait-impl owner only through a one-hop blanket impl now
-withholds the gap as unresolved reach, and a classified cache entry binds an
-explicit registered harness to the selected Cargo target under an aliased
-workspace root. Together they bump the analyzer cache schema to 1.187. Move the
-portable unchanged-attempt snapshots to 1.187, recompute the
+withholds the gap as unresolved reach, which bumps the analyzer cache schema to
+1.188. Move the portable unchanged-attempt snapshots to 1.188, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent verify
 commitments and receipt byte hashes, and recapture the honesty reports whose
 header carried an older generation (artifact, source_subject and
 analysis_inputs only). Weak grip, unchanged movement, historical currentness,
 incomplete receipt status and fail-closed first-action routing remain unchanged.
 No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.187 for attribute-macro generated tests (#12857)
+
+A macro-generated test that carries an unrecognised attribute macro takes no
+invocation scopes, which bumps the analyzer cache schema to 1.187. Move the
+portable unchanged-attempt snapshots to 1.187, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
+## Pending — explicit Cargo harness path identity (#15846)
+
+Classified cache generation 1.185 binds a harness flag to the selected Cargo
+target. The portable unchanged-attempt pair and its verification and receipt
+commitments were refreshed. The pair retains its original seam classifications.
 
 ## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 

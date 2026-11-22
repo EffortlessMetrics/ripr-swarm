@@ -36938,13 +36938,19 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
         ("reports index", &["reports", "index"]),
         ("reports ci-summary", &["reports", "ci-summary"]),
     ];
+    // Each command runs from its own working directory, so a write under the
+    // CWD names the command that made it, and a refused command must print
+    // nothing to stdout: `reports ci-summary` writes only to stdout, so its
+    // root check placement is visible only there (#14626).
     let mut failures = Vec::new();
-    for (name, argv) in commands {
+    for (index, (name, argv)) in commands.into_iter().enumerate() {
+        let cwd = scratch.join(format!("cwd-{index}"));
+        std::fs::create_dir_all(&cwd)?;
         for root in [&missing, &file] {
             let root_text = root.display().to_string();
             let mut args = argv.to_vec();
             args.extend(["--root", root_text.as_str()]);
-            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&scratch), &args)?;
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&cwd), &args)?;
             let stderr = String::from_utf8_lossy(&output.stderr);
             let expected = format!("{name} root {root_text} is not a directory");
             if output.status.code() != Some(2) || !stderr.contains(&expected) {
@@ -36953,17 +36959,27 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
                     output.status.code()
                 ));
             }
+            if !output.stdout.is_empty() {
+                failures.push(format!(
+                    "{name} --root {root_text}: printed {} bytes to stdout before refusing",
+                    output.stdout.len()
+                ));
+            }
+        }
+        if cwd.join("target").exists() {
+            failures.push(format!(
+                "{name}: a refused command wrote under the CWD (target/ripr)"
+            ));
+        }
+        // Checked per command, and removed so the next command starts from a
+        // missing root again, so a red names the command that created it.
+        if scratch.join("nope").exists() {
+            failures.push(format!("{name}: the mistyped --root was created"));
+            let _ = std::fs::remove_dir_all(scratch.join("nope"));
         }
     }
-    let created = scratch.join("nope").exists();
-    let wrote_target = scratch.join("target").exists();
     let file_kept = std::fs::read_to_string(&file)?;
     let _ = std::fs::remove_dir_all(&scratch);
-    assert!(!created, "the mistyped --root was created");
-    assert!(
-        !wrote_target,
-        "a refused command wrote under the CWD (target/ripr)"
-    );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(file_kept, "not a directory\n");
     Ok(())
@@ -37496,6 +37512,97 @@ fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Erro
     assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
     assert!(
         !stderr.contains("stdout failed") && !stderr.contains("Broken pipe"),
+        "a closed reader must not produce an error report: {stderr}"
+    );
+    Ok(())
+}
+
+/// docs/EXIT_CODES.md: an unknown `--seam-id` is one typed refusal with one
+/// exit, `3`, on `agent repair --phase before` too. A stale cross-namespace
+/// id (`probe:`, `gap:`, `file:line`) used to exit `2` there while a plain
+/// unknown seam id and every sibling surface exited `3` (#15311).
+#[test]
+fn agent_repair_stale_cross_namespace_seam_id_is_a_typed_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, _diff) = agent_brief_sample_workspace("agent-repair-stale-seam-id")?;
+    // The workspace sits under this checkout's `target/`. A repair start
+    // refuses a root below a Git top-level (#15363) or without a concrete
+    // HEAD with exit 2 before it reads the seam id, so the fixture must be
+    // its own committed repository for the plain unknown id to reach the
+    // seam refusal.
+    init_git_fixture_repo(&root)?;
+    let root_path = root.display().to_string();
+    for seam_id in [
+        "probe:src_lib.rs:predicate:566edf6b",
+        "gap:0123456789abcdef",
+        "src/lib.rs:999",
+        "f3c9e4d21a0b7c88",
+    ] {
+        for json in [false, true] {
+            let mut args = vec![
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--root",
+                &root_path,
+                "--seam-id",
+                seam_id,
+            ];
+            if json {
+                args.push("--json");
+            }
+            let output = run_ripr(&args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(3),
+                "{seam_id} (json={json}) must take the refusal exit: {stderr}"
+            );
+            assert!(
+                output.stdout.is_empty(),
+                "agent repair --phase before refusals keep stdout empty: {:?}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
+    // The attempts directory may hold only its dot-named lock files.
+    let attempts = root.join("target/ripr/repair-attempts");
+    if attempts.exists() {
+        for entry in std::fs::read_dir(&attempts)? {
+            let name = entry?.file_name();
+            assert!(
+                name.to_string_lossy().starts_with('.'),
+                "a refused seam id starts no attempt: {name:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `ripr reports ci-summary` writes its Markdown bytes through its own
+/// writer; a closed reader must still get the shared quiet exit 2, not a
+/// "could not write the summary ... summary path" report.
+#[test]
+fn ci_summary_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    // Close the reader before spawning: dropping `Child::stdout` after spawn
+    // races with the child's write, and a summary that fits the pipe buffer
+    // would then exit 0.
+    let (reader, writer) = std::io::pipe()?;
+    drop(reader);
+    let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
+        .args(["reports", "ci-summary", "--root"])
+        .arg(&sample)
+        .args(["--base-ref", "main"])
+        .stdin(Stdio::null())
+        .stdout(writer)
+        .stderr(Stdio::piped())
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        stderr.trim().is_empty(),
         "a closed reader must not produce an error report: {stderr}"
     );
     Ok(())
