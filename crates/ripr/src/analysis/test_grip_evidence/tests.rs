@@ -13022,8 +13022,8 @@ fn relation_reason_as_str_priority_and_confidence_are_pinned_per_variant() {
             RelationConfidence::Medium,
         ),
         (
-            RelationReason::SameTestFile,
-            "same_test_file",
+            RelationReason::OwnerNamedTest,
+            "owner_named_test",
             4,
             RelationConfidence::Medium,
         ),
@@ -13034,8 +13034,8 @@ fn relation_reason_as_str_priority_and_confidence_are_pinned_per_variant() {
             RelationConfidence::Medium,
         ),
         (
-            RelationReason::OwnerNamedTest,
-            "owner_named_test",
+            RelationReason::SameTestFile,
+            "same_test_file",
             6,
             RelationConfidence::Medium,
         ),
@@ -13046,9 +13046,21 @@ fn relation_reason_as_str_priority_and_confidence_are_pinned_per_variant() {
             RelationConfidence::Medium,
         ),
         (
+            RelationReason::ReExportChainFollowed,
+            "re_export_chain_followed",
+            7,
+            RelationConfidence::Medium,
+        ),
+        (
             RelationReason::FixtureOwnerAffinity,
             "fixture_owner_affinity",
             8,
+            RelationConfidence::Low,
+        ),
+        (
+            RelationReason::WeakTokenSubstring,
+            "weak_token_substring",
+            9,
             RelationConfidence::Low,
         ),
     ];
