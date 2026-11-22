@@ -259,7 +259,8 @@ fn gap_finding_on_a_whole_gripped_seam_names_the_disagreement_not_no_binding() -
         GRIPPED_BOUNDARY_NEW,
         GRIPPED_BOUNDARY_TEST,
     )?;
-    let repair = repo.ripr(&["repair", "--root", "."])?;
+    // The whole-seam reading: an empty range (#16082) keeps repair unscoped.
+    let repair = repo.ripr(&["repair", "--root", ".", "--base", "HEAD"])?;
     assert!(
         repair.contains("already check it"),
         "precondition, repair reads the whole seam as gripped:\n{repair}"
@@ -306,8 +307,9 @@ const LOOP_NEW: &str = "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n  
 const LOOP_TEST: &str =
     "use ar::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n";
 
-/// #11111: with no diff to scope to, bare repair's whole-seam "already check
-/// it (exposed)" names the seam it is about, so it is not read as a verdict
+/// #11111: with no diff to scope to (an empty `--base HEAD` range; a bare
+/// repair here follows check's last-commit rescope, #16082), repair's
+/// whole-seam "already check it (exposed)" names the seam it is about, so it is not read as a verdict
 /// on the changed loop line that `ripr check` cannot classify.
 #[test]
 fn whole_seam_gripped_refusal_names_its_seam_not_the_change() -> Result<(), String> {
@@ -318,7 +320,7 @@ fn whole_seam_gripped_refusal_names_its_seam_not_the_change() -> Result<(), Stri
             && !check.contains("Static exposure: exposed"),
         "precondition, check does not read the changed loop as exposed:\n{check}"
     );
-    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD"])?;
     assert_eq!(code, Some(3), "repair must not start:\n{repair}");
     assert!(
         repair.contains("the code at src/lib.rs:6 `acc`: ") && repair.contains("already check it"),
@@ -571,9 +573,12 @@ fn unreached_workspace_repo(commit_change: bool) -> Result<Repo, String> {
     )
 }
 
-/// The repair text for a fixture, with the refusal asserted (exit 3).
+/// The whole-repository repair text for a committed fixture, with the
+/// refusal asserted (exit 3). `--base HEAD` names an empty range: a bare
+/// repair on this clean default branch would follow check's last-commit
+/// rescope (#16082) and scope to the change.
 fn refused_repair(repo: &Repo) -> Result<String, String> {
-    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD"])?;
     assert_eq!(code, Some(3), "repair must not start:\n{repair}");
     Ok(repair)
 }
@@ -882,13 +887,14 @@ fn bare_repair_does_not_list_an_unchanged_seams_missing_evidence_for_the_change(
     Ok(())
 }
 
-/// The same shape with the change committed: no diff is available, so repair
-/// keeps the whole-repository view, and each reason names the seam it is
+/// The same shape with an empty range (`--base HEAD`; a bare repair on this
+/// clean default branch follows check's last-commit rescope, #16082): no
+/// diff is available, so repair keeps the whole-repository view, and each reason names the seam it is
 /// about instead of sitting beside the other as a second verdict.
 #[test]
 fn whole_repository_refusals_name_the_seam_each_reason_is_about() -> Result<(), String> {
     let repo = Repo::create(GUARD_OLD, GUARD_NEW, GUARD_TEST)?;
-    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD"])?;
     assert_eq!(code, Some(3), "repair must not start:\n{repair}");
     assert!(
         repair.contains("the code at src/lib.rs:2 `age > 120`: ripr does not report a gap here")
@@ -1101,6 +1107,84 @@ fn pilot_never_says_no_test_to_add_while_check_reports_a_weak_gap() -> Result<()
             && pilot.contains("Pilot ranked no gap, but `ripr check` reads your changed code")
             && pilot.contains("run `ripr check --root "),
         "pilot must point at check's reading of the change:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #16082: on a clean checkout of the comparison base, bare human `ripr
+/// check` analyzes the last commit. Repair, stub and pilot scope to that same
+/// range, so the committed weak change keeps the agreement the uncommitted
+/// fixture above proves. Before #16082 all three read the empty default range
+/// and kept the inventory's "already checked" reading.
+#[test]
+fn clean_default_branch_repair_stub_and_pilot_follow_checks_last_commit() -> Result<(), String> {
+    let repo = Repo::create(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("analyzed the last commit (--base HEAD~1)")
+            && check.contains("Static exposure: weak"),
+        "precondition, bare check falls back to the last commit and reports the weak gap:\n{check}"
+    );
+    let structured = repo.ripr(&["check", "--format", "json"])?;
+    assert!(
+        !structured.contains("\"id\": \"probe:"),
+        "structured formats keep their empty-range contract:\n{structured}"
+    );
+    let json = repo.ripr(&["check", "--format", "json", "--base", "HEAD~1"])?;
+    let (_, tail) = json
+        .split_once("\"id\": \"probe:")
+        .ok_or_else(|| format!("check JSON names no probe finding:\n{json}"))?;
+    let (id, _) = tail
+        .split_once('"')
+        .ok_or_else(|| format!("unterminated finding id:\n{json}"))?;
+    let id = format!("probe:{id}");
+
+    let (code, repair) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("already check it") && !repair.contains("no gap to repair"),
+        "repair must not call check's weak finding already checked:\n{repair}"
+    );
+    assert!(
+        repair.contains("`ripr check` reads this changed code as weak"),
+        "repair must name check's reading of the last commit:\n{repair}"
+    );
+
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        !stub.contains("existing tests already discriminate it")
+            && stub.contains("`ripr check` reads your changed code there as weak (weakly_exposed)"),
+        "the stub must name check's reading of the last commit:\n{stub}"
+    );
+
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        !pilot.contains("so there is no test to add")
+            && pilot.contains("Pilot ranked no gap, but `ripr check` reads your changed code"),
+        "pilot must point at check's reading of the last commit:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #16082 control: an explicit `--base` names the range, so a clean
+/// checkout compared with itself is not rescoped. Repair keeps the empty
+/// range and says nothing differs from that base.
+#[test]
+fn explicit_base_on_clean_default_branch_is_not_rescoped() -> Result<(), String> {
+    let repo = Repo::create(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    let (_, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD"])?;
+    assert!(
+        repair.contains("because nothing differs from `HEAD`"),
+        "an explicit base must keep its own empty range:\n{repair}"
     );
     Ok(())
 }

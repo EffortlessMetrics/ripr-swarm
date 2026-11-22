@@ -2301,9 +2301,40 @@ pub(crate) fn check_reading_of_gripped_seam(
     entry: &crate::analysis::ClassifiedSeam,
     classified: &[crate::analysis::ClassifiedSeam],
 ) -> CheckReadingOfGrippedSeam {
-    let touched =
-        live_check_diff_files(root, base).is_some_and(|files| seam_touches_change(entry, &files));
-    if !touched {
+    let Some(files) = live_check_diff_files(root, base) else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    check_reading_of_gripped_seam_on_change(root, base, config, entry, classified, &files)
+}
+
+/// The changed files [`check_reading_of_gripped_seam`] scopes to, for a
+/// caller that tests overlap before it classifies a seam (#16082), and
+/// whether any of them is `file` (root-relative). `None` when no diff is
+/// readable; the reading then stands.
+pub(crate) fn live_check_diff_files_touching(
+    root: &Path,
+    base: Option<&str>,
+    file: &Path,
+) -> Option<Vec<crate::analysis::ChangedFile>> {
+    let files = live_check_diff_files(root, base)?;
+    let file = normalized_relative_path(file);
+    files
+        .iter()
+        .any(|changed| normalized_relative_path(&changed.path) == file)
+        .then_some(files)
+}
+
+/// [`check_reading_of_gripped_seam`] against changed `files` the caller has
+/// already read.
+pub(crate) fn check_reading_of_gripped_seam_on_change(
+    root: &Path,
+    base: Option<&str>,
+    config: &crate::config::RiprConfig,
+    entry: &crate::analysis::ClassifiedSeam,
+    classified: &[crate::analysis::ClassifiedSeam],
+    files: &[crate::analysis::ChangedFile],
+) -> CheckReadingOfGrippedSeam {
+    if !seam_touches_change(entry, files) {
         return CheckReadingOfGrippedSeam::Stands;
     }
     let Ok(output) = super::gap_bound_repair::default_check_output(root, base, config) else {
@@ -3621,8 +3652,10 @@ mod unscoped_note_tests {
 /// The changed files of the diff a bare `ripr check` would read under `root`
 /// (or under an explicit `base`, which wins over inference): check's own
 /// diff-source selection (committed history, or the working tree when it
-/// holds uncommitted work), base resolution and root scoping through the
-/// shared loaders. `None` when no such diff is readable.
+/// holds uncommitted work), base resolution, root scoping through the
+/// shared loaders, and check's last-commit rescope on a clean checkout of
+/// the comparison base (#16082), so the change these readers scope to is
+/// the one check reports on. `None` when no such diff is readable.
 fn live_check_diff_files(
     root: &Path,
     base: Option<&str>,
@@ -3633,12 +3666,22 @@ fn live_check_diff_files(
         None,
     );
     let text = if source.is_working_tree() {
-        crate::analysis::load_worktree_diff(root, base, None)
+        crate::analysis::load_worktree_diff(root, base, None).ok()?
     } else {
-        crate::analysis::load_diff(root, base, None, None)
+        let loaded =
+            crate::analysis::load_diff_with_effective_base_core(root, base, None, None).ok()?;
+        match base {
+            Some(_) => loaded.text,
+            None => super::diff_source::last_commit_fallback_diff(
+                root,
+                &loaded.text,
+                loaded.effective_base.as_deref(),
+                None,
+            )
+            .unwrap_or(loaded.text),
+        }
     };
-    text.ok()
-        .map(|text| crate::analysis::parse_unified_diff(&text))
+    Some(crate::analysis::parse_unified_diff(&text))
 }
 
 /// The non-Rust languages in the diff `ripr check` would analyze under `root`

@@ -79,6 +79,87 @@ pub(crate) fn select_live_diff_source_with(
     }
 }
 
+/// The base a bare human `ripr check` rescopes to on a clean checkout of its
+/// comparison base (#13644): the commit just made.
+pub(crate) const LAST_COMMIT_BASE: &str = "HEAD~1";
+
+/// Whether a bare human `ripr check` that produced `output` from its default
+/// range rescopes to the last commit (#13644). The caller owns the flag
+/// guards (no `--base`, `--scope`, `--diff`, `--worktree`, candidate tree or
+/// artifact output, human format); this owns the output guards: nothing was
+/// found or changed, no working-tree source sits outside the range, and the
+/// default base names the checked-out branch, which has a parent.
+///
+/// `ripr check` and the default check that `ripr repair` and `ripr agent
+/// stub` reconcile against (#16082) both read this one decision.
+pub(crate) fn last_commit_fallback_applies(
+    output: &crate::CheckOutput,
+    root: &Path,
+    git_timeout: Option<std::time::Duration>,
+) -> bool {
+    if !output.findings.is_empty()
+        || output.unanalyzed_working_tree
+        || !output.untracked_working_tree_source_paths.is_empty()
+        || !output.ignored_working_tree_source_paths.is_empty()
+        || output
+            .analysis_outcome
+            .as_ref()
+            .is_none_or(|outcome| outcome.counts.changed_file_count != 0)
+    {
+        return false;
+    }
+    let Some(base) = output.base.as_deref() else {
+        return false;
+    };
+    crate::analysis::base_is_checked_out_head_with_parent(root, base, git_timeout)
+}
+
+/// The last commit's diff text, when a bare human `ripr check` that read
+/// the committed-history default range (`default_text`, against
+/// `default_base`) would analyze the last commit ([`LAST_COMMIT_BASE`])
+/// instead (#13644, #16082). For readers that need check's range without
+/// running check (`ripr repair`'s change scoping, `ripr pilot`'s current
+/// change); the caller has already established that no `--base` was given
+/// and that the committed-history source was selected.
+///
+/// It applies [`last_commit_fallback_applies`]'s guards at the diff level:
+/// the default range changes no file, no untracked or ignored routed source
+/// sits outside it, the default base names the checked-out branch with a
+/// parent, and the last commit changes a file. A guard that cannot be read
+/// keeps the default range, which is what these readers did before #16082.
+/// The diff level cannot see check's findings or its adapter-specific drop
+/// of never-analyzed untracked paths, so in those rare states it keeps the
+/// default range where check might still rescope; it never rescopes where
+/// check would not.
+pub(crate) fn last_commit_fallback_diff(
+    root: &Path,
+    default_text: &str,
+    default_base: Option<&str>,
+    git_timeout: Option<std::time::Duration>,
+) -> Option<String> {
+    if !crate::analysis::parse_unified_diff(default_text).is_empty() {
+        return None;
+    }
+    let base = default_base?;
+    if !crate::analysis::base_is_checked_out_head_with_parent(root, base, git_timeout) {
+        return None;
+    }
+    let (untracked, ignored) =
+        crate::analysis::committed_source::untracked_and_ignored_routed_paths(root, git_timeout)
+            .ok()?;
+    if !untracked.is_empty() || !ignored.is_empty() {
+        return None;
+    }
+    let last = crate::analysis::load_diff_with_effective_base_core(
+        root,
+        Some(LAST_COMMIT_BASE),
+        None,
+        git_timeout,
+    )
+    .ok()?;
+    (!crate::analysis::parse_unified_diff(&last.text).is_empty()).then_some(last.text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

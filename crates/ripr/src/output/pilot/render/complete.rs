@@ -1371,6 +1371,7 @@ fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Optio
         seams,
         diff_only.as_ref(),
         base.as_ref(),
+        &bound_check_command(context, change),
         code,
     ))
 }
@@ -1399,11 +1400,13 @@ impl CurrentChangeLabel {
 
     /// Why no seam on the change ranks (#5309). A change whose seams pilot
     /// withholds, or whose seams a seam limit left unanalyzed, must not read
-    /// as a change with no seams.
+    /// as a change with no seams. `check` is the `ripr check` command bound
+    /// to pilot's root and diff selector, the one the closing line names.
     fn why_elsewhere(
         seams: ChangeSeams,
         diff_only: Option<&DiffOnlyNote>,
         base: Option<&String>,
+        check: &str,
         code: bool,
     ) -> String {
         let ChangeSeams {
@@ -1476,9 +1479,9 @@ impl CurrentChangeLabel {
                 "; but `ripr check` reads {which} as a gap or cannot tell (pilot judges the whole spot, check your changed lines), so follow `ripr check` for your change"
             ));
         } else if check_unconfirmed {
-            reason.push_str(
-                "; but ripr could not confirm what `ripr check` reads for your changed code (pilot judges the whole spot, check your changed lines), so run `ripr check` for your change",
-            );
+            reason.push_str(&format!(
+                "; but ripr could not confirm what `ripr check` reads for your changed code (pilot judges the whole spot, check your changed lines), so run `{check}` for your change"
+            ));
         }
         if touched > 0
             && let Some(note) = diff_only
@@ -1508,7 +1511,7 @@ impl CurrentChangeLabel {
                 diff_only,
             } => format!(
                 "this gap is not on a line you changed. {} For the change itself, run: {check}",
-                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), false)
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), check, false)
             ),
         }
     }
@@ -1526,7 +1529,7 @@ impl CurrentChangeLabel {
                 diff_only,
             } => format!(
                 "this gap is not on a line you changed. {} For the change itself, run `{check}`.",
-                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), true)
+                Self::why_elsewhere(*seams, diff_only.as_ref(), base.as_ref(), check, true)
             ),
         }
     }

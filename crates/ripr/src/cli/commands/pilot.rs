@@ -500,8 +500,18 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
 
     let scan_started = Instant::now();
+    // #16082: when the change is check's last-commit rescope, the preview
+    // reads that range too, not the empty default one.
+    let python_input = match (&input.base, current_change.base()) {
+        (None, Some(base)) if base == app::diff_source::LAST_COMMIT_BASE => {
+            let mut rescoped = input.clone();
+            rescoped.base = Some(base.to_string());
+            std::borrow::Cow::Owned(rescoped)
+        }
+        _ => std::borrow::Cow::Borrowed(&input),
+    };
     let python_first_use =
-        collect_pilot_python_first_use(&input, &config, current_change.is_working_tree());
+        collect_pilot_python_first_use(&python_input, &config, current_change.is_working_tree());
     // #3906 / #7665: pilot ranks Rust seams only. Name the languages it did
     // not rank so an empty ranking is never read as a clean result for them;
     // when an enabled supported language is present, the headline names its
@@ -915,7 +925,9 @@ fn run_pilot_inventory(
 /// tracked changes, else `<base>...HEAD`. Plain `ripr check` reads committed
 /// history only, so a working-tree change is recorded as such and pilot's
 /// printed `ripr check` command carries `--worktree` to analyze the same
-/// diff. Keep this the one place pilot picks its diff. Pilot ranks seams on
+/// diff. With no `--base` on a clean checkout of the comparison base, the
+/// change is the last commit, as bare `ripr check` reads it (#16082). Keep
+/// this the one place pilot picks its diff. Pilot ranks seams on
 /// the changed lines first and says whether its top recommendation is part
 /// of the change. A load failure (not a Git work tree, no resolvable default
 /// base, a git error) never fails pilot: it is recorded as `unavailable` and
@@ -956,6 +968,24 @@ fn load_pilot_current_change(
                     None,
                     git_timeout,
                 )
+                .map(|mut loaded| {
+                    // #16082: on a clean checkout of the comparison base, a
+                    // bare `ripr check` analyzes the last commit; pilot's
+                    // change and its printed check command follow it.
+                    if input.base.is_none()
+                        && let Some(text) = app::diff_source::last_commit_fallback_diff(
+                            &input.root,
+                            &loaded.text,
+                            loaded.effective_base.as_deref(),
+                            git_timeout,
+                        )
+                    {
+                        loaded.text = text;
+                        loaded.effective_base =
+                            Some(app::diff_source::LAST_COMMIT_BASE.to_string());
+                    }
+                    loaded
+                })
             }
             .map_err(|err| current_change_unavailable_reason(&err, "git diff failed"))
         })
