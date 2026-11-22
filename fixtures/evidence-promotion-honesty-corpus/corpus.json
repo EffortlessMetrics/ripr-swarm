@@ -263,10 +263,16 @@
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
       "cache_schema_version": "1.176",
       "reason": "the claims field-construction pin (#12394, #12864) and the multiline Python receiver rebind rule (#9992) judge none of this Rust capture's seams; its judged seams are unchanged and it is held at its recorded generation until the next corpus recapture"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
     }
   ],
   "report_digest_exemptions": [],
   "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-rebound-let.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
@@ -321,6 +327,183 @@
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json"
   ],
   "cases": [
+    {
+      "id": "rust_repo_exposure_lib_test_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
+      "report_subject": "fixtures/rust_lib_test_false_skipped/input",
+      "vector": "skipped_library_unit_test_gives_no_repo_seam_reach",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::f",
+          "expression": "a + 2",
+          "grip_class": "ungripped",
+          "reach": "no"
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_test_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_test_false_skipped",
+      "vector": "lib_target_with_test_false_withholds_in_crate_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_bin_autobins_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_bin_autobins_false_skipped",
+      "vector": "autobins_false_without_bin_entry_withholds_main_unit_tests",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 0
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "rust_bin_explicit_path_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_bin_explicit_path_enabled",
+      "vector": "autobins_false_with_explicit_bin_path_credits_main_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_autolib_false_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_autolib_false_skipped",
+      "vector": "autolib_false_without_lib_entry_withholds_lib_unit_tests",
+      "assertions": [
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 0
+        },
+        {
+          "type": "expected_changed_rust_files",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "rust_lib_explicit_path_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_lib_explicit_path_enabled",
+      "vector": "autolib_false_with_explicit_lib_path_credits_lib_unit_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_example_default_skipped",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_example_default_skipped",
+      "vector": "default_example_target_without_test_true_withholds_example_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        }
+      ]
+    },
+    {
+      "id": "rust_example_test_true_enabled",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_example_test_true_enabled",
+      "vector": "example_target_with_test_true_credits_example_tests",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
     {
       "id": "rust_review_card_unrelated_oracle",
       "language": "rust",
@@ -18115,7 +18298,6 @@
       "tier": "pure",
       "source_fixture": "fixtures/module_reach_cfg_comment_hidden",
       "vector": "cfg_hidden_by_a_comment_does_not_admit_a_gated_module_entry",
-      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"
@@ -18295,7 +18477,6 @@
       "tier": "pure",
       "source_fixture": "fixtures/module_reach_cfg_alt_reexport",
       "vector": "cfg_alternate_reexport_rebinds_the_module_path_away_from_the_changed_file",
-      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"
@@ -19865,6 +20046,42 @@
       ]
     },
     {
+      "id": "rust_predicate_constant_of_other_function",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/predicate_constant_of_other_function",
+      "vector": "constant_assertion_on_another_pure_function_credits_no_predicate_observation",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "smoke",
+          "file": "src/lib.rs",
+          "line": 18,
+          "kind": "unknown",
+          "strength": "none"
+        }
+      ]
+    },
+    {
       "id": "python_table_reflection_unconnected",
       "language": "python",
       "tier": "pure",
@@ -21428,6 +21645,78 @@
       "source_fixture": "fixtures/rust_predicate_appended_char_arm_old_input",
       "vector": "a_char_tail_return_sink_does_not_promote_an_original_arm_input",
       "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_return_value_name_only_comparison_tail_far_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_return_value_name_only_comparison_tail_far_input",
+      "vector": "a_name_only_comparison_tail_return_sink_does_not_promote_a_far_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_return_value_name_only_comparison_tail_far_input_predicate",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_return_value_name_only_comparison_tail_far_input",
+      "vector": "a_name_only_comparison_tail_does_not_promote_a_far_input_predicate",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_predicate_tail_if_path_arms_far_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_predicate_tail_if_path_arms_far_input",
+      "vector": "a_tail_if_path_arm_return_sink_does_not_promote_a_far_input",
+      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"

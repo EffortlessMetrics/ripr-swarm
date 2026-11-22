@@ -116,6 +116,10 @@ Edition 2015 (an explicit `"2015"` or no `edition` key) turns discovery of
 one kind off when the manifest declares any `[[bin]]`, `[[test]]`,
 `[[bench]]` or `[[example]]` of that kind and leaves its `auto*` key unset;
 an inherited edition keeps discovery on. A
+`mod` item behind a `#[cfg]` no build satisfies (`any()`, `not(all())`),
+directly or through an enclosing inline module, declares no edge, because
+rustc strips it before loading a file for it; a feature, target or `test`
+gate keeps the edge (#15877). A
 manifest that leaves no library or binary target (`autobins = false`, no
 `[[bin]]` or `[lib]`, no discoverable `src/lib.rs`) lets a completed walk of
 its test, bench and example roots judge the package. The modules of an
@@ -483,7 +487,9 @@ fields between a `FunctionFact` and its paired executable `TestFact` via generat
   test target mounts do not (#15264); an undeclared `src/main.rs` (and the
   module it mounts), `src/bin/*.rs` or `src/lib.rs` under `autobins` or
   `autolib = false` seeds nothing while the discovered or declared control
-  seeds (#15877); an unknown tree (`cfg_if!`) keeps seeding;
+  seeds (#15877); a module mounted only behind `#[cfg(any())]` or a
+  `cfg(any())` inline module seeds nothing while the unconditional and
+  feature-gated controls seed (#15877); an unknown tree (`cfg_if!`) keeps seeding;
   the LSP partition drops the same anchors. Each walk regression pairs a
   reached file with a true orphan so neither direction goes unpinned.
 - Unbuilt tests (#6965): a test in a file no `mod` declares (unchanged,

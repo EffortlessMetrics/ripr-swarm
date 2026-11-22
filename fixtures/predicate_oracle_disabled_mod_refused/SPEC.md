@@ -17,12 +17,12 @@ uses the changed boundary in an ordinary equality, but it can never run.
 
 ## Then
 
-Exactly one predicate finding reads `reachable_unrevealed`. The module-declaration
-refusal names the `#[cfg(any())]` declaration; the strong-looking assertion text
-earns no exact-value credit.
+`src/python.rs` is mounted only by the `#[cfg(any())]` declaration, so rustc
+never compiles it and its test is not a related test (#15877). Both findings read
+`no_static_path`; the strong-looking assertion text earns no credit.
 
 ## Must Not
 
 - Admit an assertion from a module no build can compile.
-- Replace the declaration refusal with weak exact-value evidence.
+- Credit the never-compiled test with reach or weak exact-value evidence.
 - Confuse an unevaluable feature atom with the always-false `any()` predicate.
