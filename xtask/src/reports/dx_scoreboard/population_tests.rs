@@ -1665,13 +1665,13 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
         // The avoidable bar moved from 0.20 to 0.28 on measured evidence
         // (RIPR-SPEC-0219, #12766) and only ratchets down from here: it is
         // lowered when landed slices pass it, never raised to absorb a
-        // regression. Raising it means editing this pin with a dated reason.
+        // regression; see [`AVOIDABLE_ABSTENTION_BAR`].
         let target = avoidable["target"]
             .as_f64()
             .ok_or("avoidable target missing")?;
         assert!(
-            target <= 0.28,
-            "avoidable abstention target {target} was raised above 0.28"
+            (target - AVOIDABLE_ABSTENTION_BAR).abs() < 1e-9,
+            "avoidable abstention target {target} differs from the pinned bar {AVOIDABLE_ABSTENTION_BAR}"
         );
         let samples = avoidable["samples"].as_array().ok_or("samples missing")?;
         assert_eq!(samples.len(), 1);
@@ -1713,11 +1713,14 @@ fn avoidable_abstention_population_sums_to_the_report_and_stays_under_the_total(
     Ok(())
 }
 
-/// The avoidable-abstention bar moved from 0.20 to 0.28 on measured evidence
-/// (RIPR-SPEC-0219, #12766) and only ratchets down from here: it is lowered
-/// when landed slices pass it, never raised to absorb a regression. Raising it
-/// means editing this pin with a dated reason. The baseline copy is pinned in
-/// `operational_baseline_refreshes_only_the_five_rust_rates_with_provenance`.
+/// The avoidable-abstention bar (RIPR-SPEC-0219, #12766): 0.20 until
+/// 2026-11-22, then 0.28 on measured evidence. It only ratchets down: lowering
+/// it lowers this constant in the same change, and raising it means raising
+/// this constant with a dated reason in this comment, so every move, in either
+/// direction, is a reviewed edit here. Both `scoreboards.toml` and the baseline
+/// copy must equal it.
+const AVOIDABLE_ABSTENTION_BAR: f64 = 0.28;
+
 #[test]
 fn avoidable_abstention_bar_only_ratchets_down() -> Result<(), String> {
     let config = parse_config(include_str!(
@@ -1729,8 +1732,8 @@ fn avoidable_abstention_bar_only_ratchets_down() -> Result<(), String> {
         .find(|metric| metric.id == "trust.verdict_corpus_avoidable_abstention")
         .ok_or("trust.verdict_corpus_avoidable_abstention missing from scoreboards.toml")?;
     assert!(
-        metric.target <= 0.28,
-        "avoidable abstention target {} was raised above 0.28",
+        (metric.target - AVOIDABLE_ABSTENTION_BAR).abs() < 1e-9,
+        "avoidable abstention target {} differs from the pinned bar {AVOIDABLE_ABSTENTION_BAR}",
         metric.target
     );
     Ok(())

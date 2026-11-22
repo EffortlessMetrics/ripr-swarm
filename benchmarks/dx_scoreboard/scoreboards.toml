@@ -682,10 +682,12 @@ pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expect
 # `[abstain]` marker, or a `Reject` example that pins the outcome as
 # unresolved), and which accepts `limited` abstains because its spec asks it
 # to, so it is left out of this numerator (RIPR-SPEC-0219). The bar is 0.28,
-# not the original 0.20: on 871 rows 0.20 needs about 100 sound flips, more
-# than half of them gap claims on rows the tests miss, against a measured 3-6
-# sound rows per analyzer slice (#12766). Lower it whenever landed slices
-# pass it; never raise it (pinned in dx_scoreboard population_tests).
+# not the original 0.20: on 871 rows 0.20 needs 102 sound flips, against a
+# measured 3-6 sound rows per analyzer slice. Only 124 of the 276 avoidable
+# rows are credit-side, so 0.20 means flipping 82% of them or making gap
+# claims on rows the tests miss (#12766). Lower it whenever landed slices
+# pass it; never raise it (pinned by AVOIDABLE_ABSTENTION_BAR in
+# dx_scoreboard population_tests).
 [[metric]]
 id = "trust.verdict_corpus_avoidable_abstention"
 board = "trust"
