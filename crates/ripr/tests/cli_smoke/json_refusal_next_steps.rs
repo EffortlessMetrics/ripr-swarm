@@ -288,3 +288,60 @@ fn a_word_after_version_json_refusal_names_the_word() -> TestResult {
     assert!(plain.stdout.is_empty(), "{plain:?}");
     Ok(())
 }
+
+/// #16072: the strict help routes refuse extra arguments, and a JSON request
+/// gets the stray-argument document naming the first extra. Stderr keeps the
+/// usage line. Without a JSON request stdout stays empty, and the accepted
+/// `help --json` form still prints the discovery document, not a refusal.
+#[test]
+fn strict_help_routes_publish_the_stray_argument_document() -> TestResult {
+    for (args, route, token) in [
+        (
+            &["--help", "--all", "extra", "--json"][..],
+            "--help --all",
+            "extra",
+        ),
+        (
+            &["help", "--all", "extra", "--json"][..],
+            "help --all",
+            "extra",
+        ),
+        (&["help", "--json", "extra"][..], "help --json", "extra"),
+        (&["help", "--json", "--quiet"][..], "help --json", "--quiet"),
+        (&["-v", "help", "--json"][..], "help --json", "-v"),
+        (
+            &["help", "--json", "--verbose"][..],
+            "help --json",
+            "--verbose",
+        ),
+    ] {
+        let output = run_ripr(args);
+        let usage = format!(
+            "ripr: usage: ripr {route} (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands\n"
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stderr), usage, "{args:?}");
+        let value = document(&output, 2)?;
+        assert_eq!(value["status"], "refused", "{args:?}: {value}");
+        assert_eq!(
+            value["error"]["code"], "unknown_argument",
+            "{args:?}: {value}"
+        );
+        assert_eq!(value["error"]["token"], token, "{args:?}: {value}");
+        assert_eq!(
+            value["error"]["next"]["command"], "ripr --help",
+            "{args:?}: {value}"
+        );
+    }
+
+    let plain = run_ripr(&["--help", "--all", "extra"]);
+    assert_eq!(plain.status.code(), Some(2));
+    assert!(plain.stdout.is_empty(), "{plain:?}");
+
+    let accepted = run_ripr(&["help", "--json"]);
+    assert_eq!(accepted.status.code(), Some(0));
+    let discovery: serde_json::Value =
+        serde_json::from_slice(&accepted.stdout).map_err(|error| error.to_string())?;
+    assert!(discovery["commands"].is_array(), "{discovery}");
+    assert!(discovery.get("error").is_none(), "{discovery}");
+    Ok(())
+}
