@@ -33,7 +33,7 @@ impl Drop for TempRepo {
 /// (`link`, pointing at `target`, relative to the link's directory).
 enum Entry {
     File(&'static str, String),
-    #[cfg_attr(not(unix), allow(dead_code))]
+    #[cfg(unix)]
     Link(&'static str, &'static str),
 }
 
@@ -74,6 +74,7 @@ fn finding_in(entries: &[Entry], (changed, line): (&str, usize)) -> Result<Findi
     for entry in entries {
         match entry {
             Entry::File(path, text) => write(path, text)?,
+            #[cfg(unix)]
             Entry::Link(link, target) => {
                 let link = root.join(link);
                 parent_of(&link)?;
@@ -114,11 +115,6 @@ fn finding_in(entries: &[Entry], (changed, line): (&str, usize)) -> Result<Findi
 #[cfg(unix)]
 fn symlink(target: &Path, link: &Path) -> Result<(), String> {
     std::os::unix::fs::symlink(target, link).map_err(|error| format!("link {link:?}: {error}"))
-}
-
-#[cfg(not(unix))]
-fn symlink(_target: &Path, link: &Path) -> Result<(), String> {
-    Err(format!("no symlink support for {link:?}"))
 }
 
 fn normalized(path: &Path) -> String {
@@ -331,6 +327,65 @@ fn a_symlinked_src_directory_names_its_modules_from_the_link() -> Result<(), Str
         let found = finding_in(&package(call), ("real/pricing.rs", 2))?;
         assert_not_exposed(label, &found);
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dependent_crate_names_a_member_behind_a_symlinked_src() -> Result<(), String> {
+    // #15909 in a workspace: `core_lib/src -> real`. The dependent's import
+    // name comes from the member's declared root `core_lib/src/lib.rs`,
+    // which discovery indexes as `core_lib/real/lib.rs`.
+    let found = finding_in(
+        &[
+            file(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"core_lib\", \"app\"]\nresolver = \"2\"\n",
+            ),
+            file(
+                "core_lib/Cargo.toml",
+                "[package]\nname = \"core_lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            file("core_lib/real/lib.rs", "pub mod pricing;\n"),
+            file("core_lib/real/pricing.rs", OWNER),
+            Entry::Link("core_lib/src", "real"),
+            file(
+                "app/Cargo.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ncore_lib = { path = \"../core_lib\" }\n",
+            ),
+            file("app/src/lib.rs", "pub fn run() {}\n"),
+            file(
+                "app/tests/d.rs",
+                integration_test("core_lib::pricing::discount"),
+            ),
+        ],
+        ("core_lib/real/pricing.rs", 2),
+    )?;
+    assert_exposed("member behind a symlinked src", &found);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_binary_in_a_symlinked_src_leaves_its_neighbours_unplaced() -> Result<(), String> {
+    // `src -> real` with both `real/lib.rs` and `real/main.rs`: a module file
+    // there may compose into either crate, and the `src/` layout scan cannot
+    // read the roots' declarations through the link, so no spelled path names
+    // the owner (fail-closed, #16042 review). A same-named rival puts the
+    // call through call identity.
+    let found = finding_in(
+        &[
+            file("Cargo.toml", PACKAGE),
+            file("real/lib.rs", "pub mod pricing;\npub mod legacy;\n"),
+            file("real/main.rs", "mod pricing;\n\nfn main() {}\n"),
+            file("real/pricing.rs", OWNER),
+            file("real/legacy.rs", OWNER),
+            Entry::Link("src", "real"),
+            file("tests/d.rs", integration_test("my_pkg::pricing::discount")),
+        ],
+        ("real/pricing.rs", 2),
+    )?;
+    assert_not_exposed("module beside a linked binary root", &found);
     Ok(())
 }
 

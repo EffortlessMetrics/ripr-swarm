@@ -1686,6 +1686,8 @@ struct CustomRootPlacement {
     segments: Vec<String>,
     /// The file sits under the package's own `src/` directory.
     under_src: bool,
+    /// The file sits beside a binary root in a symlinked `src` directory.
+    shares_binary: bool,
 }
 
 fn custom_lib_root_reading(index: &RustIndex, file: &Path) -> CustomRootReading {
@@ -1698,6 +1700,9 @@ fn custom_lib_root_reading(index: &RustIndex, file: &Path) -> CustomRootReading 
     // reading is established, so neither names the owner (#14495 review).
     // A root whose modules sit outside `src/` shares no file with the
     // binary, so its files stay placed.
+    if placement.shares_binary {
+        return CustomRootReading::Unplaced;
+    }
     if placement.under_src
         && call_identity_shape(index, placement.package.as_deref())
             .layout
@@ -1741,6 +1746,7 @@ fn custom_lib_root_placement(index: &RustIndex, file: &Path) -> Option<CustomRoo
         package: (!package.is_empty()).then(|| package_prefix.clone()),
         segments,
         under_src: in_package.starts_with("src/"),
+        shares_binary: false,
     };
     if normalized == root {
         return Some(placed(Vec::new()));
@@ -1764,12 +1770,19 @@ fn custom_lib_root_placement(index: &RustIndex, file: &Path) -> Option<CustomRoo
     let body = normalized.strip_prefix(&directory)?;
     // A symlinked `src` directory holds the binary targets too, under the
     // name the link resolves to (#15909).
-    if custom.module_dir != custom.package.join("src")
-        && custom.declared_dir == custom.package.join("src")
-        && (body == "main.rs" || body.starts_with("bin/"))
-    {
+    let linked_src = custom.module_dir != custom.package.join("src")
+        && custom.declared_root.parent() == Some(custom.package.join("src").as_path());
+    if linked_src && (body == "main.rs" || body.starts_with("bin/")) {
         return None;
     }
+    // Beside that binary root, a module file may belong to either crate,
+    // which the literal `src/` layout scan cannot settle through the link, so
+    // it names no module path (fail-closed, #16042 review).
+    let shares_binary = linked_src
+        && index
+            .files()
+            .get(&custom.module_dir.join("main.rs"))
+            .is_some();
     let mut segments: Vec<String> = body
         .strip_suffix(".rs")?
         .split('/')
@@ -1778,7 +1791,10 @@ fn custom_lib_root_placement(index: &RustIndex, file: &Path) -> Option<CustomRoo
     if segments.last().is_some_and(|last| last == "mod") {
         segments.pop();
     }
-    (!segments.is_empty()).then(|| placed(segments))
+    (!segments.is_empty()).then(|| CustomRootPlacement {
+        shares_binary,
+        ..placed(segments)
+    })
 }
 
 fn module_path_from(
@@ -3060,8 +3076,20 @@ fn own_crate_names_of(
     if same_package && let Some(package) = owner_package {
         names.insert(package.to_string());
     }
-    let Some(owner_root) = super::owner_pin::target_root(owner_file, index, &BTreeSet::new())
-    else {
+    // A root reached through a symlink is indexed where the link lands, which
+    // no execution ancestry names; the manifests know it by the declared path
+    // (#15909).
+    let owner_root =
+        super::owner_pin::target_root(owner_file, index, &BTreeSet::new()).or_else(|| {
+            matches!(
+                custom_lib_root_reading(index, owner_file),
+                CustomRootReading::Placed(_)
+            )
+            .then(|| index.member_crates.custom_lib_path_root_of(owner_file))
+            .flatten()
+            .map(|custom| custom.declared_root)
+        });
+    let Some(owner_root) = owner_root else {
         // Without an established crate root the manifest-derived import
         // names are unavailable. Mirror the no-manifest-authority fallback
         // below so a crate-name import of the owner's own package never

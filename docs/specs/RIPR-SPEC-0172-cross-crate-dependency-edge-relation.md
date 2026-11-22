@@ -496,7 +496,13 @@ real`, `real/lib.rs` is the crate root and `real/pricing.rs` its module
 loads its `mod` declarations beside the link, so `real/pricing.rs` is no
 module of that crate and never names an owner. A link that leaves the
 analysis root, or a target path that does not resolve, keeps the declared
-reading. Links are resolved in the working tree.
+reading. Links are resolved in the working tree. A dependent names a member
+behind a symlinked `src` through the member's declared root
+(`core_lib/src/lib.rs`), which discovery indexes where the link lands. When a
+symlinked `src` also holds the binary root (`real/main.rs`), a module file
+there may compose into either crate, and the `src/` layout scan cannot read
+the roots' declarations through the link, so it names no module path
+(fail-closed).
 
 - `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_module_below_a_root_outside_src_is_named_from_that_root`
 - `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_dependent_crate_names_a_member_whose_root_is_outside_src`
@@ -504,6 +510,8 @@ reading. Links are resolved in the working tree.
 - `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_binary_beside_a_root_outside_src_keeps_the_library_modules_placed`
 - `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_symlinked_src_directory_names_its_modules_from_the_link`
 - `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_symlinked_root_file_is_the_crate_root_but_lends_no_directory`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_dependent_crate_names_a_member_behind_a_symlinked_src`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_binary_in_a_symlinked_src_leaves_its_neighbours_unplaced`
 
 ## Declared test targets outside `tests/` (#15332)
 

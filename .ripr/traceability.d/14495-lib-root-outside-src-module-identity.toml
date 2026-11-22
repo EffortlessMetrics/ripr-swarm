@@ -8,4 +8,6 @@ tests = [
   "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_binary_beside_a_root_outside_src_keeps_the_library_modules_placed",
   "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_symlinked_src_directory_names_its_modules_from_the_link",
   "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_symlinked_root_file_is_the_crate_root_but_lends_no_directory",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_dependent_crate_names_a_member_behind_a_symlinked_src",
+  "crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_binary_in_a_symlinked_src_leaves_its_neighbours_unplaced",
 ]

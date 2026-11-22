@@ -61,9 +61,9 @@ pub(crate) struct CustomLibRoot {
     /// `src/lib.rs -> ../real/lib.rs` the root is `real/lib.rs` while its
     /// modules still load from `src/`.
     pub(crate) module_dir: PathBuf,
-    /// The directory of the target path as the manifest names it, before
-    /// any link is resolved.
-    pub(crate) declared_dir: PathBuf,
+    /// The target path as Cargo names it, before any link is resolved: the
+    /// path manifests and import names know the library by.
+    pub(crate) declared_root: PathBuf,
 }
 
 /// Import names per (test file directory, owner crate root).
@@ -1516,7 +1516,7 @@ fn custom_lib_path_root_in(root: &Path, directory: &Path) -> Option<CustomLibRoo
         package: relative(&package.directory)?,
         crate_root: relative(&crate_root)?,
         module_dir: relative(&module_dir)?,
-        declared_dir: relative(target_dir)?,
+        declared_root: relative(&target)?,
     };
     let default_dir = answer.package.join("src");
     (answer.crate_root != default_dir.join("lib.rs") || answer.module_dir != default_dir)
