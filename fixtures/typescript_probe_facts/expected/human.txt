@@ -47,7 +47,7 @@ Next: drill into the top finding:
 
 Hidden:
   9 lower-priority finding(s) omitted from default human output (TypeScript preview: 7, JavaScript preview: 2).
-    - src/ambiguous.ts:5 (weak); kind: side_effect; reason: Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
+    - src/ambiguous.ts:5 (weak); kind: side_effect; reason: Dynamic dispatch (the call target is chosen at runtime) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
     - src/errors.ts:3 (weak); kind: error_path; reason: Only heuristic TypeScript test links were found for `parseToken`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
     - src/notify.js:2 (weak); kind: side_effect; reason: Only heuristic TypeScript test links were found for `notify`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
     - src/pricing.ts:2-3 (weak); 2 changed behaviors in `discountedTotal`; kinds: predicate, return_value; reason: Only heuristic TypeScript test links were found for `discountedTotal`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.

@@ -10,7 +10,7 @@
 //! `generated_github_actions_workflow` substitutes `@RIPR_...@` placeholders
 //! at render time; rendered behavior stays pinned by the
 //! `generated_workflow_*` tests in `init.rs` and `commands.rs`, the
-//! `tests/generated_review_workflow.rs` replay, and `cargo xtask
+//! `tests/generated_review_workflow/main.rs` replay, and `cargo xtask
 //! check-workflows`.
 
 #[path = "init_workflow/advisory_summary.rs"]

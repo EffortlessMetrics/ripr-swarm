@@ -434,9 +434,11 @@ pub const TYPESCRIPT_WORKSPACE_CONTAINERS: &[&str] = &["packages", "apps", "libs
 /// workspace container (`packages/*`, `apps/*`, `libs/*`, `libraries/*`):
 /// valibot keeps its sources in `library/`, remeda in `packages/remeda`.
 /// Each candidate directory is judged by the same presence-only markers as
-/// the root. Excluded, vendored and hidden directories never count, so a
-/// `node_modules` or `dist` tree cannot enable the adapter; `package.json`
-/// stays a non-marker (#10941).
+/// the root, and a container's package also by the package-led JavaScript
+/// rule (`detect_javascript_led_root`), which is how a JavaScript-only
+/// npm/yarn/pnpm workspace selects the adapter. Excluded, vendored and
+/// hidden directories never count, so a `node_modules` or `dist` tree cannot
+/// enable the adapter; `package.json` alone stays a non-marker (#10941).
 #[cfg(any(feature = "lang-typescript", test))]
 fn detect_nested_typescript_package(root: &Path) -> bool {
     child_directories(root).into_iter().any(|child| {
@@ -454,10 +456,14 @@ fn detect_nested_typescript_package(root: &Path) -> bool {
         if !is_source_dir && detect_typescript_package_root(&child, true) {
             return true;
         }
+        // A JavaScript workspace has no `tsconfig.json` and no `.ts` file:
+        // its packages are package-led roots (#11336), so each container
+        // child also gets that test. Only containers qualify; a `website/`
+        // or tooling directory with a manifest stays a non-marker (#10941).
         TYPESCRIPT_WORKSPACE_CONTAINERS.contains(&name)
-            && child_directories(&child)
-                .iter()
-                .any(|package| detect_typescript_package_root(package, true))
+            && child_directories(&child).iter().any(|package| {
+                detect_typescript_package_root(package, true) || detect_javascript_led_root(package)
+            })
     })
 }
 
@@ -1151,6 +1157,53 @@ mod tests {
         );
         write(&root, "app/tsconfig.json")?;
         assert!(detect_typescript_project(&root), "child marker sanity");
+        std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// A JavaScript-only workspace: the root manifest holds no source, each
+    /// package is a package-led root. Only a workspace container's package
+    /// counts, and only with source beside its manifest.
+    #[test]
+    fn javascript_workspace_packages_select_the_adapter() -> Result<(), String> {
+        let root = detection_root("js-workspace")?;
+        write(&root, "package.json")?;
+        write(&root, "packages/app/package.json")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "a package manifest with no source"
+        );
+        write(&root, "packages/tool/src/index.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "JavaScript source with no package manifest"
+        );
+        write(&root, "packages/app/node_modules/dep/index.js")?;
+        write(&root, "packages/app/dist/index.js")?;
+        write(&root, "packages/app/eslint.config.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "dependencies, build output and tooling config are not source"
+        );
+        write(&root, "website/package.json")?;
+        write(&root, "website/src/index.js")?;
+        write(&root, "tools/gen/package.json")?;
+        write(&root, "tools/gen/src/index.js")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "a package outside the workspace containers stays a non-marker"
+        );
+        write(&root, "packages/app/src/index.js")?;
+        assert!(
+            detect_typescript_project(&root),
+            "a container package with a manifest and JavaScript source"
+        );
+        std::fs::remove_dir_all(root.join("packages")).map_err(|err| err.to_string())?;
+        write(&root, "apps/web/package.json")?;
+        write(&root, "apps/web/index.mjs")?;
+        assert!(
+            detect_typescript_project(&root),
+            "every container name, source at the package root"
+        );
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 }

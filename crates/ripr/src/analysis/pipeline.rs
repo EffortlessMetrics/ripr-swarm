@@ -431,6 +431,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             result.uncommitted_source_paths = overlay.dirty_source_paths();
             result.untracked_source_paths = overlay.untracked_source_paths();
             result.ignored_source_paths = overlay.ignored_source_paths();
+            drop_never_analyzed_untracked_paths(&mut result, language_config);
         }
         result.analyzed_revisions = analyzed_revisions;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -634,6 +635,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         let (untracked, ignored) = excluded?;
         result.untracked_source_paths = untracked;
         result.ignored_source_paths = ignored;
+        drop_never_analyzed_untracked_paths(&mut result, language_config);
         result.analyzed_revisions = analyzed;
         bind_effective_base(&mut result, loaded.effective_base)?;
         Ok(result)
@@ -3378,6 +3380,55 @@ fn ripr_artifact_disclosure(
     )
 }
 
+/// Drop untracked paths no adapter would analyze from the working-tree
+/// disclosures (#15902).
+///
+/// An installed `node_modules/` tree that `.gitignore` does not cover shows up
+/// as hundreds of untracked routed files. The adapter's own excluded-path
+/// authority never analyzes them, tracked or not, so naming them as
+/// unanalyzed working-tree source is wrong twice: `git add -N` cannot make
+/// them analyzable, and the "unanalyzed working tree" state it sets withholds
+/// the repair start without a reason. The decision is
+/// [`is_excluded_from_diff_and_workspace_index`]: only a path that neither
+/// the diff loop nor the workspace walk reads is dropped, so a path declared
+/// in `handwritten_files` stays disclosed, and so does an untracked file
+/// under a TypeScript `docs/` directory, which the walk still indexes as
+/// test evidence. Rust has no such authority and keeps every untracked path.
+/// Tracked dirty files are never dropped: `--worktree` does read those.
+fn drop_never_analyzed_untracked_paths(
+    result: &mut AnalysisResult,
+    language_config: &crate::config::LanguagesConfig,
+) {
+    let never_analyzed =
+        never_analyzed_untracked_paths(&result.untracked_source_paths, language_config);
+    if never_analyzed.is_empty() {
+        return;
+    }
+    result
+        .untracked_source_paths
+        .retain(|path| !never_analyzed.contains(path));
+    result
+        .uncommitted_source_paths
+        .retain(|path| !never_analyzed.contains(path));
+}
+
+/// The untracked routed paths their own language adapter refuses to analyze.
+fn never_analyzed_untracked_paths(
+    untracked: &[String],
+    language_config: &crate::config::LanguagesConfig,
+) -> std::collections::BTreeSet<String> {
+    untracked
+        .iter()
+        .filter(|path| {
+            let path = std::path::Path::new(path.as_str());
+            route(path).is_some_and(|language| {
+                is_excluded_from_diff_and_workspace_index(language, path, language_config)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Whether a changed preview-language path is refused by its adapter's own
 /// excluded-path or generated-name authority before counting.
 ///
@@ -3434,17 +3485,53 @@ fn is_excluded_from_typescript_preview_analysis(
     path: &std::path::Path,
     language_config: &crate::config::LanguagesConfig,
 ) -> bool {
+    is_excluded_from_typescript_workspace_index(path, language_config)
+        || (crate::config::is_typescript_non_product_path(path)
+            && !crate::config::is_declared_handwritten_typescript_path(
+                &language_config.typescript.handwritten_files,
+                path,
+            ))
+}
+
+/// Whether the TypeScript/JS workspace walk also refuses `path`, so it can
+/// supply neither a changed owner nor test evidence. This is the diff-loop
+/// authority without the `docs/` and tool-config rules, which are diff-only
+/// (#13088, #15947): the walk keeps indexing `docs/` because libraries keep
+/// tests there, and keeps reading tool configs for alias and runner detection.
+fn is_excluded_from_typescript_workspace_index(
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(
             &language_config.typescript.excluded_file_patterns,
             path,
         )
-        || ((crate::config::is_detectable_excluded_typescript_path(path)
-            || crate::config::is_typescript_non_product_path(path))
+        || (crate::config::is_detectable_excluded_typescript_path(path)
             && !crate::config::is_declared_handwritten_typescript_path(
                 &language_config.typescript.handwritten_files,
                 path,
             ))
+}
+
+/// Whether `path` is read by neither the diff loop nor the workspace walk of
+/// its language adapter (#15902). Narrower than
+/// [`is_excluded_from_preview_analysis`] for TypeScript/JS, where `docs/` is
+/// skipped as changed scope but still indexed. The Python walk applies the
+/// same three authorities as its diff loop, so the two agree there.
+fn is_excluded_from_diff_and_workspace_index(
+    language: LanguageId,
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
+    match language {
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            is_excluded_from_typescript_workspace_index(path, language_config)
+        }
+        LanguageId::Python | LanguageId::Rust | LanguageId::Perl => {
+            is_excluded_from_preview_analysis(language, path, language_config)
+        }
+    }
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -5904,7 +5991,10 @@ mod tests {
     }
 
     /// #13894 N3: a preview-language file matching the operator's
-    /// `excluded_file_patterns` is a scope note on a complete outcome.
+    /// `excluded_file_patterns` is a scope note on a complete outcome. The
+    /// Python adapter must be compiled in; the rust-only counterpart is
+    /// `uncompiled_preview_adapter_with_configured_exclusion_stays_partial`.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn preview_excluded_file_pattern_is_a_scope_note_on_a_complete_outcome() -> Result<(), String> {
         let root = temp_root("analysis-outcome-preview-excluded")?;
@@ -5979,6 +6069,7 @@ mod tests {
             .ok_or_else(|| "outcome must be projected".to_string())
     }
 
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     fn assert_configured_scope_note(
         outcome: &crate::analysis_outcome::AnalysisOutcome,
         path: &str,
@@ -6001,6 +6092,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     fn assert_generated_name_stays_partial(outcome: &crate::analysis_outcome::AnalysisOutcome) {
         assert_eq!(
             outcome.kind,
@@ -6018,6 +6110,7 @@ mod tests {
 
     /// #13894 review: a configured `excluded_file_patterns` match wins over the
     /// built-in generated NAME convention (Python), like the Rust branch.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn configured_pattern_wins_over_generated_name_for_python() -> Result<(), String> {
         let enabled = [LanguageId::Rust, LanguageId::Python];
@@ -6050,6 +6143,63 @@ mod tests {
             &unconfigured,
         )?;
         assert_generated_name_stays_partial(&outcome);
+        Ok(())
+    }
+
+    /// #15601 C3: in a binary without the Python adapter, an enabled Python
+    /// language cannot run at all, so a changed Python file is never judged
+    /// by the preview skip rules. Even when the operator's
+    /// `excluded_file_patterns` match it, the outcome stays partial on the
+    /// typed adapter-unavailable limitation; it must not read as a complete
+    /// outcome with a configured scope note, nor as a preview-adapter skip.
+    #[cfg(not(feature = "lang-python"))]
+    #[test]
+    fn uncompiled_preview_adapter_with_configured_exclusion_stays_partial() -> Result<(), String> {
+        let enabled = [LanguageId::Rust, LanguageId::Python];
+        let configured = crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            python: crate::config::PythonLanguageConfig {
+                excluded_file_patterns: vec!["fixtures/**".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = preview_skip_outcome(
+            "preview-excluded-uncompiled",
+            "fixtures/data.py",
+            &enabled,
+            &configured,
+        )?;
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::PartialWithLimitations,
+            "{:?}",
+            outcome.limitations
+        );
+        let unavailable = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+            })
+            .ok_or_else(|| format!("python must be unavailable: {:?}", outcome.limitations))?;
+        assert!(
+            unavailable
+                .bounded_detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("python"),
+            "{unavailable:?}"
+        );
+        assert!(
+            !outcome.limitations.iter().any(|limitation| matches!(
+                limitation.kind,
+                AnalysisLimitationKind::RequestedScopeExcluded
+                    | AnalysisLimitationKind::LanguageScopeUnsupported
+            )),
+            "{:?}",
+            outcome.limitations
+        );
         Ok(())
     }
 
@@ -8487,6 +8637,38 @@ index 0000000..1111111 100644
                 )
             })
             .collect()
+    }
+
+    /// #15902: an untracked file inside a tree the adapter never analyzes
+    /// (an unignored `node_modules/`) is not unanalyzed working-tree source.
+    /// The controls keep the disclosure honest: an untracked hand-written
+    /// source file, a path the repository declared hand-written, a test under
+    /// `docs/` (skipped as changed scope but still indexed as test evidence),
+    /// and a Rust file (Rust has no excluded-path authority) all stay
+    /// disclosed.
+    #[test]
+    fn untracked_paths_the_adapter_never_analyzes_are_not_disclosed_as_source() {
+        let untracked = [
+            "docs/pricing.test.ts",
+            "node_modules/dep/index.ts",
+            "node_modules/dep/lib/util.js",
+            "node_modules/kept/handwritten.ts",
+            "node_modules/tool/build.rs",
+            "src/extra.ts",
+        ]
+        .map(str::to_string);
+        let mut config = crate::config::LanguagesConfig::default();
+        config
+            .typescript
+            .handwritten_files
+            .push("node_modules/kept/handwritten.ts".to_string());
+        let dropped: Vec<String> = never_analyzed_untracked_paths(&untracked, &config)
+            .into_iter()
+            .collect();
+        assert_eq!(
+            dropped,
+            ["node_modules/dep/index.ts", "node_modules/dep/lib/util.js"]
+        );
     }
 
     /// #4372: the enabled preview advisory ("N TypeScript files analyzed under

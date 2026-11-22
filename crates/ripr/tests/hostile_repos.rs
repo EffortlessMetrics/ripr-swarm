@@ -960,10 +960,13 @@ fn detached_head_worktree_and_submodule_roots_work() -> Result<(), String> {
 }
 
 #[test]
-fn dirty_submodule_is_a_skipped_pointer_not_a_non_source_file() -> Result<(), String> {
-    // A submodule with uncommitted edits diffs as `Subproject commit <sha>-dirty`
-    // with no mode header; it was reported as a non-source file whose empty
-    // result "is correct" (#10648).
+fn dirty_submodule_is_not_a_non_source_file_and_a_moved_one_is_a_skipped_pointer()
+-> Result<(), String> {
+    // A submodule with uncommitted edits once diffed as `Subproject commit
+    // <sha>-dirty` and was reported as a non-source file whose empty result
+    // "is correct" (#10648). Since #15101 ripr's git calls do not examine a
+    // submodule's working tree, so those edits are not part of the read at
+    // all; a moved submodule commit is still a disclosed pointer change.
     let scratch = Scratch::new("submodule-dirty")?;
     let inner = plain(&scratch, "inner")?;
     let outer = plain(&scratch, "outer")?;
@@ -979,14 +982,111 @@ fn dirty_submodule_is_a_skipped_pointer_not_a_non_source_file() -> Result<(), St
     text.push_str("// edited\n");
     fs::write(&inner_lib, text).map_err(|e| e.to_string())?;
 
-    let ran = ripr(&outer, &["check"], &[])?;
-    assert_sane(&ran, "dirty submodule")?;
     let notice = "skipped 1 submodule pointer change(s); ripr does not analyze submodule contents.";
+    let ran = ripr(&outer, &["check", "--worktree"], &[])?;
+    assert_sane(&ran, "dirty submodule")?;
+    if ran.code != Some(0) || ran.stderr.contains(notice) || ran.stderr.contains("non-source") {
+        return Err(format!(
+            "expected no submodule notice and no non-source claim; got {:?}\n{}\n{}",
+            ran.code, ran.stdout, ran.stderr
+        ));
+    }
+
+    git(&outer.join("vendor/dep"), &["commit", "-q", "-am", "move"])?;
+    let ran = ripr(&outer, &["check", "--worktree"], &[])?;
+    assert_sane(&ran, "moved submodule")?;
     if ran.code != Some(0) || !ran.stderr.contains(notice) || ran.stderr.contains("non-source") {
         return Err(format!(
             "expected the submodule notice and no non-source claim; got {:?}\n{}\n{}",
             ran.code, ran.stdout, ran.stderr
         ));
+    }
+    Ok(())
+}
+
+/// #15101: a populated submodule's own repository configuration can name a
+/// program (here a `filter.<driver>.clean`) that git runs while it examines
+/// the submodule's working tree. ripr's pins are computed from the analyzed
+/// repository's configuration only, so its git calls must not examine a
+/// submodule's working tree at all. The control shows plain git runs the
+/// planted program on the same fixture, so the stimulus is real.
+#[cfg(unix)]
+#[test]
+fn submodule_repository_helper_does_not_run() -> Result<(), String> {
+    let scratch = Scratch::new("submodule-helper")?;
+    let inner = plain(&scratch, "inner")?;
+    let outer = plain(&scratch, "outer")?;
+    let inner_arg = inner.to_string_lossy().into_owned();
+    git(
+        &outer,
+        &["submodule", "add", "-q", &inner_arg, "vendor/dep"],
+    )?;
+    git(&outer, &["commit", "-q", "-m", "add submodule"])?;
+    // The submodule is in the base, so a worktree read must decide whether it
+    // is modified; the superproject's own uncommitted edit gives `check` a
+    // change to analyze.
+    git(&outer, &["branch", "-f", "main", "HEAD"])?;
+    fs::write(outer.join("src/lib.rs"), BASE_LIB).map_err(|e| e.to_string())?;
+
+    // Plant the driver in the submodule's own configuration and attributes,
+    // neither of which the superproject's configuration listing reads.
+    let sub = outer.join("vendor/dep");
+    let marker = scratch.path.join("submodule-helper.ran");
+    let program = format!("touch '{}'; cat", marker.display());
+    git(&sub, &["config", "filter.planted.clean", &program])?;
+    let sub_git_dir =
+        PathBuf::from(fixture_git_output(&sub, &["rev-parse", "--absolute-git-dir"])?.trim_end());
+    fs::create_dir_all(sub_git_dir.join("info")).map_err(|e| e.to_string())?;
+    fs::write(
+        sub_git_dir.join("info/attributes"),
+        "src/lib.rs filter=planted\n",
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Rewrite the submodule file at its committed size each round, so git can
+    // only tell whether it changed by running the clean filter on it.
+    let sub_lib = sub.join("src/lib.rs");
+    let mut round = 0usize;
+    let mut restat = || -> Result<(), String> {
+        round += 1;
+        let body = if round.is_multiple_of(2) {
+            CHANGED_LIB
+        } else {
+            BASE_LIB
+        };
+        fs::write(&sub_lib, body).map_err(|e| e.to_string())
+    };
+    let take_marker = || {
+        let ran = marker.exists();
+        let _ = fs::remove_file(&marker);
+        ran
+    };
+
+    restat()?;
+    fixture_git_output(
+        &outer,
+        &["diff", "--ignore-submodules=none", "--raw", "main"],
+    )?;
+    if !take_marker() {
+        return Err("control: plain git diff did not run the submodule's filter".to_string());
+    }
+
+    for args in [
+        &["check"][..],
+        &["check", "--base", "main", "--worktree"][..],
+        &["check", "--format", "json"][..],
+        &["diff", "--base", "main"][..],
+        &["pilot", "--root", "."][..],
+    ] {
+        restat()?;
+        let ran = ripr(&outer, args, &[])?;
+        assert_sane(&ran, "submodule helper")?;
+        if take_marker() {
+            return Err(format!(
+                "ripr {args:?} ran the submodule's planted filter\n{}\n{}",
+                ran.stdout, ran.stderr
+            ));
+        }
     }
     Ok(())
 }
@@ -2835,5 +2935,61 @@ fn fifo_typescript_config_files_do_not_block_the_run() -> Result<(), String> {
         let ran = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
         assert_sane(&ran, &format!("FIFO {name}"))?;
     }
+    Ok(())
+}
+
+/// `--committed` judges HEAD, so a staged alternate layout of a path-less
+/// `[[bin]]` under `autobins = false` (`src/bin/extra/main.rs` beside the
+/// committed `src/bin/extra.rs`) must not drop the committed binary's root
+/// (#15892 review). Without the staged file the change is checked; with it,
+/// the committed-history run still checks the same change.
+#[test]
+fn committed_run_keeps_a_declared_bin_despite_a_staged_alternate_layout() -> Result<(), String> {
+    let scratch = Scratch::new("staged-bin-layout")?;
+    let root = scratch.path.join("repo");
+    let manifest = "[package]\nname = \"hx\"\nversion = \"0.0.0\"\nedition = \"2021\"\nautobins = false\n\n[[bin]]\nname = \"extra\"\n\n[workspace]\n";
+    let w = |rel: &str, body: &str| -> Result<(), String> {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+        }
+        fs::write(path, body).map_err(|e| format!("write {rel} failed: {e}"))
+    };
+    fs::create_dir_all(&root).map_err(|e| format!("mkdir root failed: {e}"))?;
+    git(&root, &["init", "-q", "-b", "main"])?;
+    w("Cargo.toml", manifest)?;
+    w("src/lib.rs", "pub fn unrelated() {}\n")?;
+    w(
+        "src/bin/extra.rs",
+        "fn bulk(qty: u32) -> bool {\n    qty > 10\n}\n\nfn main() {\n    println!(\"{}\", bulk(3));\n}\n",
+    )?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feat"])?;
+    w(
+        "src/bin/extra.rs",
+        "fn bulk(qty: u32) -> bool {\n    qty >= 10\n}\n\nfn main() {\n    println!(\"{}\", bulk(3));\n}\n",
+    )?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "change"])?;
+
+    let before = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&before, "committed bin before staging")?;
+    assert!(
+        summary_line(&before).starts_with("Summary: 2 changed behaviors checked: "),
+        "premise: the committed bin change is checked\n{}",
+        before.stdout
+    );
+
+    w("src/bin/extra/main.rs", "fn main() {}\n")?;
+    git(&root, &["add", "-A"])?;
+    let after = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&after, "committed bin with a staged alternate layout")?;
+    assert_eq!(
+        summary_line(&before),
+        summary_line(&after),
+        "a staged alternate layout must not change the committed run\n{}",
+        after.stdout
+    );
     Ok(())
 }

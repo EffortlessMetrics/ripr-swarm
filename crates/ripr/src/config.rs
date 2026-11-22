@@ -876,12 +876,101 @@ pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<Conf
         let hint = misplaced_key_hint(err.message())
             .or_else(|| retired_key_hint(err.message()))
             .or_else(|| did_you_mean_hint(err.message()))
+            .or_else(|| value_shape_hint(err.message()))
             .unwrap_or_default();
+        let rendered = plain_value_shape_reason(&err.to_string(), err.message());
         Box::new(ConfigDiagnostic::structural(format!(
-            "invalid ripr.toml: {err}{hint}"
+            "invalid ripr.toml: {rendered}{hint}"
         )))
     })?;
     RiprConfig::from_raw(raw, text)
+}
+
+/// What a rejected value should have been, in TOML terms rather than the
+/// deserializer's (`usize`, `a sequence`, `struct RawAnalysisConfig`), and how
+/// to write it. Each entry is serde's fixed expectation, the plain wording
+/// that replaces it in the reason, and the fixed next-step line.
+struct ValueShape {
+    plain: &'static str,
+    next: &'static str,
+}
+
+// `reports.max_related_tests` is the only whole-number key, and its own
+// validation refuses 0, so the wording gives the range the loader accepts
+// rather than the deserializer's.
+const WHOLE_NUMBER_SHAPE: ValueShape = ValueShape {
+    plain: "a whole number of 1 or more",
+    next: "write a whole number of 1 or more with no quotes, for example `5`",
+};
+const BOOLEAN_SHAPE: ValueShape = ValueShape {
+    plain: "true or false",
+    next: "write `true` or `false` with no quotes",
+};
+const STRING_SHAPE: ValueShape = ValueShape {
+    plain: "a quoted string",
+    next: "write the value in double quotes, for example `\"value\"`",
+};
+// The parser reports a list without saying what its entries are, so the line
+// covers both spellings instead of guessing from the rejected value.
+const LIST_SHAPE: ValueShape = ValueShape {
+    plain: "a list",
+    next: "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
+};
+const TABLE_SHAPE: ValueShape = ValueShape {
+    plain: "a table",
+    next: "write it as a table header on its own line, for example `[analysis]`, with its keys on the lines below",
+};
+const VALUE_SHAPES: &[&ValueShape] = &[
+    &WHOLE_NUMBER_SHAPE,
+    &BOOLEAN_SHAPE,
+    &STRING_SHAPE,
+    &LIST_SHAPE,
+    &TABLE_SHAPE,
+];
+
+/// The shape serde wanted, read only from the end of its reason: the text
+/// after the last `, expected ` is serde's own, while everything before it
+/// can echo a value from the file.
+fn expected_value_shape(error: &str) -> Option<(&str, &'static ValueShape)> {
+    let (found, expected) = error.rsplit_once(", expected ")?;
+    if !(found.starts_with("invalid type: ") || found.starts_with("invalid value: ")) {
+        return None;
+    }
+    let shape = match expected {
+        "usize" => &WHOLE_NUMBER_SHAPE,
+        "a boolean" => &BOOLEAN_SHAPE,
+        "a string" => &STRING_SHAPE,
+        "a sequence" => &LIST_SHAPE,
+        _ if is_serde_struct_name(expected) => &TABLE_SHAPE,
+        _ => return None,
+    };
+    Some((expected, shape))
+}
+
+/// `struct RawAnalysisConfig`: an internal Rust type name, never file text.
+fn is_serde_struct_name(expected: &str) -> bool {
+    expected.strip_prefix("struct ").is_some_and(|name| {
+        !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    })
+}
+
+/// The fixed next-step line for a value of the wrong TOML shape.
+fn value_shape_hint(error: &str) -> Option<String> {
+    let (_, shape) = expected_value_shape(error)?;
+    Some(format!("\n{}", shape.next))
+}
+
+/// The parser's rendered error with the deserializer's expectation replaced
+/// by its TOML wording. `rendered` ends in `reason`; anything else is left
+/// exactly as the parser wrote it.
+fn plain_value_shape_reason(rendered: &str, reason: &str) -> String {
+    let rewritten = expected_value_shape(reason).and_then(|(expected, shape)| {
+        let body = rendered.trim_end_matches('\n');
+        let tail = &rendered[body.len()..];
+        let head = body.strip_suffix(expected)?;
+        Some(format!("{head}{}{tail}", shape.plain))
+    });
+    rewritten.unwrap_or_else(|| rendered.to_string())
 }
 
 /// Keys that belong to exactly one table, so a key found anywhere else was
@@ -1011,6 +1100,7 @@ fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
             || retired
                 .iter()
                 .any(|entry| line == retired_key_hint_line(entry))
+            || VALUE_SHAPES.iter().any(|shape| line == shape.next)
     };
     let hint = error
         .lines()
@@ -1354,7 +1444,7 @@ impl RiprConfig {
             };
             if let Some(executable) = &perl.executable {
                 if executable.contains('\0') {
-                    return Err("perl.executable must not contain NUL characters"
+                    return Err("perl.executable must not contain NUL characters; set it to the exporter's path, or remove the key to use the default exporter"
                         .to_string()
                         .into());
                 }
@@ -1443,13 +1533,19 @@ fn parse_path_glob_patterns(field: &str, values: &[String]) -> Result<Vec<String
     let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
-            return Err(format!("{field} must not contain control characters"));
+            return Err(format!(
+                "{field} must not contain control characters; remove them from the entry"
+            ));
         }
         let trimmed = value.trim();
-        parse_relative_path(field, trimmed)?;
+        // Before the shared path parser, which normalizes `.` to an empty
+        // path and would answer with its generic path example instead.
         if trimmed == "." {
-            return Err(format!("{field} must identify a file pattern, not `.`"));
+            return Err(format!(
+                "{field} must identify a file pattern, not `.`; name the generated files, for example `src/generated/**`"
+            ));
         }
+        parse_relative_path(field, trimmed)?;
         if !seen.insert(trimmed) {
             return Err(format!(
                 "{field} lists `{trimmed}` more than once; remove the duplicate"
@@ -1470,11 +1566,13 @@ fn parse_handwritten_files(
     let mut seen = std::collections::HashSet::with_capacity(values.len());
     for value in values {
         if value.chars().any(char::is_control) {
-            return Err(format!("{field} must not contain control characters"));
+            return Err(format!(
+                "{field} must not contain control characters; remove them from the entry"
+            ));
         }
         if value.contains(['*', '?', '[', ']']) {
             return Err(format!(
-                "{field} must contain exact file paths, not glob patterns"
+                "{field} must contain exact file paths, not glob patterns; name each file by its repository-relative path"
             ));
         }
         let path = parse_relative_path(field, value)?;
@@ -1483,7 +1581,9 @@ fn parse_handwritten_files(
             .and_then(|extension| extension.to_str())
             .is_none_or(|extension| !extension_ok(extension))
         {
-            return Err(format!("{field} must identify {extension_desc}"));
+            return Err(format!(
+                "{field} must identify {extension_desc}; remove `{value}` or name a file with that extension"
+            ));
         }
         let normalized = path.to_string_lossy().replace('\\', "/");
         if !seen.insert(normalized.clone()) {
@@ -1512,14 +1612,14 @@ fn parse_overrides(
             }
             (Some(_), Some(_)) => {
                 return Err(format!(
-                    "[[overrides]] entry {} must set exactly one of crate or path, not both",
+                    "[[overrides]] entry {} must set exactly one of crate or path, not both; remove one of them, or split the entry in two",
                     index + 1
                 )
                 .into());
             }
             (None, None) => {
                 return Err(format!(
-                    "[[overrides]] entry {} must set crate (Cargo package name) or path (repository-relative glob)",
+                    "[[overrides]] entry {} must set crate (Cargo package name) or path (repository-relative glob); add one of them to the entry",
                     index + 1
                 )
                 .into());
@@ -1541,7 +1641,7 @@ fn parse_overrides(
                 .is_none_or(overrides::PartialOraclePolicy::is_empty)
         {
             return Err(format!(
-                "[[overrides]] entry {} must override severity or oracles",
+                "[[overrides]] entry {} must override severity or oracles; set at least one severity or oracles value in the entry, for example `severity.findings.weakly_exposed = \"info\"`, or remove the entry",
                 index + 1
             )
             .into());
@@ -1748,7 +1848,7 @@ fn parse_bun_ub_profile(raw: RawBunUbProfileConfig) -> Result<BunUbProfileConfig
         .test_roots
         .ok_or_else(|| "profiles.bun_ub.test_roots is required".to_string())?;
     if test_roots.is_empty() {
-        return Err("profiles.bun_ub.test_roots must list at least one test root".to_string());
+        return Err("profiles.bun_ub.test_roots must list at least one test root; add the glob for your Bun tests, for example `test/**/*.ts`".to_string());
     }
     let mut parsed_roots = Vec::with_capacity(test_roots.len());
     let mut seen = std::collections::HashSet::with_capacity(test_roots.len());
@@ -2165,8 +2265,12 @@ fn parse_severity(field: &str, value: &str, allow_off: bool) -> Result<ConfigSev
             "{field} cannot be `off`; use suppressions for accepted debt"
         )),
         _ => Err(format!(
-            "{field} `{value}` is not supported; expected info, warning, or note{}{}",
-            if allow_off { ", or off" } else { "" },
+            "{field} `{value}` is not supported; expected {}{}",
+            if allow_off {
+                "info, warning, note, or off"
+            } else {
+                "info, warning, or note"
+            },
             near_value_hint(
                 value,
                 if allow_off {
@@ -2184,11 +2288,15 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
     // Reject them here instead of validating a path that later looks absent
     // (Path::exists) or fails to open. Do not echo the control byte.
     if value.contains('\0') {
-        return Err(format!("{field} must not contain NUL characters"));
+        return Err(format!(
+            "{field} must not contain NUL characters; remove the escaped NUL from the path"
+        ));
     }
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(format!("{field} must not be empty"));
+        return Err(format!(
+            "{field} must not be empty; give a repository-relative path"
+        ));
     }
     if trimmed.contains('\\') {
         return Err(format!(
@@ -2216,7 +2324,9 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
         .collect::<Vec<_>>()
         .join("/");
     if normalized.is_empty() {
-        return Err(format!("{field} `{value}` must name a path"));
+        return Err(format!(
+            "{field} `{value}` must name a path; give a repository-relative path such as `src/lib.rs`"
+        ));
     }
     let path = PathBuf::from(&normalized);
     if path.components().any(|component| {
@@ -2225,7 +2335,9 @@ fn parse_relative_path(field: &str, value: &str) -> Result<PathBuf, String> {
             Component::ParentDir | Component::RootDir | Component::Prefix(_)
         )
     }) {
-        return Err(format!("{field} `{value}` must stay within the repository"));
+        return Err(format!(
+            "{field} `{value}` must stay within the repository; remove the `..` segments and use a repository-relative path"
+        ));
     }
     Ok(path)
 }
@@ -2270,9 +2382,13 @@ fn parse_test_harness_registrations(
             TestHarnessAdapter::parse(&required_text(&position, "adapter", raw.adapter)?)?;
         if !adapter.supports_kind(kind) {
             return Err(format!(
-                "{position}: adapter `{}` does not support kind `{}`; the mismatch fails closed",
+                "{position}: adapter `{}` does not support kind `{}`; the mismatch fails closed. Use adapter `{}` with kind `{}`, or `{}` with kind `{}`",
                 adapter.as_str(),
-                kind.as_str()
+                kind.as_str(),
+                TestHarnessAdapter::LibtestMimicV1.as_str(),
+                TestHarnessKind::CustomHarnessTarget.as_str(),
+                TestHarnessAdapter::ExactAttributeV1.as_str(),
+                TestHarnessKind::RegisteredAttribute.as_str()
             ));
         }
         let marker = required_text(&position, "marker", raw.marker)?;
@@ -2295,7 +2411,9 @@ fn parse_test_harness_registrations(
 fn required_text(position: &str, field: &str, value: Option<String>) -> Result<String, String> {
     match value {
         Some(text) if !text.trim().is_empty() => Ok(text.trim().to_string()),
-        Some(_) => Err(format!("{position}.{field} must not be empty")),
+        Some(_) => Err(format!(
+            "{position}.{field} must not be empty; set it to a value, or remove the registration"
+        )),
         None => Err(format!("{position}.{field} is required")),
     }
 }
