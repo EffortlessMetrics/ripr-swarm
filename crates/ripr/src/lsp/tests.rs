@@ -12785,7 +12785,15 @@ fn framed_lsp_rejected_pushed_settings_warn_naming_key_and_accepted_values_per_m
                 return Err(format!("the verbatim re-push must not warn again: {shape:?}"));
             }
 
-            // A clean push forgets the mistake; making it again warns again.
+            // Make the mistake the last warning again, then repair it: a clean
+            // push forgets the mistake, so making it again warns again.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            let before_repair = pushed_warning(&mut client_read).await?;
+            require_texts(&before_repair, &["`checkMode`", "got \"deeep\""])?;
             write_lsp_message(
                 &mut client_write,
                 push(serde_json::json!({"ripr": {"checkMode": "fast"}})),

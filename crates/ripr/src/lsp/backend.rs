@@ -16,7 +16,7 @@ use super::capabilities::{
 use super::client_features::ClientFeatureProfile;
 use super::config::{
     LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary,
-    pushed_setting_rejections,
+    pushed_setting_rejection_parts,
 };
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
@@ -86,6 +86,7 @@ use crate::output::gap_decision_ledger::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -262,9 +263,10 @@ pub(super) struct Backend {
     /// input context resets. An attempt in flight leaves it latched, so pull
     /// and push agree while a retry runs.
     base_withdrawal: Mutex<Option<AnalysisFailure>>,
-    /// The last pushed-settings warning disclosed (#15312), so a verbatim
-    /// re-push of the same unrepaired mistake is not shown twice.
-    last_pushed_settings_warning: Mutex<Option<String>>,
+    /// Fingerprint of the rejected keys and raw values behind the last
+    /// pushed-settings warning disclosed (#15312), so a verbatim re-push of
+    /// the same unrepaired mistake is not shown twice.
+    last_pushed_settings_warning: Mutex<Option<u64>>,
     /// Languages whose "adapter not enabled" notice a generic client has
     /// already been shown (#8585). A language is shown once while it stays
     /// unavailable; leaving the set (adapter enabled, or its files no longer
@@ -3641,14 +3643,12 @@ impl Backend {
 
     async fn apply_session_configuration_change(&self, settings: &LSPAny) {
         // #15312: the push path is lenient, so an ignored pushed value falls
-        // back silently. Name every ignored part of this notification. The
-        // text carries the value received, so a second typo in the same key
-        // is a new warning, not a repeat.
-        let rejections = pushed_setting_rejections(settings);
+        // back silently. Name every ignored part of this notification.
+        let rejections = pushed_setting_rejection_parts(settings);
         let warning = (!rejections.is_empty()).then(|| {
             let listed = rejections
                 .iter()
-                .map(|rejection| bounded_failure_message(rejection))
+                .map(|rejection| bounded_failure_message(&rejection.line))
                 .collect::<Vec<_>>()
                 .join(" | ");
             format!(
@@ -3657,12 +3657,22 @@ impl Backend {
         });
         // A client that re-pushes its whole section on every settings change
         // repeats an unrepaired mistake verbatim; that repeat is not shown
-        // again. A clean push forgets it, so the same mistake made again
-        // after a repair warns again.
+        // again. Repeats compare the exact rejected keys and raw values, not
+        // the display text, which is clipped and normalized: a value that
+        // changes but stays invalid is a new mistake and warns again. A clean
+        // push forgets it, so the same mistake made again after a repair
+        // warns again.
+        let fingerprint = warning.as_ref().map(|_| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            for rejection in &rejections {
+                rejection.subject.to_string().hash(&mut hasher);
+            }
+            hasher.finish()
+        });
         let repeated = self
             .last_pushed_settings_warning
             .lock()
-            .map(|mut last| std::mem::replace(&mut *last, warning.clone()) == warning)
+            .map(|mut last| std::mem::replace(&mut *last, fingerprint) == fingerprint)
             .unwrap_or(false);
         if let Some(warning) = warning
             && !repeated

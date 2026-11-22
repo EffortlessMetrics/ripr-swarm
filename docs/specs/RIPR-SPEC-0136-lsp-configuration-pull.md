@@ -161,12 +161,15 @@ transport can set anything else.
 A pushed value the push path ignores is disclosed (#15312). The push path
 stays lenient: a governed key with a wrong type or unknown literal falls back
 to its repository or default value. Each `workspace/didChangeConfiguration`
-that carries such a value, or a payload that cannot carry a `ripr` section at
-all (a bare string, an array, a non-object `ripr` key), produces one
+that carries such a value, a payload that cannot carry a `ripr` section at
+all (a bare string, an array), or a non-object `ripr` key, produces one
 `window/logMessage` warning naming every ignored key, its accepted values and
-the value received. Clients without the `riprEditor` integration also get it
-as `window/showMessage`. A verbatim repeat of the last warning is not shown
-again until a push without an ignored value arrives.
+the value received. A non-object `ripr` key is reported as an ignored
+section; the flat settings beside it still apply and are still checked.
+Clients without the `riprEditor` integration also get the warning as
+`window/showMessage`. A verbatim repeat of the last warning's rejected keys
+and raw values is not shown again until a push without an ignored value
+arrives.
 
 ### Cooperative git invocation deadline (#2303 amendment)
 

@@ -661,33 +661,71 @@ fn validate_pulled_value(key: &str, value: &Value) -> Result<(), String> {
 /// without these lines a typo in a pushed setting looked accepted.
 ///
 /// `null` settings carry no request. A payload that is not an object cannot
-/// carry a `ripr` section at all and is reported as one shape line.
+/// carry a `ripr` section at all and is reported as one shape line. A `ripr`
+/// key that is neither an object nor null is reported as ignored, and the
+/// flat settings beside it are still checked, because the push path applies
+/// them (`session_options_object`).
+#[cfg(test)]
 pub(super) fn pushed_setting_rejections(settings: &Value) -> Vec<String> {
+    pushed_setting_rejection_parts(settings)
+        .into_iter()
+        .map(|part| part.line)
+        .collect()
+}
+
+/// One ignored part of a pushed payload: the display line, and the exact
+/// rejected subject (key and raw value, or the malformed payload) it came
+/// from. Display lines are clipped and normalized for the client, so repeat
+/// detection compares subjects, not lines.
+pub(super) struct PushedSettingRejection {
+    pub(super) subject: Value,
+    pub(super) line: String,
+}
+
+pub(super) fn pushed_setting_rejection_parts(settings: &Value) -> Vec<PushedSettingRejection> {
     if settings.is_null() {
         return Vec::new();
     }
-    let shape = |got: &Value| {
-        vec![format!(
-            "workspace/didChangeConfiguration settings must be an object of ripr settings (optionally under a `ripr` key), got {}; nothing was applied",
-            clipped_value_echo(got)
-        )]
+    let Some(object) = settings.as_object() else {
+        return vec![PushedSettingRejection {
+            subject: serde_json::json!(["payload", settings]),
+            line: format!(
+                "workspace/didChangeConfiguration settings must be an object of ripr settings (optionally under a `ripr` key), got {}; nothing was applied",
+                clipped_value_echo(settings)
+            ),
+        }];
     };
+    let mut parts = Vec::new();
     // A `ripr` key that is neither an object nor null is a malformed
-    // section, not a request addressed to another server.
-    if let Some(section) = settings.get("ripr")
+    // section, not a request addressed to another server. The flat settings
+    // beside it are still applied, so they are still checked below.
+    if let Some(section) = object.get("ripr")
         && !section.is_object()
         && !section.is_null()
     {
-        return shape(section);
+        parts.push(PushedSettingRejection {
+            subject: serde_json::json!(["ripr", section]),
+            line: format!(
+                "the pushed `ripr` section must be an object of ripr settings, got {}; that section was ignored",
+                clipped_value_echo(section)
+            ),
+        });
     }
     let Some(options) = session_options_object(settings) else {
-        return shape(settings);
+        return parts;
     };
-    options
-        .iter()
-        .filter(|(key, value)| is_supported_session_option(key) && !value.is_null())
-        .filter_map(|(key, value)| pushed_value_rejection(key, value))
-        .collect()
+    parts.extend(
+        options
+            .iter()
+            .filter(|(key, value)| is_supported_session_option(key) && !value.is_null())
+            .filter_map(|(key, value)| {
+                pushed_value_rejection(key, value).map(|line| PushedSettingRejection {
+                    subject: serde_json::json!([key, value]),
+                    line,
+                })
+            }),
+    );
+    parts
 }
 
 fn pushed_value_rejection(key: &str, value: &Value) -> Option<String> {
@@ -696,7 +734,10 @@ fn pushed_value_rejection(key: &str, value: &Value) -> Option<String> {
             .as_u64()
             .is_some_and(|ms| ms < MIN_LSP_REFRESH_DEADLINE_MS)
     {
-        return Some(REFRESH_DEADLINE_MS_TOO_SMALL.to_string());
+        return Some(format!(
+            "{REFRESH_DEADLINE_MS_TOO_SMALL}; got {}",
+            clipped_value_echo(value)
+        ));
     }
     if session_option_value_is_valid(key, value) {
         return None;
@@ -1062,9 +1103,52 @@ include_unchanged_tests = false
                 return Err(format!("{payload} must not be rejected: {none:?}"));
             }
         }
+        // A non-object `ripr` key is reported as an ignored section; the flat
+        // settings beside it are still applied, so they are still checked.
+        let mixed = pushed_setting_rejections(&json!({
+            "ripr": false,
+            "checkMode": "fast",
+            "seamDiagnostics": "yes"
+        }));
+        if mixed.len() != 2
+            || !mixed[0].contains("`ripr` section must be an object")
+            || !mixed[0].contains("that section was ignored")
+            || !mixed[1].contains("`seamDiagnostics`")
+            || mixed
+                .iter()
+                .any(|line| line.contains("nothing was applied") || line.contains("checkMode"))
+        {
+            return Err(format!(
+                "malformed section must not hide flat siblings: {mixed:?}"
+            ));
+        }
+        // The deadline floor names the value received, so two different
+        // below-floor values are two different mistakes.
         let too_small = pushed_setting_rejections(&json!({"refreshDeadlineMs": 5}));
-        if too_small != [REFRESH_DEADLINE_MS_TOO_SMALL.to_string()] {
-            return Err(format!("deadline floor must be named: {too_small:?}"));
+        let also_small = pushed_setting_rejections(&json!({"refreshDeadlineMs": 50}));
+        if too_small.len() != 1
+            || !too_small[0].starts_with(REFRESH_DEADLINE_MS_TOO_SMALL)
+            || !too_small[0].ends_with("got 5")
+            || also_small.len() != 1
+            || !also_small[0].ends_with("got 50")
+        {
+            return Err(format!(
+                "deadline floor must be named with the value: {too_small:?} {also_small:?}"
+            ));
+        }
+        // Repeat detection compares exact subjects, not clipped display
+        // lines: two long values that share the clipped prefix differ.
+        let long_a = format!("{}a", "x".repeat(80));
+        let long_b = format!("{}b", "x".repeat(80));
+        let parts_a = pushed_setting_rejection_parts(&json!({"checkMode": long_a}));
+        let parts_b = pushed_setting_rejection_parts(&json!({"checkMode": long_b}));
+        match (parts_a.as_slice(), parts_b.as_slice()) {
+            ([a], [b]) if a.line == b.line && a.subject != b.subject => {}
+            _ => {
+                return Err(
+                    "long values must clip to one line but keep distinct subjects".to_string(),
+                );
+            }
         }
         Ok(())
     }
