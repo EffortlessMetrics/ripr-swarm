@@ -55,8 +55,9 @@ fn verdict_line(finding: &Finding) -> String {
         // The same stable spelling `explain` selection matches (#3609), so a
         // copied verdict location selects its finding; then the shared human
         // display rule folds a Windows verbatim prefix from a canonicalized
-        // root (`//?/<drive>:/..` renders `<drive>:/..`, which still
-        // suffix-matches).
+        // root (`//?/<drive>:/..` renders `<drive>:/..`,
+        // `//?/UNC/server/share/..` renders `//server/share/..`); the locator
+        // matcher folds the same roots, so both still select (#15921).
         crate::output::path::human_path_text(
             &crate::analysis::stable_path_text(&finding.probe.location.file),
             cfg!(windows),

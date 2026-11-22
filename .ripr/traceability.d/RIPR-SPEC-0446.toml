@@ -7,6 +7,12 @@ tests = [
   "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_appends_stop_reasons_and_skips_an_empty_reason",
   "crates/ripr/src/app/verbose_trace.rs::tests::verdict_lines_are_bounded_and_name_the_overflow",
   "crates/ripr/src/app/verbose_trace.rs::tests::a_long_or_hostile_reason_stays_one_bounded_terminal_safe_line",
+  "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_prints_forward_slash_paths_unchanged",
+  "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_renders_windows_separators_as_forward_slashes",
+  "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_folds_a_windows_verbatim_root_prefix",
+  "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_location_selects_its_finding",
+  "crates/ripr/src/app/selector.rs::tests::a_plain_unc_location_selects_a_finding_stored_under_a_verbatim_unc_path",
+  "crates/ripr/src/app/selector.rs::tests::normalize_folds_only_the_drive_and_unc_verbatim_roots",
   "crates/ripr/src/app/progress.rs::tests::phase_timing_lines_name_the_previous_stage_duration_and_the_terminal_total",
   "crates/ripr/src/cli/progress.rs::tests::verbose_env_value_enables_on_any_value_but_the_off_spellings",
   "crates/ripr/tests/cli_progress.rs",
@@ -20,6 +26,8 @@ code = [
   "crates/ripr/src/app/progress.rs",
   "crates/ripr/src/app/verbose_trace.rs",
   "crates/ripr/src/app/check.rs",
+  "crates/ripr/src/app/selector.rs",
+  "crates/ripr/src/output/path.rs",
   "crates/ripr/src/stderr_guard.rs",
 ]
 outputs = [

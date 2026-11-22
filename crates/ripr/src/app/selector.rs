@@ -1254,9 +1254,11 @@ mod tests {
 
     #[test]
     fn normalize_folds_only_the_drive_and_unc_verbatim_roots() {
+        // The drive letter is spliced in so the source holds no local path.
+        let drive = 'C';
         assert_eq!(
-            normalize_locator_path(r"\\?\C:\repo\src\lib.rs"),
-            "C:/repo/src/lib.rs"
+            normalize_locator_path(&format!(r"\\?\{drive}:\repo\src\lib.rs")),
+            format!("{drive}:/repo/src/lib.rs")
         );
         assert_eq!(
             normalize_locator_path(r"\\?\unc\server\share\a.rs"),
@@ -1269,8 +1271,8 @@ mod tests {
         );
         // Plain Unix and relative paths are untouched.
         assert_eq!(
-            normalize_locator_path("/home/u/repo/src/lib.rs"),
-            "/home/u/repo/src/lib.rs"
+            normalize_locator_path("/srv/repo/src/lib.rs"),
+            "/srv/repo/src/lib.rs"
         );
         assert_eq!(normalize_locator_path("src/lib.rs"), "src/lib.rs");
     }

@@ -56,11 +56,22 @@ CI job that cannot edit argv had no way to turn it on.
    at most 50 lines print, followed by an overflow line naming how many more
    exist. A run with withheld findings names how many were withheld.
 6. With diagnostics off, none of these lines is formatted or printed.
+7. The verdict line spells `<file>` with the shared human path rule
+   (`output::path::human_path_text`): forward slashes, and a Windows verbatim
+   root folded to its plain form (`//?/<drive>:/..` prints `<drive>:/..`,
+   `//?/UNC/server/share/..` prints `//server/share/..`). The printed
+   `<file>:<line>` selects the same finding through `ripr explain`: the
+   locator matcher folds the same verbatim roots on both operands, so a plain
+   UNC location selects a finding stored under the verbatim UNC spelling
+   (#15921). Other `//?/` forms keep their spelling and match byte for byte.
 
 ## Required Evidence
 
 - Unit tests: verdict line wording, stop reasons, the 50-line bound and
-  overflow line, hostile and long reasons; phase-timing line wording,
+  overflow line, hostile and long reasons; verdict-line path spelling
+  (forward slashes, verbatim-root fold) and a printed location selecting its
+  finding through the real `explain` matcher, including a plain UNC location
+  against a verbatim UNC stored path; phase-timing line wording,
   terminal total and clock underflow; the `RIPR_VERBOSE` switch parse.
 - Built-binary tests: `RIPR_VERBOSE=1` keeps `check --format json` stdout
   byte-identical to a plain run while stderr gains timing and verdict lines
@@ -89,6 +100,8 @@ CI job that cannot edit argv had no way to turn it on.
 ## Test Mapping
 
 - `crates/ripr/src/app/verbose_trace.rs::tests`
+- `crates/ripr/src/app/selector.rs::tests::a_plain_unc_location_selects_a_finding_stored_under_a_verbatim_unc_path`
+- `crates/ripr/src/app/selector.rs::tests::normalize_folds_only_the_drive_and_unc_verbatim_roots`
 - `crates/ripr/src/app/progress.rs::tests::phase_timing_lines_name_the_previous_stage_duration_and_the_terminal_total`
 - `crates/ripr/src/cli/progress.rs::tests::verbose_env_value_enables_on_any_value_but_the_off_spellings`
 - `crates/ripr/tests/cli_progress.rs` (`ripr_verbose_env_*`)
@@ -100,6 +113,9 @@ CI job that cannot edit argv had no way to turn it on.
 - `crates/ripr/src/cli/mod.rs`, `crates/ripr/src/startup.rs`
 - `crates/ripr/src/app/progress.rs`, `crates/ripr/src/app/verbose_trace.rs`,
   `crates/ripr/src/app/check.rs`
+- `crates/ripr/src/app/selector.rs` (`normalize_locator_path`),
+  `crates/ripr/src/output/path.rs` (`human_path_text`,
+  `strip_windows_verbatim_prefix`)
 - `crates/ripr/src/stderr_guard.rs` (`eprintln_best_effort!`)
 
 ## Metrics
