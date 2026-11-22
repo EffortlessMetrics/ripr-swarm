@@ -383,15 +383,25 @@ an attempt back or manufactures a snapshot. A cancelled attempt still commits
 as a completed snapshot when it finishes and only transport teardown abandons
 one before it commits, while a superseded attempt is never committed.
 A refresh costs what `ripr check` costs on the same input, which on a large
-repository can be minutes (#15983). The stdio transport answers one request
-until its reply is flushed and does not read input meanwhile, so while a
-refresh runs no other request is answered (`ripr_workspace_status` and `ping`
-included) and a `notifications/cancelled` for it is not read. A client-side
-timeout therefore stops nothing: the attempt still commits. Do not re-send
-`ripr_refresh` after a timeout, because the repeat is admitted after the first
-attempt finishes and runs a second full analysis. Wait, then call
-`ripr_workspace_status`; its reply arrives once the attempt has ended and
-reports the committed snapshot. For large repositories raise the client's
+repository can be minutes (#15983). While a refresh runs the stdio transport
+keeps reading input and answers, one at a time, the requests whose answer
+does not depend on that attempt: `ripr_workspace_status` (and
+`ripr://workspace/status`), which reports `attempt_state: "in_flight"`,
+`ping`, and the `tools/list`, `resources/list` and `resources/templates/list`
+catalog. A repeated `ripr_refresh` is refused at once with
+`analysis_in_flight` and starts no second analysis. Every other request (a
+snapshot or repair read) is held, with nothing read behind it, until the
+refresh reply is flushed, so a request written straight after `ripr_refresh`
+still reads the snapshot that refresh commits. A client-side timeout stops
+nothing: the attempt still commits. Do not re-send `ripr_refresh` after a
+timeout; poll `ripr_workspace_status` until `attempt_state` leaves
+`in_flight`; it then reports that attempt's outcome, the committed snapshot
+or the typed failure with the earlier snapshot kept. A `notifications/cancelled`
+for the running refresh is read: the SDK then sends no reply for it, the
+attempt still runs to its terminal state, and until it does a snapshot or
+repair read is answered `analysis_in_flight` instead of being held. End of input read during a refresh
+ends the session after that refresh reply is flushed.
+For large repositories raise the client's
 per-tool timeout (for example `tool_timeout_sec` for the server entry in
 Codex's `config.toml`, or `MCP_TOOL_TIMEOUT` for Claude Code).
 The workspace's own `ripr.toml` is honored (#6825): refresh resolves it
@@ -858,11 +868,13 @@ boundary even when CLI recovery prose can describe starting new work.
 Session transactions and supersession resolve under the session lock; durable
 filesystem and Git fallback reads run on a blocking worker after releasing it.
 The supported stdio transport admits one request until its reply is flushed,
-so a refresh queued behind a durable read starts after that reply. The session
-`analysis_in_flight` guard is evaluated at read admission. Offloading preserves
-the async executor for timers and teardown; it does not establish a concurrent
-public transport or cancellation of an already running Git read before its
-existing deadline.
+so a refresh queued behind a durable read starts after that reply, and a
+durable read written during a refresh is held until the refresh reply is
+flushed (only status, liveness, the catalog and a repeated refresh are
+answered beside a running refresh). The session `analysis_in_flight` guard is
+evaluated at read admission. Offloading preserves the async executor for
+timers and teardown; it does not establish concurrent reads or cancellation
+of an already running Git read before its existing deadline.
 
 `ripr_get_receipt_status` (and `ripr://receipt/{receipt_id}`) projects the
 current receipt state for one attempt identity (receipt ids are

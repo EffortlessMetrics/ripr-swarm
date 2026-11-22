@@ -132,6 +132,8 @@ async fn actual_sdk_held_stdout_preserves_serial_request_admission() -> Result<(
             admission: Arc::new(Admission::default()),
             pending_protocol_error: None,
             writer_needs_drain: false,
+            held: None,
+            input_closed: Arc::new(AtomicBool::new(false)),
             idle_interrupt: None,
         },
         requests: requests.clone(),
@@ -222,6 +224,8 @@ fn direct_transport<W: AsyncWrite + Unpin>(writer: W) -> BoundedTransport<&'stat
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     }
 }
@@ -448,4 +452,152 @@ async fn fatal_send_wakes_receive_with_an_admitted_request() -> Result<(), Strin
         return Err("fatal output admitted another request".into());
     }
     Ok(())
+}
+
+fn refresh_lane_transport(input: &'static [u8]) -> BoundedTransport<&'static [u8], Vec<u8>> {
+    BoundedTransport {
+        reader: Arc::new(Mutex::new(FrameReader::new(input))),
+        ..direct_transport(Vec::<u8>::new())
+    }
+}
+async fn require_end_of_input<R, W>(transport: &mut BoundedTransport<R, W>) -> Result<(), String>
+where
+    R: AsyncRead + Unpin + Send,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    match tokio::time::timeout(Duration::from_secs(5), transport.receive()).await {
+        Ok(None) => Ok(()),
+        Ok(Some(_)) => Err("transport admitted a message after end of input".into()),
+        Err(_) => Err("transport did not end at idle end of input".into()),
+    }
+}
+
+/// #15983: while the only admitted request is a `ripr_refresh` call, input is
+/// still read. Status, liveness and a repeated refresh are admitted one at a
+/// time; a request that reads the snapshot is held, with nothing read behind
+/// it, until the refresh reply is flushed.
+#[tokio::test]
+async fn running_refresh_admits_observers_and_holds_snapshot_readers() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_workspace_status\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"ping\"}\n\
+{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"resources/read\",\"params\":{\"uri\":\"ripr://workspace/status\"}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_list_gaps\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_workspace_status\",\"arguments\":{}}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    require_request(&mut transport, 2).await?;
+    // One observer at a time: nothing is read until its reply is flushed.
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(2))
+        .await
+        .map_err(|error| error.to_string())?;
+    // The repeated refresh is an ordinary request, not a second lane.
+    require_request(&mut transport, 3).await?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(3))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 4).await?;
+    transport
+        .send(reply(4))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 5).await?;
+    transport
+        .send(reply(5))
+        .await
+        .map_err(|error| error.to_string())?;
+    // The snapshot reader is held, and the status call behind it is not read.
+    require_pending(&mut transport).await?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(1))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 6).await?;
+    // With no refresh running, admission is serial again.
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(6))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 7).await?;
+    require_pending(&mut transport).await
+}
+
+/// A tool other than `ripr_refresh`, and a refresh-named argument of another
+/// method, never open the second slot.
+#[tokio::test]
+async fn only_a_refresh_tool_call_opens_the_second_slot() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_list_gaps\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"resources/read\",\"params\":{\"name\":\"ripr_refresh\",\"uri\":\"ripr://workspace/status\"}}\n\
+{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(1))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_request(&mut transport, 2).await?;
+    require_pending(&mut transport).await
+}
+
+/// End of input read while a refresh runs still owes that refresh its reply,
+/// as it did when input could not be read before the reply was flushed.
+#[tokio::test]
+async fn end_of_input_during_a_refresh_waits_for_its_reply() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(99))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_pending(&mut transport).await?;
+    transport
+        .send(reply(1))
+        .await
+        .map_err(|error| error.to_string())?;
+    require_end_of_input(&mut transport).await
+}
+
+/// The SDK drops the reply of a cancelled request, so the cancellation itself
+/// releases the slot; a cancellation naming another id releases nothing.
+#[tokio::test]
+async fn cancelling_the_running_refresh_releases_its_slot() -> Result<(), String> {
+    let mut transport = refresh_lane_transport(
+        b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"ripr_refresh\",\"arguments\":{}}}\n\
+{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}\n\
+{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":1}}\n",
+    );
+    require_request(&mut transport, 1).await?;
+    if !matches!(
+        transport.receive().await,
+        Some(ClientJsonRpcMessage::Notification(_))
+    ) {
+        return Err("unrelated cancellation was not delivered".into());
+    }
+    if transport
+        .admission
+        .is_idle()
+        .map_err(|error| error.to_string())?
+    {
+        return Err("a cancellation naming another request released the refresh".into());
+    }
+    if !matches!(
+        transport.receive().await,
+        Some(ClientJsonRpcMessage::Notification(_))
+    ) {
+        return Err("cancellation was not delivered".into());
+    }
+    require_end_of_input(&mut transport).await
 }

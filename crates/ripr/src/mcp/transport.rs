@@ -33,41 +33,123 @@ struct TransportFailure {
     wake: Notify,
 }
 type Failure = Arc<TransportFailure>;
-/// One typed request remains admitted until its actual reply frame is flushed.
+/// Requests stay admitted until their actual reply frame is flushed.
+///
+/// Admission is serial with one exception (#15983). A `ripr_refresh` call
+/// admitted while nothing else is pending takes the `refresh` slot, and while
+/// it runs the transport keeps reading. A request whose answer does not
+/// depend on that attempt's outcome ([`Lane::Observer`], and a repeated
+/// refresh, which the session refuses `analysis_in_flight`) is admitted one
+/// at a time into the `serial` slot. Any other request is held unanswered,
+/// with nothing read behind it, until the refresh reply is flushed, so a
+/// pipelined follower still binds the snapshot that refresh commits. At most
+/// two requests and two replies exist at once and only one is an analysis.
 #[derive(Default)]
 struct Admission {
-    pending: StdMutex<Option<RequestId>>,
+    slots: StdMutex<AdmissionSlots>,
     wake: Notify,
 }
+#[derive(Default)]
+struct AdmissionSlots {
+    serial: Option<RequestId>,
+    refresh: Option<RequestId>,
+}
 impl Admission {
-    fn is_pending(&self) -> Result<bool, Error> {
-        self.pending
+    fn slots(&self) -> Result<std::sync::MutexGuard<'_, AdmissionSlots>, Error> {
+        self.slots
             .lock()
-            .map(|id| id.is_some())
             .map_err(|_error| Error::other("MCP admission unavailable"))
     }
-    fn admit(&self, id: RequestId) -> Result<(), Error> {
-        let mut pending = self
-            .pending
-            .lock()
-            .map_err(|_error| Error::other("MCP admission unavailable"))?;
-        if pending.is_some() {
+    /// Input is not read while the serial slot is occupied.
+    fn serial_pending(&self) -> Result<bool, Error> {
+        self.slots().map(|slots| slots.serial.is_some())
+    }
+    fn refresh_pending(&self) -> Result<bool, Error> {
+        self.slots().map(|slots| slots.refresh.is_some())
+    }
+    /// Nothing admitted: the point where EOF and an idle signal end the session.
+    fn is_idle(&self) -> Result<bool, Error> {
+        self.slots()
+            .map(|slots| slots.serial.is_none() && slots.refresh.is_none())
+    }
+    fn admit(&self, id: RequestId, lane: Lane) -> Result<(), Error> {
+        let mut slots = self.slots()?;
+        if slots.serial.is_some() {
             return Err(Error::other("MCP admission already pending"));
         }
-        *pending = Some(id);
+        if lane == Lane::Refresh && slots.refresh.is_none() {
+            slots.refresh = Some(id);
+        } else {
+            slots.serial = Some(id);
+        }
         Ok(())
     }
+    /// Releases the slot `id` holds, if any: its reply frame was flushed, or
+    /// the client cancelled it and the SDK will drop the reply.
     fn complete(&self, id: Option<RequestId>) -> Result<(), Error> {
-        let mut pending = self
-            .pending
-            .lock()
-            .map_err(|_error| Error::other("MCP admission unavailable"))?;
-        if id.is_some() && *pending == id {
-            *pending = None;
+        let mut slots = self.slots()?;
+        if id.is_none() {
+            return Ok(());
+        }
+        let mut released = false;
+        if slots.serial == id {
+            slots.serial = None;
+            released = true;
+        }
+        if slots.refresh == id {
+            slots.refresh = None;
+            released = true;
+        }
+        if released {
             self.wake.notify_one();
         }
         Ok(())
     }
+}
+/// How a request relates to a running refresh.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lane {
+    /// A `ripr_refresh` call: the one request other input is read beside.
+    Refresh,
+    /// Answerable while a refresh runs: liveness, the catalog and workspace
+    /// status, none of which reads the snapshot that refresh will commit.
+    Observer,
+    /// Everything else waits for the running refresh, in arrival order.
+    Ordered,
+}
+/// Classified from the SDK-typed request, so the lane and the dispatched
+/// handler never disagree. A tool call or catalog request whose raw params
+/// were preserved as a custom request is refused quickly and stays ordered.
+fn request_lane(request: &ClientRequest) -> Lane {
+    use super::protocol::{REFRESH_TOOL_NAME, STATUS_RESOURCE_URI, STATUS_TOOL_NAME};
+    match request {
+        ClientRequest::CallToolRequest(call) if call.params.name == REFRESH_TOOL_NAME => {
+            Lane::Refresh
+        }
+        ClientRequest::CallToolRequest(call) if call.params.name == STATUS_TOOL_NAME => {
+            Lane::Observer
+        }
+        ClientRequest::ReadResourceRequest(read) if read.params.uri == STATUS_RESOURCE_URI => {
+            Lane::Observer
+        }
+        ClientRequest::PingRequest(_)
+        | ClientRequest::ListToolsRequest(_)
+        | ClientRequest::ListResourcesRequest(_)
+        | ClientRequest::ListResourceTemplatesRequest(_) => Lane::Observer,
+        _ => Lane::Ordered,
+    }
+}
+/// The request a `notifications/cancelled` frame names.
+///
+/// The SDK drops the reply of a request it cancelled, so no reply frame would
+/// ever release that request's slot. Only reachable while a refresh runs:
+/// input is not read while the serial slot is occupied.
+fn cancelled_request_id(frame: &[u8]) -> Option<RequestId> {
+    let value: serde_json::Value = serde_json::from_slice(frame).ok()?;
+    if value.get("method")?.as_str()? != "notifications/cancelled" {
+        return None;
+    }
+    serde_json::from_value(value.pointer("/params/requestId")?.clone()).ok()
 }
 fn record_failure(failure: &Failure, reason: &'static str) {
     if let Ok(mut stored) = failure.reason.lock()
@@ -118,6 +200,11 @@ struct BoundedTransport<R, W> {
     admission: Arc<Admission>,
     pending_protocol_error: Option<Vec<u8>>,
     writer_needs_drain: bool,
+    /// A request read while a refresh runs whose answer waits for it.
+    held: Option<ClientJsonRpcMessage>,
+    /// Input reached EOF while a request was still admitted. Shared across
+    /// handshake attempts like the reader it describes.
+    input_closed: Arc<AtomicBool>,
     idle_interrupt: Option<IdleInterrupt>,
 }
 
@@ -259,7 +346,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             {
                 return None;
             }
-            match self.admission.is_pending() {
+            match self.admission.serial_pending() {
                 Err(_) => {
                     record_failure(&self.failure, "MCP admission unavailable");
                     return None;
@@ -287,7 +374,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                         }
                     }
                     drop(writer);
-                    if self.admission.is_pending().ok() != Some(true) {
+                    if self.admission.serial_pending().ok() != Some(true) {
                         continue;
                     }
                     tokio::select! {
@@ -325,24 +412,77 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                     self.writer_needs_drain = false;
                 }
             }
+            if self.held.is_some() {
+                match self.admission.refresh_pending() {
+                    Ok(true) => {
+                        tokio::select! {
+                            _ = self.failure.wake.notified() => return None,
+                            _ = self.admission.wake.notified() => continue,
+                        }
+                    }
+                    Ok(false) => {
+                        let message = self.held.take()?;
+                        if let ClientJsonRpcMessage::Request(request) = &message
+                            && self
+                                .admission
+                                .admit(request.id.clone(), Lane::Ordered)
+                                .is_err()
+                        {
+                            record_failure(&self.failure, "MCP admission unavailable");
+                            return None;
+                        }
+                        return Some(message);
+                    }
+                    Err(_) => {
+                        record_failure(&self.failure, "MCP admission unavailable");
+                        return None;
+                    }
+                }
+            }
+            let idle = match self.admission.is_idle() {
+                Ok(idle) => idle,
+                Err(_) => {
+                    record_failure(&self.failure, "MCP admission unavailable");
+                    return None;
+                }
+            };
             // The idle point: nothing admitted, every earlier reply flushed.
             // A signal still pending here was not consumed by an attempt, so
-            // it asks the server itself to stop (#14102).
-            if take_idle_interrupt(self.idle_interrupt.as_ref()) {
+            // it asks the server itself to stop (#14102). A running refresh
+            // is not idle: the signal is that attempt's cancellation.
+            if idle && take_idle_interrupt(self.idle_interrupt.as_ref()) {
                 return None;
+            }
+            if self.input_closed.load(Ordering::SeqCst) {
+                // EOF arrived while a refresh was running. Its reply is still
+                // owed, exactly as when EOF could not be read before the
+                // reply was flushed.
+                if idle {
+                    return None;
+                }
+                tokio::select! {
+                    _ = self.failure.wake.notified() => return None,
+                    _ = self.admission.wake.notified() => continue,
+                }
             }
             let read = tokio::select! {
                 _ = self.failure.wake.notified() => return None,
                 // Re-check the flag from the top: an attempt may have
                 // consumed the signal that left this wake behind.
                 _ = idle_interrupt_wake(self.idle_interrupt.as_ref()) => continue,
+                // The refresh reply was flushed while this read was blocked:
+                // return to the top so the idle point is evaluated again.
+                _ = self.admission.wake.notified(), if !idle => continue,
                 read = async {
                     let mut reader = self.reader.lock().await;
                     reader.read_frame().await
                 } => read,
             };
             let frame = match read {
-                Ok(FrameRead::Eof) => return None,
+                Ok(FrameRead::Eof) => {
+                    self.input_closed.store(true, Ordering::SeqCst);
+                    continue;
+                }
                 Ok(FrameRead::Empty) => continue,
                 Ok(FrameRead::Oversized(prefix)) => {
                     match protocol_error_frame_with_id(
@@ -407,9 +547,27 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                         continue;
                     }
                     preserve_malformed_request_params(&mut message, &frame);
-                    if let ClientJsonRpcMessage::Request(request) = &message
-                        && self.admission.admit(request.id.clone()).is_err()
-                    {
+                    let request = match &message {
+                        ClientJsonRpcMessage::Request(request) => {
+                            Some((request.id.clone(), request_lane(&request.request)))
+                        }
+                        _ => None,
+                    };
+                    let admitted = match request {
+                        Some((id, lane)) => match self.admission.refresh_pending() {
+                            Ok(true) if lane == Lane::Ordered => {
+                                self.held = Some(message);
+                                continue;
+                            }
+                            Ok(_) => self.admission.admit(id, lane),
+                            Err(error) => Err(error),
+                        },
+                        None if matches!(message, ClientJsonRpcMessage::Notification(_)) => {
+                            self.admission.complete(cancelled_request_id(&frame))
+                        }
+                        None => Ok(()),
+                    };
+                    if admitted.is_err() {
                         record_failure(&self.failure, "MCP admission unavailable");
                         return None;
                     }
@@ -588,6 +746,7 @@ where
     let writer = Arc::new(Mutex::new(FrameWriter::new(writer)));
     let reader = Arc::new(Mutex::new(FrameReader::new(reader)));
     let admission = Arc::new(Admission::default());
+    let input_closed = Arc::new(AtomicBool::new(false));
     // A pre-initialize message the SDK refuses (a request without its
     // required `_meta`, or a stray notification) ends one handshake attempt
     // with the typed error already on the wire. ADR 0022's contract is
@@ -605,6 +764,8 @@ where
             admission: admission.clone(),
             pending_protocol_error: None,
             writer_needs_drain: false,
+            held: None,
+            input_closed: input_closed.clone(),
             idle_interrupt: idle_interrupt.clone(),
         };
         let service = match server.serve(transport).await {

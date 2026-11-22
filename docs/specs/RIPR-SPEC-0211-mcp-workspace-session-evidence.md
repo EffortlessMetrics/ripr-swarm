@@ -612,7 +612,11 @@ official SDK transport:
   `workspace_unavailable` replies still arrive.
   On a usable root, reads before the first successful refresh fail closed
   with `no_snapshot`; reads during an
-  attempt report `analysis_in_flight`; unknown item ids fail closed with
+  attempt report `analysis_in_flight` (over stdio a snapshot or repair read
+  written during a refresh is instead held until the refresh reply is
+  flushed, while workspace status, `ping`, the catalog listings and a
+  repeated `ripr_refresh`, which is refused `analysis_in_flight`, are
+  answered beside the running refresh, one at a time; #15983); unknown item ids fail closed with
   `item_not_found`; a document whose complete tool envelope cannot fit the
   128-KiB response bound fails closed with `result_too_large` — for tool
   and resource responses the envelope is measured in its final form
@@ -953,6 +957,14 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_stdio.rs::running_refresh_answers_status_and_orders_snapshot_reads`
+  (Unix) — #15983 over real stdio with the refresh held inside its own
+  `git diff`: status (tool and resource) and `tools/list` answer during the
+  attempt, a repeated refresh is refused `analysis_in_flight`, and a held
+  `ripr_list_gaps` plus the status written behind it are answered after the
+  refresh, in order, bound to its snapshot. Slot accounting, cancellation
+  release and end of input are in
+  `crates/ripr/src/mcp/transport_backpressure_tests.rs`.
 - `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
   (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
   early-primary pipe holders, typed failure, last-good retention, same-session

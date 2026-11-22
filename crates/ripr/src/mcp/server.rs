@@ -162,7 +162,7 @@ impl McpServer {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_ANALYSIS_IN_FLIGHT,
                     "an analysis attempt is already running",
-                    "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
+                    "do not re-send ripr_refresh: poll ripr_workspace_status until attempt_state leaves in_flight, then read that attempt's outcome there; refresh again only for different input",
                 );
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
