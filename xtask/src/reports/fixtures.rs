@@ -1345,6 +1345,76 @@ fn clear_fixture_cache_with(
     }
 }
 
+/// A fixture `input/` directory made its own Git top-level for one run
+/// (#15488).
+///
+/// The harness passes `--root fixtures/<name>/input`, which is a subdirectory
+/// of the ripr checkout. The repair-start gate withholds a start at a
+/// non-top-level root, so without this every fixture would model a
+/// subdirectory of the ripr repository rather than a standalone one. The
+/// guard removes the `.git` it created on drop, so the tracked corpus stays
+/// clean; a fixture that already carries its own repository is left alone.
+struct StandaloneFixtureRoot {
+    created: Option<PathBuf>,
+}
+
+impl StandaloneFixtureRoot {
+    fn ensure(input: &Path) -> Result<Self, String> {
+        let git_dir = input.join(".git");
+        if git_dir.exists() {
+            return Ok(Self { created: None });
+        }
+        let init = vec!["init".to_string(), "-q".to_string()];
+        let output = crate::run::capture_output_in_dir("git", &init, input, "fixture git init")?;
+        if !output.status.success() {
+            return Err(format!(
+                "fixture git init failed in {}: {}",
+                normalize_path(input),
+                output.stderr.trim()
+            ));
+        }
+        // From here the guard owns the `.git`, so a failed add or commit still
+        // removes it on the early return.
+        let guard = Self {
+            created: Some(git_dir),
+        };
+        for args in [
+            vec!["add".to_string(), "-A".to_string()],
+            vec![
+                "-c".to_string(),
+                "user.email=ripr-fixture@example.invalid".to_string(),
+                "-c".to_string(),
+                "user.name=RIPR Fixture".to_string(),
+                "commit".to_string(),
+                "-q".to_string(),
+                "--allow-empty".to_string(),
+                "-m".to_string(),
+                "fixture".to_string(),
+            ],
+        ] {
+            let output =
+                crate::run::capture_output_in_dir("git", &args, input, "fixture git init")?;
+            if !output.status.success() {
+                return Err(format!(
+                    "fixture git {} failed in {}: {}",
+                    args.join(" "),
+                    normalize_path(input),
+                    output.stderr.trim()
+                ));
+            }
+        }
+        Ok(guard)
+    }
+}
+
+impl Drop for StandaloneFixtureRoot {
+    fn drop(&mut self) {
+        if let Some(git_dir) = &self.created {
+            let _ = fs::remove_dir_all(git_dir);
+        }
+    }
+}
+
 pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
     let name = fixture_name(path)?;
     if name == observation_tail_return::FIXTURE {
@@ -1362,6 +1432,9 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
         ));
     }
     preparation::ensure_ready()?;
+    // #15488: a fixture models a standalone repository, not a subdirectory of
+    // the ripr checkout, so the repair-start gate sees an exact top-level.
+    let _standalone = StandaloneFixtureRoot::ensure(&input)?;
 
     let actual_dir = Path::new("target")
         .join("ripr")
@@ -5663,6 +5736,50 @@ mod tests {
         validate_bless_reason(&reason).map_err(|error| {
             format!("printed step-4 reason {reason:?} must pass validate_bless_reason: {error}")
         })
+    }
+
+    #[test]
+    fn standalone_fixture_root_is_its_own_top_level_and_is_removed() -> Result<(), String> {
+        // #15488: the goldens harness must model a fixture as a standalone
+        // repository, and must not leave a nested `.git` in the tracked corpus.
+        let root = std::env::temp_dir().join(format!(
+            "ripr-standalone-fixture-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|error| error.to_string())?;
+        {
+            let _guard = StandaloneFixtureRoot::ensure(&root)?;
+            if !root.join(".git").exists() {
+                return Err("guard must create .git".to_string());
+            }
+            let output = crate::run::capture_output_in_dir(
+                "git",
+                &["rev-parse".to_string(), "--show-toplevel".to_string()],
+                &root,
+                "fixture git top-level probe",
+            )?;
+            if !output.status.success() {
+                return Err(format!("git rev-parse failed: {}", output.stderr.trim()));
+            }
+            let top = fs::canonicalize(output.stdout.trim()).map_err(|error| error.to_string())?;
+            let expected = fs::canonicalize(&root).map_err(|error| error.to_string())?;
+            if top != expected {
+                return Err(format!(
+                    "fixture root is not its own top-level: {top:?} != {expected:?}"
+                ));
+            }
+        }
+        if root.join(".git").exists() {
+            return Err("guard must remove the .git it created".to_string());
+        }
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
     }
 
     fn bless_reason_quoted_in_step4(step4: &str) -> Result<String, String> {
