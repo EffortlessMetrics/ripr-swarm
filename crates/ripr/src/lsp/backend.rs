@@ -1626,9 +1626,11 @@ impl Backend {
                 .unwrap_or(false);
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
-        }
-        if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
-            resolved_findings.clear();
+            // Cleared under the snapshot guard (commit lock order), so a
+            // status read never pairs no snapshot with stale rows.
+            if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
+                resolved_findings.clear();
+            }
         }
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
@@ -2319,9 +2321,9 @@ impl Backend {
     pub(super) fn clear_latest_analysis_for_test(&self) {
         if let Ok(mut latest) = self.latest_analysis.lock() {
             *latest = None;
-        }
-        if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
-            resolved_findings.clear();
+            if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
+                resolved_findings.clear();
+            }
         }
     }
 
@@ -2995,27 +2997,34 @@ impl Backend {
                     value.analysis_outcome.clone(),
                     withheld_findings_summary(value),
                     value.partial_scope.clone(),
+                    // Read under the snapshot guard (the commit's lock order:
+                    // `latest_analysis`, then `resolved_findings`), so the
+                    // rows always belong to the snapshot read here.
+                    self.resolved_findings
+                        .lock()
+                        .map(|rows| rows.clone())
+                        .unwrap_or_default(),
                 )
             })
         });
-        let (snapshot_identity, components, analysis_outcome, withheld_summary, partial_scope) =
-            match snapshot_state {
-                Some((identity, components, analysis_outcome, withheld, partial_scope)) => (
-                    identity,
-                    components,
-                    analysis_outcome,
-                    withheld,
-                    partial_scope,
-                ),
-                None => (None, Vec::new(), None, None, None),
-            };
-        // Read after the snapshot guard is released: the commit path takes
-        // `latest_analysis` before `resolved_findings`.
-        let resolved_findings = self
-            .resolved_findings
-            .lock()
-            .map(|rows| rows.clone())
-            .unwrap_or_default();
+        let (
+            snapshot_identity,
+            components,
+            analysis_outcome,
+            withheld_summary,
+            partial_scope,
+            resolved_findings,
+        ) = match snapshot_state {
+            Some((identity, components, analysis_outcome, withheld, partial_scope, resolved)) => (
+                identity,
+                components,
+                analysis_outcome,
+                withheld,
+                partial_scope,
+                resolved,
+            ),
+            None => (None, Vec::new(), None, None, None, Vec::new()),
+        };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
             health.current_input_identity.as_deref(),
@@ -10586,6 +10595,7 @@ mod top_limitation_selection_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -12538,6 +12548,7 @@ mod delivery_selection_parity_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -13773,6 +13784,7 @@ mod list_actionable_items_tests {
             diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -15073,6 +15085,7 @@ mod pull_disclosure_dedup_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

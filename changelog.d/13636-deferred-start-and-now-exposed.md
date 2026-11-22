@@ -1,5 +1,6 @@
 <!-- section: Fixed -->
-- Editor: after a save that ran the quick analysis (repair spots skipped),
+- Editor: with the full diagnostic profile, after a save that ran the quick
+  analysis (repair spots skipped),
   "Start repair: copy repair command" is listed disabled on a gap finding with
   the next step, "run ripr: Refresh Full Analysis", instead of being missing.
   "ripr: Start Current Repair" shows that reason from a finding diagnostic

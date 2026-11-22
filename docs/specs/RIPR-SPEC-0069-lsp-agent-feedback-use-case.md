@@ -423,10 +423,12 @@ the only word about a live finding:
   a candidate-current gap (`weakly_exposed`, `reachable_unrevealed`,
   `no_static_path`) and that the new snapshot, matched by finding id, finds
   candidate-current `exposed`. A finding that merely disappears is never a
-  row. The set is computed once, at snapshot commit, and cleared with the
-  snapshot, so a later commit with nothing moved reports `count` 0. It is
-  static evidence, not a runtime mutation outcome. The VS Code client shows
-  one information message per snapshot and adds the rows to the status
+  row, and neither is one whose finding id changed (for example because
+  the changed line moved): the match fails quiet. The set is computed once,
+  at snapshot commit, cleared with the snapshot, and read under the same
+  guard as the snapshot, so a later commit with nothing moved reports
+  `count` 0. It is static evidence, not a runtime mutation outcome. The VS
+  Code client shows one information message per row set and adds the rows to the status
   detail, so a diagnostic that stops after a saved test reads as progress,
   not a silent failure.
 - The pull channel (`textDocument/diagnostic`, `workspace/diagnostic`)

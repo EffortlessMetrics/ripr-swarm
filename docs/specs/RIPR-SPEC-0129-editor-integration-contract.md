@@ -530,9 +530,15 @@ client supports:
   spot inventory (`seams_deferred`), a candidate-current gap-class finding
   diagnostic has no seam-bound start: a disabled-capable client sees "Start
   repair" inert as `seam_evidence_deferred`, whose reason names "ripr: Refresh
-  Full Analysis" (wire `ripr.refresh`) without promising a start after it; an
-  `exposed` or base-side finding, a full snapshot and a legacy client get no
-  inert start. With no gap or seam diagnostic near the selection, "Start
+  Full Analysis" (wire `ripr.refresh`) without promising a start after it.
+  It is listed only when a full refresh under the snapshot's configuration
+  builds the spot inventory (`seam_inventory_on_full_refresh`: full
+  diagnostic profile, spot diagnostics on, Rust enabled); under the default
+  actionable profile the refresh builds no spots and the status's
+  `seam_diagnostics_not_enabled` outcome names the setting instead. An
+  `exposed`, base-side, preview, non-Rust or static-limited finding, a full
+  snapshot and a legacy client get no inert start. While analysis is queued
+  or running, the retained start reads `analysis_not_current`. With no gap or seam diagnostic near the selection, "Start
   Current Repair" asks the server about the nearest finding diagnostic and
   shows that reason before saying no repair gap is available (#13636).
   `ripr agent repair`

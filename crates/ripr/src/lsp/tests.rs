@@ -1180,6 +1180,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -9373,6 +9374,8 @@ fn deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh() -> Resu
         vec![finding.clone()],
     );
     snapshot.seams_deferred = true;
+    // A full refresh under this configuration builds the spot inventory.
+    snapshot.seam_inventory_on_full_refresh = true;
     let params = code_action_params(vec![finding_diagnostic.clone()])?;
     let commands = vscode_advertised_client_commands()?;
     let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
@@ -9438,6 +9441,73 @@ fn deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh() -> Resu
             .iter()
             .all(|action| action.title != start_title),
         "{exposed_literals:?}"
+    );
+    // While the full refresh it names is queued or running, the retained
+    // start says to wait instead of asking for that refresh again.
+    for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Running] {
+        let mut retained = deferred_actions.clone();
+        super::actions::disable_retained_analysis_actions(
+            &mut retained,
+            &AnalysisHealth {
+                state,
+                ..AnalysisHealth::default()
+            },
+        );
+        let retained_literals = code_action_literals(&retained)?;
+        let retained_start = retained_literals
+            .iter()
+            .find(|action| action.title == start_title)
+            .ok_or_else(|| format!("retained start listed: {retained_literals:?}"))?;
+        let retained_data = retained_start.data.as_ref().ok_or("retained data")?;
+        assert_eq!(retained_data["disabled_reason"], "analysis_not_current");
+    }
+
+    // Under a configuration whose full refresh builds no spots (the default
+    // actionable profile, or spot diagnostics off) the refresh would not
+    // bring a start back, so none is promised.
+    let mut no_inventory = snapshot.clone();
+    no_inventory.seam_inventory_on_full_refresh = false;
+    let no_inventory_actions = code_action_response(&params, Some(&no_inventory), &disabled_client);
+    let no_inventory_literals = code_action_literals(&no_inventory_actions)?;
+    assert!(
+        no_inventory_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{no_inventory_literals:?}"
+    );
+    // A non-Rust finding gets no spot start from a full refresh either.
+    let mut python = snapshot.clone();
+    python.findings[0].language = Some(crate::domain::LanguageId::Python);
+    let python_actions = code_action_response(&params, Some(&python), &disabled_client);
+    let python_literals = code_action_literals(&python_actions)?;
+    assert!(
+        python_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{python_literals:?}"
+    );
+
+    // A static-limited finding and a base-side finding have no start either.
+    let mut limited = snapshot.clone();
+    limited.findings[0].static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+    let limited_actions = code_action_response(&params, Some(&limited), &disabled_client);
+    let limited_literals = code_action_literals(&limited_actions)?;
+    assert!(
+        limited_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{limited_literals:?}"
+    );
+    let mut base_side = snapshot.clone();
+    base_side.findings[0].source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    assert!(!base_side.findings[0].is_candidate_actionable());
+    let base_actions = code_action_response(&params, Some(&base_side), &disabled_client);
+    let base_literals = code_action_literals(&base_actions)?;
+    assert!(
+        base_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{base_literals:?}"
     );
     // A preview-language finding has no producer-backed start, deferred or
     // not, so the deferral must not invent one.
@@ -11407,6 +11477,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -17043,6 +17114,7 @@ fn sample_analysis_snapshot(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -20953,9 +21025,35 @@ fn resolved_findings_require_the_same_root_and_a_current_gap_before() -> Result<
     assert!(super::resolved_findings::resolved_since(&before, &other_root).is_empty());
     let mut unknown = gap.clone();
     unknown.class = ExposureClass::StaticUnknown;
-    let unknown_before =
-        sample_analysis_snapshot(PathBuf::from("/workspace"), uri, Vec::new(), vec![unknown]);
+    let unknown_before = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        vec![unknown],
+    );
     assert!(super::resolved_findings::resolved_since(&unknown_before, &after).is_empty());
+    // A finding that is not candidate-current on either side (for example
+    // base-side evidence) is never announced as now exposed.
+    let mut base_gap = gap.clone();
+    base_gap.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    assert!(!base_gap.is_candidate_actionable());
+    let base_before = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        vec![base_gap],
+    );
+    assert!(super::resolved_findings::resolved_since(&base_before, &after).is_empty());
+    let mut base_exposed = exposed.clone();
+    base_exposed.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    assert!(!base_exposed.is_candidate_actionable());
+    let base_after = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        Vec::new(),
+        vec![base_exposed],
+    );
+    assert!(super::resolved_findings::resolved_since(&before, &base_after).is_empty());
     Ok(())
 }
 
@@ -24876,6 +24974,7 @@ fn quarantine_workspace_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -25810,6 +25909,7 @@ fn partition_workspace_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred,
+        seam_inventory_on_full_refresh: false,
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -26171,6 +26271,7 @@ fn disabled_language_workspace_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -26573,6 +26674,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,

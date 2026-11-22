@@ -323,7 +323,6 @@ pub(super) fn disable_retained_analysis_actions(
                         | "preview_or_static_limitation"
                         | "repair_route_not_ready"
                         | "uncommitted_production_change"
-                        | "seam_evidence_deferred"
                 )
             )
         {
@@ -645,16 +644,20 @@ pub(super) mod test_premise {
 
 /// The inert "Start repair" action for a gap-class finding whose snapshot
 /// came from an interactive refresh that deferred the full spot inventory
-/// (#13636). `None` unless the snapshot is `seams_deferred` and the cited
-/// finding is a candidate-current actionable Rust-tier gap with no static
-/// limit: an exposed or base-side finding never had a start to defer, and a
-/// preview or static-limited finding gets no seam start from a full refresh
-/// either, so naming the refresh there would mislead.
+/// (#13636). `None` unless the snapshot is `seams_deferred`, a full refresh
+/// under its configuration builds the spot inventory, and the cited finding
+/// is a candidate-current actionable Rust gap with no static limit: an
+/// exposed or base-side finding never had a start to defer, and a preview,
+/// non-Rust or static-limited finding gets no spot start from a full refresh
+/// either. Under the default actionable profile, or with spot diagnostics
+/// off, a full refresh builds no spots, so naming it would mislead; the
+/// status already names that setting.
 fn deferred_seam_start_disabled_action(
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
 ) -> Option<CodeActionOrCommand> {
-    let snapshot = snapshot.filter(|snapshot| snapshot.seams_deferred)?;
+    let snapshot = snapshot
+        .filter(|snapshot| snapshot.seams_deferred && snapshot.seam_inventory_on_full_refresh)?;
     let finding_id = diagnostic
         .data
         .as_ref()
@@ -664,6 +667,9 @@ fn deferred_seam_start_disabled_action(
         finding.id == finding_id
             && super::diagnostics::finding_is_withheld_gap(finding)
             && finding.language_status != Some(crate::domain::LanguageStatus::Preview)
+            && finding
+                .language
+                .is_none_or(|language| language == crate::domain::LanguageId::Rust)
             && finding.static_limit_kind.is_none()
     })?;
     disabled_action(
@@ -3649,6 +3655,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

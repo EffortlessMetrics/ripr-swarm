@@ -5,6 +5,7 @@
 id = "RIPR-SPEC-0129"
 tests = [
   "crates/ripr/src/lsp/tests.rs::deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh",
+  "crates/ripr/src/lsp/diagnostics.rs::seam_inventory_on_full_refresh_follows_the_inventory_gate",
 ]
 
 [[extend]]

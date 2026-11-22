@@ -605,7 +605,7 @@ export class RiprClientController {
    * start. Reset whenever the session stops.
    */
   private lastCompletedStatus: RiprStatusState | undefined;
-  /** Snapshot and rows whose now-exposed findings were last announced (#13636). */
+  /** Row set whose now-exposed findings were last announced (#13636). */
   private lastResolvedFindingsSnapshot: string | undefined;
   /**
    * True while the main status shows a rejected configuration pull (#9917).
@@ -2451,16 +2451,15 @@ export class RiprClientController {
       case 'succeeded': {
         // #13636: gaps a saved test now appears to expose. Their diagnostics
         // stop being published, so name them instead of going quiet; once
-        // per snapshot and row set, since the same status can be re-sent and
-        // a status read can pair new rows with the previous snapshot id.
+        // per row set, since the same status can be re-sent. The server
+        // recomputes the rows at each commit (a repeat commit has none), so
+        // the rows alone identify one transition.
         const resolved = resolvedFindingsNote(status.resolved_findings);
-        const resolvedKey = resolved && status.snapshot_id
-          ? `${status.snapshot_id}\n${resolved.lines.join('\n')}`
-          : undefined;
+        const resolvedKey = resolved ? `${resolved.count}\n${resolved.lines.join('\n')}` : undefined;
         if (!resolved) {
           this.lastResolvedFindingsSnapshot = undefined;
         }
-        if (resolved && resolvedKey && resolvedKey !== this.lastResolvedFindingsSnapshot) {
+        if (resolved && resolvedKey !== this.lastResolvedFindingsSnapshot) {
           this.lastResolvedFindingsSnapshot = resolvedKey;
           for (const line of resolved.lines) {
             this.output.appendLine(`ripr now exposed: ${line}`);

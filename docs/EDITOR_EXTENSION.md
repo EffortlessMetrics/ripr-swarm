@@ -400,9 +400,10 @@ open the best related test, copy the verify command, copy the receipt command,
 or copy a static-limit note. When the server lists the start (or the repair
 packet) disabled, the command shows the server's reason instead. For example,
 while the production change is uncommitted it names the commit step to run
-first (#13636). After a save that ran the quick analysis (it skips repair spots
-until a full refresh), a gap finding has no start yet; the command
-then says to run **ripr: Refresh Full Analysis** instead of reporting that no
+first (#13636). With `ripr.diagnosticProfile` set to `full` and spot
+diagnostics on, a save runs the quick analysis, which skips repair spots
+until a full refresh, so a gap finding has no start yet; the command then
+says to run **ripr: Refresh Full Analysis** instead of reporting that no
 gap is near the selection. If only refresh/setup actions are available and the
 server names no reason, the command reports that no current bounded repair
 action is available.

@@ -1584,6 +1584,19 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
 /// effective source of the blocked value: a session override (editor
 /// setting / initialization option) outranks `ripr.toml`, so a repository
 /// edit could not lift it (#6853 review).
+/// Whether a full (non-deferred) refresh builds the repo-wide spot inventory
+/// under `config`: the full diagnostic profile, spot diagnostics enabled and
+/// Rust enabled.
+fn seam_inventory_enabled(config: &LspAnalysisConfig) -> bool {
+    config.diagnostic_profile == LspDiagnosticProfile::Full
+        && config.enable_seam_diagnostics
+        && config
+            .repo_config()
+            .languages()
+            .enabled()
+            .contains(&LanguageId::Rust)
+}
+
 fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOutcome {
     let session_controlled = |key: &str| {
         matches!(
@@ -1820,13 +1833,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // not gap-record repair packets — the WARNING/INFORMATION mapping
     // is owned by SeverityConfig. When run is not full, seam WARNINGs
     // downgrade to INFORMATION. The exception is documented here.
-    let seam_inventory_enabled = config.diagnostic_profile == LspDiagnosticProfile::Full
-        && config.enable_seam_diagnostics
-        && config
-            .repo_config()
-            .languages()
-            .enabled()
-            .contains(&LanguageId::Rust);
+    let seam_inventory_enabled = seam_inventory_enabled(config);
     let (raw_seams, repair_card_candidate_seams, seam_outcome) = if defer_seam_inventory {
         (
             Vec::new(),
@@ -2015,6 +2022,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled,
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
@@ -2822,6 +2830,7 @@ fn git_timeout_limited_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled(config),
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
@@ -2930,6 +2939,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled(config),
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
@@ -8889,6 +8899,25 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    /// #13636: the snapshot's promise that a full refresh brings repair
+    /// spots back holds only where the full refresh builds the inventory.
+    #[test]
+    fn seam_inventory_on_full_refresh_follows_the_inventory_gate() {
+        assert!(!seam_inventory_enabled(&LspAnalysisConfig::default()));
+        let mut full = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            ..LspAnalysisConfig::default()
+        };
+        full.repo_config.languages.enabled = vec![LanguageId::Rust];
+        assert!(seam_inventory_enabled(&full));
+        let mut seams_off = full.clone();
+        seams_off.enable_seam_diagnostics = false;
+        assert!(!seam_inventory_enabled(&seams_off));
+        let mut rust_off = full.clone();
+        rust_off.repo_config.languages.enabled = vec![LanguageId::TypeScript];
+        assert!(!seam_inventory_enabled(&rust_off));
+    }
+
     #[test]
     fn seam_inventory_status_prose_uses_plain_words() -> Result<(), String> {
         let features = crate::lsp::client_features::ClientFeatureProfile::unsupported();
@@ -9613,6 +9642,7 @@ mod delivery_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
