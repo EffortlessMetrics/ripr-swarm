@@ -121,14 +121,38 @@ impl ReviewCommentsReceiptRun {
         self.receipt.missing_artifacts.clear();
     }
 
+    /// The repair route a timeout in `active_phase` records, shared by the
+    /// receipt limitation and the CLI error so the two cannot drift.
+    ///
+    /// A `canonical_analysis` timeout names the two routes that avoid paying
+    /// for the same phase again (#12940): `ripr check` on the same base, which
+    /// runs canonical analysis without the review-guidance second stage, and a
+    /// narrower diff. A larger timeout stays listed last because the phase
+    /// restarts from the beginning ([`CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM`]).
+    /// No claim is made that `ripr check` finishes inside the same budget.
+    pub(crate) fn timeout_repair_route(&self, active_phase: &str) -> String {
+        if active_phase == "canonical_analysis" {
+            format!(
+                "run `ripr check --base {base} --json` at the head checkout ({head}) for \
+                 findings without review guidance, or narrow --base/--head to a smaller diff; \
+                 a larger --timeout-ms restarts canonical_analysis from the beginning",
+                base = self.receipt.base_sha,
+                head = self.receipt.head_sha,
+            )
+        } else {
+            "rerun review-comments with a larger configured timeout".to_string()
+        }
+    }
+
     pub fn limited_timeout(&mut self, active_phase: &str) {
+        let repair_route = self.timeout_repair_route(active_phase);
         self.receipt.status = "limited_timeout";
         self.receipt.active_phase = Some(active_phase.to_string());
         self.receipt
             .limitations
             .push(ReviewCommentsReceiptLimitation {
                 category: "analysis_timeout".to_string(),
-                repair_route: "rerun review-comments with a larger configured timeout".to_string(),
+                repair_route,
             });
         self.terminalize_non_claims();
         if active_phase == "canonical_analysis" {
@@ -429,6 +453,18 @@ mod tests {
         receipt.limited_timeout("canonical_analysis");
         let value = serde_json::to_value(&*receipt).map_err(|err| err.to_string())?;
         assert_eq!(value["canonical_analysis_evaluated_seams"], 7);
+        // #12940: name `ripr check` on the recorded base and a narrower diff,
+        // not only a larger budget that restarts the same phase.
+        let route = value["limitations"][0]["repair_route"]
+            .as_str()
+            .ok_or("repair_route must be a string")?;
+        let check_route = format!(
+            "run `ripr check --base {} --json` at the head checkout ({})",
+            receipt.base_sha, receipt.head_sha
+        );
+        assert!(route.starts_with(&check_route), "{route}");
+        assert!(route.contains("narrow --base/--head"), "{route}");
+        assert_eq!(route, receipt.timeout_repair_route("canonical_analysis"));
         let claims = value["non_claims"]
             .as_array()
             .ok_or("non_claims must be an array")?;
@@ -444,6 +480,10 @@ mod tests {
         earlier.phase("diff_discovery", "language_facts");
         earlier.limited_timeout("language_facts");
         let value = serde_json::to_value(&*earlier).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["limitations"][0]["repair_route"],
+            "rerun review-comments with a larger configured timeout"
+        );
         assert!(value.get("canonical_analysis_evaluated_seams").is_none());
         assert!(
             !earlier
