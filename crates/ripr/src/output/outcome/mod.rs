@@ -555,7 +555,7 @@ fn repo_exposure_seam_owners(seams: &[Value]) -> BTreeMap<String, String> {
 
 fn parse_repo_exposure_static_snapshot(json: &str) -> Result<StaticSnapshot, String> {
     let value: Value = serde_json::from_str(json)
-        .map_err(|err| format!("failed to parse repo exposure JSON: {err}"))?;
+        .map_err(|err| format!("failed to parse repo exposure JSON: {err}; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format"))?;
     if let Some(seams) = value.get("seams").and_then(Value::as_array) {
         // #12108: a pilot file whose seams[] the byte budget cut lists only
         // some seams, so a seam missing from it would read as removed or
@@ -601,7 +601,7 @@ fn parse_repo_exposure_static_snapshot(json: &str) -> Result<StaticSnapshot, Str
         });
     }
 
-    Err("static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array".to_string())
+    Err("static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format".to_string())
 }
 
 fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, String> {
@@ -615,20 +615,20 @@ fn parse_repo_exposure_seams(seams: &[Value]) -> Result<Vec<StaticSeamRecord>, S
             .filter(|value| value.is_object());
         let seam_id = optional_json_string(evidence_record, "seam_id")
             .or_else(|| optional_json_string(Some(seam), "seam_id"))
-            .ok_or_else(|| "repo exposure seam is missing string field `seam_id`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing string field `seam_id`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let seam_kind = optional_json_string(evidence_record, "seam_kind")
             .or_else(|| optional_json_string(Some(seam), "kind"))
-            .ok_or_else(|| "repo exposure seam is missing string field `kind`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing string field `kind`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let file = optional_json_string(location, "file")
             .or_else(|| optional_json_string(Some(seam), "file"))
             .map(|path| normalize_report_path(&path))
-            .ok_or_else(|| "repo exposure seam is missing string field `file`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing string field `file`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let line = optional_json_usize(location, "line")
             .or_else(|| optional_json_usize(Some(seam), "line"))
-            .ok_or_else(|| "repo exposure seam is missing numeric field `line`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing numeric field `line`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let seam_grip_class = optional_json_string(evidence_record, "grip_class")
             .or_else(|| optional_json_string(Some(seam), "grip_class"))
-            .ok_or_else(|| "repo exposure seam is missing string field `grip_class`".to_string())?;
+            .ok_or_else(|| "repo exposure seam is missing string field `grip_class`; regenerate the snapshot with `ripr check --format repo-exposure-json`".to_string())?;
         let oracle_source = match evidence_record {
             Some(record) if record.get("related_tests").is_some() => record,
             _ => seam,

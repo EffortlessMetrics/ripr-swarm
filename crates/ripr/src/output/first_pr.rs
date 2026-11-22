@@ -428,23 +428,25 @@ fn check_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
             .and_then(Value::as_str)
             .is_some();
         let ledger_path = string_path(&packet, &["inputs", "gap_ledger"])
-            .ok_or("first-pr --check: no-action source ledger is unavailable; recompose before relying on the packet")?;
+            .ok_or("first-pr --check: no-action source ledger is unavailable; run `ripr first-pr` again with the packet's original inputs, then rerun --check")?;
+        // Recomposing alone does not rebuild a standalone `--gap-ledger`
+        // input, so the advice names the ledger and how each route restores it.
         let (ledger, ledger_digest) = read_json_with_digest(&resolve_path(&root, &ledger_path)).map_err(|_ledger_error| {
-            "first-pr --check: no-action source ledger is missing or malformed; recompose before relying on the packet".to_string()
+            format!("first-pr --check: no-action source ledger is missing or malformed (`{ledger_path}`); regenerate or restore that file, then rerun --check. Rerunning `ripr first-pr` with the packet's original --check-output rebuilds it; a ledger passed with --gap-ledger comes from `ripr reports gap-ledger` with its original inputs")
         })?;
         let recorded_digest = string_path(&packet, &["inputs", "gap_ledger_sha256"]).ok_or(
-            "first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose before relying on it",
+            "first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source ledger bytes. Recompose it: run `ripr first-pr` again with the packet's original inputs, then rerun --check",
         )?;
         if recorded_digest != ledger_digest {
-            return Err("first-pr --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packet. Recompose before relying on it".to_string());
+            return Err("first-pr --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packet. Recompose it: run `ripr first-pr` again with the packet's original inputs, then rerun --check".to_string());
         }
         let source_kind = string_path(&ledger, &["inputs", "source_kind"])
-            .ok_or("first-pr --check: no-action source kind is unavailable; recompose before relying on the packet")?;
+            .ok_or("first-pr --check: no-action source kind is unavailable; run `ripr first-pr` again with the packet's original inputs, then rerun --check")?;
         if direct_check_output || requires_no_action_source_limit(&ledger) {
-            return Err("first-pr --check: source_currentness_unavailable; this historical no-action packet cannot establish current source-corpus identity. Recompose from its original inputs and inspect a fresh selected-workspace check; a fresh check alone cannot establish unavailable preview/mixed corpus provenance (#7452).".to_string());
+            return Err("first-pr --check: source_currentness_unavailable; this historical no-action packet cannot establish current source-corpus identity. Recompose it (run `ripr first-pr` again with its original inputs) and inspect a fresh selected-workspace check; a fresh check alone cannot establish unavailable preview/mixed corpus provenance (#7452).".to_string());
         }
         if !matches!(source_kind.as_str(), "records" | "repo_exposure") {
-            return Err("first-pr --check: no-action source kind is unrecognized; recompose before relying on the packet".to_string());
+            return Err("first-pr --check: no-action source kind is unrecognized; run `ripr first-pr` again with the packet's original inputs, then rerun --check".to_string());
         }
     }
     print!(
