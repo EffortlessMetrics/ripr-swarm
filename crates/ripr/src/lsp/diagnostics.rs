@@ -1574,16 +1574,6 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
     .map_err(String::from)
 }
 
-/// The typed outcome for a seam inventory that cannot run because its
-/// configuration switches are off (#6001). The default `actionable` profile
-/// lands here in every default-profile session, so the wire must carry the
-/// concrete enable route — a bare `recovery: null` gives an agent consumer
-/// no path to the switch, which only `ripr lsp --help` prose names. The
-/// message names the actual blocking condition so the recovery string is
-/// never a guess about which switch is off, and the route follows the
-/// effective source of the blocked value: a session override (editor
-/// setting / initialization option) outranks `ripr.toml`, so a repository
-/// edit could not lift it (#6853 review).
 /// Whether a full (non-deferred) refresh builds the repo-wide spot inventory
 /// under `config`: the full diagnostic profile, spot diagnostics enabled and
 /// Rust enabled.
@@ -1597,6 +1587,16 @@ fn seam_inventory_enabled(config: &LspAnalysisConfig) -> bool {
             .contains(&LanguageId::Rust)
 }
 
+/// The typed outcome for a seam inventory that cannot run because its
+/// configuration switches are off (#6001). The default `actionable` profile
+/// lands here in every default-profile session, so the wire must carry the
+/// concrete enable route — a bare `recovery: null` gives an agent consumer
+/// no path to the switch, which only `ripr lsp --help` prose names. The
+/// message names the actual blocking condition so the recovery string is
+/// never a guess about which switch is off, and the route follows the
+/// effective source of the blocked value: a session override (editor
+/// setting / initialization option) outranks `ripr.toml`, so a repository
+/// edit could not lift it (#6853 review).
 fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOutcome {
     let session_controlled = |key: &str| {
         matches!(

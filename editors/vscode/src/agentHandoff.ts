@@ -561,7 +561,13 @@ function nearestFindingDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic 
 }
 
 function isRiprFindingDiagnostic(diagnostic: vscode.Diagnostic): boolean {
-  if (diagnostic.source !== 'ripr' || isRiprGapDiagnostic(diagnostic) || isRiprSeamDiagnostic(diagnostic)) {
+  // An `exposed` finding has no gap to start a repair on.
+  if (
+    diagnostic.source !== 'ripr'
+    || isRiprGapDiagnostic(diagnostic)
+    || isRiprSeamDiagnostic(diagnostic)
+    || diagnosticCodeText(diagnostic) === 'exposed'
+  ) {
     return false;
   }
   const data = (diagnostic as { data?: unknown }).data;
@@ -915,7 +921,10 @@ export class AgentHandoffController {
       const finding = nearestFindingDiagnostic(editor);
       if (finding) {
         const generation = this.host.getStartGeneration();
-        const blocked = await this.serverBlockedStart(editor.document.uri, finding.range);
+        // Send only this finding: the server answers for the first finding
+        // diagnostic it is given, so an overlapping marker or exposed
+        // finding must not shadow it.
+        const blocked = await this.serverBlockedStart(editor.document.uri, finding.range, finding);
         if (
           !this.host.actionRootStillCurrent(generation, editor.document.uri, (target) =>
             this.host.copyActionRootBlocker(target)
@@ -1003,14 +1012,20 @@ export class AgentHandoffController {
    * the same ripr diagnostics VS Code would attach. `undefined` when no
    * client is running, the request fails, or no inert action names a reason.
    */
-  private async serverBlockedStart(uri: vscode.Uri, range: vscode.Range): Promise<BlockedRepairStart | undefined> {
+  private async serverBlockedStart(
+    uri: vscode.Uri,
+    range: vscode.Range,
+    only?: vscode.Diagnostic
+  ): Promise<BlockedRepairStart | undefined> {
     const client = this.host.getClient();
     if (!client) {
       return undefined;
     }
-    const diagnostics = vscode.languages
-      .getDiagnostics(uri)
-      .filter((diagnostic) => diagnostic.source === 'ripr' && diagnostic.range.intersection(range) !== undefined)
+    const diagnostics = (only
+      ? [only]
+      : vscode.languages
+        .getDiagnostics(uri)
+        .filter((diagnostic) => diagnostic.source === 'ripr' && diagnostic.range.intersection(range) !== undefined))
       .map(protocolDiagnostic);
     try {
       const actions = await client.sendRequest('textDocument/codeAction', {

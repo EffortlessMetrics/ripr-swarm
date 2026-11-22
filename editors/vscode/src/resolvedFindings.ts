@@ -36,10 +36,27 @@ export function resolvedFindingsNote(value: unknown): ResolvedFindingsNote | und
     .map((row) => (row && typeof row.text === 'string' ? row.text.trim() : ''))
     .filter((text) => text.length > 0);
   const omitted = count - lines.length;
-  if (omitted > 0) {
+  if (omitted > 0 && lines.length > 0) {
     lines.push(`+${omitted} more`);
   }
   return { count, lines };
+}
+
+/**
+ * Whether to announce `note`, given the key of the last announced row set,
+ * and the key to keep. The server recomputes the rows at each commit (a
+ * repeat commit has none), so a re-sent status with the same rows is not
+ * announced again, and a status with no rows resets the key.
+ */
+export function resolvedFindingsAnnouncement(
+  lastKey: string | undefined,
+  note: ResolvedFindingsNote | undefined
+): { announce: boolean; key: string | undefined } {
+  if (!note) {
+    return { announce: false, key: undefined };
+  }
+  const key = `${note.count}\n${note.lines.join('\n')}`;
+  return { announce: key !== lastKey, key };
 }
 
 /** The one-line message shown once per snapshot. */
@@ -48,5 +65,5 @@ export function resolvedFindingsMessage(note: ResolvedFindingsNote): string {
     ? 'ripr: 1 changed behavior is now exposed since the last analysis: a test appears to observe it (static evidence).'
     : `ripr: ${note.count} changed behaviors are now exposed since the last analysis: tests appear to observe them (static evidence).`;
   const first = note.lines[0];
-  return first && note.count === 1 ? `${head} ${first}` : head;
+  return first && note.count === 1 && !first.startsWith('+') ? `${head} ${first}` : head;
 }

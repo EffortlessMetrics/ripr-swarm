@@ -102,6 +102,7 @@ import {
 } from './repairFinish';
 import {
   AnalysisStatusResolvedFindings,
+  resolvedFindingsAnnouncement,
   resolvedFindingsMessage,
   resolvedFindingsNote,
 } from './resolvedFindings';
@@ -2455,12 +2456,9 @@ export class RiprClientController {
         // recomputes the rows at each commit (a repeat commit has none), so
         // the rows alone identify one transition.
         const resolved = resolvedFindingsNote(status.resolved_findings);
-        const resolvedKey = resolved ? `${resolved.count}\n${resolved.lines.join('\n')}` : undefined;
-        if (!resolved) {
-          this.lastResolvedFindingsSnapshot = undefined;
-        }
-        if (resolved && resolvedKey !== this.lastResolvedFindingsSnapshot) {
-          this.lastResolvedFindingsSnapshot = resolvedKey;
+        const announcement = resolvedFindingsAnnouncement(this.lastResolvedFindingsSnapshot, resolved);
+        this.lastResolvedFindingsSnapshot = announcement.key;
+        if (resolved && announcement.announce) {
           for (const line of resolved.lines) {
             this.output.appendLine(`ripr now exposed: ${line}`);
           }
