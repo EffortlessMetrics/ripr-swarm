@@ -201,10 +201,101 @@ fn a_renamed_or_shadowed_binding_lends_no_reach() -> Result<(), String> {
         "        const digest = (s: string) => s + \"=\";\n        expect(digest(\"a\")).toBe(\"a=\");\n",
     );
     assert_unreached("bind-shadowed", &pad_finding("bind-shadowed", &shadowed)?);
-    // A describe-level `impls` hides the file table from the loop.
+    // A describe-level `impls` hides the file table from the loop. The file
+    // table's text scan already refuses it (the second declaration is a
+    // mention that is not an enumeration); the scope guard is the backstop.
     let hidden = format!(
         "{HEADER}{TABLE}\ndescribe(\"inner\", () => {{\n  const impls = {{ js: {{ digest: (s: string) => s }} }};\n  for (const [name, {{ digest }}] of Object.entries(impls)) {{\n    it(name, () => {{\n{BODY}    }});\n  }}\n}});\n"
     );
     assert_unreached("bind-hidden", &pad_finding("bind-hidden", &hidden)?);
+    Ok(())
+}
+
+/// A loop body the same iteration by iteration, as `const` per iteration.
+fn loop_test(header: &str, body: &str) -> String {
+    format!("{HEADER}{TABLE}\n{header} {{\n{body}}}\n")
+}
+
+const ENTRIES: &str = "for (const [name, { digest }] of Object.entries(impls))";
+const PLAIN: &str = "  it(name, () => {\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n";
+
+#[test]
+fn only_a_const_binding_each_iteration_runs_lends_reach() -> Result<(), String> {
+    assert_reached(
+        "iter-twin",
+        &pad_finding("iter-twin", &loop_test(ENTRIES, PLAIN))?,
+    );
+    // `var`: one binding, read by every test after the loop ends, so every
+    // test runs the last entry's `digest`.
+    let shared = loop_test(
+        "for (var [name, { digest }] of Object.entries(impls))",
+        PLAIN,
+    );
+    assert_unreached("iter-var", &pad_finding("iter-var", &shared)?);
+    // `let` reassigned in the body: no test runs either export.
+    let reassigned = loop_test(
+        "for (let [name, { digest }] of Object.entries(impls))",
+        &format!("  digest = (s: string) => s + \"=\";\n{PLAIN}"),
+    );
+    assert_unreached("iter-let", &pad_finding("iter-let", &reassigned)?);
+    Ok(())
+}
+
+#[test]
+fn a_loop_that_may_skip_an_iteration_lends_no_reach() -> Result<(), String> {
+    assert_reached(
+        "skip-twin",
+        &pad_finding("skip-twin", &loop_test(ENTRIES, PLAIN))?,
+    );
+    let skipped = loop_test(
+        ENTRIES,
+        &format!("  if (name === \"js\") continue;\n{PLAIN}"),
+    );
+    assert_unreached("skip-continue", &pad_finding("skip-continue", &skipped)?);
+    let guarded = loop_test(
+        ENTRIES,
+        "  if (name !== \"js\") {\n    it(name, () => {\n      expect(digest(\"a\")).toBe(\"a=\");\n    });\n  }\n",
+    );
+    assert_unreached("skip-if", &pad_finding("skip-if", &guarded)?);
+    let short = loop_test(
+        ENTRIES,
+        "  name !== \"js\" && it(name, () => {\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n",
+    );
+    assert_unreached("skip-and", &pad_finding("skip-and", &short)?);
+    // Inside a suite callback the same holds.
+    let nested = loop_test(
+        ENTRIES,
+        "  describe(name, () => {\n    if (name === \"js\") return;\n    it(\"digest\", () => {\n      expect(digest(\"a\")).toBe(\"a=\");\n    });\n  });\n",
+    );
+    assert_unreached("skip-return", &pad_finding("skip-return", &nested)?);
+    // A test body that reads the key can skip its own call.
+    let body = loop_test(
+        ENTRIES,
+        "  it(\"digest\", () => {\n    if (name === \"js\") return;\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n",
+    );
+    assert_unreached("skip-body", &pad_finding("skip-body", &body)?);
+    // The key titling a suite or a test is not a skip.
+    let titled = loop_test(
+        ENTRIES,
+        "  describe(`impl ${name}`, () => {\n    it(name, () => {\n      expect(digest(\"a\")).toBe(\"a=\");\n    });\n  });\n",
+    );
+    assert_reached("skip-titled", &pad_finding("skip-titled", &titled)?);
+    Ok(())
+}
+
+#[test]
+fn an_exported_table_or_a_local_object_lends_no_reach() -> Result<(), String> {
+    assert_reached(
+        "bound-twin",
+        &pad_finding("bound-twin", &loop_test(ENTRIES, PLAIN))?,
+    );
+    // Another file can import an exported table and swap an entry.
+    let exported = format!("{HEADER}export {TABLE}\n{ENTRIES} {{\n{PLAIN}}}\n");
+    assert_unreached("bound-exported", &pad_finding("bound-exported", &exported)?);
+    // `Object.entries` must be the global.
+    let local = format!(
+        "{HEADER}const Object = {{ entries: (o: object) => [[\"js\", {{ digest: (s: string) => s + \"=\" }}]] }};\n{TABLE}\n{ENTRIES} {{\n{PLAIN}}}\n"
+    );
+    assert_unreached("bound-object", &pad_finding("bound-object", &local)?);
     Ok(())
 }

@@ -1248,14 +1248,21 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             // callback parameters shadow every enclosing binding. A member
             // destructured from a table of namespace imports is that member
             // of each namespace (#13592).
-            let members = scope.implementation_tables.loop_members(stmt, |name| {
-                scope
-                    .levels
-                    .iter()
-                    .skip(1)
-                    .flatten()
-                    .any(|(bound, _, _)| bound == name)
-            });
+            let members = scope
+                .implementation_tables
+                .loop_members(stmt, source.text(), |name| {
+                    // `Object` must be the global: no binding anywhere in
+                    // the file, the file level included, nor an import.
+                    let from = usize::from(name != "Object");
+                    scope
+                        .levels
+                        .iter()
+                        .skip(from)
+                        .flatten()
+                        .any(|(bound, _, _)| bound == name)
+                        || (name == "Object"
+                            && imports.iter().any(|import| import.local == "Object"))
+                });
             scope.levels.push(
                 loop_bindings
                     .into_iter()

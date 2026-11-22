@@ -1820,13 +1820,20 @@ and `for (const [name, { digest }] of Object.entries(impls))`, a bare
 be, and module-entry reach continues from it. `Object.values(impls)` with
 `{ digest }`, and an array table iterated directly, are the same. Refused:
 a table value that is not an identifier, a table naming no namespace import,
-a table name mentioned anywhere in the file except as the argument of
-`Object.entries(` / `Object.values(` or the iterable after `of` (so no write,
-alias or call can swap an entry), a table a describe or loop level
-re-declares, a renamed, defaulted or rest destructure (`{ digest: run }`),
-an `await` loop, and a body-local declaration of the name. The binding is the
-loop's own `const`, recorded on the test's scope binding as
-`namespace_member_of`; file-fact schema 14 carries it.
+an exported table (another file could swap an entry), a table name mentioned
+anywhere in the file except as the argument of `Object.entries(` /
+`Object.values(` or the iterable after `of` (so no write, alias or call can
+swap an entry), a table a describe or loop level re-declares, an `Object`
+the file binds or imports, a `var` or `let` loop binding (one shared or
+reassignable binding), a renamed, defaulted or rest destructure
+(`{ digest: run }`), an `await` loop, and a body-local declaration of the
+name. Every iteration must register the same tests: the path from the loop
+to its tests (the loop body and `describe` / `context` / `suite` callbacks)
+holds only declarations, call statements and blocks, with no `if`,
+`switch`, `continue`, `break`, `return`, `try`, label or `cond && it(...)`,
+and no test body or declaration on that path reads the `Object.entries`
+key (a suite or test title may). The binding is recorded on the test's
+scope binding as `namespace_member_of`; file-fact schema 14 carries it.
 
 Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,

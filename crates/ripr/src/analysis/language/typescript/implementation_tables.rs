@@ -59,13 +59,10 @@ impl ImplementationTables {
         };
         let mut tables = Vec::new();
         for statement in statements {
-            let declaration = match statement {
-                Statement::VariableDeclaration(declaration) => declaration,
-                Statement::ExportNamedDeclaration(export) => match &export.declaration {
-                    Some(Declaration::VariableDeclaration(declaration)) => declaration,
-                    _ => continue,
-                },
-                _ => continue,
+            // An exported table is refused: another file can import it and
+            // swap an entry where this file's text scan cannot see.
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
             };
             if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
                 || declaration.declare
@@ -116,21 +113,25 @@ impl ImplementationTables {
 
     /// The names a `for...of` header binds to a member of the table's
     /// namespace imports, each with those namespace locals. `shadowed` says
-    /// whether a scope between the file and the loop rebinds a name.
+    /// whether a scope between the file and the loop rebinds a name (for
+    /// `Object`, whether anything in the file binds it).
     pub(crate) fn loop_members(
         &self,
         statement: &Statement<'_>,
+        source: &str,
         shadowed: impl Fn(&str) -> bool,
     ) -> Vec<(String, Vec<String>)> {
         let Statement::ForOfStatement(for_of) = statement else {
             return Vec::new();
         };
-        self.for_of_members(for_of, &shadowed).unwrap_or_default()
+        self.for_of_members(for_of, source, &shadowed)
+            .unwrap_or_default()
     }
 
     fn for_of_members(
         &self,
         for_of: &ForOfStatement<'_>,
+        source: &str,
         shadowed: &impl Fn(&str) -> bool,
     ) -> Option<Vec<(String, Vec<String>)>> {
         if for_of.r#await {
@@ -139,11 +140,27 @@ impl ImplementationTables {
         let ForStatementLeft::VariableDeclaration(declaration) = &for_of.left else {
             return None;
         };
+        // A `var` loop binding is one shared binding every test reads after
+        // the loop ends, and a `let` one can be reassigned in the body: only
+        // a `const` holds each iteration's member for that iteration's tests.
+        if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+            return None;
+        }
         let [declarator] = declaration.declarations.as_slice() else {
             return None;
         };
         let (table_name, enumeration) = iterated_table(&for_of.right)?;
-        if shadowed(table_name) {
+        if shadowed(table_name) || (enumeration != Enumeration::Direct && shadowed("Object")) {
+            return None;
+        }
+        // Every iteration must register the same tests: a skipped iteration
+        // (`if (name === "js") continue;`) would credit a namespace no test
+        // runs.
+        let body = match &for_of.body {
+            Statement::BlockStatement(block) => block.body.as_slice(),
+            single => std::slice::from_ref(single),
+        };
+        if !registers_unconditionally(body) {
             return None;
         }
         let table = self.tables.iter().find(|table| table.name == table_name)?;
@@ -151,6 +168,13 @@ impl ImplementationTables {
             // `Object.entries(T)` yields `[key, value]` pairs.
             (Enumeration::Entries, _, BindingPattern::ArrayPattern(pair)) => {
                 if pair.rest.is_some() || pair.elements.len() != 2 {
+                    return None;
+                }
+                // The key may title a registration; a test body that reads it
+                // can choose to skip the call on one iteration.
+                if let Some(Some(BindingPattern::BindingIdentifier(key))) = pair.elements.first()
+                    && test_bodies_mention(body, source, key.name.as_str())
+                {
                     return None;
                 }
                 pair.elements.get(1)?.as_ref()?
@@ -206,6 +230,99 @@ fn iterated_table<'a>(right: &'a Expression<'a>) -> Option<(&'a str, Enumeration
         }
         _ => None,
     }
+}
+
+/// The statements between the loop and its tests run the same way on every
+/// iteration: only declarations, call statements and blocks, recursing into
+/// the callback of a `describe` / `context` / `suite` call. No `if`,
+/// `switch`, `continue`, `break`, `return`, `try`, label or conditional
+/// expression statement (`cond && it(...)`) on that path.
+fn registers_unconditionally(statements: &[Statement<'_>]) -> bool {
+    statements.iter().all(|statement| match statement {
+        Statement::VariableDeclaration(_) | Statement::EmptyStatement(_) => true,
+        Statement::BlockStatement(block) => registers_unconditionally(&block.body),
+        Statement::ExpressionStatement(expression) => {
+            let Expression::CallExpression(call) = &expression.expression else {
+                return false;
+            };
+            if !matches!(&call.callee, Expression::Identifier(callee) if matches!(callee.name.as_str(), "describe" | "context" | "suite"))
+            {
+                return true;
+            }
+            call.arguments.iter().all(|argument| match argument {
+                Argument::ArrowFunctionExpression(function) => {
+                    registers_unconditionally(&function.body.statements)
+                }
+                Argument::FunctionExpression(function) => function
+                    .body
+                    .as_ref()
+                    .is_none_or(|body| registers_unconditionally(&body.statements)),
+                _ => true,
+            })
+        }
+        _ => false,
+    })
+}
+
+/// Whether `name` appears in the callback of any call statement on the
+/// registration path that is not a suite (`it`, `test`, a hook): the test
+/// bodies. A suite's own arguments (its title) may mention it.
+fn test_bodies_mention(statements: &[Statement<'_>], source: &str, name: &str) -> bool {
+    statements.iter().any(|statement| match statement {
+        Statement::BlockStatement(block) => test_bodies_mention(&block.body, source, name),
+        Statement::ExpressionStatement(expression) => {
+            let Expression::CallExpression(call) = &expression.expression else {
+                return false;
+            };
+            let suite = matches!(&call.callee, Expression::Identifier(callee) if matches!(callee.name.as_str(), "describe" | "context" | "suite"));
+            call.arguments.iter().any(|argument| {
+                let (span, statements) = match argument {
+                    Argument::ArrowFunctionExpression(function) => {
+                        (function.span, Some(&function.body.statements))
+                    }
+                    Argument::FunctionExpression(function) => {
+                        (function.span, function.body.as_ref().map(|body| &body.statements))
+                    }
+                    _ => return false,
+                };
+                if suite {
+                    statements.is_some_and(|inner| test_bodies_mention(inner, source, name))
+                } else {
+                    mentions_identifier(
+                        source
+                            .get(span.start as usize..span.end as usize)
+                            .unwrap_or(""),
+                        name,
+                    )
+                }
+            })
+        }
+        // A declaration on the registration path that reads the key (`const
+        // skip = name === "js"`) can feed a test body.
+        Statement::VariableDeclaration(declaration) => mentions_identifier(
+            source
+                .get(declaration.span.start as usize..declaration.span.end as usize)
+                .unwrap_or(""),
+            name,
+        ),
+        _ => false,
+    })
+}
+
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let mut from = 0;
+    while let Some(found) = text.get(from..).and_then(|rest| rest.find(name)) {
+        let start = from + found;
+        let end = start + name.len();
+        from = end;
+        let before = text.get(..start).and_then(|t| t.chars().next_back());
+        let after = text.get(end..).and_then(|t| t.chars().next());
+        if !before.is_some_and(is_ident) && !after.is_some_and(is_ident) {
+            return true;
+        }
+    }
+    false
 }
 
 /// `{ digest }`: the key is the bound name, with no default.
