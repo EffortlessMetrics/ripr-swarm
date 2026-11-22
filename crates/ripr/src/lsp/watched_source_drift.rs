@@ -43,7 +43,7 @@ pub(super) fn committed_source_watchers(
     root_uri: Option<&Uri>,
     absolute_root: &str,
 ) -> Vec<LSPAny> {
-    let extensions = ["rs", "py", "pm", "pl", "t"]
+    let extensions = ["rs", "py", "pm", "pl", "t", "psgi"]
         .iter()
         .chain(crate::analysis::TYPESCRIPT_SOURCE_EXTENSIONS)
         .chain(crate::analysis::JAVASCRIPT_SOURCE_EXTENSIONS)
@@ -134,9 +134,13 @@ fn paths_match_on(left: &Path, right: &Path, case_insensitive: bool) -> bool {
 ///   the same bytes twice.
 /// - A path with a captured commitment drifts only when its current bytes
 ///   hash differently or cannot be read, so a `touch` schedules nothing.
-/// - A path without a commitment (a non-Rust source) drifts when it carries
-///   committed diagnostics: `Changed` has nothing to compare against, and
-///   `Deleted` must be confirmed by the file actually being gone.
+/// - A path without a commitment drifts when it carries committed
+///   diagnostics: `Changed` has nothing to compare against, and `Deleted`
+///   must be confirmed by the file actually being gone.
+/// - A Python, TypeScript, JavaScript or Perl source never has a commitment,
+///   so a change to one outside dependency and build directories drifts
+///   whether or not it carries diagnostics, and a deletion drifts once the
+///   file is confirmed gone (see [`is_uncaptured_script_source`]).
 /// - A deleted directory drifts when it is gone and covered a committed
 ///   source or a diagnostics URI. The registered deletion glob covers every
 ///   path under the root, so a folder deleted as one entry reaches here.
@@ -215,14 +219,16 @@ fn event_drifts_committed_source(
         .related_test_files
         .iter()
         .any(|file| paths_match_on(file, &relative, case_insensitive));
+    let is_uncaptured_script_source = is_uncaptured_script_source(&relative);
     if !deleted {
-        return carries_diagnostics || is_related_test;
+        return carries_diagnostics || is_related_test || is_uncaptured_script_source;
     }
     // The delete watcher covers every path under the root, so most events
     // (build output, editor scratch files) name nothing committed: answer that
     // from memory first and touch the filesystem only for a covered path.
     let covers_committed_input = carries_diagnostics
         || is_related_test
+        || is_uncaptured_script_source
         || committed
             .related_test_files
             .iter()
@@ -237,6 +243,46 @@ fn event_drifts_committed_source(
     // `symlink_metadata` so a dangling link left behind still reads as present
     // (the event named the entry, not its target).
     covers_committed_input && std::fs::symlink_metadata(&path).is_err()
+}
+
+/// Whether `relative` is a Python, TypeScript, JavaScript or Perl source the
+/// analysis would read, for which a snapshot holds no captured bytes.
+///
+/// Only Rust sources are captured (`ConsumedRustSources`), so for these
+/// languages there is nothing to compare a rewrite against. A snapshot with no
+/// diagnostics on such a file therefore knows nothing about it: before this
+/// rule, a clean Python or TypeScript file rewritten outside the editor kept
+/// its clean result until the next save inside the editor, while the same
+/// rewrite of a Rust file refreshed. The event is treated as drift instead,
+/// which costs at most one interactive refresh for a `touch`.
+///
+/// Dependency, environment and build directories are left out so an install
+/// or a build that rewrites thousands of files schedules nothing. The
+/// predicates are each producer's own static walk rule. A configured
+/// handwritten-file override inside an excluded TypeScript directory is not
+/// consulted here; such a file refreshes on save or on `ripr.refresh`.
+fn is_uncaptured_script_source(relative: &Path) -> bool {
+    if relative
+        .extension()
+        .is_some_and(|extension| extension == "rs")
+    {
+        return false;
+    }
+    // Each language's own walk rule: Python environments are not TypeScript
+    // exclusions, and TypeScript build output is not a Python exclusion.
+    let excluded_by_adapter = match crate::analysis::route(relative) {
+        None | Some(crate::domain::LanguageId::Rust) => return false,
+        Some(crate::domain::LanguageId::Python) => {
+            crate::config::is_detectable_excluded_python_path(relative)
+        }
+        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript) => {
+            crate::config::is_detectable_excluded_typescript_path(relative)
+                || crate::config::is_detectable_generated_typescript_path(relative)
+        }
+        Some(crate::domain::LanguageId::Perl) => false,
+    };
+    let normalized = relative.to_string_lossy().replace('\\', "/");
+    !excluded_by_adapter && !crate::analysis::path_enters_ignored_dir(&normalized)
 }
 
 #[cfg(test)]
@@ -403,21 +449,177 @@ mod tests {
     #[test]
     fn uncommitted_paths_drift_only_when_they_carry_diagnostics() -> Result<(), String> {
         let root = temp_root("uncommitted")?;
-        write(&root.0, "src/app.py", b"x = 1\n")?;
-        write(&root.0, "src/other.py", b"y = 1\n")?;
+        // Not a source of any analyzed language: nothing routes these files,
+        // so the committed diagnostics are the only reason to refresh.
+        write(&root.0, "src/app.txt", b"x = 1\n")?;
+        write(&root.0, "src/other.txt", b"y = 1\n")?;
         let sources = ConsumedRustSources::default();
-        let carried = [file_uri_for_path(&root.0.join("src/app.py"))?];
+        let carried = [file_uri_for_path(&root.0.join("src/app.txt"))?];
 
-        let changed_carrier = [event(&root.0, "src/app.py", FileChangeType::CHANGED)?];
-        let changed_other = [event(&root.0, "src/other.py", FileChangeType::CHANGED)?];
+        let changed_carrier = [event(&root.0, "src/app.txt", FileChangeType::CHANGED)?];
+        let changed_other = [event(&root.0, "src/other.txt", FileChangeType::CHANGED)?];
         assert!(drifts(&root.0, &sources, &carried, &changed_carrier, &[]));
         assert!(!drifts(&root.0, &sources, &carried, &changed_other, &[]));
 
         // A delete event is confirmed against the filesystem.
-        let deleted_carrier = [event(&root.0, "src/app.py", FileChangeType::DELETED)?];
+        let deleted_carrier = [event(&root.0, "src/app.txt", FileChangeType::DELETED)?];
         assert!(!drifts(&root.0, &sources, &carried, &deleted_carrier, &[]));
-        std::fs::remove_file(root.0.join("src/app.py")).map_err(|err| format!("remove: {err}"))?;
+        std::fs::remove_file(root.0.join("src/app.txt")).map_err(|err| format!("remove: {err}"))?;
         assert!(drifts(&root.0, &sources, &carried, &deleted_carrier, &[]));
+        Ok(())
+    }
+
+    /// A clean Python or TypeScript file carries no diagnostics and has no
+    /// captured bytes, so the snapshot cannot tell that a rewrite outside the
+    /// editor left it unchanged. It must refresh, as a Rust rewrite does.
+    #[test]
+    fn rewritten_script_source_without_diagnostics_drifts() -> Result<(), String> {
+        let root = temp_root("script-source")?;
+        let sources = consumed(&[("src/lib.rs", b"pub fn f() {}\n")]);
+        for relative in [
+            "src/pricing.py",
+            "src/pricing.ts",
+            "src/pricing.tsx",
+            "src/pricing.js",
+            "lib/Pricing.pm",
+        ] {
+            if let Some(parent) = root.0.join(relative).parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("create dir: {err}"))?;
+            }
+            write(&root.0, relative, b"rewritten\n")?;
+            let changed = event(&root.0, relative, FileChangeType::CHANGED)?;
+            assert!(
+                drifts(&root.0, &sources, &[], std::slice::from_ref(&changed), &[]),
+                "a rewrite of {relative} must schedule a refresh"
+            );
+            // Open: document sync owns the buffer and its saves.
+            assert!(
+                !drifts(
+                    &root.0,
+                    &sources,
+                    &[],
+                    std::slice::from_ref(&changed),
+                    std::slice::from_ref(&changed.uri),
+                ),
+                "an open {relative} is left to document sync"
+            );
+            // Created: still never drift.
+            let created = [event(&root.0, relative, FileChangeType::CREATED)?];
+            assert!(!drifts(&root.0, &sources, &[], &created, &[]));
+            // Deleted: only once the file is actually gone.
+            let deleted = [event(&root.0, relative, FileChangeType::DELETED)?];
+            assert!(!drifts(&root.0, &sources, &[], &deleted, &[]));
+            std::fs::remove_file(root.0.join(relative)).map_err(|err| format!("remove: {err}"))?;
+            assert!(drifts(&root.0, &sources, &[], &deleted, &[]));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn script_sources_in_dependency_and_build_directories_do_not_drift() -> Result<(), String> {
+        let root = temp_root("script-ignored")?;
+        let sources = ConsumedRustSources::default();
+        for relative in [
+            "node_modules/pkg/index.js",
+            "web/node_modules/pkg/index.ts",
+            ".venv/lib/site.py",
+            "venv/lib/site.py",
+            "target/debug/build/gen.py",
+            ".git/hooks/pre-commit.py",
+            "pkg/__pycache__/cached.py",
+        ] {
+            if let Some(parent) = root.0.join(relative).parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("create dir: {err}"))?;
+            }
+            write(&root.0, relative, b"rewritten\n")?;
+            let changed = [event(&root.0, relative, FileChangeType::CHANGED)?];
+            assert!(
+                !drifts(&root.0, &sources, &[], &changed, &[]),
+                "{relative} is not a workspace source and must schedule nothing"
+            );
+        }
+        // Control: the same file name outside those directories drifts.
+        write(&root.0, "src/index.js", b"rewritten\n")?;
+        let changed = [event(&root.0, "src/index.js", FileChangeType::CHANGED)?];
+        assert!(drifts(&root.0, &sources, &[], &changed, &[]));
+        Ok(())
+    }
+
+    /// Each language is held to its own walk rule. `env` is a Python
+    /// environment name and an ordinary TypeScript directory; `out` is
+    /// TypeScript build output and an ordinary Python package name.
+    #[test]
+    fn script_exclusions_follow_the_language_of_the_file() -> Result<(), String> {
+        let root = temp_root("script-language-rules")?;
+        let sources = ConsumedRustSources::default();
+        for (relative, expected) in [
+            ("src/env/pricing.ts", true),
+            ("env/lib/site.py", false),
+            ("out/bundle.js", false),
+            ("dist/index.ts", false),
+            ("out/report.py", true),
+            ("app.psgi", true),
+        ] {
+            if let Some(parent) = root.0.join(relative).parent() {
+                std::fs::create_dir_all(parent).map_err(|err| format!("create dir: {err}"))?;
+            }
+            write(&root.0, relative, b"rewritten\n")?;
+            let changed = [event(&root.0, relative, FileChangeType::CHANGED)?];
+            assert_eq!(
+                drifts(&root.0, &sources, &[], &changed, &[]),
+                expected,
+                "{relative}"
+            );
+        }
+        Ok(())
+    }
+
+    /// A drift rule only matters for a path the client is asked to report:
+    /// every extension the router sends to an adapter is in the change glob.
+    #[test]
+    fn change_registration_covers_every_routed_extension() -> Result<(), String> {
+        let watchers = committed_source_watchers(None, "/workspace");
+        let change_glob = watchers
+            .iter()
+            .find(|watcher| watcher.get("kind") == Some(&serde_json::json!(WATCH_CHANGE)))
+            .and_then(|watcher| watcher.get("globPattern"))
+            .and_then(|glob| glob.as_str())
+            .ok_or_else(|| format!("no change registration in {watchers:?}"))?;
+        let listed = change_glob
+            .rsplit_once('{')
+            .and_then(|(_, tail)| tail.strip_suffix('}'))
+            .ok_or_else(|| format!("change glob lists no extensions: {change_glob}"))?
+            .split(',')
+            .collect::<Vec<_>>();
+        for extension in ["rs", "py", "ts", "tsx", "js", "pm", "pl", "t", "psgi"] {
+            let routed = crate::analysis::route(Path::new(&format!("file.{extension}")));
+            assert!(routed.is_some(), "fixture: .{extension} must be routed");
+            assert!(
+                listed.contains(&extension),
+                ".{extension} is routed to an adapter but missing from the change glob {change_glob}"
+            );
+        }
+        Ok(())
+    }
+
+    /// The rule is for languages without captured bytes. A Rust file the
+    /// snapshot did not capture keeps the earlier answer, and a captured one
+    /// is still compared by digest, so a `touch` schedules nothing.
+    #[test]
+    fn rust_sources_keep_the_captured_bytes_rule() -> Result<(), String> {
+        let root = temp_root("script-rust-control")?;
+        let analyzed = b"pub fn f() {}\n";
+        write(&root.0, "src/lib.rs", analyzed)?;
+        write(&root.0, "src/uncaptured.rs", b"pub fn g() {}\n")?;
+        let sources = consumed(&[("src/lib.rs", analyzed)]);
+        let touched = [event(&root.0, "src/lib.rs", FileChangeType::CHANGED)?];
+        assert!(!drifts(&root.0, &sources, &[], &touched, &[]));
+        let uncaptured = [event(
+            &root.0,
+            "src/uncaptured.rs",
+            FileChangeType::CHANGED,
+        )?];
+        assert!(!drifts(&root.0, &sources, &[], &uncaptured, &[]));
         Ok(())
     }
 

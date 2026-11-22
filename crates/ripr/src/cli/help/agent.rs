@@ -53,7 +53,7 @@ Options:
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
-  --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
+  --out PATH       Workflow output directory (relative to --root; must stay inside it). Defaults to target/ripr/workflow.
   --json           Emit one machine-readable JSON document instead of the
                    `Wrote <path>` / `Next: <cmd>` prose lines:
                      {"schema_version": "0.1", "workflow": {"workflow_manifest": <path>,

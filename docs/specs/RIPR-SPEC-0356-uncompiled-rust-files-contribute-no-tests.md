@@ -341,8 +341,10 @@ change.
   mode. `[[example]] test = true` reads `exposed` in every mode except
   `instant`, which does not index `examples/` and reads `no_static_path` on
   base too. An `autobins = false` `src/main.rs` that another member mounts
-  through `#[path]` reads `exposed` in every mode. The withheld shapes read
-  exactly `no_static_path` in every mode: the undiscovered bin and lib, a
+  through `#[path]` reads `exposed` in every mode. The undiscovered bin and
+  lib report no finding in any mode, since no build compiles their change
+  (#15877). The other withheld shapes read
+  exactly `no_static_path` in every mode: a
   default example, a multi-file `examples/demo/` directory, an `[[example]]
   test = true` whose `required-features` are unmet, and an example whose
   `required-features` are on by default but which leaves `test` at `false`.

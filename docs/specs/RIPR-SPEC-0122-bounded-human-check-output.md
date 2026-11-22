@@ -217,6 +217,15 @@ unrooted relative paths retain the shared renderer's fallback spelling and
 encoding. This presentation rule also applies when no finding is selected;
 it does not re-coordinate base-side findings or change their currentness.
 
+When `ripr check` runs from a directory strictly below an absolute analysis
+root, the human location rows (the `File:` digest row, the arm-head note,
+owner opt-out and suppression-selector rows, and triage rows) replace the
+leading `./` with one `../` per directory between the invocation directory and
+the root, so a copied path opens from where the command ran (#15473). At the
+root, with a relative root, or for a path outside the root, the text is the
+shared renderer's byte for byte. The finding header line, `--format agent`,
+JSON, MCP, LSP and selector identities keep the shared `./` spelling.
+
 When the hidden identity list exceeds its 20-row window, its remainder
 line names `--format json with RIPR_CHECK_FINDINGS_BYTES=0` for every identity.
 Default check JSON has its own findings-array byte budget; the explicit
@@ -536,7 +545,10 @@ function has no seam of that kind, nothing is printed. When the location is
 ambiguous and ripr cannot narrow it to a validated stub (more than eight seams
 to check, an inventory that cannot be classified, or a seam missing from it),
 the block prints `No test stub here:` with a plain reason that lists no seam ID
-and no command. A seam that is not a reported gap is worded as a stub target
+and no command. For ambiguous choices in one scoped file, a check evaluates the
+union of eligible seam IDs from the displayed rows once against the full
+evidence corpus. Each row retains its candidate order and its own eight-seam
+limit after expression narrowing (#15682). A seam that is not a reported gap is worded as a stub target
 that is not a gap in the seam view, with a pointer to strengthen the existing
 test, and gets no hand-written step. The resolver reads the files on disk, so a check
 that analyzed other bytes (`--candidate-tree`, or a committed-history diff
@@ -658,7 +670,7 @@ literal the owner does not return are refused by name.
 | State | Meaning |
 | --- | --- |
 | `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. The human action line points at the instruction the digest prints (#14173): `Safe next action: follow the Next step below; this is static advisory evidence only` when the digest carries a `Next step` line, and `Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only` when it carries none. |
-| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
+| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` (a run whose only findings are removed lines reads `every finding left is on removed code, which is never an edit target`; see Removed-code-only runs) and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
 | `preview_limited` | The selected finding is from a preview-language adapter; evidence is advisory until the preview contract explicitly promotes it. |
 | `static_limited` | The selected finding is no-path, unknown, or carries a producer-owned typed static limitation. A typed limitation remains authoritative even when the retained classification is `reachable_unrevealed` or `weakly_exposed`; inspect the named limitation before treating it as repair-ready. When a selected `no_static_path` finding has no typed limitation, review the unresolved static path and existing tests instead. The finding classification does not change. |
 | `missing_scope` | The run produced no findings because no analysis scope was provided. This empty output is not an all-clear. |
@@ -998,8 +1010,13 @@ unchanged, and the lines claim no runtime outcome.
 ### Removed-code-only runs (#15335)
 
 When no finding is selected and every omitted finding is a removed line
-(`source_currentness: base_deleted`), the `Safe next action` line says that
-the diff removes code, that removed code is never an edit target, and so
+(`source_currentness: base_deleted`), the `State:` line reads `every finding
+left is on removed code, which is never an edit target` instead of `no gap
+selected for repair`. It describes the findings left after suppression, not
+the whole diff: a policy-suppressed finding on added code is not counted, so
+the line does not claim the diff only removes code.
+
+The `Safe next action` line says that the diff removes code, that removed code is never an edit target, and so
 nothing is selected for repair. It then gives the static evidence on the
 removed code as class counts in the Summary line's plain words and order
 (`appear noticed by tests`, `partly noticed`, `reached but not noticed`,
@@ -1010,7 +1027,7 @@ does not say "before treating this run as actionable", which read as
 "nothing to look at" for a removal that tests reach.
 
 Any other no-selection mix (a moved or renamed line, unresolved currentness,
-or a mix of those) keeps the earlier wording. The State id
+or a mix of those) keeps the earlier wording on both lines. The State id
 (`no_actionable_gap`), the Hidden list, the counts, repair routing and every
 machine format are unchanged; the line claims no runtime outcome.
 

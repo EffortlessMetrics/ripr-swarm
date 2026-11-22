@@ -252,6 +252,17 @@ answers no credit.
   operand is a bare owner call (no wrapper, no local argument) whose
   arguments are `true`/`false` or integer expressions that fold with no
   bindings (`100`, `50 + 50`).
+- An integration test may spell that owner call through the package's own
+  library path with no `use` (`shipping::shipping_cost(100, true)`,
+  `shipping::rates::shipping_cost(..)`). The path is read as the bare owner
+  call only when the relation's own-crate authority
+  (`own_crate_qualified_entry_path`, #8999/#9638) establishes it: the test
+  is a test-crate root under the root package's `tests/`, the owner is a
+  module-level item of that package's library, the path is exactly
+  `<library name>::<module path>::<owner>`, and nothing in the file or the
+  test body declares, imports, renames or globs the library name. Any other
+  qualified spelling (a rebound crate name, a longer or wrong path, a module
+  child of the test crate, another package) stays unevaluated.
 - The other compared operand is a value the test fixes itself: `true`,
   `false` or an integer expression that folds with no bindings, read through
   a `let` when it names one. An expected value computed by calling code
@@ -329,6 +340,11 @@ local wraps, so the call takes the other branch) and
 `fixtures/rust_computed_return_tail_primitive_alias` (not promoted: the
 same wrap through `pub type i32 = u8;`) pin both sides in the
 evidence-promotion honesty corpus.
+`fixtures/rust_computed_return_tail_crate_qualified` (promoted: the pin is
+spelled through the package's own library path) and
+`fixtures/rust_computed_return_tail_crate_rebound` (not promoted: the test
+file declares a module with the library's name) pin the own-crate spelling
+there too.
 
 ## Test Mapping
 
@@ -368,6 +384,18 @@ evidence-promotion honesty corpus.
 - `crates/ripr/tests/computed_return_tail_13037.rs::a_wrapping_local_a_static_or_a_shadowing_closure_is_not_credited`
 - `crates/ripr/tests/computed_return_tail_13037.rs::an_expected_value_the_test_computes_by_calling_code_is_not_credited`
 - `crates/ripr/tests/computed_return_tail_13037.rs::a_release_elided_assertion_or_a_glob_import_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_crate_qualified_exact_pin_that_reaches_the_branch_is_exposed`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::the_bare_imported_spelling_keeps_its_credit`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_crate_qualified_pin_through_a_library_module_is_exposed`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::the_library_target_name_is_the_spelling_that_counts`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_qualified_pin_from_the_other_branch_only_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_rebound_crate_name_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::another_path_ending_in_the_owner_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_transformed_or_wrapped_qualified_call_is_not_a_pin`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_test_outside_the_test_crate_root_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::an_explicit_library_name_is_the_spelling_that_counts`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::an_expected_name_bound_twice_resolves_to_the_binding_in_scope`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_let_bound_qualified_call_reads_like_the_bare_let_bound_call`
 
 ## Implementation Mapping
 
@@ -379,6 +407,11 @@ evidence-promotion honesty corpus.
   downgrade in `best_oracle`.
 - `crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs`:
   `return_seam_tail_reached_by_call` (#13037).
+- `crates/ripr/src/analysis/classify/related_tests.rs`:
+  `own_crate_qualified_owner_path`, the own-crate spelling the admission
+  establishes; `return_seam_tail_reached_by_call` reads the assertion and
+  the test body with that path spelled bare (`spell_path_bare`), so a `let`
+  the assertion names is still selected by the assertion's position.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: the `reached_tail_pin`
   admission; `crates/ripr/src/analysis/classify/reveal.rs`: its use in
   observation confirmation.

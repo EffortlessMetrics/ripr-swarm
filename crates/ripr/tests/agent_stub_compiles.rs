@@ -3276,6 +3276,8 @@ fn existing_target_scratch(
 /// `[[test]]` exists, so the file is not a registered target and no command is
 /// offered; edition 2018+ still auto-discovers, and `autotests = true` restores
 /// discovery in 2015. The human output says the file is not a registered target.
+/// #15877: Cargo never builds the undiscovered `tests/discount.rs`, so it is not
+/// a related test and the stub proposes a new file, which is equally unregistered.
 #[test]
 fn legacy_edition_discovery_fails_closed_and_controls_register() -> Result<(), String> {
     let other = "\n[[test]]\nname = \"other\"\npath = \"tests/other.rs\"\n";
@@ -3308,13 +3310,20 @@ fn legacy_edition_discovery_fails_closed_and_controls_register() -> Result<(), S
             let text = String::from_utf8_lossy(&out.stdout).to_string();
             assert!(
                 out.status.success()
-                    && text.contains("tests/discount.rs is not a registered cargo test target"),
+                    && text.contains(
+                        "tests/discount_boundary.rs is not a registered cargo test target"
+                    ),
                 "{edition}: {text}"
             );
         }
         let document = stub_json(root, "src/lib.rs:2")?;
         let case = format!("{edition} {tail}: {document}");
-        assert_eq!(document["placement"]["file"], "tests/discount.rs", "{case}");
+        let placed = if registered {
+            "tests/discount.rs"
+        } else {
+            "tests/discount_boundary.rs"
+        };
+        assert_eq!(document["placement"]["file"], placed, "{case}");
         if registered {
             let run = document["run_command"].as_str().ok_or(case.clone())?;
             assert!(run.contains("--test discount "), "{case}");

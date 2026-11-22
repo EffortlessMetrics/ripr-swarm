@@ -90,9 +90,13 @@ profile fields.
   the bytes the committed snapshot consumed (deleted, renamed away, or
   rewritten outside the editor) schedules one diagnostics refresh. For a
   Rust source the snapshot recorded as consumed, an event for unchanged
-  bytes schedules none. Other sources have no recorded bytes to compare:
-  they are covered only while they carry committed diagnostics, and a
-  Changed event for one always refreshes. A test file that a committed
+  bytes schedules none. Python, TypeScript, JavaScript and Perl sources
+  have no recorded bytes to compare, so a Changed event for one outside
+  dependency, environment and build directories always refreshes, whether
+  or not it carries committed diagnostics: a clean file rewritten outside
+  the editor must not keep its clean result. Any other path without
+  recorded bytes is covered only while it carries committed diagnostics. A
+  test file that a committed
   finding lists as a related test, but whose bytes the snapshot never
   recorded, has nothing to compare either: a Changed event refreshes, and a
   deletion refreshes once the file is confirmed gone. The delete watcher
@@ -296,7 +300,13 @@ and never the raw capability document or the client name.
   — a rewritten or deleted committed source drifts, while unchanged bytes,
   open documents, created files and paths outside the root do not; a related
   test with no captured bytes and a deleted folder covering committed files
-  drift too (#14099).
+  drift too (#14099). A rewritten Python, TypeScript, JavaScript or Perl
+  source drifts without carrying diagnostics, except under dependency and
+  build directories.
+- `crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::external_rewrite_of_a_clean_source_refreshes_in_every_language`
+  — the real server refreshes on the watched-file event alone for a clean
+  Rust, Python and TypeScript source and then serves the findings a fresh
+  server serves.
 - `crates/ripr/tests/lsp_lifecycle.rs::deleting_an_unopened_file_outside_the_editor_retracts_its_diagnostics`
   — the real server retracts a deleted file's diagnostics from the
   watched-file event alone.
