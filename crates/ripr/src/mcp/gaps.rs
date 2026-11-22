@@ -1063,10 +1063,11 @@ pub(super) fn finding_guidance(item: &GapItem) -> Value {
 
 /// Budget items for the shared [`crate::lsp::diagnostic_budget`] authority.
 /// Eligibility is the producer's candidate-actionability predicate captured
-/// at projection time; MCP does not invent its own filter or ranking. The
-/// selection key uses the same unset (128) ranks the LSP delivery bridge
-/// uses, so the budget's evidence-owned order (selection key, then canonical
-/// id, then document) is the only ordering applied.
+/// at projection time; MCP does not invent its own filter or ranking. Every
+/// item here is a gap from the analyzed change, so they share one unset
+/// (128) selection key and the budget's canonical-id-then-document order is
+/// the only ordering applied. (The LSP bridge ranks the same findings ahead
+/// of repository seam inventory rows, which this list never carries.)
 pub(crate) fn budget_items(
     items: &[GapItem],
 ) -> Vec<crate::lsp::diagnostic_budget::DiagnosticBudgetItem> {
