@@ -16,7 +16,7 @@ mod both_diff_versions;
 mod call_budget;
 mod claims_payload_pin;
 mod framework_snapshot;
-mod local_operand_alias;
+pub(in crate::analysis) mod local_operand_alias;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
