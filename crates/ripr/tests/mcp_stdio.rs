@@ -7367,16 +7367,10 @@ fn weak_boundary_naming_its_discriminator_is_repair_ready_only_where_the_cli_adm
     Ok(())
 }
 
-/// `ripr_refresh` `source: "worktree"` (#7357): the opt-in saved
-/// tracked-worktree input. Real temporary tracked Git repository, production
-/// stdio, committed -> worktree -> committed switching with an equal-findings
-/// control, staged-only / unstaged-only / mixed edits, failed-refresh
-/// retention with distinct requested and captured source, and withheld
-/// repair claims.
-#[cfg(feature = "lang-rust")]
 /// #13096 worktree leg: a worktree refresh over a tests-only range names the
 /// base retry, and following it keeps worktree custody. The checkout has no
 /// tracked edit, where an omitted `source` would select committed input.
+#[cfg(feature = "lang-rust")]
 #[test]
 fn worktree_tests_only_refresh_names_a_retry_that_keeps_the_worktree_source() -> Result<(), String>
 {
@@ -7428,6 +7422,13 @@ fn worktree_tests_only_refresh_names_a_retry_that_keeps_the_worktree_source() ->
     Ok(())
 }
 
+/// `ripr_refresh` `source: "worktree"` (#7357): the opt-in saved
+/// tracked-worktree input. Real temporary tracked Git repository, production
+/// stdio, committed -> worktree -> committed switching with an equal-findings
+/// control, staged-only / unstaged-only / mixed edits, failed-refresh
+/// retention with distinct requested and captured source, and withheld
+/// repair claims.
+#[cfg(feature = "lang-rust")]
 #[test]
 fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse()
 -> Result<(), String> {
