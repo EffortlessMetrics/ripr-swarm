@@ -12,6 +12,12 @@
 use crate::domain::{ExposureClass, Finding};
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Per-process fixture sequence. A wall-clock name collides on Windows, where
+/// parallel tests in one binary often read the same `SystemTime`, so one
+/// case's cleanup removed a tree another case was still using (#16105).
+static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 const CALC: &str =
     "def discount(total):\n    if total >= 100:\n        return total - 10\n    return total\n";
@@ -1470,12 +1476,9 @@ fn check_style(
     }
     let after = before.replacen(edit.old, edit.new, 1);
     let diff = single_line_diff(edit, before)?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| format!("system time: {error}"))?
-        .as_nanos();
+    let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
-        "ripr-python-test-style-{}-{stamp}",
+        "ripr-python-test-style-{}-{sequence}",
         std::process::id()
     ));
     let result = (|| -> Result<Finding, String> {
@@ -1515,11 +1518,25 @@ fn check_style(
             _ => Err(format!("{name}: expected exactly one finding")),
         }
     })();
-    let cleanup = fs::remove_dir_all(&root)
-        .map_err(|error| format!("{name}: remove {}: {error}", root.display()));
-    let finding = result?;
-    cleanup?;
-    Ok(finding)
+    remove_fixture(&root, name);
+    result
+}
+
+/// Remove a fixture tree. Removing temp state is not this matrix's claim: on
+/// Windows a scanner or indexer can still hold a just-written file and refuse
+/// the removal (`Access is denied`, #16105). Retry briefly, then report the
+/// leftover instead of failing the reading the case already produced.
+fn remove_fixture(root: &Path, name: &str) {
+    for attempt in 0..5 {
+        match fs::remove_dir_all(root) {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if attempt == 4 => {
+                eprintln!("{name}: leaving {}: {error}", root.display());
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+        }
+    }
 }
 
 fn run_check(root: &Path) -> Result<crate::CheckOutput, String> {

@@ -127,8 +127,8 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
     ),
     (
         // `ripr agent packet --seam-id <id> --json`, the one-seam packet
-        // document. The `--gap-ledger` document shares the constant but is
-        // not covered by this schema yet (#3920).
+        // document. The `--gap-ledger` document shares the constant and has
+        // its own schema, `agent-gap-packet`.
         "agent-packet",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -140,6 +140,16 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         // `ripr check --format agent-seam-packets-json`, the repository-wide
         // packet document over the same packet definitions.
         "agent-seam-packets",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr agent packet --gap-ledger <path> --gap-id <id> --json`, the
+        // GapRecord-backed packet document.
+        "agent-gap-packet",
         &[producer(
             "crates/ripr/src/app.rs",
             "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
@@ -715,6 +725,18 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["agent-seam-packets-json", "receipt_after_verify"],
+    },
+    // `ripr agent packet --gap-ledger <path> --gap-id <id> --json`. The
+    // fixture is a capture of an advisory packet with the host's absolute
+    // root made portable; the producer-byte authority is
+    // `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-gap-packet.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-gap-packet.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["agent-gap-packet.schema.json", "blocked_candidate"],
     },
     // `ripr agent status --json`. The fixture is a capture of a finished
     // repair loop with the host's absolute root replaced by `.`; the

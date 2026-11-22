@@ -311,7 +311,11 @@ pub(super) fn bare_string_statement_text(
     // part of it either.
     let bare = without_trailing_comment(line_text)?.trim_end();
     let bare = bare.strip_suffix(',').unwrap_or(bare);
-    if !is_python_no_behavior_line_at(bare, false) || bare.trim().is_empty() {
+    if bare.trim().is_empty() {
+        return None;
+    }
+    let keyword = !is_python_no_behavior_line_at(bare, false);
+    if keyword && !is_literal_keyword_argument(bare) {
         return None;
     }
     let source = source?;
@@ -319,10 +323,20 @@ pub(super) fn bare_string_statement_text(
         Some((start, end)) => (source.get(start..end)?, 0),
         None => (source, open.checked_sub(1)?),
     };
-    let lines: Vec<&str> = statement
+    let raw: Vec<&str> = statement
         .lines()
         .skip(skip)
         .take(close.checked_sub(open)? + 1)
+        .collect();
+    // A keyword line's statement drops each line's own `# comment`, so a
+    // comment after the closing `)` does not hide the call.
+    let raw = if keyword {
+        statement_lines_without_comments(&raw)?
+    } else {
+        raw
+    };
+    let lines: Vec<&str> = raw
+        .iter()
         .enumerate()
         .map(|(offset, text)| {
             if continuation
@@ -336,7 +350,107 @@ pub(super) fn bare_string_statement_text(
             }
         })
         .collect();
-    (!lines.is_empty()).then(|| lines.join(" "))
+    let joined = lines.join(" ");
+    // A keyword line inside a `def` or `class` header is a parameter default
+    // or class keyword, not a call argument: it keeps its own reading, so a
+    // different default's imported call does not limit it.
+    if keyword
+        && ["def ", "async def ", "class "]
+            .iter()
+            .any(|header| joined.starts_with(header))
+    {
+        return None;
+    }
+    (!lines.is_empty()).then_some(joined)
+}
+
+/// [`is_literal_keyword_argument`] for a whole physical line, with its
+/// trailing comma and `# comment` removed as [`bare_string_statement_text`]
+/// removes them.
+pub(super) fn is_literal_keyword_argument_line(line_text: &str) -> bool {
+    without_trailing_comment(line_text).is_some_and(|code| {
+        let code = code.trim_end();
+        is_literal_keyword_argument(code.strip_suffix(',').unwrap_or(code))
+    })
+}
+
+/// `name=literal` alone (#16018): one keyword argument (or parameter default)
+/// whose value is a number, string, `True`, `False` or `None`, as a
+/// continuation line of a bracketed call spells it (`stacklevel=3`). On its own
+/// it is no statement, so it takes the enclosing statement's probe shape, the
+/// same shape the call has when written on one line.
+fn is_literal_keyword_argument(text: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let Some(tokens) = lex(text.trim(), Mode::Module)
+        .map(|result| result.ok().map(|(token, _)| token))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    let tokens: Vec<_> = tokens
+        .into_iter()
+        .filter(|token| !matches!(token, Tok::Newline))
+        .collect();
+    let value = match tokens.as_slice() {
+        [Tok::Name { .. }, Tok::Equal, value] => value,
+        [Tok::Name { .. }, Tok::Equal, Tok::Minus | Tok::Plus, value]
+            if matches!(value, Tok::Int { .. } | Tok::Float { .. }) =>
+        {
+            value
+        }
+        _ => return false,
+    };
+    matches!(
+        value,
+        Tok::Int { .. } | Tok::Float { .. } | Tok::True | Tok::False | Tok::None
+    ) || matches!(value, Tok::String { kind, .. } if !kind.is_any_fstring())
+}
+
+/// The physical lines of one bracketed statement, each cut at the end of its
+/// last code token, so `# comment`s drop out while a `#` inside a string
+/// stays. The statement is lexed whole, because a single line may open a
+/// bracket another line closes. `None` when the statement does not lex.
+fn statement_lines_without_comments<'a>(lines: &[&'a str]) -> Option<Vec<&'a str>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let text = lines.join("\n");
+    let mut starts = Vec::with_capacity(lines.len());
+    let mut offset = 0;
+    for line in lines {
+        starts.push(offset);
+        offset += line.len() + 1;
+    }
+    let mut code_ends = vec![0_usize; lines.len()];
+    for result in lex(&text, Mode::Module) {
+        let (token, range) = result.ok()?;
+        if matches!(
+            token,
+            Tok::Newline | Tok::Indent | Tok::Dedent | Tok::EndOfFile
+        ) {
+            continue;
+        }
+        let line_of = |at: usize| starts.partition_point(|start| *start <= at).checked_sub(1);
+        let end = usize::from(range.end());
+        let (first, last) = (
+            line_of(usize::from(range.start()))?,
+            line_of(end.checked_sub(1)?)?,
+        );
+        // A token spanning lines (a triple-quoted string) keeps every line it
+        // starts or continues on whole.
+        for index in first..last {
+            if let (Some(code_end), Some(line)) = (code_ends.get_mut(index), lines.get(index)) {
+                *code_end = line.len();
+            }
+        }
+        let line_start = *starts.get(last)?;
+        if let Some(code_end) = code_ends.get_mut(last) {
+            *code_end = (*code_end).max(end - line_start);
+        }
+    }
+    lines
+        .iter()
+        .zip(&code_ends)
+        .map(|(line, end)| line.get(..*end))
+        .collect()
 }
 
 /// `line_text` without its trailing `#` comment, cut at the end of the last

@@ -2131,6 +2131,19 @@ Deleting it from a kept statement produces base-side evidence. A backslash in
 a comment or a string token supplies no evidence of a join between tokens.
 Docstrings and standalone sequences of plain string literals stay quiet.
 
+A bracket-continuation line holding one keyword argument with a literal value
+(`stacklevel=3,`: a number, string, `True`, `False` or `None`, with an optional
+argument comma or trailing comment) is not a statement on its own either
+(#16018). It takes the probe family of its enclosing statement, and the static
+limits read that statement, as they would for the same call written on one
+line. So a changed `stacklevel=` of a statement-level `warnings.warn(` is a
+side effect of an imported call, and a return-value assertion reads it as
+`weakly_exposed`, not `exposed`. A keyword continuing `return f(` stays a
+returned value. A keyword whose value is a name, a call or a comparison keeps
+the line's own reading.
+
+Tests: `deleted_lines_tests.rs::literal_keyword_argument_line_takes_the_call_shape`.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed

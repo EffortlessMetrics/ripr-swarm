@@ -4721,10 +4721,26 @@ fn assert_already_complete_summary(
             ));
         }
     }
+    // The printed root is the bound root, shell-quoted for this host: on
+    // Windows it renders with `/` separators (#4287), so a backslash-separated
+    // drive root prints with forward slashes (#16105). Decode each command
+    // the way its shell would and compare the argument as a path, not as the
+    // bytes the test passed in.
     for (index, command) in [(4, "Next"), (5, "Full status")] {
-        if !lines[index].contains(&format!("--root {root_arg}`")) {
+        let printed = lines[index]
+            .split('`')
+            .nth(1)
+            .ok_or_else(|| format!("the {command} line must carry a command:\n{summary}"))?;
+        let words = printed_words::printed_words(printed)?;
+        // `--root <root>` must be the final pair, as the old byte check
+        // (`--root <root>` before the closing backtick) required.
+        let names_root = match words.as_slice() {
+            [.., flag, value] => flag == "--root" && Path::new(value) == Path::new(root_arg),
+            _ => false,
+        };
+        if !names_root {
             return Err(format!(
-                "the {command} command must name the selected root `{root_arg}`:\n{summary}"
+                "the {command} command must end by naming the selected root `{root_arg}`:\n{summary}"
             ));
         }
     }

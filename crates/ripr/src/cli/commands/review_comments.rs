@@ -248,7 +248,15 @@ fn record_review_comments_timeout(
     phase: &str,
 ) -> String {
     receipt.limited_timeout(phase);
-    let error = format!("review-comments timed out during {phase}");
+    let error = if phase == "canonical_analysis" {
+        // #12940: name the recovery routes instead of failing bare.
+        format!(
+            "review-comments timed out during {phase}. Next step: {}",
+            receipt.timeout_repair_route(phase)
+        )
+    } else {
+        format!("review-comments timed out during {phase}")
+    };
     match receipt.write_atomic(receipt_path) {
         Ok(()) => error,
         Err(receipt_error) => {
@@ -265,7 +273,7 @@ fn record_review_comments_timeout(
 /// `None` and keeps the loader's own validation and error ordering.
 fn early_producer_refusal_error(path: Option<&Path>) -> Option<String> {
     let path = path?;
-    let text = crate::bounded_input::read_to_string(path).ok()?;
+    let text = crate::bounded_input::read_artifact_text(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
     if value.get("analysis_outcome").is_some()
         || crate::output::gate::discloses_limited_findings_bound(&value)
@@ -308,7 +316,7 @@ fn load_review_comments_analysis_outcome(
     let Some(path) = path else {
         return Ok(None);
     };
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -467,7 +475,7 @@ fn load_review_comments_analysis_outcome(
 fn load_check_output_suppressed_findings(
     path: &Path,
 ) -> Result<Vec<output::review_comments::CheckOutputSuppressedFinding>, String> {
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -3209,8 +3217,37 @@ mod tests {
                 "deadline cancellation must be a typed timeout: {receipt}"
             ));
         }
-        if result != Err("review-comments timed out during canonical_analysis".to_string()) {
+        // #12940: the error and the receipt name the same recovery routes,
+        // `ripr check` on the same root and base over committed history, and a
+        // narrower diff, at the base the receipt recorded (this fixture has no
+        // Git, so the raw revision).
+        let base = receipt["base_sha"].as_str().unwrap_or_default();
+        let head = receipt["head_sha"].as_str().unwrap_or_default();
+        let check_root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.display().to_string()),
+        );
+        let route = format!(
+            "run `ripr check --root {check_root} --base {base} --committed --json` at the head \
+             checkout ({head}) for findings \
+             without review guidance, or narrow --base/--head to a smaller diff; a larger \
+             --timeout-ms restarts canonical_analysis from the beginning"
+        );
+        if base.is_empty() || head.is_empty() {
+            return Err(format!(
+                "canonical timeout receipt lost base/head: {receipt}"
+            ));
+        }
+        if result
+            != Err(format!(
+                "review-comments timed out during canonical_analysis. Next step: {route}"
+            ))
+        {
             return Err(format!("unexpected canonical timeout result: {result:?}"));
+        }
+        if receipt["limitations"][0]["repair_route"].as_str() != Some(route.as_str()) {
+            return Err(format!(
+                "canonical timeout receipt must carry the same repair route: {receipt}"
+            ));
         }
         // Work done is disclosed (none: the budget expired at the first
         // interior checkpoint) and the receipt says nothing was kept (#11107).

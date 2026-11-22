@@ -1141,6 +1141,12 @@ pub(super) struct AnalysisSnapshot {
     /// Invoking `ripr.refreshDiagnostics` produces a new snapshot with
     /// `seams_deferred = false` and the full seam inventory.
     pub(super) seams_deferred: bool,
+    /// Whether a full refresh under this snapshot's configuration builds the
+    /// spot inventory (full diagnostic profile, spot diagnostics enabled,
+    /// Rust enabled; #13636). A deferred snapshot only promises that
+    /// "ripr: Refresh Full Analysis" brings repair spots back when this is
+    /// true; otherwise the refresh would leave them out as well.
+    pub(super) seam_inventory_on_full_refresh: bool,
     /// Partial diff-scope run state (RIPR-PROP-0019, #1999). `Some` only when
     /// the diff exceeded the partial-selection budget and the run analyzed a
     /// deterministic bounded partition (`limited_partial_scope`). The run
@@ -5015,6 +5021,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5054,6 +5061,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5103,6 +5111,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5160,6 +5169,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

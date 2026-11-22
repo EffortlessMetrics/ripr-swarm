@@ -472,6 +472,15 @@ struct PackageCallIdentityShape {
     /// ([`path_attributes_stay_in_test_dir`]): that moves no module of an
     /// owner outside `tests/`, so only owners under `tests/` turn the rule off.
     remaps_test_modules: bool,
+    /// A file of the package invokes `include!`, which can compile another
+    /// file's items (a `tests/` file into the library, a `src/` file into an
+    /// integration test) into a crate its location does not show.
+    includes_source: bool,
+    /// A `#[path]` of the package may name a file outside the directory of
+    /// the file that declares it ([`path_literals_stay_below`]), so it can
+    /// mount a `tests/` file into the library or a `src/` file into an
+    /// integration test.
+    mounts_outside_directory: bool,
     layout: CrateLayout,
 }
 
@@ -487,11 +496,21 @@ fn scan_call_identity_shapes(
     // Per package: (a `#[path]` that may move any module, a `#[path]` that
     // only rearranges an integration-test crate).
     let mut remaps: BTreeMap<Option<String>, (bool, bool)> = BTreeMap::new();
+    let mut includes: BTreeSet<Option<String>> = BTreeSet::new();
+    let mut mounts: BTreeSet<Option<String>> = BTreeSet::new();
     let mut libs: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     let mut mains: BTreeMap<Option<String>, Vec<std::sync::Arc<str>>> = BTreeMap::new();
     for (path, facts) in index.files().iter() {
         let package = package_key_in(index, path);
         remaps.entry(package.clone()).or_insert((false, false));
+        if source_includes_a_file(&facts.data().source) {
+            includes.insert(package.clone());
+        }
+        if has_path_attribute(&facts.data().source)
+            && !path_literals_stay_below(&facts.data().source)
+        {
+            mounts.insert(package.clone());
+        }
         if has_path_attribute(&facts.data().source)
             && !path_attributes_only_select_cfg_alternatives(&facts.data().source)
         {
@@ -538,6 +557,8 @@ fn scan_call_identity_shapes(
             let shape = PackageCallIdentityShape {
                 remaps_module_paths,
                 remaps_test_modules,
+                includes_source: includes.contains(&package),
+                mounts_outside_directory: mounts.contains(&package),
                 layout: CrateLayout {
                     package: package.clone(),
                     roots,
@@ -598,6 +619,8 @@ fn call_identity_shape(
             std::sync::Arc::new(PackageCallIdentityShape {
                 remaps_module_paths: false,
                 remaps_test_modules: false,
+                includes_source: false,
+                mounts_outside_directory: false,
                 layout: CrateLayout {
                     package: package.map(str::to_string),
                     roots: None,
@@ -1405,6 +1428,136 @@ fn package_remaps_module_paths(index: &RustIndex, package: Option<&str>) -> bool
 fn package_remaps_owner_module_paths(index: &RustIndex, owner: &FunctionSummary) -> bool {
     let shape = call_identity_shape(index, package_key_in(index, &owner.file).as_deref());
     shape.remaps_module_paths || (shape.remaps_test_modules && under_tests_dir(&owner.file))
+}
+
+/// Whether `source` invokes `include!` (not `include_str!` or
+/// `include_bytes!`, which yield a value and no item). A source that
+/// mentions the word and does not parse cleanly counts.
+fn source_includes_a_file(source: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    if !source.contains("include") {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .any(|call| {
+            call.path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_none_or(|name| name.text().trim_start_matches("r#") == "include")
+        })
+}
+
+/// Whether `file`'s package compiles every file into the crate its location
+/// shows: no `#[path]` that leaves its directory and no `include!`.
+fn package_compiles_files_in_place(index: &RustIndex, file: &Path) -> bool {
+    let shape = call_identity_shape(index, package_key(file).as_deref());
+    !(shape.mounts_outside_directory || shape.includes_source)
+}
+
+/// Whether `test` is in an integration-test crate (a file under `tests/`)
+/// of a package that compiles every file in place, so it sees only what
+/// other crates export.
+pub(super) fn is_plain_integration_test(index: &RustIndex, test: &TestSummary) -> bool {
+    is_plain_integration_test_file(index, &test.file)
+}
+
+/// [`is_plain_integration_test`] for any function of the file.
+pub(super) fn is_plain_integration_test_file(index: &RustIndex, file: &Path) -> bool {
+    under_tests_dir(file) && package_compiles_files_in_place(index, file)
+}
+
+/// Whether every `path = ..` in `source` is followed by a string literal
+/// that stays below the declaring file's directory: not empty, not absolute,
+/// no drive, backslash or `..` segment. A raw scan, so a `#[path]` inside a
+/// macro body or a `cfg_attr` is read too; a `path =` with any other value
+/// fails closed, and one in a comment or string can only fail closed.
+fn path_literals_stay_below(source: &str) -> bool {
+    let mut rest = source;
+    while let Some(at) = rest.find("path") {
+        let before = &rest[..at];
+        let after = rest[at + "path".len()..].trim_start();
+        rest = &rest[at + "path".len()..];
+        if before.chars().next_back().is_some_and(is_ident_char) {
+            continue;
+        }
+        let Some(value) = after.strip_prefix('=') else {
+            continue;
+        };
+        if value.starts_with('=') {
+            continue;
+        }
+        let Some(literal) = value
+            .trim_start()
+            .strip_prefix('"')
+            .and_then(|text| text.split_once('"'))
+            .map(|(literal, _)| literal)
+        else {
+            return false;
+        };
+        if literal.is_empty()
+            || literal.starts_with('/')
+            || literal.contains(['\\', ':'])
+            || literal.split('/').any(|segment| segment == "..")
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// #15932: whether `owner` is a module-level function or inherent method
+/// that only its own crate can name. A function that is not `pub` (private,
+/// `pub(crate)`, `pub(super)`, `pub(in ..)`) cannot be re-exported, so a call
+/// of its name in an integration test ([`is_plain_integration_test`]) runs
+/// some other function (`tokio::time::sleep`, not the crate-private
+/// `runtime::jspi::sleep`).
+///
+/// Answers `false`, keeping the name-only relation, whenever the files do
+/// not settle that: the owner is not a `src/` function with one readable
+/// declaration; a `#[path]` that leaves its directory or an `include!` in
+/// its package may compile a file into a crate its location does not show;
+/// or the owner, its `impl` or a module around it carries an attribute that
+/// may export or rewrite it (`#[no_mangle]`, `#[wasm_bindgen]`), or it
+/// declares a foreign ABI.
+pub(super) fn owner_is_private_to_its_crate(index: &RustIndex, owner: &FunctionSummary) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasVisibility};
+    if !matches!(
+        owner.item.container,
+        FunctionContainer::Free | FunctionContainer::Inherent { .. }
+    ) || !owner.item.has_body
+        || under_tests_dir(&owner.file)
+        || crate_class(&owner.file).is_none()
+        || !package_compiles_files_in_place(index, &owner.file)
+    {
+        return false;
+    }
+    let Some(declaration) = super::transitive_reach::indexed_declaration(index, owner) else {
+        return false;
+    };
+    // Every inert attribute is a single-segment name; `unsafe(..)` reads as
+    // the attribute it wraps and `cfg_attr(..)` as itself, so neither is
+    // inert.
+    let inert = |attribute: ast::Attr| {
+        attribute
+            .simple_name()
+            .is_some_and(|name| name == "cfg" || super::reach::owner_attribute_is_inert(&name))
+    };
+    declaration
+        .visibility()
+        .is_none_or(|visibility| visibility.syntax().text() != "pub")
+        // A foreign ABI is called from outside Rust.
+        && declaration.abi().is_none()
+        && declaration
+            .syntax()
+            .ancestors()
+            .all(|node| node.children().filter_map(ast::Attr::cast).all(inert))
 }
 
 /// Whether every `#[path]` in `source` only selects between the two files of
@@ -2886,6 +3039,18 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
 /// [`call_qualifiers`] with each site's method-call flag, optionally counting
 /// method calls (`x.name(..)`, an empty qualifier) as sites.
 fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<String>>, bool)> {
+    call_site_offsets(body, name, with_methods)
+        .into_iter()
+        .map(|(qualifier, is_method, _)| (qualifier, is_method))
+        .collect()
+}
+
+/// [`call_sites`] with each site's byte offset of the name in `body`.
+fn call_site_offsets(
+    body: &str,
+    name: &str,
+    with_methods: bool,
+) -> Vec<(Option<Vec<String>>, bool, usize)> {
     let masked = mask_comments_and_strings(body);
     let mut calls = Vec::new();
     for (start, _) in masked.match_indices(name) {
@@ -2903,16 +3068,56 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
         let head = masked[..start].trim_end();
         if head.ends_with('.') && !head.ends_with("..") {
             if with_methods {
-                calls.push((Some(Vec::new()), true));
+                calls.push((Some(Vec::new()), true, start));
             }
             continue;
         }
         if head_word(head) == "fn" {
             continue;
         }
-        calls.push((qualifier_before(head), false));
+        calls.push((qualifier_before(head), false, start));
     }
     calls
+}
+
+/// Byte ranges of `body` inside a `stringify!` token tree, whose tokens are
+/// never evaluated (#15278). `body` is read with comments and strings masked,
+/// so a delimiter inside either does not end the range; an unclosed tree runs
+/// to the end of `body`.
+fn stringify_ranges(body: &str) -> Vec<std::ops::Range<usize>> {
+    let masked = mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    let mut ranges = Vec::new();
+    for (start, _) in masked.match_indices("stringify") {
+        if ident_char_before(&masked, start) {
+            continue;
+        }
+        let rest = &masked[start + "stringify".len()..];
+        let Some(after_bang) = rest.trim_start().strip_prefix('!') else {
+            continue;
+        };
+        let open_at = masked.len() - after_bang.trim_start().len();
+        if !matches!(bytes.get(open_at), Some(b'(' | b'[' | b'{')) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = masked.len();
+        for (offset, byte) in bytes.iter().enumerate().skip(open_at) {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = offset + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        ranges.push(open_at..end);
+    }
+    ranges
 }
 
 /// Whether a call of this name may have the function's container kind (#12234).
@@ -3308,6 +3513,40 @@ pub(in crate::analysis) fn bare_owner_call_settles_on_owner(
         let scope = identity.test_scope(test, index);
         identity.target_of(&identity.resolve_spelled(&[], &scope)) == CallTarget::Owner
     })
+}
+
+/// #15278: whether some call site of the owner's name in `test` settles on
+/// the owner alone through the solo identity: a path spelled through a
+/// crate name the test's package imports the owner's library by
+/// (`wscore::discount(..)`), or an unshadowed bare call bound by an import
+/// from it. Each site is resolved on its own: a spelling inside a comment,
+/// a string or a `stringify!` token tree is not a site, and a bare call
+/// shadowed at its line by a local binding (`let discount = |p| ..;`) is
+/// refused. A call spelled through another crate (`pricing::discount(..)`)
+/// or bound by an import from one settles elsewhere, and an unsettled
+/// reading does not count. Only a free owner has such an identity.
+pub(in crate::analysis) fn test_call_settles_on_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+) -> bool {
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let body: &str = &test.body;
+    let quoted = stringify_ranges(body);
+    call_site_offsets(body, &owner.name, false)
+        .into_iter()
+        .filter(|(_, _, at)| !quoted.iter().any(|range| range.contains(at)))
+        .any(|(qualifier, _, at)| match qualifier {
+            None => false,
+            Some(segments) if segments.is_empty() => {
+                let line = test.start_line + body[..at].matches('\n').count();
+                !bare_call_shadowed_by_local(index, owner, test, line)
+                    && identity.resolve_call(test, index, &[]) == CallTarget::Owner
+            }
+            Some(segments) => identity.resolve_call(test, index, &segments) == CallTarget::Owner,
+        })
 }
 
 /// Whether a bare call of the owner's name may supply a boundary input.

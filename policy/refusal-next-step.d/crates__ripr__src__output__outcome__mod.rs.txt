@@ -1,12 +1,5 @@
 crates/ripr/src/output/outcome/mod.rs|before artifact does not contain selected seam_id(s): {} ,
 crates/ripr/src/output/outcome/mod.rs|failed to parse explicit before JSON: {err}
-crates/ripr/src/output/outcome/mod.rs|failed to parse repo exposure JSON: {err}
-crates/ripr/src/output/outcome/mod.rs|repo exposure seam is missing numeric field `line`
-crates/ripr/src/output/outcome/mod.rs|repo exposure seam is missing string field `file`
-crates/ripr/src/output/outcome/mod.rs|repo exposure seam is missing string field `grip_class`
-crates/ripr/src/output/outcome/mod.rs|repo exposure seam is missing string field `kind`
-crates/ripr/src/output/outcome/mod.rs|repo exposure seam is missing string field `seam_id`
-crates/ripr/src/output/outcome/mod.rs|static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array
 crates/ripr/src/output/outcome/mod.rs|static snapshot is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a
 crates/ripr/src/output/outcome/mod.rs|targeted rerun before artifact is missing `seams` array
 crates/ripr/src/output/outcome/mod.rs|targeted rerun seam is missing string `static_class`

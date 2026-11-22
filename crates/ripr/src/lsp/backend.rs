@@ -201,6 +201,10 @@ pub(super) struct Backend {
     /// (#15461 review).
     pending_pull_marker_served_recovery: Mutex<Option<String>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
+    /// Findings whose gap became `exposed` between the previous committed
+    /// snapshot and `latest_analysis` (#13636). Written with the snapshot
+    /// commit and cleared whenever the snapshot is dropped.
+    resolved_findings: Mutex<Vec<super::resolved_findings::ResolvedFinding>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
     pull_diagnostics: Mutex<bool>,
@@ -392,6 +396,7 @@ impl Backend {
             pending_push_marker_uris: Mutex::new(BTreeMap::new()),
             pending_pull_marker_served_recovery: Mutex::new(None),
             latest_analysis: Mutex::new(None),
+            resolved_findings: Mutex::new(Vec::new()),
             diagnostic_result_ids: Mutex::new(None),
             analysis_health: Mutex::new(AnalysisHealth::default()),
             pull_diagnostics: Mutex::new(false),
@@ -1514,6 +1519,9 @@ impl Backend {
         let Ok(mut stored_result_ids) = self.diagnostic_result_ids.lock() else {
             return None;
         };
+        let Ok(mut resolved_findings) = self.resolved_findings.lock() else {
+            return None;
+        };
         let Ok(mut documents) = self.quarantine.documents.lock() else {
             return None;
         };
@@ -1544,6 +1552,12 @@ impl Backend {
             cleared,
         );
         *last_diagnostic_uris = plan.current_uris.clone();
+        // #13636: name the gaps a saved test now appears to expose, so the
+        // editor does not just go quiet when their diagnostics stop.
+        *resolved_findings = latest_analysis
+            .as_deref()
+            .map(|previous| super::resolved_findings::resolved_since(previous, &snapshot))
+            .unwrap_or_default();
         *latest_analysis = Some(snapshot);
         *stored_result_ids = Some(diagnostic_result_ids);
         Some(transitions)
@@ -1626,6 +1640,11 @@ impl Backend {
                 .unwrap_or(false);
         if let Ok(mut latest_analysis) = self.latest_analysis.lock() {
             *latest_analysis = None;
+            // Cleared under the snapshot guard (commit lock order), so a
+            // status read never pairs no snapshot with stale rows.
+            if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
+                resolved_findings.clear();
+            }
         }
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
@@ -2321,6 +2340,9 @@ impl Backend {
     pub(super) fn clear_latest_analysis_for_test(&self) {
         if let Ok(mut latest) = self.latest_analysis.lock() {
             *latest = None;
+            if let Ok(mut resolved_findings) = self.resolved_findings.lock() {
+                resolved_findings.clear();
+            }
         }
     }
 
@@ -2994,20 +3016,34 @@ impl Backend {
                     value.analysis_outcome.clone(),
                     withheld_findings_summary(value),
                     value.partial_scope.clone(),
+                    // Read under the snapshot guard (the commit's lock order:
+                    // `latest_analysis`, then `resolved_findings`), so the
+                    // rows always belong to the snapshot read here.
+                    self.resolved_findings
+                        .lock()
+                        .map(|rows| rows.clone())
+                        .unwrap_or_default(),
                 )
             })
         });
-        let (snapshot_identity, components, analysis_outcome, withheld_summary, partial_scope) =
-            match snapshot_state {
-                Some((identity, components, analysis_outcome, withheld, partial_scope)) => (
-                    identity,
-                    components,
-                    analysis_outcome,
-                    withheld,
-                    partial_scope,
-                ),
-                None => (None, Vec::new(), None, None, None),
-            };
+        let (
+            snapshot_identity,
+            components,
+            analysis_outcome,
+            withheld_summary,
+            partial_scope,
+            resolved_findings,
+        ) = match snapshot_state {
+            Some((identity, components, analysis_outcome, withheld, partial_scope, resolved)) => (
+                identity,
+                components,
+                analysis_outcome,
+                withheld,
+                partial_scope,
+                resolved,
+            ),
+            None => (None, Vec::new(), None, None, None, Vec::new()),
+        };
         let snapshot_input = snapshot_identity.map(|identity| identity.status_payload());
         let current_input = match (
             health.current_input_identity.as_deref(),
@@ -3132,6 +3168,10 @@ impl Backend {
             // and the `diagnostic_profile = "full"` recovery route, so
             // `finding_count` and the served listings reconcile on the wire.
             "withheld_findings": withheld_findings_status_payload(withheld_summary),
+            // Gaps the committed snapshot now finds `exposed` that the
+            // previous one listed as gaps (#13636): clients render these so a
+            // vanished diagnostic reads as progress, not a silent failure.
+            "resolved_findings": super::resolved_findings::resolved_findings_status(&resolved_findings),
             // Typed bounded per-component outcomes for the committed snapshot
             // (#1997, RIPR-SPEC-0141): the single typed authority for
             // optional-component degradation. Empty until a snapshot commits.
@@ -10582,6 +10622,7 @@ mod top_limitation_selection_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -12534,6 +12575,7 @@ mod delivery_selection_parity_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -13769,6 +13811,7 @@ mod list_actionable_items_tests {
             diagnostic_uri_index: None,
             delivery_selection: selection.map(Arc::new),
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -14496,6 +14539,36 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
+    /// #13636: an `exposed` preview finding is not withheld: there is no gap
+    /// to repair, so it must not read as a preview finding "not shown in the
+    /// editor". The same finding as `weakly_exposed` is still disclosed.
+    #[test]
+    fn exposed_preview_findings_are_not_disclosed_as_withheld() -> Result<(), String> {
+        for (language, file) in [
+            (crate::domain::LanguageId::Python, "src/click/core.py"),
+            (crate::domain::LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
+            let mut finding = preview_finding(language, file);
+            finding.class = crate::domain::ExposureClass::Exposed;
+            snapshot.findings = vec![finding];
+            snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
+            assert_eq!(super::withheld_preview_summary(&snapshot).0, 0, "{file}");
+            let disclosure = super::profile_withholding_pull_disclosure(&snapshot);
+            assert!(
+                !disclosure
+                    .as_deref()
+                    .is_some_and(|text| text.contains("preview-language")),
+                "{file}: {disclosure:?}"
+            );
+
+            // Discriminator: the same finding as a gap is still disclosed.
+            snapshot.findings[0].class = crate::domain::ExposureClass::WeaklyExposed;
+            assert_eq!(super::withheld_preview_summary(&snapshot).0, 1, "{file}");
+        }
+        Ok(())
+    }
+
     /// #11798: a withheld non-preview (Rust) gap-class finding is counted as
     /// a static-gap withholding, never as a preview one, and the pull
     /// disclosure names the count, static vocabulary and the `full` route. A
@@ -15039,6 +15112,7 @@ mod pull_disclosure_dedup_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
