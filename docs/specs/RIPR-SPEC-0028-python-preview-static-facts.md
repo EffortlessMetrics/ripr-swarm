@@ -1389,12 +1389,18 @@ unrebound test-module constant. When a slice bound and its compared literal
 move together (`tag[:4] != "musl"` -> `tag[:3] != "mus"`) no operand is
 shared, so the missing discriminator is the pair itself,
 `(tag[:3] == "mus") != (tag[:4] == "musl")`, and the reason lists the slice
-values the calls produced. A string with a backslash or quote, a stepped or
-computed slice, a rebound parameter, and a call whose argument cannot be read
-leave the witness unknown, and a `!=` finding reads `weakly_exposed`; for
-`==`, a call whose old comparison cannot be read keeps the earlier reading,
-where placing the new equality is the witness. An operator
-flip (`==` -> `!=`) and an identity test (`is`) stay outside this gate.
+values the calls produced. The pair is also the discriminator whenever an
+operand is a slice, because two slices of one name are not independent
+(`tag[:4] == "mus"` holds only where `tag[:3] == "mus"` does). A slice result
+is read only when it is printable ASCII. A string with a backslash or quote,
+a stepped or computed slice, a parameter the owner rebinds on either side of
+the edit, and a call whose argument cannot be read leave the witness unknown,
+and a `!=` finding reads `weakly_exposed`; a call that takes only a literal
+default is read like any other. For `==`, a call whose old comparison cannot
+be read keeps the earlier reading, where placing the new equality is the
+witness. An operator flip (`==` -> `!=`), an identity test (`is`) and a `!=`
+edit that also changes the text around the comparison (`n != 11 and on` ->
+`n != 10 or on`) stay outside this gate.
 
 For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
 integer bound, a closed generator walk can resolve a rebound parameter. It
