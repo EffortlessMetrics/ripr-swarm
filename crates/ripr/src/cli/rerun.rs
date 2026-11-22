@@ -3030,6 +3030,41 @@ mod tests {
     }
 
     #[test]
+    fn ledger_rerun_admits_only_schema_compatible_working_directories() -> Result<(), String> {
+        for (cwd, admitted) in [
+            ("a\n", false),
+            ("a\rb", false),
+            ("src:gen/x", false),
+            ("src/gen:x", true),
+        ] {
+            let mut spec = verify_spec_fixture("verify", "ripr verify", vec!["verify".into()]);
+            spec.cwd = cwd.into();
+            let record = gap_record_with_specs(
+                "gap:cwd",
+                None,
+                None,
+                &["ripr verify"],
+                None,
+                Some(spec),
+                None,
+            );
+            let json = serde_json::to_value(record).map_err(|e| e.to_string())?;
+            match serde_json::from_value::<GapRecord>(json) {
+                Ok(record) if admitted => {
+                    let route = route_from_gap_records(&[(0, record)]);
+                    if route.verify_command_specs.first().map(|s| s.cwd.as_str()) != Some(cwd) {
+                        return Err(format!("lost working directory {cwd:?} in the rerun route"));
+                    }
+                }
+                Err(e)
+                    if !admitted && e.to_string().contains("cwd must be a root-relative path") => {}
+                other => return Err(format!("unexpected ledger outcome for {cwd:?}: {other:?}")),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn targeted_rerun_route_carries_typed_specs() -> Result<(), String> {
         let verify_spec = verify_spec_fixture(
             "ripr:agent:verify",

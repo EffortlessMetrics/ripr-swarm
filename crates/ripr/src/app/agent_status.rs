@@ -35,6 +35,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod complete_summary;
 pub(crate) mod test_run;
 
 pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = "0.1";
@@ -1715,9 +1716,16 @@ fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string)
     };
+    // #15302: a nested project's command is relative to its `verify_cwd`.
+    let verify_cwd = text_at("/verify_cwd");
     Some(PilotPythonCard {
         missing_discriminator: text_at("/missing_discriminator"),
-        verify_command: text_at("/verify_command"),
+        verify_command: text_at("/verify_command").map(|command| {
+            crate::output::python_repair_card::rooted_verify_display(
+                verify_cwd.as_deref(),
+                &command,
+            )
+        }),
     })
 }
 
@@ -3869,6 +3877,34 @@ pub(crate) fn render_agent_attempt_status_json(
         .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
+/// The re-check an unreadable attempt's status points at (#15903): the
+/// selected root only, because nothing the attempt recorded is trusted.
+fn unreadable_attempt_recheck_command(root_display: &str) -> String {
+    format!("ripr check --root {}", shell_arg(root_display))
+}
+
+/// The one-line receipt reading shared by the status page and the
+/// already-complete `continue` summary (#15282).
+fn receipt_summary(receipt: &AgentStatusAttemptReceipt) -> String {
+    match receipt {
+        AgentStatusAttemptReceipt::Issued { path, reading } => format!(
+            "issued (`{}`, status `{}`, movement `{}`)",
+            path,
+            reading.status.as_deref().unwrap_or("unknown"),
+            reading.movement.as_deref().unwrap_or("unknown")
+        ),
+        AgentStatusAttemptReceipt::NotApplicable => "not applicable".to_string(),
+        AgentStatusAttemptReceipt::NotIssued => "not issued".to_string(),
+        AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
+            format!("superseded by `{by_attempt_id}`")
+        }
+        AgentStatusAttemptReceipt::Unreadable => "unreadable".to_string(),
+        AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
+            format!("unavailable: {reason}")
+        }
+    }
+}
+
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
     let attempt = &report.attempt;
     let mut rendered = String::new();
@@ -3903,24 +3939,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         ));
     }
     if let Some(receipt) = &attempt.receipt {
-        let summary = match receipt {
-            AgentStatusAttemptReceipt::Issued { path, reading } => format!(
-                "issued (`{}`, status `{}`, movement `{}`)",
-                path,
-                reading.status.as_deref().unwrap_or("unknown"),
-                reading.movement.as_deref().unwrap_or("unknown")
-            ),
-            AgentStatusAttemptReceipt::NotApplicable => "not applicable".to_string(),
-            AgentStatusAttemptReceipt::NotIssued => "not issued".to_string(),
-            AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
-                format!("superseded by `{by_attempt_id}`")
-            }
-            AgentStatusAttemptReceipt::Unreadable => "unreadable".to_string(),
-            AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
-                format!("unavailable: {reason}")
-            }
-        };
-        rendered.push_str(&format!("Receipt: {summary}\n"));
+        rendered.push_str(&format!("Receipt: {}\n", receipt_summary(receipt)));
     }
 
     if let Some(next) = &report.next_action {
@@ -3948,6 +3967,16 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         }
     } else {
         rendered.push_str("\nStatus names no next action; the claim boundary below says why.\n");
+        // #15903: an attempt status cannot validate (a missing before
+        // snapshot, a broken manifest) has no gap status may trust, so no
+        // restart is named. `ripr check` trusts nothing from the attempt and
+        // reads the tree as it is now, so it is the one honest way forward.
+        if report.attempt.unreadable_reason.is_some() {
+            rendered.push_str(&format!(
+                "\nThis attempt cannot be finished and cannot produce a receipt. To read the current state without it, run `{}`. If the gap is still open and the check can offer a repair, it prints a new start; set any test edit aside before you run that start, then reapply the edit. If it prints no start, it says why. If the gap already reads as noticed, the test is in place and only the receipt is missing.\n",
+                unreadable_attempt_recheck_command(&report.root)
+            ));
+        }
     }
 
     if let Some(reading) = &report.test_run {
@@ -4905,6 +4934,16 @@ mod tests {
                 .map_err(|err| format!("parse attempt status JSON: {err}"))?;
             if value["attempt"]["status_class"] != "corrupt_or_unavailable" {
                 return Err(format!("JSON dropped the corrupt class: {value}"));
+            }
+            // #15903: the human status still invents no restart, but it no
+            // longer ends in a dead end: it names the one command that reads
+            // the current state without trusting the unreadable attempt.
+            let human = render_agent_attempt_status_markdown(&report);
+            let recheck = format!("ripr check --root {}", shell_arg(&report.root));
+            if !human.contains(&recheck) || !human.contains("cannot produce a receipt") {
+                return Err(format!(
+                    "unreadable attempt status named no way forward:\n{human}"
+                ));
             }
             Ok(())
         })();
@@ -7947,6 +7986,29 @@ mod tests {
             "{rendered}"
         );
 
+        // #15302: a nested project's card names its directory.
+        #[cfg(not(windows))]
+        {
+            let nested = r#"{"status": "ready", "repair_cards_total": 1, "top_repair_card": {"missing_discriminator": "qty >= 5", "verify_command": "python -m pytest tests/test_price.py::test_discount", "verify_cwd": "py"}}"#;
+            write_file(
+                &root.join(PILOT_SUMMARY_ARTIFACT),
+                &summary("complete", "[]", nested, "null"),
+            )?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let warning = report
+                .warnings
+                .iter()
+                .find(|warning| warning.kind == "pilot_python_repair_card_no_agent_repair")
+                .ok_or_else(|| format!("expected a nested card warning: {:?}", report.warnings))?;
+            assert!(
+                warning.message.contains(
+                    "(`(cd -- py && python -m pytest tests/test_price.py::test_discount)`)"
+                ),
+                "{}",
+                warning.message
+            );
+        }
+
         // Controls: a ranked seam, a recorded repair start, an incomplete run,
         // or a ready status without cards keeps status on `select_seam`.
         for control in [
@@ -8774,6 +8836,13 @@ mod tests {
             if !human.contains("Status names no next action") {
                 return Err(format!(
                     "{label}: human lost the empty next action:\n{human}"
+                ));
+            }
+            // #15903 control: the re-check sentence belongs to an attempt
+            // status could not read, never to a readable one.
+            if human.contains("cannot produce a receipt") {
+                return Err(format!(
+                    "{label}: a readable attempt got the unreadable-attempt recovery:\n{human}"
                 ));
             }
         }

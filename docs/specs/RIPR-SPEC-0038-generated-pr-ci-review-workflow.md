@@ -80,7 +80,7 @@ come from `policy/distribution.toml`, bound by drift tests. The step:
 - stops with an explicit unsupported error on Windows ARM64.
 
 `tests/ripr_check_action.rs` and the archive replays in
-`tests/generated_review_workflow.rs` run that block with the version the
+`tests/generated_review_workflow/main.rs` run that block with the version the
 generated workflow passes. A ripr already on `PATH` is reused only when it
 reports exactly the pinned version.
 

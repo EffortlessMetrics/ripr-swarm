@@ -1391,26 +1391,10 @@ impl PacketRun {
         let head_sha = crate::git::run_git(&self.root, &["rev-parse", "--verify", "HEAD^{commit}"])
             .map_err(|err| format!("ripr: cannot resolve HEAD: {err}; run inside a git checkout that has at least one commit"))?;
         let range = format!("{base_sha}...{head_sha}");
-        let diff = git_bytes(
-            &self.root,
-            &[
-                "-c",
-                "core.quotePath=true",
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                // Ambient `diff.ignoreSubmodules=all` (or `.gitmodules`
-                // `ignore = all`) would silently empty a gitlink bump (#8209).
-                "--ignore-submodules=none",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-                "--unified=3",
-                "--inter-hunk-context=0",
-                &range,
-            ],
-        )
+        // The shared assembly owns the pinned argv (#9365): no restated
+        // flags here, so an ambient rename limit, diff algorithm or
+        // abbreviation cannot change the recorded bytes.
+        let diff = crate::analysis::load_ci_packet_diff_bytes(&self.root, &range)
         .map_err(|err| format!("ripr: git diff failed for {range}: {err}; fetch the base ref (in CI, check out with full history), then rerun"))?;
         crate::output::file_write::write(&self.path("target/ripr/reports/pr.diff"), &diff)
             .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}; check you can write under target/ripr, then rerun"))?;
@@ -1439,7 +1423,7 @@ impl PacketRun {
                     "core.quotePath=true",
                     "diff",
                     "--name-only",
-                    "--ignore-submodules=none",
+                    crate::git::SUBMODULE_POINTERS_ONLY,
                     "-z",
                     &range,
                 ],
