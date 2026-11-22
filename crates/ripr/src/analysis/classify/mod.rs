@@ -52,6 +52,7 @@ mod mask_pin;
 mod match_transfer;
 mod operand_pin;
 mod out_parameter;
+mod owner_baseline;
 mod owner_pin;
 mod owner_prelude;
 mod owner_shape;
@@ -191,6 +192,7 @@ pub(in crate::analysis) use operand_pin::{operand_only_pin, outer_imported_names
 pub(in crate::analysis) use out_parameter::{
     assertion_out_parameter, expression_writes_parameter, file_shadows_buffer_types,
 };
+pub(in crate::analysis) use owner_baseline::{agreeing_inputs_infection, sole_line_owner_baseline};
 #[cfg(test)]
 pub(in crate::analysis) use owner_pin::SCAN_LOG;
 pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
