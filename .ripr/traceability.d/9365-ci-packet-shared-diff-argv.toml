@@ -1,0 +1,7 @@
+# Registers the ci-packet capture through the shared pinned diff argv
+# (#9365) beside the #15954 loader pins.
+[[extend]]
+id = "RIPR-SPEC-0170"
+tests = [
+  "crates/ripr/tests/cli_smoke/diff_ambient_settings.rs::ci_packet_diff_capture_ignores_ambient_git_diff_settings",
+]

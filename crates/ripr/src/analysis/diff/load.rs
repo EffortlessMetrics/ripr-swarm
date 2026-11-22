@@ -2636,6 +2636,24 @@ fn load_pr_evidence_diff_range_within(
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
 
+/// The `ci-packet` capture of `target/ripr/reports/pr.diff` (#9365): the
+/// shared pinned assembly with the PR-evidence presentation (`--binary`,
+/// three context lines), so the packet no longer restates the argv and gets
+/// every ambient pin this file owns (#15954 rename limit, algorithm, indent
+/// heuristic, big-file threshold, full index). The bytes are recorded and
+/// hashed as they are, so no UTF-8 decode, and there is no deadline, as
+/// before.
+pub(crate) fn load_ci_packet_diff_bytes(root: &Path, range: &str) -> Result<Vec<u8>, String> {
+    Ok(run_git_diff_bytes(
+        root,
+        range,
+        &["--binary"],
+        "3",
+        None,
+        None,
+    )?)
+}
+
 /// Return `true` when the working tree at `root` has uncommitted changes to
 /// tracked source files (staged or unstaged).
 ///
