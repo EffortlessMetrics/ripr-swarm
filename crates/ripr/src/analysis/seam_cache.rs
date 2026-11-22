@@ -780,7 +780,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.188`: a test reaching a trait-impl owner only through a one-hop blanket
 /// impl (`impl<T: Render> ToText for T`) withholds the gap as unresolved reach
 /// instead of reporting it (#6732).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.188";
+/// `1.189`: a std- or core-rooted import of an exempt macro name lets a
+/// generated test keep its invocation scopes when the root is not shadowed (#12876).
+/// `1.190`: the merge of the blanket-impl reach withholding (#6732) and the
+/// std-rooted import exemption (#12876).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.190";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1008,7 +1012,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.188";
 /// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
 /// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
 /// `0.190`: same blanket-impl reach withholding as full `1.188` (#6732).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.190";
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.192`: same merge as full `1.190`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.192";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1238,7 +1244,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.190";
 /// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
 /// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
 /// `0.190`: same blanket-impl reach withholding as full `1.188` (#6732).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.190";
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.192`: same merge as full `1.190`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.192";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5779,7 +5787,9 @@ mod tests {
         // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
         // 1.185 -> 1.187: attribute-macro generated tests refuse invocation scopes (#12857).
         // 1.187 -> 1.188: the blanket-impl reach withholding generation (#6732).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.188");
+        // 1.188 -> 1.189: std-rooted imports keep invocation scopes (#12876).
+        // 1.189 -> 1.190: the merge of #6732 and #12876.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.190");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5946,8 +5956,10 @@ mod tests {
         // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
         // 0.187 -> 0.189: same attribute-macro scope refusal as full 1.187 (#12857).
         // 0.189 -> 0.190: same blanket-impl reach withholding as full 1.188 (#6732).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.190");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.190");
+        // 0.190 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
+        // 0.191 -> 0.192: the merge of #6732 and #12876.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.192");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.192");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

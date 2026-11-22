@@ -560,6 +560,7 @@ fn render_pilot_summary_md_with_target(
     let routes = required_routes(context);
     let python_card = python_top_repair_card(context.python_first_use).filter(|_| top.is_empty());
     let python_first_pr = python_card_first_pr_command(context.root);
+    let python_verify = python_card.map(PythonRepairCard::verify_display);
     let next_commands: Vec<&String> = match (repair.as_ref(), routes) {
         (Some(command), _) => {
             let scope = top
@@ -595,7 +596,10 @@ fn render_pilot_summary_md_with_target(
                         out.push_str(&format!(
                             "{edit}, then run the card's verify command and its receipt command:\n\n"
                         ));
-                        vec![&card.verify_command, receipt]
+                        vec![
+                            python_verify.as_ref().unwrap_or(&card.verify_command),
+                            receipt,
+                        ]
                     }
                     None => {
                         out.push_str(&format!(
@@ -604,7 +608,10 @@ fn render_pilot_summary_md_with_target(
                             card.suggested_test_name,
                             card.suggested_test_file
                         ));
-                        vec![&python_first_pr, &card.verify_command]
+                        vec![
+                            &python_first_pr,
+                            python_verify.as_ref().unwrap_or(&card.verify_command),
+                        ]
                     }
                 }
             }
@@ -1039,7 +1046,7 @@ fn render_pilot_terminal_unescaped(
         out.push_str("Next, in order:\n");
         if let Some(receipt) = card.receipt_command.as_deref() {
             out.push_str(&format!("  1. {edit}\n"));
-            out.push_str(&format!("  2. {}\n", card.verify_command));
+            out.push_str(&format!("  2. {}\n", card.verify_display()));
             out.push_str(&format!("  3. {receipt}\n"));
         } else {
             out.push_str(&format!(
@@ -1047,7 +1054,7 @@ fn render_pilot_terminal_unescaped(
                 python_card_first_pr_command(context.root)
             ));
             out.push_str(&format!("  2. {edit}\n"));
-            out.push_str(&format!("  3. {}\n", card.verify_command));
+            out.push_str(&format!("  3. {}\n", card.verify_display()));
             out.push_str("  4. run the receipt command step 1 printed\n");
         }
         return out;
@@ -2220,6 +2227,9 @@ fn push_python_repair_card_json(out: &mut String, card: &PythonRepairCard, inden
         &card.verify_command,
         true,
     );
+    if let Some(cwd) = card.verify_cwd.as_deref() {
+        json_string_field(out, indent + 2, "verify_cwd", cwd, true);
+    }
     json_string_field(
         out,
         indent + 2,
@@ -2379,7 +2389,7 @@ fn push_python_repair_card_md(out: &mut String, card: &PythonRepairCard) {
         "  - Suggested test target: `{}` in `{}`\n",
         card.suggested_test_name, card.suggested_test_file
     ));
-    out.push_str(&format!("  - Verify: `{}`\n", card.verify_command));
+    out.push_str(&format!("  - Verify: `{}`\n", card.verify_display()));
     if let Some(command) = card.receipt_command.as_deref() {
         out.push_str(&format!("  - Receipt: `{command}`\n"));
     } else {
@@ -2435,7 +2445,7 @@ fn push_python_repair_card_terminal(out: &mut String, card: &PythonRepairCard) {
     ));
     out.push_str(&format!("  test shape: {}\n", card.recommended_test_shape));
     out.push_str(&format!("  assertion: {}\n", card.suggested_assertion));
-    out.push_str(&format!("  verify: {}\n", card.verify_command));
+    out.push_str(&format!("  verify: {}\n", card.verify_display()));
     if let Some(command) = card.receipt_command.as_deref() {
         out.push_str(&format!("  receipt: {command}\n"));
     } else {

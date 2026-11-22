@@ -200,6 +200,69 @@ pub(crate) fn is_test_surface_path(path: &str) -> bool {
     file_name.starts_with("test_") && file_name.ends_with(".py")
 }
 
+/// Test-surface recognition with manifest authority (#15910): a path
+/// [`is_test_surface_path`] accepts, or the entry file of a Cargo `[[test]]`
+/// target the nearest package manifest declares outside the test layouts
+/// (`[[test]] path = "spec/pricing.rs"`).
+///
+/// The analysis already relates tests in such a file, so the repair route
+/// must be able to name it as the test to edit. The manifest half is
+/// deliberately narrow and fails closed:
+///
+/// - only a Rust file at a clean root-relative path;
+/// - only a file the layout does not read as production or as another
+///   target's evidence (`src/**`, `benches/`, `examples/`, `xtask/`, and the
+///   non-source directories never qualify, whatever the manifest says);
+/// - only a target `cargo test` builds and runs through libtest, that the
+///   manifest names as no other target's root
+///   ([`MemberCrates::is_declared_test_only_entry`]).
+///
+/// The manifest is read where the analysis reads it (the committed-source
+/// overlay when one is active, the working tree otherwise).
+///
+/// [`MemberCrates::is_declared_test_only_entry`]: crate::analysis::facts::member_crates::MemberCrates::is_declared_test_only_entry
+pub(crate) fn is_test_surface(root: &Path, path: &str) -> bool {
+    is_test_surface_path(path) || is_declared_cargo_test_surface(root, path)
+}
+
+/// The manifest half of [`is_test_surface`].
+pub(crate) fn is_declared_cargo_test_surface(root: &Path, path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    is_declared_cargo_test_surface_in(
+        &crate::analysis::facts::member_crates::MemberCrates::new(root),
+        Path::new(&normalized),
+    )
+}
+
+/// [`is_declared_cargo_test_surface`] against an analysis's own manifest
+/// authority, for the producer that records the answer on a related test
+/// (`TestKind::DeclaredIntegration`).
+pub(crate) fn is_declared_cargo_test_surface_in(
+    member_crates: &crate::analysis::facts::member_crates::MemberCrates,
+    relative: &Path,
+) -> bool {
+    if relative.extension() != Some(std::ffi::OsStr::new("rs"))
+        || !relative
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+        || is_test_surface_path(&relative.to_string_lossy())
+    {
+        return false;
+    }
+    let layout_owned = relative.components().any(|component| {
+        let name = component_name(&component);
+        name == "src"
+            || name == "xtask"
+            || name == "benches"
+            || name == "examples"
+            || NON_SOURCE_DIRECTORIES.contains(&name.as_str())
+    });
+    if layout_owned || classify(relative).seeds_production_findings() {
+        return false;
+    }
+    member_crates.is_declared_test_only_entry(relative)
+}
+
 /// Layout-only classification (context-free base shared by every
 /// consumer, including surfaces without Cargo metadata at hand).
 ///

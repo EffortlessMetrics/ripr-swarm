@@ -1,0 +1,7 @@
+# Registers the field-write upgrade suggestion that names where the written
+# field is read (#11726) under RIPR-SPEC-0228.
+[[extend]]
+id = "RIPR-SPEC-0228"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_field_write_upgrade_suggestion_names_where_the_field_is_read",
+]

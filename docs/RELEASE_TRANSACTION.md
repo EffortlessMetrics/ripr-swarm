@@ -743,12 +743,19 @@ the authority path. #1470's amendments place authority in canonical packets
 (`ripr#1651`), bound to an exact tag or continuation event (`ripr#1652`) and
 consumed by one publication owner (`ripr#1646`, with `ripr#1644`/`#1649`), and
 say the record cannot authorize `cargo publish`, `gh release`, or another
-workflow generically. A template below runs only when the record names that
-exact command or workflow as the channel's path. Otherwise stop: the channel
-belongs to the source transaction the record names. `ripr#1637`'s 2026-08-30
-amendment also makes that bridge a precondition of
-`stable_ready_same_candidate`; its 2026-11-11 floor does not restate it, and
-this runbook does not settle which holds.
+workflow generically. `ripr#1637`'s 2026-08-30 amendment makes that bridge a
+precondition of `stable_ready_same_candidate`.
+
+**0.11.0: stable waits for that machinery.** The owner ruling of 2026-11-21
+(made in the project chat; `ripr-swarm#16012` is its repository record) is
+that `0.11.0` stable publication waits for `ripr#1651`, `ripr#1652`,
+`ripr#1646`, `ripr#1644`, and `ripr#1649`. The manual templates below are not
+the `0.11.0` stable path. Do
+not run an `[EXTERNAL-PUBLISHING]` template in this section for `0.11.0`, and
+do not ask for a #1470 record that names one. They stay as the reference for
+the order, the per-channel gates, and the receipts the source transaction must
+reproduce. For a later release, a template runs only when the #1470 record
+names that exact command or workflow as the channel's path; otherwise stop.
 
 The check also does not read the remaining RC evidence digests,
 artifact-attestation permissions, or each release secret/environment. Read
@@ -821,9 +828,10 @@ test "$(authorization_value STABLE_DECISION_RECEIPT_SHA256)" = "$STABLE_DECISION
 git -C "$SOURCE_ROOT" rev-parse "$SOURCE_RELEASE_HEAD"
 ```
 
-Publish one channel at a time, in #1470's order, and receipt it before the
-next: crates.io publish and verify, then the `v<VERSION>` tag, then the GitHub
-Release and server assets, then the VSIX and each marketplace. Each template
+The order, for the source transaction and for any template the record names,
+is #1470's, one channel at a time with a receipt before the next: crates.io
+publish and verify, then the `v<VERSION>` tag, then the GitHub Release and
+server assets, then the VSIX and each marketplace. Each template
 calls `require_authorized` for its own item and stops when that item is not
 exactly `authorized`. These templates require #1470; they are not permission
 to publish from this documentation PR.
@@ -1019,7 +1027,12 @@ withheld, skip its three blocks and the Open VSX dispatch becomes that first
 dispatch. The second channel's dispatch must pass the attached
 VSIX's digest as `vsix_sha256` (recorded below before that dispatch); it
 downloads the attached bytes, checks them against it, and each publish job
-re-checks their SHA-256 against the Release asset. The workflow cannot prove
+re-checks their SHA-256 against the Release asset. The attach job re-checks the
+VSIX digest and the embedded `manifest_sha256` before its Release write. A
+publish job treats a version already on its channel as published only when the
+channel serves this release's exact bytes; other bytes, an unexpected status or
+a failed fetch fail the job (see
+[RELEASE_MARKETPLACE.md](RELEASE_MARKETPLACE.md#ci-publish)). The workflow cannot prove
 equivalence with the swarm qualification archives, whose commit and URLs
 differ; that remains outside this control (#3807 R8-F2).
 
@@ -1077,11 +1090,35 @@ a corrective-release decision through #1470. A failed marketplace does not
 invalidate a verified crate, tag, and server release. Never republish a crate
 version, delete or retarget a public tag, or claim a complete release.
 
-A withheld or failed marketplace leaves no run receipt. Section 7's
-publication receipt still loads the server, VS Code Marketplace, and Open VSX
-run receipts unconditionally, so it stops there. Do not fabricate a receipt:
-K waits for the terminal `ripr#1481` channel matrix and an owner-backed
-disposition for that channel.
+A withheld or failed marketplace leaves no run receipt. Do not fabricate one.
+Record the channel's state as an owner-backed disposition instead, in
+`$PACKET_ROOT/vs-marketplace-disposition.json` or
+`$PACKET_ROOT/open-vsx-disposition.json`:
+
+```json
+{
+  "channel": "vs_marketplace",
+  "state": "withheld",
+  "source_release_head": "<40-hex SOURCE_RELEASE_HEAD>",
+  "authority_url": "https://github.com/EffortlessMetrics/ripr/issues/1470#issuecomment-<id>"
+}
+```
+
+The Open VSX file is the same with `"channel": "open_vsx"`. `state` is
+`withheld` (the #1470 record says `not_authorized`, or the channel was never
+dispatched) or `failed` (dispatched, the admitted bytes are not what the
+channel serves, and #1470 carries the corrective decision). `authority_url` is
+the owner's #1470 comment that says so; section 7 checks its form and does not
+fetch it.
+
+A disposition is the terminal outcome and wins over a workflow result. The
+extension workflow can succeed without publishing the admitted bytes, so a
+`failed` disposition may sit beside a run receipt; section 7 then records the
+failed row and keeps the run under `workflow_run` as supporting evidence. A
+`withheld` disposition beside a run receipt is contradictory and stops. With no
+disposition, the marketplace row is its successful run receipt. A marketplace
+with neither file stops. K still waits for the terminal `ripr#1481` channel
+matrix.
 
 ### npm and PyPI
 
@@ -1155,7 +1192,8 @@ BACK_SYNC_TREE="${BACK_SYNC_TREE:?set to the separately reviewed back-sync tree 
 test "$(git -C "$SWARM_ROOT" rev-parse "$K^{tree}")" = "$BACK_SYNC_TREE"
 ```
 
-After K, BACK_SYNC_TREE, and all authorized channel receipts are available,
+After K, BACK_SYNC_TREE, and a run receipt or owner-backed disposition for
+every channel are available,
 produce the exact release-receipt schema consumed by the K verifier. Do this
 before either verifier invocation; its semantics remain owned by
 [`BACK_SYNC_VERIFIER.md`](BACK_SYNC_VERIFIER.md).
@@ -1163,8 +1201,33 @@ before either verifier invocation; its semantics remain owned by
 ```bash
 set -euo pipefail
 # [LOCAL-MUTATING] repo=packet; produce verifier-bound publication receipt
-jq -n --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" --arg source_release_tag "v${VERSION}" --slurpfile server "$PACKET_ROOT/server-run-receipt.json" --slurpfile marketplace "$PACKET_ROOT/vs-marketplace-run-receipt.json" --slurpfile open_vsx "$PACKET_ROOT/open-vsx-run-receipt.json" '{schema_version: 1, version: $version, source_release_head: $source_release_head, join: $join, tree: $tree, source_release_tag: $source_release_tag, channels: {server_binaries: $server[0], vs_marketplace: $marketplace[0], open_vsx: $open_vsx[0]}}' > "$PUBLICATION_RECEIPT"
-jq -e --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" '.version == $version and .source_release_head == $source_release_head and .join == $join and .tree == $tree and .source_release_tag == ("v" + $version) and (.channels | keys | sort) == ["open_vsx", "server_binaries", "vs_marketplace"]' "$PUBLICATION_RECEIPT" >/dev/null
+run_receipt_row() {
+  jq -e -c --arg sha "$SOURCE_RELEASE_HEAD" 'select(.headSha == $sha and .status == "completed" and .conclusion == "success")' "$1"
+}
+marketplace_row() {
+  # $1 = packet file stem, $2 = channel key. An owner-backed disposition is
+  # the terminal outcome and wins over a workflow result: a run can succeed
+  # without publishing the admitted bytes. A missing row is a stop.
+  local run="$PACKET_ROOT/$1-run-receipt.json" disposition="$PACKET_ROOT/$1-disposition.json" row
+  if test -e "$disposition"; then
+    # Explicit returns: errexit does not reach a command substitution.
+    row="$(jq -e -c --arg channel "$2" --arg sha "$SOURCE_RELEASE_HEAD" 'select((keys | sort) == ["authority_url", "channel", "source_release_head", "state"] and .channel == $channel and .source_release_head == $sha and (.state == "withheld" or .state == "failed") and (.authority_url | type == "string" and test("^https://github\\.com/EffortlessMetrics/ripr/issues/1470#issuecomment-[0-9]+$")))' "$disposition")" || return 1
+    if test -e "$run"; then
+      # A withheld channel was never dispatched, so it has no run. A failed
+      # one keeps its run, whatever its conclusion, as supporting evidence.
+      jq -e -c --argjson row "$row" --arg sha "$SOURCE_RELEASE_HEAD" 'select($row.state == "failed" and .headSha == $sha) | $row + {workflow_run: .}' "$run" || return 1
+    else
+      printf '%s\n' "$row"
+    fi
+  else
+    run_receipt_row "$run"
+  fi
+}
+SERVER_ROW="$(run_receipt_row "$PACKET_ROOT/server-run-receipt.json")"
+MARKETPLACE_ROW="$(marketplace_row vs-marketplace vs_marketplace)"
+OPEN_VSX_ROW="$(marketplace_row open-vsx open_vsx)"
+jq -n --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" --arg source_release_tag "v${VERSION}" --argjson server "$SERVER_ROW" --argjson marketplace "$MARKETPLACE_ROW" --argjson open_vsx "$OPEN_VSX_ROW" '{schema_version: 1, version: $version, source_release_head: $source_release_head, join: $join, tree: $tree, source_release_tag: $source_release_tag, channels: {server_binaries: $server, vs_marketplace: $marketplace, open_vsx: $open_vsx}}' > "$PUBLICATION_RECEIPT"
+jq -e --arg version "$VERSION" --arg source_release_head "$SOURCE_RELEASE_HEAD" --arg join "$K" --arg tree "$BACK_SYNC_TREE" '.version == $version and .source_release_head == $source_release_head and .join == $join and .tree == $tree and .source_release_tag == ("v" + $version) and (.channels | keys | sort) == ["open_vsx", "server_binaries", "vs_marketplace"] and (.channels.server_binaries.conclusion == "success") and ([.channels.vs_marketplace, .channels.open_vsx] | all(.conclusion == "success" or .state == "withheld" or .state == "failed"))' "$PUBLICATION_RECEIPT" >/dev/null
 ```
 
 ```bash

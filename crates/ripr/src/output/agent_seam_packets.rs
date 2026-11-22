@@ -658,6 +658,11 @@ pub(crate) struct BeforePhaseAttemptContinuation {
     /// summary only; the `--json` continuation is unchanged. `None` when no
     /// exact command can be established.
     pub(crate) focused_test_command: Option<String>,
+    /// The selected file is a `[[test]]` target the manifest declares
+    /// outside `tests/` (#15910), from the attempt's cage policy. The human
+    /// summary then words it as a test file, not as a source file's inline
+    /// test module, which is what its path shape alone would suggest.
+    pub(crate) declared_cargo_test_target: bool,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -771,6 +776,12 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
     let Some(verify_command) = record.verification_commands.first().cloned() else {
         return Err("requires verification_commands".to_string());
     };
+    // #15302: a nested Python project's verify command is relative to its
+    // project directory; every copyable or prose form runs it from there.
+    let verify_display = crate::output::python_repair_card::rooted_verify_display(
+        record.verify_cwd.as_deref(),
+        &verify_command,
+    );
     let current_evidence_strength = gap_record_current_evidence_strength(record);
     let stop_conditions = stop_conditions_for(route);
     let anchor = record.anchor.as_ref();
@@ -809,7 +820,7 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         record,
         route,
         discriminator: &discriminator,
-        verify_command: &verify_command,
+        verify_command: &verify_display,
         allowed_edit_surface: &allowed_edit_surface,
         stop_conditions: &stop_conditions,
         authority_boundary: authority_boundary.as_str(),
@@ -846,9 +857,14 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
     {
         object.insert("command_specs".to_string(), command_specs.clone());
     }
+    if let Some(cwd) = record.verify_cwd.as_deref()
+        && let Some(object) = repair_card_json.as_object_mut()
+    {
+        object.insert("verify_cwd".to_string(), json!(cwd));
+    }
     let llm_guidance_json = json!({
-        "prompt": gap_record_prompt(route, &discriminator, &verify_command),
-        "verify_command": &verify_command,
+        "prompt": gap_record_prompt(route, &discriminator, &verify_display),
+        "verify_command": &verify_display,
         "stop_conditions": &stop_conditions,
         "copyable_packet": pasteable_packet,
     });
@@ -897,6 +913,11 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         && let Some(object) = packet.as_object_mut()
     {
         object.insert("command_specs".to_string(), command_specs);
+    }
+    if let Some(cwd) = record.verify_cwd.as_deref()
+        && let Some(object) = packet.as_object_mut()
+    {
+        object.insert("verify_cwd".to_string(), json!(cwd));
     }
     if let Some(projection) = causal_projection
         && let Some(delta) = projection.delta_for(non_empty(&record.canonical_gap_id).as_deref())
@@ -1042,7 +1063,10 @@ pub(crate) fn build_gap_record_queue_model(
                 .allows_targeted_test()
                 .then(|| route.related_test.clone())
                 .flatten(),
-            verify_command: verify_command.clone(),
+            verify_command: crate::output::python_repair_card::rooted_verify_display(
+                record.verify_cwd.as_deref(),
+                verify_command,
+            ),
             receipt_command: record.receipt_command.clone(),
             command_specs: gap_record_command_specs_json(record),
             conflict_group,
@@ -3119,7 +3143,39 @@ fn uniquify_recommended_test_name(base: &str, entry: &ClassifiedSeam, target_fil
 pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> bool {
     let recommended = recommended_test_for(entry);
     crate::analysis::is_test_surface_path(&recommended.file)
+        || recommended_test_is_declared_test_target(entry, &recommended)
         || recommended_inline_test_module(entry, &recommended.file).is_some()
+}
+
+/// Whether the recommended test is an existing test in a `[[test]]` target
+/// entry the package manifest declares outside the test layouts (#15910).
+/// The producer read the manifest and recorded the answer on the related
+/// test (`TestKind::DeclaredIntegration`); this projection only reads it, and
+/// the edit cage asks the manifest again before it admits the file
+/// (`edit_cage_policy_from_packet_in`).
+/// The recommended test file when it is a manifest-declared test target
+/// ([`recommended_test_is_declared_test_target`]).
+pub(crate) fn declared_test_target_file(entry: &ClassifiedSeam) -> Option<String> {
+    let recommended = recommended_test_for(entry);
+    recommended_test_is_declared_test_target(entry, &recommended).then_some(recommended.file)
+}
+
+fn recommended_test_is_declared_test_target(
+    entry: &ClassifiedSeam,
+    recommended: &RecommendedTest,
+) -> bool {
+    let Some(symbol_id) = recommended.symbol_id.as_deref() else {
+        return false;
+    };
+    recommended.target_kind == RecommendedTestTargetKind::ExistingTest
+        && entry.evidence.related_tests.iter().any(|test| {
+            test.test_target.as_ref().is_some_and(|target| {
+                target.symbol_id().0 == symbol_id
+                    && target.test_kind()
+                        == crate::analysis::test_grip_evidence::TestKind::DeclaredIntegration
+                    && display_path(target.file()) == recommended.file
+            })
+        })
 }
 
 /// Whether the packet's recommended test file is exactly `proposed_file`. A
@@ -6616,6 +6672,59 @@ mod tests {
             render_agent_gap_record_packet_json("gap-ledger.json", record),
             Err("requires nonblank receipt_command".to_string())
         );
+        Ok(())
+    }
+
+    /// #15302: a record whose verify command is relative to a nested project
+    /// keeps the raw command next to `verify_cwd`, and every copyable or prose
+    /// form runs it from that directory.
+    #[cfg(not(windows))]
+    #[test]
+    fn gap_record_packet_and_queue_run_a_nested_verify_command_from_its_directory()
+    -> Result<(), String> {
+        let raw = "python -m pytest tests/test_price.py::test_discount";
+        let rooted = "(cd -- py && python -m pytest tests/test_price.py::test_discount)";
+        let record = GapRecord {
+            verification_commands: vec![raw.to_string()],
+            verify_cwd: Some("py".to_string()),
+            command_specs: None,
+            ..typed_gap_record()?
+        };
+        let packet = render_agent_gap_record_packet_json("gap-ledger.json", &record)?;
+        let envelope: Value =
+            serde_json::from_str(&packet).map_err(|error| format!("parse packet: {error}"))?;
+        let packet = &envelope["packets"][0];
+        assert_eq!(packet["verify_command"], raw, "{packet}");
+        assert_eq!(packet["verify_cwd"], "py", "{packet}");
+        assert_eq!(packet["repair_card"]["verify_cwd"], "py", "{packet}");
+        assert_eq!(packet["llm_guidance"]["verify_command"], rooted, "{packet}");
+        let prompt = packet["llm_guidance"]["prompt"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(prompt.contains(rooted), "{prompt}");
+        let copyable = packet["llm_guidance"]["copyable_packet"].to_string();
+        assert!(copyable.contains("cd -- py"), "{copyable}");
+
+        let queue = render_agent_gap_record_queue_json(
+            ".",
+            "gap-ledger.json",
+            std::slice::from_ref(&record),
+            record.language.as_str(),
+            10,
+        )?;
+        assert!(
+            queue.contains(&serde_json::to_string(rooted).unwrap_or_default()),
+            "{queue}"
+        );
+
+        let root_level = GapRecord {
+            verification_commands: vec![raw.to_string()],
+            command_specs: None,
+            ..typed_gap_record()?
+        };
+        let packet = render_agent_gap_record_packet_json("gap-ledger.json", &root_level)?;
+        assert!(!packet.contains("verify_cwd"), "{packet}");
+        assert!(!packet.contains("cd -- py"), "{packet}");
         Ok(())
     }
 

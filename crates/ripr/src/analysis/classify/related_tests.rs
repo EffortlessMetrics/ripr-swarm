@@ -3008,6 +3008,29 @@ pub(super) fn own_crate_qualified_entry_path(
     .then_some(spelled_path)
 }
 
+/// The path an integration test spells `owner` through when it calls it by
+/// the package's own library path with no `use` (`pkg::owner`,
+/// `pkg::module::owner`), for a reader that otherwise evaluates only a bare
+/// owner call (the reached-tail pin).
+///
+/// The path is [`own_crate_qualified_entry_path`]'s, so the same authority
+/// that relates the test to the owner decides the spelling: no second
+/// resolver. `None` when no call of the owner in `test` is established that
+/// way. A call written bare never reaches the authority, so the common
+/// spelling pays no file scan here.
+pub(in crate::analysis) fn own_crate_qualified_owner_path(
+    index: &RustIndex,
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    test.calls.iter().find_map(|call| {
+        (call.name == owner.name
+            && !super::helper_transfer::is_direct_call_site(&call.text, &owner.name))
+        .then(|| own_crate_qualified_entry_path(index, test, owner, call.line))
+        .flatten()
+    })
+}
+
 /// Whether `owner` is a top-level `impl` item of a file of the root package's library (`src/lib.rs` or a
 /// module composed under it), the only owner a root integration test reaches
 /// through the library's own crate name.

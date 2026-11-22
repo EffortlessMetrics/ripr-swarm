@@ -599,6 +599,90 @@ fn weak_test_repair_target_is_ready_with_one_fix_site_on_every_route() -> Result
     Ok(())
 }
 
+/// #15910: a weak test in a `[[test]]` target the manifest declares outside
+/// `tests/` is the repair target on every route, including when its file name
+/// holds a literal `%` (spelled `%25` in stable path text): the MCP gate asks
+/// the manifest about the native name, as the CLI gate does.
+#[test]
+fn declared_test_target_is_ready_with_one_fix_site_on_every_route() -> Result<(), String> {
+    let lib = |op: &str| {
+        format!(
+            "pub fn discount(qty: u32) -> u32 {{\n    if qty {op} 10 {{ 5 }} else {{ 0 }}\n}}\n"
+        )
+    };
+    for (native, shown) in [
+        ("spec/discount.rs", "spec/discount.rs"),
+        ("spec/discount%.rs", "spec/discount%25.rs"),
+    ] {
+        let fixture = Fixture::create(
+            "declared-target",
+            &[
+                (
+                    "Cargo.toml",
+                    format!(
+                        "{CARGO_TOML}\n[[test]]\nname = \"boundary_checks\"\npath = \"{native}\"\n"
+                    ),
+                ),
+                ("src/lib.rs", lib(">=")),
+                (
+                    native,
+                    "use fx::discount;\n#[test]\nfn total_positive() {\n    assert!(discount(12) > 0);\n}\n".to_string(),
+                ),
+                (".gitignore", "target/\n.ripr/\n".to_string()),
+            ],
+            &[("src/lib.rs", lib(">"))],
+        )?;
+        let mut mcp = Mcp::spawn(&fixture.0)?;
+        let refresh = mcp.tool("ripr_refresh", json!({}))?;
+        if refresh["attempt"]["state"] != "completed" {
+            return Err(format!("{native}: refresh did not complete: {refresh}"));
+        }
+        let gaps = mcp.tool("ripr_list_gaps", json!({}))?;
+        let items = gaps["items"].as_array().ok_or("gap list omitted items")?;
+        let [item] = items.as_slice() else {
+            return Err(format!(
+                "{native}: fixture must yield exactly one item: {gaps}"
+            ));
+        };
+        let canonical_id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        let finding_id = item["finding_id"].as_str().unwrap_or(canonical_id);
+        assert_eq!(
+            item["repair_packet_ready"], true,
+            "{native} list_gaps: {item}"
+        );
+
+        let prepare = mcp.tool(
+            "ripr_prepare_repair",
+            json!({ "canonical_id": canonical_id }),
+        )?;
+        assert_eq!(
+            prepare["repair_packet_ready"], true,
+            "{native} prepare: {prepare}"
+        );
+        assert_eq!(prepare["allowed_edit_surface"], json!([shown]), "{prepare}");
+
+        let card = mcp.tool(
+            "ripr_get_repair_card",
+            json!({ "canonical_id": canonical_id }),
+        )?;
+        assert!(card["failure"].is_null(), "{native} card refused: {card}");
+        assert_eq!(card["card"]["allowed_files"], json!([shown]), "{card}");
+
+        let output = ripr()
+            .current_dir(&fixture.0)
+            .args(["repair", finding_id, "--root", "."])
+            .output()
+            .map_err(|e| e.to_string())?;
+        let cli = String::from_utf8_lossy(&output.stdout).to_string();
+        assert!(
+            cli.contains("Ready to repair")
+                && cli.contains(&format!("Files you may change: {shown}")),
+            "{native}: the CLI names the same ready item and edit file:\n{cli}"
+        );
+    }
+    Ok(())
+}
+
 /// With two weak direct tests the MCP edit surface must be the file the CLI
 /// names as the test to extend, not whichever related test sorts first.
 #[test]

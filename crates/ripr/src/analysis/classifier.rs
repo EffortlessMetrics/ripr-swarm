@@ -390,6 +390,19 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
             candidate_index.module_declarations(),
         )
     });
+    // #15272: the base-side owner for any one-line predicate or return-value
+    // change, so agreeing asserted inputs do not read as a discriminator.
+    context.owner_baseline = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        let tests = context.related_test_summaries();
+        super::classify::sole_line_owner_baseline(
+            probe,
+            owner,
+            &tests,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+        )
+    });
     context.owner_sole_change = changed_file
         .zip(owner_fn)
         .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));
