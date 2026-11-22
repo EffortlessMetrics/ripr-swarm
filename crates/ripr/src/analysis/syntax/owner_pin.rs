@@ -2177,6 +2177,16 @@ fn audited_pass_through_call(
             // `dep::prop_assert!` names whatever `dep` exports, not the
             // trusted macro its last segment spells. Only the `proptest` root
             // itself (`proptest::prop_oneof!`) is the audited crate's path.
+            // A group whose tokens name no trusted macro is accepted whatever
+            // its call names, so it adds no root that needs proof.
+            let mentions_known = group
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| known.contains(&token.text().trim_start_matches("r#")));
+            if !mentions_known {
+                return true;
+            }
             let qualifier = pass_through_call_qualifier(before);
             let name = name.text().trim_start_matches("r#");
             let audited = PASS_THROUGH_WRAPPERS.contains(&name);
@@ -2205,13 +2215,7 @@ fn audited_pass_through_call(
                 }
                 _ => false,
             };
-            qualifier.is_empty() && known.contains(&name)
-                || wrapper
-                || !group
-                    .syntax()
-                    .descendants_with_tokens()
-                    .filter_map(|element| element.into_token())
-                    .any(|token| known.contains(&token.text().trim_start_matches("r#")))
+            qualifier.is_empty() && known.contains(&name) || wrapper
         });
     nested_calls_confined.then_some((wrapper, nested))
 }
@@ -2310,6 +2314,9 @@ fn argument_uses_bind_no_trusted_name(
                     && text != "as"
                     && !known.contains(&text)
                     && !PASS_THROUGH_WRAPPERS.contains(&text)
+                    // An argument import of `serde_json` would take over a
+                    // nested `serde_json::json!` that the call trusts.
+                    && text != "serde_json"
                     && !INERT_PASS_THROUGH_ATTRIBUTES.contains(&text)
             })
         })
