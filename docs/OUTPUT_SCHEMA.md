@@ -214,7 +214,14 @@ alternative (it may overlap an existing one), or more `allOf` conjuncts; and any
 Widening edits pass, as does a new property on an object with
 `additionalProperties: false`, `const` widening to an `enum` that contains it,
 a dropped `pattern`, and annotation-only edits (`description`, `title`,
-`examples`, ...) at any depth. Changing the version pin accepts a breaking edit
+`examples`, ...) at any depth. A new root `anyOf` also passes when one properties-only alternative
+repeats earlier same-field scalar guards (`type`, `minLength`) and every
+other alternative either repeats those guards or supplies only a valid
+nonempty list of distinct required names. The compatibility tests
+`added_any_of_preserves_a_repeated_scalar_guard_only` and
+`published_check_root_widening_does_not_admit_overlapping_cache_receipts`
+cover this implication and an enclosing exclusive alternative.
+Changing the version pin accepts a breaking edit
 explicitly; deleting the pin does not. A schema with no pin (the Shields badge
 schema) cannot take a breaking edit at all. With no merge base the gate prints
 `schema compatibility not established`; it passes locally but fails when `CI`
@@ -1354,7 +1361,8 @@ next=ripr context ... --at SELECTOR
   `no_static_path`, unknown classes).
   A finding that is not a current edit target (`base_deleted`, `moved_or_renamed`,
   `unresolved_subject`) never prints `open=` or `done=`: its `stop=` names the
-  currentness. A policy-suppressed finding prints a suppression `stop=`; a
+  currentness. An owner opt-out prints `stop=owner_mutants_skip|owner=NAME|scope=SCOPE`
+  with `|scope_label=LABEL` for a named enclosing scope. A policy-suppressed finding prints a suppression `stop=`; a
   `--from` replay with `--suppression-policy` is refused for this format. All
   are static advisory, never runtime mutation outcomes.
 - `owner=` is the function the changed line belongs to (the producer's probe
@@ -2478,14 +2486,14 @@ badge, or proof route, and it is not portable between machines.
 An `unsupported_input` outcome exits `2` with its ordinary incomplete report
 and direct-input navigation, without creating or replacing the artifact.
 Existing valid and advisory `partial_with_limitations` artifact behavior is
-unchanged. Older v1 artifacts do not record the producing outcome; regenerate
-an artifact if it may have come from an unsupported-input run.
+unchanged. Re-run `ripr check --write-artifact` to replace a v1 artifact.
+That version did not record owner opt-outs.
 
-Envelope (`schema_version = "ripr-check-artifact-v1"`):
+Envelope (`schema_version = "ripr-check-artifact-v2"`):
 
 ```json
 {
-  "schema_version": "ripr-check-artifact-v1",
+  "schema_version": "ripr-check-artifact-v2",
   "tool": "ripr",
   "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
   "identity": {
@@ -2502,7 +2510,8 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
     "config_identity_version": 1,
     "config_identity_hash": "fnv1a64:fedcba9876543210"
   },
-  "findings": [ /* complete Finding set, full fidelity */ ]
+  "findings": [ /* complete Finding set, full fidelity */ ],
+  "owner_opt_outs": [ /* finding_id, owner, reason, scope, scope_label */ ]
 }
 ```
 
@@ -2517,6 +2526,8 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 - `findings` serializes the complete `Finding` set with serde: uncapped
   `related_tests` (no 8-entry render cap), always-present probe `owner`,
   and no render-time severity projection.
+- `owner_opt_outs` records the producing check’s decisions after suppression
+  policy. An empty array means that no finding was withheld by an owner.
 - The identity gate is fail-closed: any mismatch on `diff_bytes_hash`,
   `root`, `mode`, `enabled_languages`, `analysis_options.*`,
   `config_identity_version`, `config_identity_hash`, or `analyzer_version`
@@ -2913,7 +2924,9 @@ The evidence-first fields are additive in schema `0.2`:
   (reason `python_unread_owner_result_field_with_bounded_repair_route`,
   RIPR-SPEC-0028); every other orthogonal card stays undelegated. The exact
   repaired read on that binding surfaces `direct` with
-  `strong_oracle_observes_owner_result_field`.
+  `strong_oracle_observes_owner_result_field`. A strong literal comparison
+  of a direct read of a plain builtin `@property` owner surfaces `direct`
+  with `strong_oracle_observes_property_read` (RIPR-SPEC-0238 Decision 10).
 
   Example — an `exposed` finding aligned directly, and a `weakly_exposed`
   finding whose strong oracle is orthogonal:
@@ -3108,7 +3121,7 @@ The evidence-first fields are additive in schema `0.2`:
     emitted, `typescript_preview_card.verify.command` reflects the same value.
     Command forms (RIPR-SPEC-0085 PR 3):
     `<launch> jest <file>`, `<launch> vitest run <file>`, `bun test <file>`,
-    `<launch> ava <file>`, `node --test <file>`, `npm test -- <file>`,
+    `<launch> ava <file>`, `<launch> mocha <file>`, `node --test <file>`, `npm test -- <file>`,
     `pnpm test -- <file>`, `yarn test <file>`. `<launch>` is the package
     runner's local-binary launcher (`npx --no-install` for npm or an
     unresolved runner, `pnpm exec`, `yarn`, `bun run`), because devDependency
@@ -3673,7 +3686,8 @@ JSON fields:
   `typescript_workspace_discovery_truncated`, or
   `typescript_workspace_read_limited`, or
   `rust_future_never_polled`, or
-  `activation_boundary_input_unresolved`.
+  `activation_boundary_input_unresolved`, or
+  `rust_gated_doctest_unread`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -4158,8 +4172,9 @@ the editor supplies no suppression policy (#14610).
 withheld finding and starts with one line stating the withholding, taken from
 the same run's `owner_opt_outs`, for example
 ``Withheld: owner `limit` is inside impl `Cart` marked #[mutants::skip] (owner_mutants_skip)``.
-`explain --format agent` and `explain --from <artifact>` do not add it (the
-check artifact does not record opt-outs).
+Agent output names the owner, scope and reason in its `stop=` record.
+`explain --from <artifact>` uses the recorded opt-out in both formats.
+Agent explanations and human artifact replay offer no repair for a withheld finding.
 
 #### Repo scope owner opt-outs (#14139)
 
@@ -4515,6 +4530,12 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
   over the field-snapshot adapter, so its reason cannot be hidden by a later
   framework marker.
 - `rust_debug_assertion_profile_unresolved` -- (RIPR-SPEC-0240, additive, #8051) A related, non-ignored test calls the owner directly and pins its result with a bare `debug_assert_eq!` that the owner-return pin admits under every gate it applies to `assert_eq!`. Debug assertions run under the default `cargo test` profile and are compiled out under `--release`, and ripr does not resolve which profile runs the tests, so the `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim, and never exposure credit.
+For repo-seam stage evidence, the activation-boundary, call-budget, panic and
+framework producers persist an optional `static_limit_kind`. The corresponding
+evidence-record limitation keeps its existing category wire value when the
+display summary changes. Stages without a typed marker, including records
+written by earlier versions, retain the summary-based classification.
+
 - `rust_call_fact_budget` -- (#8600, additive) A related test has a source line holding 256 distinct callees, the per-line call-fact budget, so further calls on that line may have been omitted (exactly 256 is treated as possibly truncated, not as proof a call was dropped). A negative claim that depends on the test's calls (`reachable_unrevealed` or `weakly_exposed`) is withheld as `static_unknown` with stop reason `gap_evidence_unresolved`; an already-unknown finding keeps its class, gains the named reason, and drops its call-derived absence lines, missing discriminators and next-step prescription. Saturation is read over every matched related test before the eight-row render cap, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read `observation_unconfirmed`. Findings with no related saturated test are unchanged, and the reason never raises a class. The `repo-exposure-json` and `repo-exposure-summary-json` seam readings apply the same decision to their stage evidence: a stage that read `no` or `weak` becomes `unknown`, the seam's missing boundary values are dropped, and the evidence record carries a `static_limitations[]` row whose `category` is `rust_call_fact_budget`, a `static_limitation` actionability and a `limitation` canonical item with no repair command; an already-unknown seam keeps its class and gains the reason. A named limitation, not a missing-test, coverage, or repair claim.
 - `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, an insta snapshot whose redactions do not name the changed field, a literal pin on a receiver a test helper builds under a changed closure tail, or a field of a hand-written recording double the test passes as `&mut`. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
   For owner-bound field snapshots, full and compact repository evidence also
@@ -4542,6 +4563,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `typescript_workspace_read_limited` -- (RIPR-SPEC-0240, additive, #11985) TypeScript workspace reads refused discovered source files under `RIPR_TS_MAX_FILE_READ_BYTES` or `RIPR_TS_MAX_WORKSPACE_READ_BYTES`, so a test or call path may be absent from the evidence index. A TypeScript or JavaScript finding that would be `no_static_path` with no earlier named limit becomes `static_unknown` with this kind and stop reason `gap_evidence_unresolved`. Findings with observed related tests and existing named limits are unchanged. Actionability names the same limit, and recovery names both byte settings or a narrower root. The read refusals still mark the run partial; no finding is invented for an unread changed source. The existing typed-limitation contract withholds canonical repair-gap and TypeScript repair-packet projection. The optional kind uses the existing wire shape/version and makes no coverage claim.
 - `rust_future_never_polled` -- (RIPR-SPEC-0240, additive, #13702) Every test that reaches the changed `async fn` owner is a plain synchronous `#[test]` (no async test attribute such as `#[tokio::test]` or `#[async_std::test]`) whose every owner call builds a future and drops it unpolled: a bare statement, the sole argument of `std::mem::drop(..)`/`core::mem::drop(..)` (or of a bare `drop(..)` when no user-defined `drop` is indexed or brought into the test's file), or a `let` initializer bound to `_` or to a name the test never mentions again, in a body with no `.await`, `async` block, `block_on`, `block_in_place`, `Runtime`, `Handle`, `spawn` or `poll` spelling. The owner's body never runs in those tests, so reach is not claimed: the reach stage becomes `unknown` ("future created but never polled"), infection becomes `unknown` when it reads `yes` or `weak` (propagation, read from the owner's own code, is kept), stale reach and infection evidence lines are dropped, and a `weakly_exposed`, `reachable_unrevealed`, `infection_unknown` or `propagation_unknown` finding becomes `static_unknown` with stop reason `gap_evidence_unresolved`. Every related test, whatever its relation, must be one of those direct-call tests, and every spelling of the owner's name in the indexed files must be its declaration, one of those test bodies or a plain `use` leaf. An awaited call, a call driven by an executor, an async test attribute, a mention inside a macro, a closure whose tail expression is the call, a `use … as …` alias or `macro_rules!` naming the owner, a user-defined `drop`, another function naming the owner, or a helper relation keeps today's reading; a closure whose body drops the call as a statement (`let c = || { fetch_len("abc"); }; c();`) still drops the future unpolled and is named. Nothing is credited and no runtime is chosen; repair does not start. The optional kind uses the existing wire shape/version and makes no coverage claim.
 - `activation_boundary_input_unresolved` -- (RIPR-SPEC-0068, additive, #14951) A changed Rust predicate boundary compares an operand that binds to no owner argument ripr can read from a test call (local, computed such as `cents % 100 > 49`, iterator-derived or closure-derived). The repo seam's activate-stage summary leads with this token and the evidence record's static-limitation `category` is read from it, with the sub-case in `repair_route`. A `check` finding carries it only when its owner is `no_static_path` with reach `no`, the reach summary ends with `(unreferenced in workspace)`, at least one test is related, and the shared decision finds the boundary input unresolved; the class, stages and related tests are unchanged, and the agent header counts it as a named limit rather than in `gaps=`. Nothing is credited; this is not a coverage claim. The optional kind uses the existing wire shape/version.
+- `rust_gated_doctest_unread` -- (RIPR-SPEC-0240, additive, #14935) A Rust `reachable_unrevealed` finding with reach `weak` (no indexed test is seen calling the owner) whose owner's cfg gate requires a custom cfg name on (not a `feature`/target pair or a built-in name such as `unix`), where a runnable fenced doc example in the same doctested library was refused by a gate on that name (a doc-text `cfg_attr` inside the fence that runs the example only with the name on, or an item `cfg` that requires it on) and documents a public production function. The class becomes `static_unknown` with stop reason `gap_evidence_unresolved`; reach, related tests and stages are unchanged, and the agent header counts it as a named limit rather than in `gaps=`. Nothing is credited; this is not a coverage claim. The optional kind uses the existing wire shape/version.
 
 Reserved `flow_sink` values:
 
@@ -5336,9 +5358,15 @@ one. It is emitted between `tool` and `source_currentness`.
 ## Check Findings Artifact
 
 `ripr check --format check-findings-json` emits the complete diff-scoped
-`check --format json` document (the Output section above, never
+generic check JSON document (the Output section above, never
 findings-bounded) with one additive top-level member, `artifact`, as its
-first member (ADR 0020 amendment, #9103). The envelope is the same shared
+first member (ADR 0020 amendment, #9103). Because it is rendered by the
+generic renderer rather than the navigation-aware `--format json` adapter, it
+carries neither `finding_routes` nor `canonical_next_action`; every other
+member of the check document is present under the same conditions as in
+`--format json`. `schemas/ripr/check.schema.json` admits `artifact` as an
+optional member (the `check_findings_artifact` definition), so both documents validate
+against it. The envelope is the same shared
 projection `repo-exposure-json` carries with these token differences: `kind`
 is `"check_findings"` and `analysis.format` / `analysis.command` name
 `check-findings-json` / `ripr check --format check-findings-json`. The
@@ -14119,7 +14147,10 @@ Field contract:
 - `status` - `no_suppressions` when the manifest is missing or empty,
   `healthy` when all parsed records have complete policy metadata, `warning`
   when valid records need review, or `config_error` when the manifest is
-  malformed.
+  malformed. An explicitly named `--manifest` that does not exist, or is
+  unreadable or malformed, is refused with exit `2` instead of reporting
+  `no_suppressions` (the report is still written first for a `config_error`);
+  only the absent default manifest reads as `no_suppressions` (#15254).
 - `summary.missing_owner` and `summary.missing_reason` - parser-level
   structural errors. Owner and reason remain required for every durable
   suppression.
@@ -19693,7 +19724,7 @@ repair-routing records. Python preview GapRecords accept bounded
 `python -m pytest ...` (and the earlier bare `pytest ...` form) and
 `python -m unittest ...` verification commands, and TypeScript preview
 GapRecords accept the local-only launcher forms (`npx --no-install`,
-`pnpm exec`, `yarn`, `bun run` followed by `jest`, `vitest run` or `ava`, plus
+`pnpm exec`, `yarn`, `bun run` followed by `jest`, `vitest run`, `ava` or `mocha`, plus
 `bun test`, `node --test`, `npm|pnpm test --` and `yarn test`). After the
 runner, a verify command may name only package-relative test paths and node
 ids: an option token (`--config`, `-p`), an absolute or home path (`/`, `C:`,
@@ -21720,7 +21751,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.63",
+    "schema_version": "1.64",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -22035,6 +22066,37 @@ remain generic references and are never interpreted by position as seam IDs.
 When static evidence changes between incomparable same-rank classes, movement
 is `limited` with `movement_indeterminate` rather than being mislabeled as an
 incompatible before artifact.
+
+The report is published as
+[`schemas/ripr/rerun.schema.json`](../schemas/ripr/rerun.schema.json) (the
+refusal written with exit code 2 is `rerun-refusal.schema.json`).
+`crates/ripr/tests/rerun_json_schema.rs` validates the bytes the real command
+writes for both selectors, `--before` movement (unchanged, improved, regressed,
+closed, indeterminate, and an unusable or incompatible before artifact),
+`--check-parity` (matched and capped), a gap ledger whose records conflict, a
+ledger carrying the typed command specs `ripr agent packet` produced, a
+TypeScript gap rerun, and selectors that resolve to nothing, including an
+empty `--gap ""` and a `--changed-test` that names the root. Only text the
+producer is observed to leave empty stays a plain string: a TypeScript related
+test with no oracle or relation writes `""` for `evidence_summary`,
+`relation_reason` and `relation_confidence`; a blank legacy `verify_commands`
+display is kept as written; and the selector echoes an empty `--gap` value, or
+a `--changed-test` that normalizes to an empty path, as `""` in a `limited`
+report. Every other text field is non-empty. Beyond the field shapes, the schema binds these rules: `limitation`
+is present exactly when `state` is `limited`; a `movement` section carries the
+report `state` and the before/after `authority_boundary`, and a report without
+one is `current_state_only` or `limited`; a `limited` movement is
+`movement_indeterminate`, and a `movement_indeterminate` limitation always
+carries a movement section; an unusable before artifact makes no movement
+claim; `matched` parity has no mismatch of any kind, and `limited` parity is
+exactly the report's `full_pipeline_parity_*` limitation (each requires the
+other); at most 32 `cache.store_failures` rows are retained; a typed command
+spec's `working_directory` is relative, as in `repair-assurance.schema.json`; only a gap selector writes
+`route` or `scope_limitations`; a `receipt_command_conflict` leaves
+`receipt_command` null with no typed receipt spec. Analysis-wide vocabularies
+(`static_class`, oracle and relation names, the selector limitation kinds) are
+non-empty strings rather than closed lists, so a new analysis value does not
+break the schema.
 
 ## Targeted rerun benchmark receipt
 
