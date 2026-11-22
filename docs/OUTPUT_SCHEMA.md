@@ -719,6 +719,17 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
   Human output prints the same strings. Serving a strongly_gripped seam as
   a scaffold remains `state: ready` / exit 0; the warning is disclosure,
   not a refusal.
+  When the live diff touches a `strongly_gripped` seam, the stub asks the
+  same default `ripr check` what it reads for the changed code there
+  (#15278). If check reads a gap or a limit, `classification` carries
+  check's class (for example `weakly_exposed`) while `grip_class` stays
+  `strongly_gripped`, and the warning becomes `seam <id> is
+  strongly_gripped when ripr reads the whole spot, but `ripr check` reads
+  your changed code there as weak (weakly_exposed): existing tests do not
+  clearly notice the change, so this stub is for that gap`. If check could
+  not run, `classification` is `null` and the warning says ripr could not
+  confirm that existing tests notice the changed code. When check reads the
+  change as exposed, or the diff does not touch the seam, nothing changes.
 - `already_present` — `true` when the placement already holds the identical
   test function ripr would write (a second run for the same seam recomputes
   byte-identical text). A repeated `--write` then reports the stub as already
@@ -1395,6 +1406,10 @@ header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
+When every finding is on removed code, the block also prints a
+`Removed code` list of up to three rows (current-file location, removed code,
+probe kind and what the class says about the old line), then an
+`N more: rerun with --format human-full` row for the rest.
 Each listed hidden finding includes its probe kind and bounded explanatory
 reason alongside location, exposure class, and any currentness label. When
 `--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit

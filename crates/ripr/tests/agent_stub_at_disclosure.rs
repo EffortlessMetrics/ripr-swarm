@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "common/mod.rs"]
+mod common;
+
 struct Scratch(PathBuf);
 
 impl Scratch {
@@ -18,6 +21,13 @@ impl Scratch {
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        // #10683: CI sets TMPDIR inside the checkout, so a scratch root below
+        // the enclosing work tree would trip the #15488 subdirectory-root
+        // guard before the refusal under test. Its own repository makes the
+        // scratch the exact Git top-level, so the guard stays quiet and the
+        // product rule is unchanged.
+        common::fixture_git::fixture_git_ok(&root, &["init", "-q"])
+            .map_err(|error| format!("fixture git init: {error}"))?;
         std::fs::write(
             root.join("Cargo.toml"),
             format!("[package]\nname = \"{label}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),

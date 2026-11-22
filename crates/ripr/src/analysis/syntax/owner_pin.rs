@@ -8,6 +8,7 @@
 
 mod fallible_check;
 mod literal_json;
+mod scan_memo;
 use literal_json::{
     json_namespace_rebound, literal_json_import_visible_among, literal_json_tokens,
     literal_json_tree, literal_json_uses,
@@ -4225,6 +4226,7 @@ fn owner_pin_assertions_with_matches(
     };
     result.parsed = true;
     let _extern_crate_scan = ExternCrateScan::enter();
+    let _module_scan = scan_memo::ModuleScan::enter();
     result.file_binds_test = file_binds_test_name(parse.tree().syntax());
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
@@ -5335,9 +5337,9 @@ fn item_context_refusal(
         {
             return Some(AssertionContextRefusal::NestedItem);
         }
-        if let Some(attr) = node.children().filter_map(ast::Attr::cast).find(|attr| {
-            attribute_test_build_availability(&attr.syntax().text().to_string()) != Some(true)
-                && !default_enabled_gate(attr, default_features)
+        // #11738: within a scan the node's unsettled attributes are read once.
+        if let Some(attr) = scan_memo::first_refusing_attribute(&node, |attr| {
+            !default_enabled_gate(attr, default_features)
         }) {
             return Some(AssertionContextRefusal::GatedItem(
                 attr.syntax().text().to_string(),
@@ -5714,7 +5716,7 @@ fn is_inert_attribute_path(path: &str) -> bool {
 /// prelude and cannot be rebound by an import; a bare built-in name can be, by
 /// a `use` or `extern crate .. as`, exactly as `test` can.
 fn builtin_attribute_holds(path: &str, module: &SyntaxNode) -> bool {
-    path.contains("::") || builtin_name_holds(path, module, true)
+    path.contains("::") || builtin_name_holds(path, module)
 }
 
 /// Whether a bare `#[test]` in `module` is libtest's built-in attribute. An
@@ -5724,12 +5726,25 @@ fn builtin_attribute_holds(path: &str, module: &SyntaxNode) -> bool {
 /// crate is refused by the macro-binding authority, and one of the
 /// workspace's own modules is not seen into.
 fn builtin_test_attribute_holds(module: &SyntaxNode) -> bool {
-    builtin_name_holds("test", module, true)
+    builtin_name_holds("test", module)
 }
 
 /// Whether no import in `module` (or an enclosing module of this file reached
-/// by `use super::*`) rebinds the built-in attribute name `name`.
-fn builtin_name_holds(name: &str, module: &SyntaxNode, allow_unresolved_globs: bool) -> bool {
+/// by `use super::*`) rebinds the built-in attribute name `name`. Memoized
+/// within an owner-pin scan (#11738). A glob this tree cannot follow is read
+/// as holding; [`source_item_builtin_name_holds`] asks the refusing form.
+fn builtin_name_holds(name: &str, module: &SyntaxNode) -> bool {
+    scan_memo::builtin_name_holds(name, module)
+}
+
+/// [`builtin_name_holds`] computed directly.
+fn builtin_name_holds_uncached(name: &str, module: &SyntaxNode) -> bool {
+    builtin_name_holds_with(name, module, true)
+}
+
+/// The unmemoized reading. The scan memo is keyed by module and name only, so
+/// only the `allow_unresolved_globs` form recurses through it.
+fn builtin_name_holds_with(name: &str, module: &SyntaxNode, allow_unresolved_globs: bool) -> bool {
     !extern_crate_binds_name(module, name)
         && module_use_leaves(module)
             .iter()
@@ -5744,7 +5759,11 @@ fn builtin_name_holds(name: &str, module: &SyntaxNode, allow_unresolved_globs: b
                         parent = parent.and_then(|items| enclosing_module_items(&items));
                     }
                     parent.map_or(allow_unresolved_globs, |parent| {
-                        builtin_name_holds(name, &parent, allow_unresolved_globs)
+                        if allow_unresolved_globs {
+                            builtin_name_holds(name, &parent)
+                        } else {
+                            builtin_name_holds_with(name, &parent, false)
+                        }
                     })
                 }
             })
@@ -5756,7 +5775,7 @@ fn builtin_name_holds(name: &str, module: &SyntaxNode, allow_unresolved_globs: b
 pub(crate) fn source_item_builtin_name_holds(name: &str, item: &SyntaxNode) -> bool {
     item.parent().is_some_and(|scope| {
         (ast::ItemList::can_cast(scope.kind()) || ast::SourceFile::can_cast(scope.kind()))
-            && builtin_name_holds(name, &scope, false)
+            && builtin_name_holds_with(name, &scope, false)
     })
 }
 

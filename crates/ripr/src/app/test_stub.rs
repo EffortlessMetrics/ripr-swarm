@@ -1657,6 +1657,40 @@ std::thread_local! {
     static INVENTORY_ENTRY_FACTS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// What `ripr check` reads on the changed lines of a stubbed seam the
+/// inventory reads as strongly gripped (#15278). The stub's disclosure says
+/// "existing tests already discriminate it" from the whole-seam inventory;
+/// when check reads the changed code there as a gap or a limit, that sentence
+/// contradicts it. The seam's file is classified so the finding binds through
+/// the same location join the repair start uses. Any step that cannot be
+/// established leaves the inventory's reading as it is.
+pub(crate) fn check_reading_of_gripped_stub_seam(
+    root: &Path,
+    config: &RiprConfig,
+    seam_id: &str,
+) -> super::task_first::CheckReadingOfGrippedSeam {
+    use super::task_first::CheckReadingOfGrippedSeam;
+    let Ok(Some(location)) = analysis::locate_seam_file_at_with_config(root, config, seam_id)
+    else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    let Ok(scoped) = analysis::inventory_file_guidance_at_with_config(root, config, &location.file)
+    else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    let Some(entry) = scoped
+        .classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)
+    else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    if entry.class != SeamGripClass::StronglyGripped {
+        return CheckReadingOfGrippedSeam::Stands;
+    }
+    super::task_first::check_reading_of_gripped_seam(root, None, config, entry, &scoped.classified)
+}
+
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
 /// Classification is not used to pick the seam (#5471); this lookup is
 /// disclosure only, plus the weak-oracle pointer (#10683). A failed or empty

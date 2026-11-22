@@ -5942,9 +5942,7 @@ shell, unbounded, or otherwise unsupported subprocess shapes.
   its warning now names the current id to write instead
   ([#4736](https://github.com/EffortlessMetrics/ripr-swarm/issues/4736)).
 - Upgrading from 0.10: `ripr receipt check --gap` finds a receipt 0.10 wrote
-  under the raw gap id file name when the id contains no path separator (for
-  an id such as `gap:rust:src/lib.rs:...`, pass the file with `--path`), and a
-  receipt without `current_head` is
+  under the raw gap id file name, and a receipt without `current_head` is
   rejected with the reason (it predates HEAD binding) and the
   `ripr receipt write` command that replaces it
   ([#4737](https://github.com/EffortlessMetrics/ripr-swarm/issues/4737)).
