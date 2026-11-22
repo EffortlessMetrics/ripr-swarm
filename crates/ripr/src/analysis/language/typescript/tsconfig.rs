@@ -830,8 +830,9 @@ struct DeclaredPaths {
 struct ChainOptions {
     base_url: Option<Option<(PathBuf, String)>>,
     paths: Option<Option<DeclaredPaths>>,
-    /// Every config merged so far, with whether it has a `paths` key.
-    followed: Vec<(PathBuf, bool)>,
+    /// Every config merged so far, with the config that declares the
+    /// `paths` in effect for it (`None` when it has none).
+    followed: Vec<(PathBuf, Option<PathBuf>)>,
 }
 
 /// Maximum `extends` hops followed from the workspace-root config.
@@ -873,16 +874,19 @@ fn merge_compiler_options(
 ) -> Result<MergedCompilerOptions, TsAliasMapBlocker> {
     let chain = merge_chain(root, config_path, text, visited, depth)?;
     let paths = chain.paths.flatten();
-    // A base whose own `paths` a later config replaced contributes nothing
-    // this map states, so it is not modeled.
+    // A followed config is modeled only when the `paths` in effect for it
+    // are the ones this map states. A base whose own `paths` a later config
+    // replaced is not, and neither is a config between them that inherits
+    // the replaced `paths` without declaring any.
     let modeled_configs = chain
         .followed
         .into_iter()
-        .filter(|(config, declares_paths)| {
-            !declares_paths
-                || paths
+        .filter(|(_, effective)| {
+            effective.as_ref().is_none_or(|effective| {
+                paths
                     .as_ref()
-                    .is_some_and(|declared| declared.config == *config)
+                    .is_some_and(|declared| declared.config == *effective)
+            })
         })
         .filter_map(|(config, _)| normalize_lexically(&config))
         .collect();
@@ -973,22 +977,38 @@ fn merge_chain_level(
             merged.followed.extend(base.followed);
         }
     }
-    let mut declares_paths = false;
     if let Some(options) = raw.compiler_options {
         if let Some(base_url) = options.base_url {
             merged.base_url = Some(base_url.map(|raw| (config_dir.to_path_buf(), raw)));
         }
         if let Some(paths) = options.paths {
-            declares_paths = true;
-            merged.paths = Some(paths.map(|entries| DeclaredPaths {
-                config: config_path.to_path_buf(),
-                entries,
+            merged.paths = Some(paths.map(|entries| {
+                DeclaredPaths {
+                    config: config_path.to_path_buf(),
+                    // `tsc` normalizes `\` to `/` in a substitution before it
+                    // joins or tests it, so `.\src\*` is `./src/*`.
+                    entries: entries
+                        .into_iter()
+                        .map(|(key, templates)| {
+                            let templates = templates
+                                .into_iter()
+                                .map(|template| template.replace('\\', "/"))
+                                .collect();
+                            (key, templates)
+                        })
+                        .collect(),
+                }
             }));
         }
     }
+    let effective_paths_config = merged
+        .paths
+        .as_ref()
+        .and_then(Option::as_ref)
+        .map(|declared| declared.config.clone());
     merged
         .followed
-        .push((config_path.to_path_buf(), declares_paths));
+        .push((config_path.to_path_buf(), effective_paths_config));
     Ok(merged)
 }
 
@@ -2153,7 +2173,7 @@ mod tests {
             write(
                 &root,
                 config,
-                r#"{"compilerOptions":{"paths":{"@/*":["./src/*"],"@owner":["./src/owner.ts"]}}}"#,
+                r#"{"compilerOptions":{"paths":{"@/*":["./src/*"],"@owner":["./src/owner.ts"],"@win/*":[".\\src\\*"]}}}"#,
             );
             write(&root, "src/owner.ts", "export const owner = 1;\n");
             // A same-named file at a different anchor must not be chosen.
@@ -2166,6 +2186,12 @@ mod tests {
             );
             assert_eq!(
                 resolved(&map, "@owner").as_deref(),
+                Some("src/owner.ts"),
+                "{config}"
+            );
+            // `tsc` reads a backslash-separated target as the same path.
+            assert_eq!(
+                resolved(&map, "@win/owner").as_deref(),
                 Some("src/owner.ts"),
                 "{config}"
             );
@@ -2362,6 +2388,33 @@ mod tests {
         assert!(!map.models_config(&root.join("jsconfig.json")));
         let packages_only = TsAliasMap::workspace_packages_only(&root, Default::default());
         assert!(!packages_only.models_config(&root.join("tsconfig.json")));
+        // A config between the selected one and the replaced base inherits
+        // the replaced `paths` without declaring any: not modeled either.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.mid.json","compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.mid.json",
+            r#"{"extends":"./tsconfig.base.json","include":["test"]}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the longer chain must load")?;
+        assert!(map.models_config(&root.join("tsconfig.json")));
+        assert!(map.models_config(&root.join("tsconfig.options.json")));
+        assert!(!map.models_config(&root.join("tsconfig.mid.json")));
+        assert!(!map.models_config(&root.join("tsconfig.base.json")));
+        // Once the selected config inherits those `paths` instead, the
+        // whole chain states the same aliases.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.mid.json"}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the inheriting chain must load")?;
+        assert!(map.models_config(&root.join("tsconfig.mid.json")));
+        assert!(map.models_config(&root.join("tsconfig.base.json")));
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

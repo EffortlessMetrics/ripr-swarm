@@ -9619,9 +9619,17 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_multi_entry_value_fails_closed",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_non_owner_import_emits_no_limitation",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::relative_paths_resolve_without_base_url",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::non_relative_template_without_base_url_blocks_its_key",
+  "crates/ripr/src/analysis/language/typescript/tsconfig.rs::tests::a_map_models_only_the_configs_it_was_compiled_from",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs::tests::a_loaded_root_map_exempts_only_the_configs_it_was_compiled_from",
+  "crates/ripr/tests/typescript_tsconfig_alias_default.rs::relative_paths_without_base_url_relate_the_aliased_test",
+  "crates/ripr/tests/typescript_tsconfig_alias_default.rs::paths_without_base_url_do_not_credit_a_same_named_decoy",
+  "crates/ripr/tests/typescript_tsconfig_alias_default.rs::non_relative_target_without_base_url_stays_unresolved",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/tsconfig.rs",
+  "crates/ripr/src/analysis/language/typescript/gap_reach.rs",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
