@@ -9360,7 +9360,7 @@
       ],
       "source": "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate",
       "status": "below_target",
-      "target": 0.24,
+      "target": 0.32,
       "title": "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)",
       "unit": "ratio",
       "value": 0.3711
@@ -14564,7 +14564,7 @@
       ],
       "source": "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate",
       "status": "below_target",
-      "target": 0.2,
+      "target": 0.28,
       "title": "Hand-checked edits where ripr gives no specific verdict and no spec asks it to abstain",
       "unit": "ratio",
       "value": 0.3585

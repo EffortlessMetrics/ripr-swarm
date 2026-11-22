@@ -1600,8 +1600,7 @@
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "exposed",
-        "propagation_unknown"
+        "exposed"
       ],
       "outcome": "ideal",
       "contradictions": [],
@@ -1755,8 +1754,7 @@
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "exposed",
-        "propagation_unknown"
+        "exposed"
       ],
       "outcome": "ideal",
       "contradictions": [],
@@ -19951,9 +19949,9 @@
       "ideal_verdict": "gap",
       "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "reachable_unrevealed"
       ],
       "outcome": "ideal",
       "contradictions": [],
