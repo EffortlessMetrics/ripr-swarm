@@ -11,3 +11,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_built_class_entry_reach (2)
+
+Reason:
+RIPR-SPEC-0243: #15928 the deferred control passes arguments to the timer so the fixture module runs as written; readings unchanged
+
+Command:
+`cargo xtask goldens bless typescript_built_class_entry_reach --reason "..."`
+
+Updated:
+- `expected/check.json`

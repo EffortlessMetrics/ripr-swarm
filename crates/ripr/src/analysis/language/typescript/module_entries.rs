@@ -30,8 +30,11 @@
 //! the importer's exports as entries of the imported module's owners, under
 //! the same three-hop total bound and the same weaker-than-direct contract.
 
+use super::module_class_nodes::{
+    ModuleClass, constructed_method_calls, method_nodes, module_class, this_method_calls,
+};
 use super::module_value_reads::{
-    byte_preserving_mask, never_mutated_in_module, reads_unshadowed_value,
+    byte_preserving_mask, never_mutated_in_module, past_type_arguments, reads_unshadowed_value,
 };
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -150,6 +153,8 @@ struct ModuleValues<'s> {
     decl_starts: BTreeMap<&'s str, usize>,
     /// Values an immediately invoked function builds (#15928).
     built: BTreeMap<&'s str, BuiltValue<'s>>,
+    /// Top-level class declarations whose methods may be nodes (#15928).
+    classes: Vec<ModuleClass<'s>>,
 }
 
 /// `const X = (function () { ... })()`: the function that builds the value.
@@ -200,6 +205,7 @@ pub(crate) fn module_entries_and_outbound<'a>(
         names: mut values,
         decl_starts,
         built,
+        classes,
     } = module_values;
     // A value is followable only while nothing in the file writes it; a name
     // that is also a function/factory node keeps its bare-call edges only.
@@ -209,16 +215,21 @@ pub(crate) fn module_entries_and_outbound<'a>(
     let mentioned: std::collections::HashSet<&str> = nodes
         .values()
         .flat_map(|node| node.call_texts.iter().chain(node.returned_texts.iter()))
+        .map(|text| &*text.calls)
+        // A building function and a module-private class read values too.
+        .chain(built.values().map(|value| value.text))
+        .chain(classes.iter().map(|class| class.text))
         .flat_map(|text| {
-            text.calls
-                .split(|ch: char| !is_javascript_identifier_char(ch))
+            text.split(|ch: char| !is_javascript_identifier_char(ch))
                 .filter(|token| !token.is_empty())
         })
         .collect();
     values.retain(|name| {
         !nodes.contains_key(name) && !exported_values.contains(name) && mentioned.contains(name)
     });
-    if !values.is_empty() {
+    // The whole-module mask is built only when a value or class needs it.
+    let mut method_nodes_of_classes = Vec::new();
+    if !values.is_empty() || !classes.is_empty() {
         let masked_source = byte_preserving_mask(source, &ts_mask_literals_and_comments(source));
         values.retain(|name| {
             never_mutated_in_module(
@@ -229,7 +240,13 @@ pub(crate) fn module_entries_and_outbound<'a>(
                 built.get(name).and_then(|value| value.shadow.as_ref()),
             )
         });
+        method_nodes_of_classes = method_nodes(&classes, source, &masked_source, |name| {
+            nodes.contains_key(name)
+                || decl_starts.contains_key(name)
+                || imports.iter().any(|import| import.local == name)
+        });
     }
+    let method_nodes_of_classes = method_nodes_of_classes;
     // Imported bindings a node may bare-call: named, value, bound once, and
     // not also a top-level declaration of this module.
     let bindings: BTreeMap<&str, &TypeScriptImport> = imports
@@ -284,6 +301,45 @@ pub(crate) fn module_entries_and_outbound<'a>(
             .filter(|callee| !declares_member_named(value.text, callee))
             .collect();
         callees.insert(*name, top_level);
+    }
+    // A method of a module-private class is a node `Class.method` (#15928):
+    // it calls what its text bare-calls, the siblings it calls on `this`, and
+    // any method it runs on a class it constructs. A function reaches it by
+    // `new Class(...).method(`.
+    for method in &method_nodes_of_classes {
+        let node = ModuleNode {
+            call_texts: vec![CallText {
+                calls: std::borrow::Cow::Borrowed(method.text),
+                scope: method.text,
+            }],
+            ..ModuleNode::default()
+        };
+        let mut edges: BTreeSet<&str> = node_callees(&node, &nodes, &names, &values)
+            .into_iter()
+            .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
+            .filter(|callee| !declares_member_named(method.text, callee))
+            .collect();
+        edges.extend(this_method_calls(method, &method_nodes_of_classes));
+        edges.extend(constructed_method_calls(
+            method.text,
+            method.text,
+            &method_nodes_of_classes,
+        ));
+        callees.insert(method.key.as_str(), edges);
+    }
+    if !method_nodes_of_classes.is_empty() {
+        for (name, node) in &nodes {
+            if node.factory.is_some() {
+                continue;
+            }
+            for text in &node.call_texts {
+                let constructed =
+                    constructed_method_calls(&text.calls, text.scope, &method_nodes_of_classes);
+                if !constructed.is_empty() {
+                    callees.entry(*name).or_default().extend(constructed);
+                }
+            }
+        }
     }
     let mut entries: BTreeMap<String, Vec<TypeScriptModuleEntry>> = BTreeMap::new();
     // (import local) -> exports of this module that reach a call of it.
@@ -358,6 +414,11 @@ fn collect_statement<'a>(
         }
         Statement::VariableDeclaration(decl) => {
             collect_variables(decl, source, nodes, values);
+        }
+        // An exported class is constructed by tests directly; only a
+        // module-private one needs the entry graph.
+        Statement::ClassDeclaration(class) => {
+            values.classes.extend(module_class(class, source));
         }
         Statement::ExportNamedDeclaration(export) => {
             if export.export_kind == ImportOrExportKind::Type {
@@ -653,7 +714,8 @@ fn built_value<'a>(
 fn declares_member_named(text: &str, name: &str) -> bool {
     text.match_indices(name).any(|(idx, _)| {
         let before = &text[..idx];
-        let after = &text[idx + name.len()..];
+        // `name (a) {` and `name<T>(a: T) {` declare the same member.
+        let after = past_type_arguments(&text[idx + name.len()..]);
         if before
             .chars()
             .next_back()
@@ -781,7 +843,7 @@ fn node_callees<'n, 'a>(
             if !checked.insert(name) {
                 continue;
             }
-            if text_calls_top_level(text, name) {
+            if text_calls_top_level(text, name, nodes.contains_key(name)) {
                 callees.insert(name);
             }
         }
@@ -789,25 +851,31 @@ fn node_callees<'n, 'a>(
     callees
 }
 
-/// A bare call to `name` that the enclosing function cannot have rebound, or
-/// `name` handed by reference to a synchronous array callback method
-/// (`keys.sort(name)`, #15928), which calls it before returning.
+/// A bare call to `name` that the enclosing function cannot have rebound, or,
+/// for a declaration of this module (`declared_here`), `name` handed by
+/// reference to a synchronous array callback method (`keys.sort(name)`,
+/// #15928), which calls it before returning. An imported binding passed by
+/// reference is no edge: cross-module reach stays bare calls only.
 /// Fail-closed: every mention of `name` in the scope must be one of those two
 /// forms. Any other mention (a parameter, including destructured and
 /// nested-callback parameters, an assignment, a `function name` declaration, a
 /// value stored or passed to anything else, such as `setTimeout(name)` or
 /// `promise.then(name)`) may bind, alias or defer it, so no edge is recorded.
-fn text_calls_top_level(text: &CallText<'_>, name: &str) -> bool {
-    (contains_call_name(&text.calls, name) || runs_function_reference(&text.calls, name))
+fn text_calls_top_level(text: &CallText<'_>, name: &str, declared_here: bool) -> bool {
+    (contains_call_name(&text.calls, name)
+        || (declared_here && runs_function_reference(&text.calls, name)))
         && every_mention_is_a_bare_call(text.scope, name)
 }
 
+/// The raw scan is the cheap filter; the reference counts only when it is
+/// still there with comments and literals masked, so `// keys.sort(name)`
+/// after code on the same line, or inside a string, is no call.
 fn runs_function_reference(calls: &str, name: &str) -> bool {
-    calls.match_indices(name).any(|(idx, _)| {
-        is_sync_callback_reference(&calls[..idx], &calls[idx + name.len()..])
-            && !line_prefix_looks_like_comment_or_string(calls, idx)
-            && !inside_block_comment(calls, idx)
-    })
+    let referenced = |code: &str| {
+        code.match_indices(name)
+            .any(|(idx, _)| is_sync_callback_reference(&code[..idx], &code[idx + name.len()..]))
+    };
+    referenced(calls) && referenced(&ts_mask_literals_and_comments(calls))
 }
 
 /// `recv.sort(NAME)` / `recv.map(NAME, ...)`: the whole first argument of a

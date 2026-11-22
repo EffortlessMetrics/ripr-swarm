@@ -1,5 +1,5 @@
 diff --git a/src/serialize.ts b/src/serialize.ts
-index d01ff64..5adb565 100644
+index 68a826c..e69ed23 100644
 --- a/src/serialize.ts
 +++ b/src/serialize.ts
 @@ -6,7 +6,7 @@ function compareStrings(a: string, b: string): number {

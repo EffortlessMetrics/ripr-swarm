@@ -1,0 +1,38 @@
+diff --git a/src/serialize.ts b/src/serialize.ts
+index bcabc5b..47e5bab 100644
+--- a/src/serialize.ts
++++ b/src/serialize.ts
+@@ -6,21 +6,21 @@ function compareKeys(a: string, b: string): number {
+     if (a === b) {
+         return 0;
+     }
+-    return a > b ? -1 : 1;
++    return a < b ? -1 : 1;
+ }
+ 
+ class Serializer {
+     write(record: Record<string, number>): string {
+         const keys = this.order(Object.keys(record));
+-        return keys.map((key) => key + ':' + record[key]).join(';');
++        return keys.map((key) => key + ':' + record[key]).join(',');
+     }
+ 
+     order(keys: string[]): string[] {
+-        return keys.sort();
++        return keys.sort(compareKeys);
+     }
+ 
+     describe(keys: string[]): string {
+-        return keys.join('-');
++        return keys.join('+');
+     }
+ }
+ 
+@@ -30,6 +30,6 @@ export function count(Counter: any, keys: string[]): number {
+ 
+ class Counter {
+     total(keys: string[]): number {
+-        return keys.length + 2;
++        return keys.length * 2;
+     }
+ }

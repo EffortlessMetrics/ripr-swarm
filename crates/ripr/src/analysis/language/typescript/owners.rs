@@ -83,6 +83,19 @@ pub(crate) fn owners_from_program(
     let instance_fields = class_instance_field_names(program);
     let repeated_names = repeated_class_names(program);
     assign_class_entries(&mut owners, &instance_fields, &repeated_names);
+    // A method of a module-private class an exported entry constructs
+    // (`Class.method` graph node, #15928) also carries those entries.
+    for owner in &mut owners {
+        if owner.owner_kind == OwnerKind::Method
+            && owner.method_kind == TypeScriptMethodKind::Ordinary
+            && let Some(class_name) = owner.class_name.as_ref()
+            && !repeated_names.contains(class_name)
+            && let Some(owner_entries) = entries.get(&format!("{class_name}.{}", owner.name))
+        {
+            owner.module_entries.extend(owner_entries.iter().cloned());
+            owner.module_entries.sort();
+        }
+    }
     assign_instance_factories(
         program,
         source,

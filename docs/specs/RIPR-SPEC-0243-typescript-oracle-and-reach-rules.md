@@ -1017,13 +1017,36 @@ Candidates come from the first non-empty tier:
    followed by `:` (a conditional arm reads like a return type). A function
    passed by reference as the whole first argument of a synchronous array
    callback method (`keys.sort(compare)`, `values.reduce(add, 0)`) is a call
-   of it; any other mention of the name in the enclosing function (stored,
+   of it when the function is declared in this module and the reference is
+   code, not a comment or a literal; an imported binding passed by reference
+   is no edge, so cross-module reach stays bare calls only. An explicit type
+   argument list and whitespace before the argument list are read through
+   (`new Box<string>()`, `new Box ()`, `values.map<string>(format)`); `new
+   Box` with no argument list is not a construction here. Any other mention of the name in the enclosing function (stored,
    an array element, a later argument, an argument of a bare call,
    `setTimeout`, `then`, an event listener) leaves no edge. Limits: the
    class is one node, so a method no entry calls is reached with the rest of
-   the class; a plain module-level `class` that an exported entry constructs
-   is not followed (its methods are separate owners); the receiver of the
-   array method is not typed.
+   the class; the receiver of the array method is not typed.
+   **Methods of a module-private class (#15928).** A top-level `class X`
+   declaration that is not exported has one node per plain instance method,
+   `X.method`, in the same graph under the same hop bound. A function or
+   method reaches `X.method` by `new X(...).method(` written as one
+   expression, when every mention of `X` in that function is a construction.
+   `X.method` calls what its text bare-calls, the sibling methods it calls
+   as `this.other(` (or hands by reference to a synchronous array callback),
+   and the methods it runs on a class it constructs the same way. A method
+   owner then carries the exported entries that reach its node, and so does
+   a module function only such a method calls. Fail-closed: the class has no
+   `extends`, no decorator, no computed member and no `return` in its
+   constructor; its name is declared once
+   in the file and every mention outside the declaration is `new X(...)`
+   (an alias, a type position, a re-export, a subclass, a prototype write or
+   any other mention refuses the whole class); a method is a node only when
+   no other member of the class has its name (a field, an accessor, a
+   static), it is not a generator, and nothing in the module assigns a
+   member of that name on any receiver. Limits: an instance kept in a
+   variable (`const s = new X(); s.method()`) is not followed, and neither
+   is a class expression, a static method, an accessor or a constructor body.
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
    imported from module Y reaches the owner Y declares (or the owner Y's own
@@ -2654,6 +2677,16 @@ keys); do not take the next number.
   callback methods against stored and deferred references, and the
   `static_unknown` and `no_static_path` readings;
   `fixtures/typescript_built_class_entry_reach` pins the rendered check.
+
+- #15928 (methods of a module-private class): `tests/plain_class_entry_tests.rs`
+  pins the constructed method, the sibling called on `this`, the function only
+  a method calls, the hop bound, the method off the call path, the parameter,
+  local-class, stored-instance, method-reference, namespace and string
+  refusals, the replaced, aliased, typed, re-exported and subclassed class,
+  the field, accessor, constructor and member-assignment refusals, the
+  deferred `this` call, the returning constructor, and the `static_unknown`
+  and `no_static_path` readings;
+  `fixtures/typescript_plain_class_entry_reach` pins the rendered check.
 
 - #10314 (decorated-method reach, constructor spellings): `crates/ripr/src/analysis/language/typescript/tests/decorated_reach_tests.rs`
   pins `aliased_constructor_import_credits_the_return_edit` (a named-import alias

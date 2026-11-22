@@ -1,0 +1,68 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_plain_class_entry_reach/input
+config: <cwd>/fixtures/typescript_plain_class_entry_reach/input/ripr.toml
+
+Summary: 5 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 2 no test path, 3 unclear. 5 found, 0 suppressed by your settings
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 10 changed line(s), 5 candidate line(s), 5 changed behavior(s) checked, 5 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_path_alias_unresolved — test `serialize orders object keys` imports `describe` from non-relative specifier `vitest` which plausibly targets owner `describe` in `src/serialize.ts`, but the adapter could not resolve the specifier to a unique workspace file because no tsconfig.json or jsconfig.json exists at the workspace root, and the importing file's nearest package config does not supply a usable `paths` map; the root map reads only those two workspace-root configs; add compilerOptions.baseUrl and compilerOptions.paths to the importing package's tsconfig.json (or jsconfig.json), or to the workspace root, for credit; a package config is followed only with a `baseUrl` (its own or inherited) and relative `extends` bases inside the workspace; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  File: src/serialize.ts:23
+  Language: typescript
+  Language status: preview
+  Static exposure: no path (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
+  Why no path: no related test was found that reaches this change
+  Changed behavior: return keys.join('+');
+  Missing check: Test `serialize orders object keys` imports `describe` through non-relative
+    specifier `vitest`, which ripr did not resolve to a workspace file because no tsconfig.json or
+    jsconfig.json exists at the workspace root, and the importing file's nearest package config does
+    not supply a usable `paths` map; the root map reads only those two workspace-root configs; no
+    resolved test references `describe(`
+  Next step — TypeScript preview advisory: test `serialize orders object keys` imports `describe`
+    through `vitest`, which ripr did not resolve; add compilerOptions.baseUrl and
+    compilerOptions.paths to the importing package's tsconfig.json (or jsconfig.json), or to the
+    workspace root, for credit; a package config is followed only with a `baseUrl` (its own or
+    inherited) and relative `extends` bases inside the workspace. If that import does not target the
+    changed owner, add a test that calls the owner and asserts the changed behavior with `toBe` /
+    `toEqual`
+  Evidence: reach no · infection unknown · propagation unknown · observation no · assertion no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach no: 0 related test(s) found for owner `describe`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/typescript_plain_class_entry_reach/input --diff <cwd>/fixtures/typescript_plain_class_entry_reach/diff.patch --mode fast probe:src_serialize.ts:typescript_preview:a7379969
+  ripr context --root <cwd>/fixtures/typescript_plain_class_entry_reach/input --diff <cwd>/fixtures/typescript_plain_class_entry_reach/diff.patch --mode fast --at probe:src_serialize.ts:typescript_preview:a7379969
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
+
+Hidden:
+  4 lower-priority finding(s) omitted from default human output (TypeScript preview: 4).
+    - src/serialize.ts:9 (unknown: static analysis limited); kind: predicate; reason: Related tests reach `compareKeys` only through same-module callers (`serialize`); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether…
+    - src/serialize.ts:15 (unknown: static analysis limited); kind: return_value; reason: Related tests reach `write` only through same-class callers (`serialize`); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test…
+    - src/serialize.ts:19 (unknown: static analysis limited); kind: return_value; reason: Related tests reach `order` only through same-class callers (`serialize`); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test…
+    - src/serialize.ts:33 (no path); kind: return_value; reason: No trusted TypeScript method receiver relation for `total`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules,…
+  Hidden classes:
+    no path = no test path was found
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

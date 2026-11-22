@@ -7,7 +7,7 @@
   "summary": {"changed_rust_files":0,"probes":3,"findings":3,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":1,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:35781e9143f4cfc1","base_revision":null,"input_identity":"sha256:1050bdd79a095f15d430a6a78fba5decb40ddce3f174737ae024236d6ae74edb","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":6,"candidate_line_count":3,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:35781e9143f4cfc1","base_revision":null,"input_identity":"sha256:7d8c083ff4c725101519180737c081780422e28a7b6771ea2ddcbafc3d2d20d2","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":6,"candidate_line_count":3,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -429,5 +429,5 @@
       "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
     }
   ],
-  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/serialize.ts","digest":"sha256:535599ddcd7a2afd821a529033e455b4a1d17e5a20a8777f74c243495d0ccddb"}]}
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/serialize.ts","digest":"sha256:550932b30768453a7169462bf260d32d8c5f8318753839e2a4ad7894b88bd157"}]}
 }

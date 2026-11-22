@@ -138,6 +138,7 @@ mod lookup_table_guard;
 mod loop_bound_guard;
 mod match_object_guard;
 mod mock_payload_guard;
+mod module_class_nodes;
 mod module_entries;
 mod module_value_reads;
 #[cfg(test)]

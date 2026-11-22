@@ -270,13 +270,39 @@ fn classify(text: &str, idx: usize, name: &str) -> Mention {
 /// `new NAME(...)`: constructing an instance runs the value and binds nothing
 /// to the name. What is done with the instance is the instance's business.
 fn is_construction(before: &str, after: &str) -> bool {
-    after.starts_with('(')
+    past_type_arguments(after).starts_with('(')
         && before.strip_suffix("new").is_some_and(|rest| {
             !rest
                 .chars()
                 .next_back()
                 .is_some_and(is_javascript_identifier_char)
         })
+}
+
+/// `after` past leading whitespace and one explicit type argument list
+/// (`<string>`, `<Map<K, V>>`), which is erased at runtime. Text that does not
+/// open a balanced list comes back only trimmed.
+pub(super) fn past_type_arguments(after: &str) -> &str {
+    let rest = after.trim_start();
+    if !rest.starts_with('<') {
+        return rest;
+    }
+    let mut depth = 0usize;
+    for (offset, ch) in rest.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return rest[offset + 1..].trim_start();
+                }
+            }
+            // A comparison, not a type argument list.
+            '(' | ')' | ';' | '{' | '}' | '=' => return rest,
+            _ => {}
+        }
+    }
+    rest
 }
 
 /// `NAME.member...` / `NAME[index]...` whose access chain is read-only.

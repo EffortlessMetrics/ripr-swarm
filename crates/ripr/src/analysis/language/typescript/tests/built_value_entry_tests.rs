@@ -177,6 +177,80 @@ fn function_reference_to_a_synchronous_array_callback_is_a_call() {
 }
 
 #[test]
+fn function_reference_in_a_comment_or_literal_is_no_call() {
+    for (label, body) in [
+        ("trailing comment", "return keys; // keys.sort(cmp)"),
+        ("block comment", "return keys; /* keys.sort(cmp) */"),
+        ("string", "return [\"keys.sort(cmp)\"];"),
+    ] {
+        let source = format!(
+            "function cmp(a: any, b: any) {{\n  return a < b ? -1 : 1;\n}}\nexport function order(keys: any[]) {{\n  {body}\n}}\n"
+        );
+        assert!(entry_names(&source, "cmp").is_empty(), "{label}");
+    }
+    // The live control: the same line with the call as code.
+    let live = "function cmp(a: any, b: any) {\n  return a < b ? -1 : 1;\n}\nexport function order(keys: any[]) {\n  return keys.sort(cmp); // sorted\n}\n";
+    assert_eq!(entry_names(live, "cmp"), ["order"]);
+}
+
+#[test]
+fn type_arguments_and_whitespace_before_the_argument_list_are_read_through() {
+    let typed_callback = "function format(value: number): string {\n  return String(value);\n}\nexport function render(values: number[]) {\n  return values.map<string>(format);\n}\n";
+    assert_eq!(entry_names(typed_callback, "format"), ["render"]);
+    for construction in [
+        "new Serializer<string>()",
+        "new Serializer ()",
+        "new Serializer<Map<string, number>> ()",
+    ] {
+        let source = SRC.replacen("new Serializer()", construction, 1);
+        assert_ne!(source, SRC, "{construction}");
+        assert_eq!(
+            entry_hops(&source, "Serializer"),
+            [("serialize".to_string(), 1)],
+            "{construction}"
+        );
+        assert_eq!(
+            entry_hops(&source, "compareStrings"),
+            [("serialize".to_string(), 2)],
+            "{construction}"
+        );
+    }
+    // A comparison is not a type argument list.
+    let compared = SRC.replacen(
+        "return new Serializer().serialize(input);",
+        "return String(Serializer < input);",
+        1,
+    );
+    assert_ne!(compared, SRC);
+    assert!(entry_names(&compared, "Serializer").is_empty());
+}
+
+#[test]
+fn spaced_or_generic_member_declaration_is_not_a_call() {
+    for member in ["compare (a: any, b: any) {", "compare<T>(a: T, b: T) {"] {
+        let source = format!(
+            "export function serialize(input: any): string {{\n  return new Serializer().run(input);\n}}\nfunction compare(a: string, b: string): number {{\n  return a < b ? -1 : 1;\n}}\nconst Serializer = (function () {{\n  class Serializer {{\n    {member}\n      return 0;\n    }}\n    run(value: any) {{\n      return this.compare(value, value);\n    }}\n  }}\n  return Serializer;\n}})();\n"
+        );
+        assert_eq!(
+            entry_names(&source, "Serializer"),
+            ["serialize"],
+            "{member}"
+        );
+        assert!(entry_names(&source, "compare").is_empty(), "{member}");
+    }
+}
+
+#[test]
+fn built_class_that_alone_reads_a_module_constant_reaches_it() {
+    let source = "export function lookup(key: string): number {\n  return new Reader().get(key);\n}\nconst TABLE: Record<string, number> = { a: 1 };\nconst Reader = (function () {\n  class Reader {\n    get(key: string): number {\n      return TABLE[key];\n    }\n  }\n  return Reader;\n})();\n";
+    assert_eq!(entry_hops(source, "TABLE"), [("lookup".to_string(), 2)]);
+    // Control: a write to the table anywhere in the module refuses it.
+    let mutated =
+        format!("{source}export function set(key: string): void {{\n  TABLE[key] = 2;\n}}\n");
+    assert!(entry_names(&mutated, "TABLE").is_empty());
+}
+
+#[test]
 fn stored_or_deferred_function_reference_gets_no_edge() {
     for (label, body) in [
         ("timer", "setTimeout(cmp);\n  return keys;"),

@@ -28,6 +28,6 @@ function compareLengths(a: string, b: string): number {
 }
 
 export function later(keys: string[]): string[] {
-    setTimeout(compareLengths);
+    setTimeout(compareLengths, 0, 'a', 'b');
     return keys;
 }

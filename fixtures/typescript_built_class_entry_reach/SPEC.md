@@ -15,7 +15,7 @@ A TypeScript module in the shape of unjs/ohash `serialize` (#15928):
 
 The diff changes a return in `compareStrings`, the `sort` call inside the
 class, and a return in `compareLengths`. `compareLengths` is the control:
-its only mention is `setTimeout(compareLengths)` in the exported `later`,
+its only mention is `setTimeout(compareLengths, 0, ...)` in the exported `later`,
 a deferred reference.
 
 A Vitest test calls `serialize(...)` and pins its string result. Another
