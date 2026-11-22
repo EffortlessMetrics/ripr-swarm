@@ -2269,7 +2269,9 @@ that seed and loop. An infinity seed, `best = float("-inf")` for `>`/`>=` or
 same way: it takes the first finite element under either operator. So is
 `best = -math.inf` (`math.inf` for a minimum) when the module has exactly one
 top-level `import math` and nothing else in it binds `math`, writes through it
-or passes the module on; a star import also refuses the seed. The
+or passes the module on. Another import of the module (`import math as m`),
+a private attribute such as `math.__dict__`, a `"math"` string (a by-name lookup
+such as `sys.modules["math"]`) or a star import also refuses the seed. The
 result-alias form reads the test's own assignment; an earlier test's call
 assigned to a local of the same name does not stand in for it. The finding carries an infection stop
 reason and no repair suggestion. Other source and test shapes retain their

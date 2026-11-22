@@ -4,7 +4,9 @@
 //! only when nothing in the module can replace `math` or its `inf`. One
 //! top-level `import math` binds it; any other binding of the name, any
 //! store or delete through it, any use of `math` other than reading one of
-//! its attributes, and any star import refuse the seed.
+//! its public attributes, another import of the module, a `"math"` string
+//! (a by-name lookup such as `sys.modules["math"]`) and any star import
+//! refuse the seed.
 
 use rustpython_parser::ast::{self, ExprContext, Fold};
 use rustpython_parser::text_size::TextRange;
@@ -58,7 +60,9 @@ impl Fold<TextRange> for MathUses {
         if matches!(node.value.as_ref(), ast::Expr::Name(name) if name.id.as_str() == "math") {
             // `math.inf` read; `math.inf = 0`, `del math.inf` and loop or
             // tuple targets through `math` are stores.
-            return if node.ctx == ExprContext::Load {
+            // A dunder such as `math.__dict__` hands out the writable
+            // namespace, so only public attribute reads pass.
+            return if node.ctx == ExprContext::Load && !node.attr.as_str().starts_with('_') {
                 Ok(node)
             } else {
                 Err(())
@@ -76,15 +80,27 @@ impl Fold<TextRange> for MathUses {
         ast::fold::fold_expr_name(self, node)
     }
 
+    fn fold_expr_constant(&mut self, node: ast::ExprConstant) -> Result<ast::ExprConstant, ()> {
+        // `sys.modules["math"]`, `importlib.import_module("math")` and
+        // `globals()["math"]` reach the module by name.
+        if matches!(&node.value, ast::Constant::Str(text) if text.as_str() == "math") {
+            return Err(());
+        }
+        ast::fold::fold_expr_constant(self, node)
+    }
+
     fn fold_stmt_import(&mut self, node: ast::StmtImport) -> Result<ast::StmtImport, ()> {
         for alias in &node.names {
             let bound = alias.asname.as_ref().map_or_else(
                 || alias.name.split('.').next().unwrap_or(""),
                 |name| name.as_str(),
             );
+            let names_math = alias.name.as_str() == "math" || alias.name.starts_with("math.");
             if plain_math(alias) {
                 self.imports += 1;
-            } else if bound == "math" {
+            } else if bound == "math" || names_math {
+                // `import math as m` exposes the same module under another
+                // name, where a write would go unseen.
                 return Err(());
             }
         }
@@ -95,8 +111,12 @@ impl Fold<TextRange> for MathUses {
         &mut self,
         node: ast::StmtImportFrom,
     ) -> Result<ast::StmtImportFrom, ()> {
+        let from_math = node.module.as_ref().is_some_and(|module| {
+            module.as_str() == "math" || module.as_str().starts_with("math.")
+        });
         if node.names.iter().any(|alias| {
             alias.name.as_str() == "*"
+                || (from_math && alias.name.as_str().starts_with('_'))
                 || alias.asname.as_ref().unwrap_or(&alias.name).as_str() == "math"
         }) {
             return Err(());

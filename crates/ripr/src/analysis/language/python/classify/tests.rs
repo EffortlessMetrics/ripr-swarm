@@ -5259,6 +5259,14 @@ fn loop_boundary_math_infinity_seed_needs_an_unrebound_stdlib_math() -> Result<(
         ("rebound name", "import math\nmath = object()\n"),
         ("patched attribute", "import math\nmath.inf = 3\n"),
         ("setattr", "import math\nsetattr(math, 'inf', 3)\n"),
+        // A second name for the module, its namespace dict, or a by-name
+        // lookup can each patch `inf` without naming `math.inf`.
+        ("alias patch", "import math\nimport math as m\nm.inf = 3\n"),
+        ("dict patch", "import math\nmath.__dict__['inf'] = 3\n"),
+        (
+            "sys.modules patch",
+            "import math\nimport sys\nsys.modules['math'].inf = 3\n",
+        ),
         (
             "conditional import",
             "try:\n    import math\nexcept ImportError:\n    pass\n",
