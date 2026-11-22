@@ -21,11 +21,12 @@ pub enum DeltaAttribution {
     /// The gap is absent at head, became resolved or already observed, or its
     /// oracle strength rose.
     ResolvedByChange,
-    /// The change touches the item, but its evidence is unchanged.
+    /// The evidence is unchanged and the item is in a changed file. Whether
+    /// the diff touches the item itself is not checked.
     ChangedSurfaceExisting,
     /// An existing gap next to the changed surface, not caused by the change.
     AdjacentPreexisting,
-    /// An existing gap already recorded in the baseline.
+    /// An existing gap with unchanged evidence outside the changed files.
     BaselineExisting,
     /// The comparison could not establish a cause, for example because a
     /// snapshot is unavailable, the identity is ambiguous, or the gap state is
@@ -65,7 +66,8 @@ pub enum AttributionBasis {
     OracleStrengthIncreased,
     /// The gap state differs between base and head.
     GapStateChanged,
-    /// Gap state and oracle strength are unchanged.
+    /// Gap state and oracle strength are unchanged, counting `resolved` and
+    /// `already_observed` as the same state.
     UnchangedEvidence,
     /// The item is absent from a complete base snapshot.
     BaseItemAbsent,
@@ -75,13 +77,15 @@ pub enum AttributionBasis {
     BaseSnapshotUnavailable,
     /// The head snapshot is unavailable.
     HeadSnapshotUnavailable,
-    /// Base and head identities do not match, or neither side has the item.
+    /// Base and head identities do not match, neither side has the item, or
+    /// a head item has no single base item to match.
     IdentityAmbiguous,
     /// The item was matched across a rename or move.
     RenameOrMoveMapped,
     /// The item is next to the changed surface rather than on it.
     AdjacentSurface,
-    /// The item matched a baseline receipt.
+    /// The item was assigned to the baseline because its evidence is
+    /// unchanged and it is outside the changed files. No receipt is looked up.
     BaselineReceipt,
 }
 
@@ -246,7 +250,8 @@ pub struct ComparisonCoverage {
     pub matched_items: usize,
     /// Items whose identity could not be matched unambiguously.
     pub ambiguous_items: usize,
-    /// Items whose comparison stayed unknown.
+    /// Items whose comparison stayed unknown. A producer may also add one for
+    /// each unavailable snapshot.
     pub unknown_items: usize,
 }
 
