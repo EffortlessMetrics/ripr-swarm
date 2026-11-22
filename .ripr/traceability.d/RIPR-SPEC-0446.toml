@@ -12,7 +12,7 @@ tests = [
   "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_folds_a_windows_verbatim_root_prefix",
   "crates/ripr/src/app/verbose_trace.rs::tests::a_verdict_line_location_selects_its_finding",
   "crates/ripr/src/app/selector.rs::tests::a_plain_unc_location_selects_a_finding_stored_under_a_verbatim_unc_path",
-  "crates/ripr/src/app/selector.rs::tests::normalize_folds_only_the_drive_and_unc_verbatim_roots",
+  "crates/ripr/src/app/selector.rs::tests::the_unc_fold_leaves_the_existing_path_rules_unchanged",
   "crates/ripr/src/app/progress.rs::tests::phase_timing_lines_name_the_previous_stage_duration_and_the_terminal_total",
   "crates/ripr/src/cli/progress.rs::tests::verbose_env_value_enables_on_any_value_but_the_off_spellings",
   "crates/ripr/tests/cli_progress.rs",

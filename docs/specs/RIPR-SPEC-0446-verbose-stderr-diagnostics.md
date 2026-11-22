@@ -64,10 +64,13 @@ CI job that cannot edit argv had no way to turn it on.
    path text prints unchanged. On every host, the printed `<file>:<line>`
    matches its finding through `ripr explain` (a location several reported
    findings share is refused as ambiguous, as for any `file:line` selector,
-   and the finding ID then selects one): the locator matcher folds
-   the same verbatim roots on both operands, so a plain UNC location selects a
-   finding stored under the verbatim UNC spelling (#15921). Other `//?/` forms
-   keep their spelling and match byte for byte.
+   and the finding ID then selects one). A printed drive location is a
+   suffix of its verbatim stored path; for the UNC form, the locator matcher
+   also treats `//?/UNC/server/share/..` and `//server/share/..` as the same
+   path when they are equal after the shared verbatim fold, on either operand
+   (#15921). That equivalence is exact and is checked only after the
+   unchanged equality and suffix rules miss. Other `//?/` forms keep their
+   spelling and match byte for byte.
 
 ## Required Evidence
 
@@ -107,7 +110,7 @@ CI job that cannot edit argv had no way to turn it on.
 
 - `crates/ripr/src/app/verbose_trace.rs::tests`
 - `crates/ripr/src/app/selector.rs::tests::a_plain_unc_location_selects_a_finding_stored_under_a_verbatim_unc_path`
-- `crates/ripr/src/app/selector.rs::tests::normalize_folds_only_the_drive_and_unc_verbatim_roots`
+- `crates/ripr/src/app/selector.rs::tests::the_unc_fold_leaves_the_existing_path_rules_unchanged`
 - `crates/ripr/src/app/progress.rs::tests::phase_timing_lines_name_the_previous_stage_duration_and_the_terminal_total`
 - `crates/ripr/src/cli/progress.rs::tests::verbose_env_value_enables_on_any_value_but_the_off_spellings`
 - `crates/ripr/tests/cli_progress.rs` (`ripr_verbose_env_*`)
@@ -119,7 +122,7 @@ CI job that cannot edit argv had no way to turn it on.
 - `crates/ripr/src/cli/mod.rs`, `crates/ripr/src/startup.rs`
 - `crates/ripr/src/app/progress.rs`, `crates/ripr/src/app/verbose_trace.rs`,
   `crates/ripr/src/app/check.rs`
-- `crates/ripr/src/app/selector.rs` (`normalize_locator_path`),
+- `crates/ripr/src/app/selector.rs` (`locator_paths_match`),
   `crates/ripr/src/output/path.rs` (`human_path_text`,
   `strip_windows_verbatim_prefix`)
 - `crates/ripr/src/stderr_guard.rs` (`eprintln_best_effort!`)

@@ -261,6 +261,28 @@ pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str
     stored == wanted
         || stored.ends_with(&format!("/{wanted}"))
         || wanted.ends_with(&format!("/{stored}"))
+        || unc_spellings_match(&stored, &wanted)
+}
+
+/// Whether two normalized paths name the same UNC path, one (or both) under
+/// the Windows verbatim spelling (#15921). A finding stored under
+/// `//?/UNC/server/share/...` is printed by `output::path` and typed as
+/// `//server/share/...`, which is neither equal to nor a suffix of the stored
+/// text. Only exact equality after the shared verbatim fold counts, and only
+/// for the UNC form: the equality and suffix rules above are unchanged, and
+/// the drive form (`//?/<drive>:/...`) already matches its plain spelling as
+/// a suffix.
+fn unc_spellings_match(stored: &str, wanted: &str) -> bool {
+    let fold_unc = |path: &str| {
+        crate::output::path::strip_windows_verbatim_prefix(path)
+            .filter(|plain| plain.starts_with("//"))
+    };
+    match (fold_unc(stored), fold_unc(wanted)) {
+        (None, None) => false,
+        (stored_plain, wanted_plain) => {
+            stored_plain.as_deref().unwrap_or(stored) == wanted_plain.as_deref().unwrap_or(wanted)
+        }
+    }
 }
 
 /// [`locator_paths_match`] ignoring ASCII case (#14416). Resolution stays
@@ -482,20 +504,12 @@ pub(in crate::app) fn location_column_form_file(selector_file: &str) -> Option<&
     })
 }
 
-/// Normalize a path for locator matching: convert `\` to `/`, reduce a
-/// Windows verbatim root to its plain spelling, drop a leading `./`, and trim
-/// a trailing `/`. Lets the path a user copies from `check` output (or types
-/// naturally) match the stored form regardless of platform separators or the
-/// leading-current-directory prefix.
-///
-/// The verbatim fold is the one `output::path` renders with, so a location
-/// ripr prints selects its finding (#15921): a finding stored under
-/// `\\?\UNC\server\share\...` is printed and typed as `//server/share/...`,
-/// which is neither equal to nor a suffix of the stored text. The drive form
-/// (`//?/C:/...`) already matched as a suffix; folding it too keeps one rule.
+/// Normalize a path for locator matching: convert `\` to `/`, drop a leading
+/// `./`, and trim a trailing `/`. Lets the path a user copies from `check`
+/// output (or types naturally) match the stored form regardless of platform
+/// separators or the leading-current-directory prefix.
 pub(in crate::app) fn normalize_locator_path(path: &str) -> String {
     let forward = path.replace('\\', "/");
-    let forward = crate::output::path::strip_windows_verbatim_prefix(&forward).unwrap_or(forward);
     let trimmed = forward.strip_prefix("./").unwrap_or(forward.as_str());
     trimmed.trim_end_matches('/').to_string()
 }
@@ -504,8 +518,8 @@ pub(in crate::app) fn normalize_locator_path(path: &str) -> String {
 mod tests {
     use super::{
         FindingSelection, ScopeCompleteness, location_miss_hint,
-        location_selector_needs_syntax_hint, normalize_locator_path, select_finding,
-        selector_matches_file_line,
+        location_selector_needs_syntax_hint, locator_paths_match, normalize_locator_path,
+        select_finding, selector_matches_file_line,
     };
     use crate::domain::{
         ActivationEvidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap, Probe,
@@ -1234,7 +1248,7 @@ mod tests {
                 "{selector}"
             );
         }
-        // The fold applies to the selector operand as well.
+        // The UNC equivalence holds with the operands reversed.
         assert!(selector_matches_file_line(
             "//server/share/repo/src/lib.rs",
             7,
@@ -1254,22 +1268,47 @@ mod tests {
     }
 
     #[test]
-    fn normalize_folds_only_the_drive_and_unc_verbatim_roots() {
-        // The drive letter is spliced in so the source holds no local path.
-        let drive = 'C';
+    fn the_unc_fold_leaves_the_existing_path_rules_unchanged() {
+        // Normalization itself does not fold a verbatim root.
         assert_eq!(
-            normalize_locator_path(&format!(r"\\?\{drive}:\repo\src\lib.rs")),
-            format!("{drive}:/repo/src/lib.rs")
+            normalize_locator_path(r"\\?\UNC\server\share\a.rs"),
+            "//?/UNC/server/share/a.rs"
         );
-        assert_eq!(
-            normalize_locator_path(r"\\?\unc\server\share\a.rs"),
+        // A lowercase `unc` verbatim root still equals its plain spelling.
+        assert!(locator_paths_match(
+            r"\\?\unc\server\share\a.rs",
             "//server/share/a.rs"
-        );
+        ));
+        // A folded drive selector must not become a suffix of an unrelated
+        // relative path that happens to contain the drive spelling. The drive
+        // letter is spliced in so the source holds no local path.
+        let drive = 'C';
+        assert!(!locator_paths_match(
+            &format!("mirror/{drive}:/repo/src/lib.rs"),
+            &format!("//?/{drive}:/repo/src/lib.rs")
+        ));
+        // The drive form keeps matching its plain spelling as a suffix.
+        assert!(locator_paths_match(
+            &format!("//?/{drive}:/repo/src/lib.rs"),
+            &format!("{drive}:/repo/src/lib.rs")
+        ));
+        // A relative path ending in the verbatim UNC text keeps its suffix
+        // match.
+        assert!(locator_paths_match(
+            "//?/UNC/server/share/repo/src/lib.rs",
+            "?/UNC/server/share/repo/src/lib.rs"
+        ));
+        // The fold is exact equality: a plain share path that is only a
+        // suffix of the folded text does not match.
+        assert!(!locator_paths_match(
+            "//?/UNC/server/share/repo/src/lib.rs",
+            "/share/repo/src/lib.rs"
+        ));
         // Other verbatim forms keep their spelling and match byte for byte.
-        assert_eq!(
-            normalize_locator_path(r"\\?\Volume{1234}\a.rs"),
+        assert!(locator_paths_match(
+            r"\\?\Volume{1234}\a.rs",
             "//?/Volume{1234}/a.rs"
-        );
+        ));
         // Plain Unix and relative paths are untouched.
         assert_eq!(
             normalize_locator_path("/srv/repo/src/lib.rs"),
