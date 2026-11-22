@@ -599,7 +599,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]",
         "merge-queue conflict-notice <new-output-directory> <pr> <main> <head> [--post]",
         "module-health [--threshold <n>]",
-        "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
+        "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path> [--run1-part <log> <status>]... [--run2-part <log> <status>]... [--expected-targets <build-log>]",
         "windows-advisory-run --timeout-minutes <n> --log <path> --status <path> -- <program> [args...]",
         "windows-advisory-acl-evidence --log <path> --status <path> --expect <test-path> [--expect <test-path>...]",
         "windows-advisory-file-policy-evidence --report <path> --subject <path> --log <path> --status <path> --head <sha>",
@@ -1003,7 +1003,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Walks crates/ripr/src/ and xtask/src/ for *.rs files, counts lines per file, and writes an advisory ranked report flagging files over the configurable line threshold (default 2000); always exits 0, never mutates source, and is never wired into CI gates.",
         ),
         command_entry(
-            "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
+            "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path> [--run1-part <log> <status>]... [--run2-part <log> <status>]... [--expected-targets <build-log>]",
             "report_only",
             "stdout only",
             false,
@@ -2576,7 +2576,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "CHANGELOG.md and changelog.d/*.md (only with --write; fragments are deleted unless --keep-fragments)",
             true,
             false,
-            "Folds changelog.d fragments into the first matching `### <Section>` under `## Unreleased` in CHANGELOG.md, in file-name order, preserving continuation lines, and deletes each folded fragment (README.md stays). Default is a dry run that prints the plan and writes nothing; --write applies it. --limit takes the first N fragments for a fold-and-delete batch (use at most 149 fragments when CHANGELOG.md is the only other path to stay within 150 changed files per PR). --keep-fragments leaves fragment files on disk for local inspection only: check-changelog-fragments rejects PRs that keep fragments duplicating Unreleased entries. Refuses an unknown section, a missing section marker or any malformed fragment by file name, and an entry already present in Unreleased. --release-cut is the cut-day mode: it folds every fragment (conflicts with --limit and --keep-fragments), prints an advisory warning (not a write guard) when the PR would exceed the 160-file admission cap, and after --write requires check-changelog-fragments --release-cut to pass (dry run does not run final validation, and on --write both the size warning and final validation run after writing). Release-cut tooling, not part of precommit; see changelog.d/README.md.",
+            "Folds changelog.d fragments into the first matching `### <Section>` under `## Unreleased` in CHANGELOG.md, in file-name order, preserving continuation lines, and deletes each folded fragment (README.md stays). Default is a dry run that prints the plan and writes nothing; --write applies it. --limit takes the first N fragments for a fold-and-delete batch (use at most 149 fragments when CHANGELOG.md is the only other path to stay within 150 changed files per PR). --keep-fragments leaves fragment files on disk for local inspection only: check-changelog-fragments rejects PRs that keep fragments duplicating Unreleased entries. Every run, dry or --write, first runs the whole check-changelog-fragments check and refuses with CHANGELOG.md and every fragment untouched when it fails. Refuses an unknown section, a missing section marker or any malformed fragment by file name, and a fragment with any bullet already present in Unreleased. --release-cut is the cut-day mode: it folds every fragment (conflicts with --limit and --keep-fragments), prints an advisory warning (not a write guard) when the PR would exceed the 160-file admission cap, and after --write requires check-changelog-fragments --release-cut to pass (a dry run does not run that release-cut check, and on --write both the size warning and the release-cut check run after writing). Release-cut tooling, not part of precommit; see changelog.d/README.md.",
         ),
         command_entry(
             "install-receipt [--check] | (--cells <dir> --run-id <id>)... [--write]",

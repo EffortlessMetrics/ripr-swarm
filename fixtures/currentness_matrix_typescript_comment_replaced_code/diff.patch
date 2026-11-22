@@ -1,0 +1,20 @@
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -2,14 +2,12 @@ const CAP = 100;
+ 
+ export function cappedTotal(items: number[]): number {
+     let total = items.reduce((sum, item) => sum + item, 0);
+-    if (total > CAP) {
+-        total = CAP;
+-    }
++    // The cap moved to the caller.
+ 
+     return total;
+ }
+ 
+ export function clampedDouble(x: number): number {
+-    x = Math.min(x * 2, CAP);
+-    return Math.max(x, 0);
++    // one clamp for both ends
++    return Math.max(Math.min(x * 2, CAP), 0);
+ }

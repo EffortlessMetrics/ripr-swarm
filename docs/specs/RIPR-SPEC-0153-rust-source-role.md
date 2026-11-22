@@ -109,7 +109,11 @@ root (a declared `[lib] path` replaces `src/lib.rs`). `autobins = false`
 drops the undiscovered `src/main.rs` and `src/bin/*` roots, and
 `autolib = false` drops `src/lib.rs` unless a `[lib]` table remains; a
 path-less declaration keeps its default path, including edition 2015's
-`src/<name>.rs`, `src/main.rs` and `src/bin/main.rs` fallback (#15877). A
+`src/<name>.rs`, `src/main.rs` and `src/bin/main.rs` fallback (#15877).
+Edition 2015 (an explicit `"2015"` or no `edition` key) turns discovery of
+one kind off when the manifest declares any `[[bin]]`, `[[test]]`,
+`[[bench]]` or `[[example]]` of that kind and leaves its `auto*` key unset;
+an inherited edition keeps discovery on. A
 `mod` item behind a `#[cfg]` no build satisfies (`any()`, `not(all())`),
 directly or through an enclosing inline module, declares no edge, because
 rustc strips it before loading a file for it; a feature, target or `test`

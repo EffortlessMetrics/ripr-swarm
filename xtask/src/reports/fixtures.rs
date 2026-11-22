@@ -40,6 +40,17 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
         Some(value) => vec![fixture_dir_for_name(value)?],
         None => fixture_dirs,
     };
+    if let Err(refusal) = refuse_empty_fixture_selection(&selected) {
+        // Replace any earlier passing report before refusing.
+        let body = fixture_report_body(
+            name.map(String::as_str),
+            &[],
+            &[],
+            std::slice::from_ref(&refusal),
+        );
+        write_report("fixtures.md", &body)?;
+        return Err(refusal);
+    }
     let run_set = collect_fixture_runs(selected, evaluate_fixture);
     write_fixture_report(name.map(String::as_str), &run_set)?;
     if run_set.violations.is_empty() {
@@ -50,6 +61,18 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
             run_set.violations.join("\n")
         ))
     }
+}
+
+/// A run over no fixture compared nothing, so it is not a pass (#15925). An
+/// absent or emptied `fixtures/` used to exit 0 here.
+fn refuse_empty_fixture_selection(selected: &[PathBuf]) -> Result<(), String> {
+    if selected.is_empty() {
+        return Err(
+            "fixture command selected zero fixtures; nothing was compared, so this is not a pass. Run from the repository root with `fixtures/` present."
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn evaluate_fixture(path: &Path) -> FixtureResult {
@@ -1183,13 +1206,19 @@ pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
     Ok(FixtureRun { comparisons, ..run })
 }
 
+/// The optional goldens compared only while their `expected/` file exists.
+/// `fixture_contracts::denominator_floor` names each present one, so deleting
+/// a golden cannot silently drop its comparison (#15925).
+pub(crate) const HUMAN_GOLDEN_SURFACES: [&str; 2] = ["human.txt", "human-full.txt"];
+pub(crate) const ANNOTATION_GOLDEN_SURFACES: [&str; 2] = ["sarif.json", "github.txt"];
+
 fn annotation_golden_comparisons(
     fixture: &str,
     expected: &Path,
     actual: &Path,
 ) -> Result<Vec<GoldenComparison>, String> {
     let mut comparisons = Vec::new();
-    for surface in ["sarif.json", "github.txt"] {
+    for surface in ANNOTATION_GOLDEN_SURFACES {
         let expected_surface = expected.join(surface);
         if expected_surface.exists() {
             comparisons.push(compare_golden(
@@ -1805,23 +1834,14 @@ fn fixture_golden_comparisons(
         check_json,
     )?);
 
-    let expected_human = expected.join("human.txt");
-    if expected_human.exists() {
-        comparisons.push(compare_golden(
-            fixture,
-            "human.txt",
-            &expected_human,
-            human_txt,
-        )?);
-    }
-    let expected_human_full = expected.join("human-full.txt");
-    if expected_human_full.exists() {
-        comparisons.push(compare_golden(
-            fixture,
-            "human-full.txt",
-            &expected_human_full,
-            human_full_txt,
-        )?);
+    for (surface, actual) in HUMAN_GOLDEN_SURFACES
+        .into_iter()
+        .zip([human_txt, human_full_txt])
+    {
+        let expected_surface = expected.join(surface);
+        if expected_surface.exists() {
+            comparisons.push(compare_golden(fixture, surface, &expected_surface, actual)?);
+        }
     }
     Ok(comparisons)
 }
@@ -3771,6 +3791,20 @@ mod tests {
     fn joint_fixture_command_rejects_extra_arguments_before_execution() {
         let result = goldens_impl(&["check-with-fixtures".into(), "ignored-filter".into()]);
         assert!(result.is_err());
+    }
+
+    /// #15925: `cargo xtask fixtures` over an absent `fixtures/` exited 0.
+    #[test]
+    fn an_empty_fixture_selection_is_refused() {
+        let refused = refuse_empty_fixture_selection(&[]);
+        assert!(
+            refused.is_err_and(|error| error.contains("selected zero fixtures")),
+            "a run over no fixture must not pass"
+        );
+        assert_eq!(
+            refuse_empty_fixture_selection(&[PathBuf::from("fixtures/boundary_gap")]),
+            Ok(())
+        );
     }
 
     #[test]

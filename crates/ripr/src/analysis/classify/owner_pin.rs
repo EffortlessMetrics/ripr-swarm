@@ -14011,7 +14011,7 @@ fn other_definition_competes(
             FunctionContainer::Free => {
                 !method
                     && !associated
-                    && !settled_per_test.is_some_and(|identity| identity.settles(function))
+                    && !settled_per_test.is_some_and(|identity| identity.settles(index, function))
             }
             _ if associated => true,
             _ => {

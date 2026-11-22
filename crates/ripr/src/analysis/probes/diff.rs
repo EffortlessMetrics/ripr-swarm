@@ -282,6 +282,31 @@ pub(crate) fn probes_for_file_with_relations(
             }
         }
     }
+    // RIPR-SPEC-0348 Rule 5: `Self` written for the implementing type's own
+    // name, or the reverse, names the same item. A position macro on the
+    // line still sees its column move.
+    if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {
+        let respelled = super::self_type_respelling::self_type_respelled_lines(
+            changed,
+            &facts.source,
+            old_source,
+        );
+        for (&new_side_line, removed) in &changed.replacement_counterparts() {
+            if !respelled.added.contains(&new_side_line)
+                || !respelled.removed.contains(&removed.line)
+                || added_position.contains(&new_side_line)
+                || removed_position.contains(&removed.line)
+            {
+                continue;
+            }
+            if let (Some(&added_index), Some(&removed_index)) =
+                (added_at.get(&new_side_line), removed_at.get(&removed.line))
+            {
+                skip_added[added_index] = true;
+                skip_removed[removed_index] = true;
+            }
+        }
+    }
     // #15110: a complete item moved within its owner, with no other change,
     // is the same program.
     if let (Some(facts), Some(old_source)) = (find_file_facts(index, &changed.path), old_source) {

@@ -5891,7 +5891,11 @@ mod tests {
         // #15632: `python_membership_removed_member` keeps a removed
         // literal-collection member no row passes weakly exposed; its weak
         // finding names `val == "y"`, one more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (25, 36, 49, 2) {
+        // #15646: `python_class_attr_text_unobserved` reaches `Length` through
+        // strong assertions that carry no literal telling the old message
+        // from the new; its weak card is one more direct-aligned card. The
+        // multi-line conjunct control is `exposed` and carries none.
+        if (direct, no_strong, orthogonal, family_selection) != (26, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

@@ -2712,23 +2712,55 @@ fn generated_capture_step_uses_pinned_diff_contract() -> Result<(), Box<dyn Erro
         .nth(1)
         .and_then(|rest| rest.split("\n    fn ").next())
         .ok_or("ci_packet.rs has no capture_pull_request_diff")?;
+    // Since #9365 the capture calls the shared pinned assembly instead of
+    // restating the argv; the pins live in `analysis/diff/load.rs`, and the
+    // behavior under hostile config is proved by
+    // `cli_smoke::diff_ambient_settings::ci_packet_diff_capture_ignores_ambient_git_diff_settings`.
+    for pin in [
+        "crate::analysis::load_ci_packet_diff_bytes(",
+        "\"rev-parse\"",
+        "Sha256::digest",
+    ] {
+        assert!(
+            capture.contains(pin),
+            "capture must use {pin}; got:\n{capture}"
+        );
+    }
+    assert!(
+        !capture.contains("\"--src-prefix=a/\""),
+        "capture must not restate the diff argv; got:\n{capture}"
+    );
+    let loader = fs::read_to_string(manifest_dir.join("src/analysis/diff/load.rs"))?;
+    let body = |name: &str| -> Result<String, String> {
+        loader
+            .split(&format!("fn {name}("))
+            .nth(1)
+            .and_then(|rest| rest.split("\nfn ").next())
+            .and_then(|rest| rest.split("\npub").next())
+            .map(str::to_string)
+            .ok_or(format!("load.rs has no {name}"))
+    };
+    let packet = body("load_ci_packet_diff_bytes")?;
+    for pin in ["run_git_diff_bytes(", "\"--binary\"", "\"3\""] {
+        assert!(
+            packet.contains(pin),
+            "packet capture must pin {pin}; got:\n{packet}"
+        );
+    }
+    let shared = body("run_git_diff_bytes")?;
     for pin in [
         "\"--no-ext-diff\"",
         "\"--no-textconv\"",
         "\"--no-color\"",
         "\"--src-prefix=a/\"",
         "\"--dst-prefix=b/\"",
-        "\"--unified=3\"",
+        "--unified={unified}",
         "\"--inter-hunk-context=0\"",
         "\"core.quotePath=true\"",
-        "\"--binary\"",
-        "\"rev-parse\"",
-        "Sha256::digest",
+        "\"--full-index\"",
+        "\"diff.renameLimit=1000\"",
     ] {
-        assert!(
-            capture.contains(pin),
-            "capture must pin {pin}; got:\n{capture}"
-        );
+        assert!(shared.contains(pin), "shared diff argv must pin {pin}");
     }
 
     fs::remove_dir_all(root)?;
