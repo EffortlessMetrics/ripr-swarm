@@ -278,7 +278,8 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
 }
 
 /// Where a seam id comes from, for the missing-`--seam-id` errors of
-/// `agent card`, `agent packet`, `agent start` and `agent brief`. One copy so the messages cannot drift.
+/// `agent card`, `agent packet`, `agent start` and `agent brief`. One copy so
+/// the messages cannot drift.
 pub(crate) const SEAM_ID_SOURCE_HINT: &str =
     "Use an id that `ripr check` or `ripr pilot --root <dir>` printed";
 

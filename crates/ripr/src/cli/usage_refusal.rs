@@ -531,8 +531,9 @@ mod tests {
     #[test]
     fn an_empty_command_name_publishes_no_token() -> Result<(), String> {
         reset();
-        note_unknown_command("", "the command name is empty. Run `ripr --help`.");
-        let error = CommandError::Failure("the command name is empty.".to_string());
+        let message = "the command name is empty. Run `ripr --help`.";
+        note_unknown_command("", message);
+        let error = CommandError::Failure(message.to_string());
         let document = document_for(&args(&["ripr", "", "--json"]), &error)
             .ok_or("a JSON-requested unknown command must write a document")?;
         let value: serde_json::Value =
