@@ -1119,4 +1119,60 @@ mod tests {
         );
         Ok(())
     }
+
+    /// Release tooling asks this owner which tree paths block a release:
+    /// every `changelog.d/` path except the directory's README, sorted, and
+    /// nothing outside the directory (#6341).
+    #[test]
+    fn unfolded_fragment_paths_keeps_only_fragments_in_sorted_order() {
+        assert_eq!(
+            unfolded_fragment_paths([
+                "changelog.d/b-fix.md",
+                "CHANGELOG.md",
+                "changelog.d/README.md",
+                "docs/changelog.d/x.md",
+                "changelog.d/a-fix.md",
+            ]),
+            vec![
+                "changelog.d/a-fix.md".to_string(),
+                "changelog.d/b-fix.md".to_string(),
+            ]
+        );
+        assert_eq!(
+            unfolded_fragment_paths(["changelog.d/README.md"]),
+            Vec::<String>::new()
+        );
+    }
+
+    /// A comment indented under a bullet is not entry text, so it cannot make
+    /// a fragment and an Unreleased entry look different to the duplicate
+    /// check (#11815).
+    #[test]
+    fn bullet_entries_leave_out_an_indented_comment() {
+        assert_eq!(
+            bullet_entries(["- Fixed a thing (#1).", "  <!-- folded from 1-a.md -->"].into_iter()),
+            vec!["- Fixed a thing (#1).".to_string()]
+        );
+        assert_eq!(
+            bullet_entries(["- Fixed a thing (#1).", "   ", "  continued line."].into_iter()),
+            vec!["- Fixed a thing (#1). continued line.".to_string()]
+        );
+    }
+
+    /// Only no flag or `--release-cut` alone is accepted; anything else is
+    /// refused with the usage line before any file is read.
+    #[test]
+    fn check_refuses_unknown_or_extra_arguments_with_usage() {
+        for args in [
+            vec!["--release".to_string()],
+            vec!["--release-cut".to_string(), "--release-cut".to_string()],
+            vec!["release-cut".to_string()],
+        ] {
+            assert_eq!(
+                check_changelog_fragments_with_args(&args),
+                Err(USAGE.to_string()),
+                "{args:?}"
+            );
+        }
+    }
 }
