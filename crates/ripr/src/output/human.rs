@@ -1062,7 +1062,10 @@ fn render_owner_opt_out_block(out: &mut String, output: &CheckOutput) {
         {
             out.push_str(&format!(
                 "  - {}:{} {} (owner: {}, scope: {}, reason: {})\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 opt_out.owner,
@@ -1136,7 +1139,10 @@ fn render_suppression_policy_block(out: &mut String, output: &CheckOutput) {
         {
             out.push_str(&format!(
                 "  - {}:{} {} (selector: {})\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 entry.selector

@@ -1131,6 +1131,16 @@ pub(crate) struct GoldenDriftSemantics {
     pub(crate) changed_recommendations: Vec<String>,
     pub(crate) static_language_terms: Vec<String>,
     pub(crate) changed_line_count: usize,
+    pub(crate) human_evidence: Option<HumanEvidenceDrift>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum HumanEvidenceDrift {
+    Unavailable,
+    Compared {
+        changed_stages: Vec<String>,
+        detail_window_changed: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -2687,6 +2697,24 @@ pub(crate) fn golden_drift_type(semantics: &GoldenDriftSemantics) -> String {
             semantics.static_language_terms.join(", ")
         ));
     }
+    match &semantics.human_evidence {
+        Some(HumanEvidenceDrift::Unavailable) => parts.push("stage_states_unavailable".into()),
+        Some(HumanEvidenceDrift::Compared {
+            changed_stages,
+            detail_window_changed,
+        }) => {
+            if !changed_stages.is_empty() {
+                parts.push(format!(
+                    "stage_states_changed [{}]",
+                    changed_stages.join("; ")
+                ));
+            }
+            if *detail_window_changed {
+                parts.push("detail_window_changed".into());
+            }
+        }
+        None => {}
+    }
     if parts.is_empty() {
         parts.push(format!(
             "formatting_only ({} line(s))",
@@ -2771,6 +2799,7 @@ pub(crate) fn golden_drift_semantics(
             ),
             static_language_terms,
             changed_line_count,
+            ..Default::default()
         }
     } else {
         let expected_recommendations = human_recommended_next_steps(expected);
@@ -2778,6 +2807,8 @@ pub(crate) fn golden_drift_semantics(
         let expected_stop_reasons = human_stop_reason_lines(expected);
         let actual_stop_reasons = human_stop_reason_lines(actual);
         GoldenDriftSemantics {
+            human_evidence: (surface == "human.txt")
+                .then(|| classify_human_evidence(expected, actual)),
             changed_stop_reasons: set_change_summary(&expected_stop_reasons, &actual_stop_reasons),
             changed_recommendations: set_change_summary(
                 &expected_recommendations,
@@ -2787,6 +2818,61 @@ pub(crate) fn golden_drift_semantics(
             changed_line_count,
             ..GoldenDriftSemantics::default()
         }
+    }
+}
+
+const HUMAN_STAGES: [&str; 5] = [
+    "reach",
+    "infection",
+    "propagation",
+    "observation",
+    "assertion",
+];
+
+fn human_evidence(text: &str) -> Option<([&str; 5], Vec<&str>)> {
+    let mut lines = text.lines();
+    let vector = lines
+        .find(|line| line.starts_with("  Evidence:"))?
+        .strip_prefix("  Evidence: ")?;
+    let mut fields = vector.split('·').map(str::trim);
+    let mut states = [""; 5];
+    for (index, stage) in HUMAN_STAGES.iter().enumerate() {
+        let (name, state) = fields.next()?.split_once(' ')?;
+        let valid = matches!(
+            state,
+            "yes" | "no" | "weak" | "unknown" | "opaque" | "not_applicable"
+        ) || (name == "assertion" && matches!(state, "missing" | "not established"));
+        if name != *stage || !valid {
+            return None;
+        }
+        states[index] = state;
+    }
+    if fields.next().is_some() || lines.clone().any(|line| line.starts_with("  Evidence:")) {
+        return None;
+    }
+    let details = lines
+        .take_while(|line| line.starts_with("    "))
+        .filter_map(|line| line.strip_prefix("    - "))
+        .filter(|detail| detail.contains(": "))
+        .collect();
+    Some((states, details))
+}
+
+fn classify_human_evidence(expected: &str, actual: &str) -> HumanEvidenceDrift {
+    let (Some((old, old_details)), Some((new, new_details))) =
+        (human_evidence(expected), human_evidence(actual))
+    else {
+        return HumanEvidenceDrift::Unavailable;
+    };
+    let mut changed_stages = Vec::new();
+    for ((stage, before), after) in HUMAN_STAGES.into_iter().zip(old).zip(new) {
+        if before != after {
+            changed_stages.push(format!("{stage}: {before} -> {after}"));
+        }
+    }
+    HumanEvidenceDrift::Compared {
+        changed_stages,
+        detail_window_changed: old == new && old_details != new_details,
     }
 }
 
@@ -2829,6 +2915,18 @@ fn golden_drift_markdown(
                 "- changed lines: {}\n",
                 entry.semantics.changed_line_count
             ));
+            if entry.surface == "human.txt" {
+                body.push_str(&format!(
+                    "- drift type: {}\n",
+                    golden_drift_type(&entry.semantics)
+                ));
+                if let Some(HumanEvidenceDrift::Compared { changed_stages, .. }) =
+                    &entry.semantics.human_evidence
+                {
+                    let unchanged = changed_stages.is_empty();
+                    body.push_str(&format!("- stage_states_unchanged: {unchanged}\n"));
+                }
+            }
             write_optional_list(
                 &mut body,
                 "added finding IDs",
@@ -2980,6 +3078,25 @@ fn golden_drift_json(
             "      \"blessing_reason_present\": {},\n",
             entry.blessing_reason_present
         ));
+        match &entry.semantics.human_evidence {
+            Some(HumanEvidenceDrift::Compared {
+                changed_stages,
+                detail_window_changed,
+            }) => {
+                body.push_str(&format!(
+                    "      \"stage_states_unchanged\": {},\n",
+                    changed_stages.is_empty()
+                ));
+                body.push_str(&format!(
+                    "      \"detail_window_changed\": {detail_window_changed},\n"
+                ));
+                write_json_field_array(&mut body, "changed_stages", changed_stages, true);
+            }
+            Some(HumanEvidenceDrift::Unavailable) => {
+                body.push_str("      \"stage_states_unchanged\": null,\n")
+            }
+            None => {}
+        }
         write_json_field_array(
             &mut body,
             "added_finding_ids",
@@ -4013,6 +4130,48 @@ mod tests {
             "ripr 0.11.0 (abc123)"
         );
         assert_eq!(value["entries"][0]["provenance"]["revision"], "abc123");
+        Ok(())
+    }
+
+    #[test]
+    fn golden_drift_human_evidence_reports_preserve_unknown_and_multiword_states()
+    -> Result<(), serde_json::Error> {
+        let before = "  Evidence: reach weak · infection yes · propagation opaque · observation not_applicable · assertion not established";
+        let after = before
+            .replace("reach weak", "reach no")
+            .replace("not established", "missing");
+        let provenance = GoldenDriftProvenance {
+            binary: "ripr".into(),
+            ripr_version: "test".into(),
+            revision: "test".into(),
+        };
+        let entries = [&after[..], before, "missing vector"].map(|actual| GoldenDriftEntry {
+            fixture: "human-evidence".into(),
+            surface: "human.txt".into(),
+            expected: "expected".into(),
+            actual: "actual".into(),
+            blessing_reason_required: true,
+            blessing_reason_present: false,
+            semantics: golden_drift_semantics("human.txt", before, actual),
+        });
+        let json: serde_json::Value =
+            serde_json::from_str(&golden_drift_json(&entries, &[], &provenance))?;
+        let rows = &json["entries"];
+        assert_eq!(rows[0]["stage_states_unchanged"], false);
+        assert_eq!(
+            rows[0]["changed_stages"],
+            serde_json::json!(["reach: weak -> no", "assertion: not established -> missing"])
+        );
+        assert_eq!(rows[1]["stage_states_unchanged"], true);
+        assert_eq!(rows[1]["detail_window_changed"], false);
+        assert_eq!(
+            rows[2].get("stage_states_unchanged"),
+            Some(&serde_json::Value::Null)
+        );
+        let markdown = golden_drift_markdown(&entries, &[], &provenance);
+        assert!(markdown.contains("assertion: not established -> missing"));
+        assert!(markdown.contains("stage_states_unchanged: true"));
+        assert!(markdown.contains("stage_states_unavailable"));
         Ok(())
     }
 

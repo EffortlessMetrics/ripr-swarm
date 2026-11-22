@@ -233,6 +233,7 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
         safe_gate_predicate: None,
         authority_boundary: PERL_AUTHORITY_BOUNDARY.to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
