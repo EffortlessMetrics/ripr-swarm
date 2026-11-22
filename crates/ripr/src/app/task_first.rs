@@ -2953,7 +2953,8 @@ fn uncommitted_production_files(
     );
     let packet =
         crate::output::agent_seam_packets::render_gap_bound_repair_packet(&display, record)?;
-    let policy = crate::app::repair_attempt::edit_cage_policy_from_packet(
+    let policy = crate::app::repair_attempt::edit_cage_policy_from_packet_in(
+        root,
         &packet,
         &record.canonical_gap_id,
     )?;
@@ -4467,7 +4468,7 @@ fn held_inline_target(
     let relative = file.strip_prefix(root).unwrap_or(file);
     let relative = relative.to_string_lossy().replace('\\', "/");
     (!Path::new(&relative).is_absolute()
-        && !crate::analysis::is_test_surface_path(&relative)
+        && !crate::analysis::is_test_surface(root, &relative)
         && Path::new(&relative)
             .extension()
             .is_some_and(|ext| ext == "rs")
