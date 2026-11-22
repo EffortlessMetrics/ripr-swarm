@@ -163,6 +163,9 @@ fn a_directory_at_the_manifest_path_fails_instead_of_passing() -> Result<(), Str
     Ok(())
 }
 
+// Windows refuses a control byte in a file name (os error 123), so the
+// fixture file can exist only on Unix.
+#[cfg(unix)]
 #[test]
 fn a_control_byte_in_the_manifest_path_is_escaped_on_success() -> Result<(), String> {
     let root = workspace("escape")?;

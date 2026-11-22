@@ -160,7 +160,12 @@ fn agent_status_json_refuses_a_malformed_attempt_id_with_the_listing_command() -
 fn invalid_config_json_refusals_carry_the_human_next_step() -> TestResult {
     let root = broken_config_repo("config-refusal-15260")?;
     let root_arg = root.display().to_string();
-    let validate = format!("ripr config validate --root {root_arg}");
+    // The printed command spells the root with `/` on every platform (the
+    // human-path rule), so on Windows it differs from the native argument.
+    let validate = format!(
+        "ripr config validate --root {}",
+        root_arg.replace('\\', "/")
+    );
 
     let check = document(&run_ripr(&["check", "--json", "--root", &root_arg]), 2)?;
     assert_eq!(check["error"]["code"], "config_invalid", "{check}");

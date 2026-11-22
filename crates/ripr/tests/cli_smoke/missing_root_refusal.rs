@@ -158,14 +158,37 @@ fn diff_json_refuses_a_missing_root_with_a_json_envelope() -> TestResult {
     assert_eq!(output.status.code(), Some(2), "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|error| format!("diff --json refusal is one JSON document ({error}): {stdout}"))?;
-    let text = document.to_string();
-    assert!(text.contains("repository_root_unusable"), "{stdout}");
+    // Search the decoded strings, not the serialized document: JSON escapes
+    // each `\` of a Windows path, so the native path is not a substring of
+    // the serialized text there.
+    let mut strings = Vec::new();
+    collect_strings(&document, &mut strings);
+    let says = |needle: &str| strings.iter().any(|text| text.contains(needle));
+    assert!(says("repository_root_unusable"), "{stdout}");
     assert!(
-        text.contains(&format!("diff root {missing_text} is not a directory")),
+        says(&format!("diff root {missing_text} is not a directory")),
         "{stdout}"
     );
-    assert!(!text.contains("default base"), "{stdout}");
+    assert!(!says("default base"), "{stdout}");
     Ok(())
+}
+
+/// Every string value in `value`, at any depth.
+fn collect_strings<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(text) => out.push(text),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_strings(item, out);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for field in fields.values() {
+                collect_strings(field, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The root refusal for `first-pr` / `start-here` is the directory check
