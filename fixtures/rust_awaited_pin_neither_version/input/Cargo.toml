@@ -1,0 +1,4 @@
+[package]
+name = "rust_awaited_pin_neither_version_fixture"
+version = "0.0.0"
+edition = "2024"

@@ -1,0 +1,1 @@
+crates/ripr/tests/cache_differential.rs|Command::new|1|cli-tests|#16004: the warm-against-cold differential runs the built ripr binary (check, stdin null, piped output) against isolated temp repositories, each with its own RIPR_CACHE_DIR. Git fixture setup goes through the shared fixture_git helper. No shell, network, or user-repository mutation.

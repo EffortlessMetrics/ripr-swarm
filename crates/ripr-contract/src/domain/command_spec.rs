@@ -407,7 +407,7 @@ impl CommandSpec {
         for argument in &self.args {
             validate_no_nul("args", argument)?;
         }
-        validate_root_relative_path("cwd", &self.cwd)?;
+        validate_working_directory(&self.cwd)?;
         for path in &self.expected_writes {
             validate_root_relative_path("expected_writes", path)?;
         }
@@ -450,6 +450,23 @@ fn validate_no_nul(field: &'static str, value: &str) -> Result<(), CommandSpecVa
     } else {
         Ok(())
     }
+}
+
+fn validate_working_directory(value: &str) -> Result<(), CommandSpecValidationError> {
+    validate_root_relative_path("cwd", value)?;
+    // The published working_directory pattern excludes ECMAScript line
+    // terminators and a nonempty scheme prefix before the first separator.
+    let has_scheme_prefix = value
+        .split(['/', '\\'])
+        .next()
+        .is_some_and(|first| first.chars().skip(1).any(|ch| ch == ':'));
+    if has_scheme_prefix || value.contains(['\r', '\n', '\u{2028}', '\u{2029}']) {
+        return Err(CommandSpecValidationError::InvalidRelativePath {
+            field: "cwd",
+            value: value.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_root_relative_path(
@@ -798,6 +815,31 @@ mod tests {
             );
         }
         assert_eq!(validated(|spec| spec.expected_writes.clear()), Ok(()));
+    }
+
+    #[test]
+    fn working_directory_matches_published_line_and_scheme_rules() -> Result<(), String> {
+        for cwd in [
+            "a\n",
+            "a\rb",
+            "a\u{2028}b",
+            "a\u{2029}b",
+            "src:gen/x",
+            ":x:y",
+        ] {
+            let expected = Err(Refusal::InvalidRelativePath {
+                field: "cwd",
+                value: cwd.into(),
+            });
+            if validated(|spec| spec.cwd = cwd.into()) != expected {
+                return Err(format!("unexpected working_directory verdict for {cwd:?}"));
+            }
+        }
+        for cwd in [":literal", "src/gen:x", "src\\gen:x"] {
+            validated(|spec| spec.cwd = cwd.into()).map_err(|err| err.to_string())?;
+        }
+        validated(|spec| spec.expected_writes = vec!["src:gen/x".into()])
+            .map_err(|err| err.to_string())
     }
 
     #[test]

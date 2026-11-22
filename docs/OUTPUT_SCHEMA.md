@@ -140,7 +140,7 @@ map is:
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr reports kani` | `schema_version` | `ripr_kani_report.v1` |
 | `ripr reports kani --binding` input | `schema_version` | `ripr_kani_binding.v1` |
-| `ripr help --json` | `schema_version` | `5` |
+| `ripr help --json` (published as `schemas/ripr/help.schema.json`; an integer) | `schema_version` | `5` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
@@ -177,9 +177,11 @@ records that distinction.
 | `schemas/ripr/cli-refusal.schema.json` | `0.1` | `crates/ripr/src/app.rs` and `crates/ripr/src/output/refusal.rs`; minimal usage-error / selector-miss refusal under an explicit JSON request (#11584) |
 | `schemas/ripr/diff.schema.json` | `0.1` | `crates/ripr/src/output/diff_report.rs`; `ripr_diff` report (`ripr diff --json`) |
 | `schemas/ripr/diff-refusal.schema.json` | `0.1` | `crates/ripr/src/cli/commands.rs`; the refusal envelope `ripr diff --json` writes when it cannot produce a report, keyed with the diff report's version |
+| `schemas/ripr/help.schema.json` | `5` | `crates/ripr/src/cli/help_json.rs` (`HELP_JSON_SCHEMA_VERSION`, an integer); command and workflow discovery (`ripr help --json`) |
 | `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
+| `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document and the `agent-seam-packets-json` check format are not covered yet |
 | `schemas/ripr/agent-packet-refusal.schema.json` | `0.5` | `crates/ripr/src/app.rs`; the refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet, keyed with the packet's version |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
@@ -215,8 +217,13 @@ Widening edits pass, as does a new property on an object with
 a dropped `pattern`, and annotation-only edits (`description`, `title`,
 `examples`, ...) at any depth. A new root `anyOf` also passes when one properties-only alternative
 repeats earlier same-field scalar guards (`type`, `minLength`) and every
-other alternative either repeats those guards or supplies only a valid
-nonempty list of distinct required names. The compatibility tests
+other alternative either repeats those guards or uses the bounded predicate
+accepted by the gate. That predicate supports literal `const` values, string
+`description`, `type: string`, boolean `additionalProperties`, and nonempty
+`required` lists of distinct names. It also accepts nonnegative integer
+`minItems` and `maxItems` bounds and recursively checks schemas under `items`
+and `properties`, up to 32 levels. References, combinators and other keywords
+fall outside this proof. The compatibility tests
 `added_any_of_preserves_a_repeated_scalar_guard_only` and
 `published_check_root_widening_does_not_admit_overlapping_cache_receipts`
 cover this implication and an enclosing exclusive alternative.
@@ -2699,8 +2706,8 @@ field; normalize across surfaces at this crosswalk:
 | Finding `probe.file` (this contract) | `./src/lib.rs` | `./`-prefixed for files under `--root`; files outside `--root` keep their portable spelling (`finding_location_text`, `crates/ripr/src/analysis/mod.rs`) |
 | Finding `related_tests[].file` (this contract) | `tests/pricing.rs` | repository-relative, no `./` (`output::path::display_path`) — deliberately different from `probe.file` within the same document |
 | Context Packet `probe.file` | `./src/lib.rs` | same `./`-prefixed finding location as Finding `probe.file` for files under `--root` (`ContextPacket::from_finding`; `display_path_text` only normalizes separators) |
-| SARIF `artifactLocation.uri` | `src/lib.rs` | `./` stripped, RFC 3986 percent-encoded (`crates/ripr/src/output/sarif.rs`) |
-| GitHub annotation `file=` | `src/lib.rs` | repository-relative, no `./` (`crates/ripr/src/output/path.rs`) |
+| SARIF `artifactLocation.uri` | `src/lib.rs` | relative to the Git checkout top level (code scanning's base), `./` stripped, RFC 3986 percent-encoded; a `--root` below the top level such as `crates/app` yields `crates/app/src/lib.rs`, whichever spelling names the root. Without a Git work tree the uri stays relative to `--root`. Inside a submodule the top level is the submodule's own, not the superproject's. For member roots `riprFingerprintV1` embeds the anchored path (`CheckoutAnchor` in `crates/ripr/src/output/path.rs`, `crates/ripr/src/output/sarif.rs`) |
+| GitHub annotation `file=` | `src/lib.rs` | relative to the Git checkout top level (what `GITHUB_WORKSPACE` resolves), no `./`; same member-root and no-work-tree rules as the SARIF uri (`CheckoutAnchor` in `crates/ripr/src/output/path.rs`) |
 | Finding/gap IDs (`probe:…`, `gap:…`) | `src_lib.rs` / `src/lib.rs` | path embedded in the content-addressed ID; IDs are identity, never path-join inputs |
 
 The evidence-first fields are additive in schema `0.2`:
@@ -2992,7 +2999,17 @@ The evidence-first fields are additive in schema `0.2`:
   `.venv/bin/python` or `venv/bin/python` found statically at the root
   (POSIX), else `python`; its confidence is `low` when that venv statically
   lacks pytest and `medium` when the venv cannot be read statically
-  (RIPR-SPEC-0028, #13801).
+  (RIPR-SPEC-0028, #13801). When the test file belongs to a Python project
+  nested below the root (the nearest directory that statically declares a
+  project: `setup.py`, a `pyproject.toml` with `[project]`, `[build-system]`
+  or `[tool.poetry]`, or a `setup.cfg` with `[metadata]` or `[options]`;
+  tool-only configuration such as a lint-only `setup.cfg` does not count),
+  the optional
+  `verify_cwd` names that directory relative to the root, and the command,
+  test path and venv are relative to it; confidence is at most `medium` when
+  that project has no venv but the root does (#15302). A command that cannot
+  be moved into its project keeps the root-relative route and the root's
+  venv decision, and omits `verify_cwd`, as root-level projects do.
 - `python_repair_card` is an additive optional object for direct weak Python
   findings that already have a canonical gap, concrete missing discriminator,
   related-test evidence, placement, and verify command. It is intentionally
@@ -3005,6 +3022,16 @@ The evidence-first fields are additive in schema `0.2`:
   `repair_action = "strengthen_existing_test"` means the card and derived
   packet should strengthen the named weak related test instead of adding a
   redundant new test.
+  `verify.cwd` is optional and appears only when the verify command runs from
+  a nested Python project directory (the same root-relative directory as
+  `repair_placement.verify_cwd`, #15302); the human card, SARIF properties,
+  GitHub annotation, gap-ledger `verify_cwd` and first-pr verify command
+  context all use it, and first-pr withholds its verify forms when that
+  directory cannot be resolved under the selected root. Pilot cards and
+  gap-bound agent packets carry the raw `verify_command` with `verify_cwd`,
+  and their prose, copyable verification, queue rows, `agent status` and
+  gap-ledger review-comment guidance show it as `(cd -- <dir> && <command>)`.
+  On Windows the route stays root-relative and no `verify_cwd` is emitted.
   In raw `ripr check` output, `receipt.command` may still be `null` because the
   renderer does not know where the caller will save before/after check
   snapshots. Raw check cards include `receipt.guidance`, and pilot projections
@@ -17688,6 +17715,18 @@ the drafted assertion. Both members are additive, so `schema_version` stays
 dump the full repo packet set. Missing seam IDs, non-actionable seam classes,
 and seams whose configured severity is `off` return an actionable error.
 
+The `--seam-id` document is published as
+[`schemas/ripr/agent-packet.schema.json`](../schemas/ripr/agent-packet.schema.json).
+It holds at most one packet, whose `task` is `write_targeted_test` or
+`inspect_static_limitation`; only a `write_targeted_test` packet carries a
+suggested test command, a non-empty edit surface and the top-level `next`
+block. `crates/ripr/tests/agent_packet_json_schema.rs` validates the real
+command's bytes for every seam of a fixture crate and pins the documents the
+schema rejects. The `--gap-ledger` document below has a different packet shape
+(`source`, `status`, `inputs`, `source_currentness`) and is not covered by this
+schema yet; neither is the multi-seam `agent-seam-packets-json` check format
+(#3920).
+
 `ripr agent packet --root . --gap-ledger <path> --gap-id <id> --json` emits
 the same packet envelope from one explicit `GapRecord`, matched by `gap_id` or
 `canonical_gap_id`. This mode does not rerun analysis and does not infer
@@ -20959,7 +20998,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.185",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.189",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21714,6 +21753,25 @@ that no real condition can produce (see #1130 adversarial review).
 
 Spec: `docs/specs/RIPR-SPEC-0075-pr-evidence-summary.md`.
 
+## Command discovery output
+
+`ripr help --json` prints one JSON line describing every catalog command and
+workflow (RIPR-SPEC-0190). It is published as
+[`schemas/ripr/help.schema.json`](../schemas/ripr/help.schema.json); its
+`schema_version` is the integer `5`. Each command row carries its class,
+discovery posture, relation, effects, flags parsed from its help body with
+their `flags_scope`, and a typed `exit` object whose codes follow
+[EXIT_CODES.md](EXIT_CODES.md). `catalog_digest` is the lowercase hex SHA-256
+of the command rows, the workflow rows and `catalog_contract_version`, so a
+release that only changes `product_version` keeps the digest.
+`crates/ripr/tests/help_json_schema.rs` validates the real command's bytes,
+asserts they reach every exit-contract kind, flag scope and workflow next-route
+kind, and checks that broken variants are rejected at the field and for the
+constraint each one breaks. Beyond field shapes the
+schema binds the exit codes of each contract kind, discovery to class and
+relation as the catalog validator derives it, an empty `flags` list for
+`no_help_body`, and no value set on a flag that takes no value.
+
 ## Targeted rerun output
 
 `ripr rerun --changed-test <path>[::<test_node>] [--before <path>] --json` and
@@ -21744,7 +21802,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.185",
+      "schema_version": "1.189",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

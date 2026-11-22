@@ -13,11 +13,21 @@ secrets = "forbidden"
 release_upload = "forbidden"
 receipt_transport = "actions_artifact_only"
 
+# The lane installs the archive the release ships: the publish-stage crate
+# (`cargo xtask publish-dry-run`, #14198), not the checkout's own crate, which
+# is over the crates.io upload limit and is never uploaded. The packaged
+# `ripr-contract` beside it satisfies the exact ADR 0027 requirement before
+# that crate is on crates.io. The run's rehearsal receipt must name the
+# candidate commit and both archive digests.
+package_source = "publish_stage"
+package_producer = "cargo xtask publish-dry-run"
+contract_resolution = "packaged_ripr_contract_path_patch"
+
 [required_journeys]
 cli = ["version", "help", "doctor-json", "check", "explain", "context", "pilot", "outcome"]
 editor_trusted = ["default", "full", "preview", "restart", "shutdown", "orphan-process"]
 editor_untrusted = ["zero-resolver-process-analysis-work"]
-artifact_identity = ["crate-sha256", "installed-binary-path-and-sha256", "vsix-sha256", "candidate-sha"]
+artifact_identity = ["crate-sha256", "contract-crate-sha256", "publish-stage-receipt", "installed-binary-path-and-sha256", "vsix-sha256", "candidate-sha"]
 
 [non_claims]
 release = "No version, tag, release asset, signing, marketplace, or source publication claim."

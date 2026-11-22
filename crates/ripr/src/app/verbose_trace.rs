@@ -52,7 +52,15 @@ fn verdict_line(finding: &Finding) -> String {
         .join(" ");
     let mut line = format!(
         "ripr: verdict {}:{} {} [{states}]",
-        finding.probe.location.file.display(),
+        // The same stable spelling `explain` selection matches (#3609), so a
+        // copied verdict location selects its finding; then the shared human
+        // display rule folds a Windows verbatim prefix from a canonicalized
+        // root (`//?/<drive>:/..` renders `<drive>:/..`, which still
+        // suffix-matches).
+        crate::output::path::human_path_text(
+            &crate::analysis::stable_path_text(&finding.probe.location.file),
+            cfg!(windows),
+        ),
         finding.probe.location.line,
         finding.class.as_str(),
     );
@@ -115,6 +123,76 @@ mod tests {
                 observe,
                 discriminate: stage(StageState::Unknown, "later reason"),
             },
+        }
+    }
+
+    fn verdict_line_for(file: &str) -> String {
+        let mut f = finding(
+            ExposureClass::Exposed,
+            evidence(
+                stage(StageState::Yes, "reached"),
+                stage(StageState::Yes, "observed"),
+            ),
+        );
+        f.probe.location.file = std::path::PathBuf::from(file);
+        verdict_line(&f)
+    }
+
+    #[test]
+    fn a_verdict_line_prints_forward_slash_paths_unchanged() {
+        let line = verdict_line_for("./src/lib.rs");
+        assert!(line.starts_with("ripr: verdict ./src/lib.rs:7 "), "{line}");
+    }
+
+    // On Windows `\` is a separator, so a joined `.\src/lib.rs` renders with
+    // one separator style.
+    #[cfg(windows)]
+    #[test]
+    fn a_verdict_line_renders_windows_separators_as_forward_slashes() {
+        let line = verdict_line_for(".\\src/lib.rs");
+        assert!(line.starts_with("ripr: verdict ./src/lib.rs:7 "), "{line}");
+        assert!(!line.contains('\\'), "{line}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_verdict_line_folds_a_windows_verbatim_root_prefix() {
+        // The drive letter is spliced in so the source holds no local path.
+        let drive = 'C';
+        let line = verdict_line_for(&format!("\\\\?\\{drive}:\\repo\\src\\lib.rs"));
+        let expected = format!("ripr: verdict {drive}:/repo/src/lib.rs:7 ");
+        assert!(line.starts_with(&expected), "{line}");
+    }
+
+    // A location copied from the verdict line must select the same finding
+    // through the real `explain` matcher, for slash, backslash and
+    // literal-percent file names alike.
+    #[test]
+    fn a_verdict_line_location_selects_its_finding() {
+        for file in [
+            "./src/lib.rs",
+            ".\\src/lib.rs",
+            "src/back\\slash.rs",
+            "src/100%done.rs",
+        ] {
+            let mut f = finding(
+                ExposureClass::Exposed,
+                evidence(
+                    stage(StageState::Yes, "reached"),
+                    stage(StageState::Yes, "observed"),
+                ),
+            );
+            f.probe.location.file = std::path::PathBuf::from(file);
+            let line = verdict_line(&f);
+            let location = line
+                .strip_prefix("ripr: verdict ")
+                .and_then(|rest| rest.split_once(' '))
+                .map(|(location, _)| location)
+                .unwrap_or_default();
+            assert!(
+                crate::app::selector::selector_matches_location(location, &f),
+                "{file:?} printed {location:?}, which does not select its finding: {line}"
+            );
         }
     }
 

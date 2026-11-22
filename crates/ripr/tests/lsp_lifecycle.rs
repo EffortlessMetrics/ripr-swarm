@@ -2255,6 +2255,14 @@ fn await_publish_and_response(
 #[path = "lsp_lifecycle/publication_response_order.rs"]
 mod publication_response_order;
 
+#[cfg(all(
+    feature = "lang-rust",
+    feature = "lang-python",
+    feature = "lang-typescript"
+))]
+#[path = "lsp_lifecycle/incremental_differential.rs"]
+mod incremental_differential;
+
 /// #14099: a file that is not open has no document-sync path. Deleting it
 /// outside the editor reaches the server only as a watched-file event, and
 /// the server must then retract the diagnostics it published for that file

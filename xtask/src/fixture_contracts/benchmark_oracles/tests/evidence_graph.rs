@@ -530,6 +530,7 @@ fn benchmark_semantic_graph_production_report_rejects_required_leaf_damage() -> 
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     crate::tests::with_temp_cwd("typed-evidence-graph-report", |root| {
         crate::tests::copy_dir_recursive(&repo.join("fixtures"), &root.join("fixtures"))?;
+        crate::fixture_contracts::denominator_floor::seed_floor_in_cwd()?;
         let corpus_root = root.join("fixtures/evidence-quality-benchmark");
         let corpus = read_json(&corpus_root.join("corpus.json"))?;
         let graph = required_graph(&corpus_root, &corpus)?;

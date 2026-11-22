@@ -382,11 +382,13 @@ mod import_identity;
 mod imported_call_operator;
 mod known_equality_helpers;
 mod loop_walk;
+mod math_infinity;
 // The may-reach graph is built and measured by tests and the corpus report
 // only; no verdict reads it yet (#11425), so it is not part of the shipped
 // build.
 #[cfg(test)]
 mod may_reach;
+mod membership_activation;
 mod message_pin;
 mod module_value;
 mod range_activation;
@@ -2185,13 +2187,53 @@ impl PythonAdapter {
                 .sources
                 .get(&changed.path)
                 .and_then(|source| reconstruct_old_source(source, changed));
+            // Lines inside a multi-line string are string content, not
+            // statements; an unreadable or unlexable file is treated as all
+            // string so the trailing-comment guard fails closed (#10706).
+            let string_line_ranges = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
+            // Every removed line of a replacement block shares the new-side
+            // line where the added run starts, so matching on that coordinate
+            // alone finds an old line only for the run's first added line
+            // (#7556, #7524 for TypeScript). Every old-line reader below takes
+            // it from one pairing: by position in an even block, by content in
+            // an uneven one, by coordinate where a removed line interrupts the
+            // run. An added run that holds no code (comments, blank lines,
+            // imports) replaced nothing: the code it stands on was deleted,
+            // and reading the pair as an edit reported the comment text as the
+            // changed behavior (#15913). Its lines pair with nothing, so the
+            // removed line keeps its own base-side record.
+            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
+                .as_deref()
+                .map(|source| {
+                    let old_facts = extract_source_facts(&changed.path, source);
+                    (
+                        old_facts.docstring_line_ranges,
+                        old_facts.import_line_ranges,
+                        old_facts.owners,
+                    )
+                })
+                .unwrap_or_default();
+            let import_ranges = import_ranges_by_file
+                .get(&changed.path)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let mut counterparts = changed.aligned_counterparts();
+            no_behavior::unpair_runs_without_code(
+                changed,
+                string_line_ranges.as_deref(),
+                no_behavior::ImportLines {
+                    added: import_ranges,
+                    removed: &old_import_ranges,
+                },
+                &mut counterparts,
+            );
+            let counterparts = counterparts;
             // Never mint an ID from a fragment without source-verified string
             // boundaries. Paired deletions do not become deleted findings.
-            let paired_old: BTreeSet<usize> = changed
-                .aligned_counterparts()
-                .values()
-                .map(|line| line.line)
-                .collect();
+            let paired_old: BTreeSet<usize> = counterparts.values().map(|line| line.line).collect();
             let old_identity = old_source.as_deref().and_then(PythonIdentityContext::new);
             let valid_new = identity_context.as_ref().is_some_and(|context| {
                 changed
@@ -2217,17 +2259,6 @@ impl PythonAdapter {
                 }
                 continue;
             }
-            let (old_docstring_ranges, old_import_ranges, old_owners) = old_source
-                .as_deref()
-                .map(|source| {
-                    let old_facts = extract_source_facts(&changed.path, source);
-                    (
-                        old_facts.docstring_line_ranges,
-                        old_facts.import_line_ranges,
-                        old_facts.owners,
-                    )
-                })
-                .unwrap_or_default();
             let compound_loop_owners = workspace_read
                 .sources
                 .get(&changed.path)
@@ -2241,13 +2272,6 @@ impl PythonAdapter {
                     )
                 })
                 .unwrap_or_default();
-            // Lines inside a multi-line string are string content, not
-            // statements; an unreadable or unlexable file is treated as all
-            // string so the trailing-comment guard fails closed (#10706).
-            let string_line_ranges = workspace_read
-                .sources
-                .get(&changed.path)
-                .and_then(|source| no_behavior::multi_line_string_line_ranges(source));
             // The paired old line gets the same test against the
             // reconstructed old source, so a delimiter edit that turns old
             // string content into code is not read as a spacing edit.
@@ -2274,22 +2298,10 @@ impl PythonAdapter {
                 })
                 .unwrap_or_default();
             let brackets = BracketEvidence::of(&workspace_read, &changed.path, &old_source);
-            let import_ranges = import_ranges_by_file
-                .get(&changed.path)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
             // An import line that replaces an import line re-points a name
             // (`from a import x` -> `from b import x`, or `old as x,` inside a
             // parenthesized import), so it is behavior of its own; any other
             // added import line is not.
-            // Every removed line of a replacement block shares the new-side
-            // line where the added run starts, so matching on that coordinate
-            // alone finds an old line only for the run's first added line
-            // (#7556, #7524 for TypeScript). Every old-line reader below takes
-            // it from one pairing: by position in an even block, by content in
-            // an uneven one, by coordinate where a removed line interrupts the
-            // run.
-            let counterparts = changed.aligned_counterparts();
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
                     && counterparts.get(&added.line).is_none_or(|removed| {
@@ -2508,7 +2520,7 @@ impl PythonAdapter {
         teardown::free_in_background(facts);
         // #13801: the interpreter and confidence of the pytest verify route
         // are decided once here, from static facts at the root.
-        verify_interpreter::PytestVerifyInterpreter::at(&options.root).apply(&mut findings);
+        verify_interpreter::apply_at(&options.root, &mut findings);
         Ok(LanguageDiffResult {
             value_origins,
             findings,
@@ -2544,7 +2556,7 @@ impl PythonAdapter {
     ) -> Result<LanguageRepoResult, String> {
         let input = repo::select_repo_input_with_limit(root, working_set_limit);
         let mut evidence = repo::build_repo_evidence(&input, root);
-        verify_interpreter::PytestVerifyInterpreter::at(root).apply(&mut evidence.findings);
+        verify_interpreter::apply_at(root, &mut evidence.findings);
         let partial_reason = repo::partial_disclosure(&evidence);
         let production_files = input.production_files.len();
         let skipped_files = evidence.counts.skipped;
@@ -2629,6 +2641,9 @@ mod unreachable_assertion_tests;
 
 #[cfg(test)]
 mod arm_activation_tests;
+
+#[cfg(test)]
+mod membership_activation_tests;
 
 #[cfg(test)]
 mod nested_result_tests;
