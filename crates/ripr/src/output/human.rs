@@ -6333,11 +6333,17 @@ mod tests {
     /// producer's wording stays in `missing` (JSON, `human-full`) and every
     /// other change type keeps its stable token.
     #[test]
-    fn default_text_plain_words_cover_only_the_two_fixed_forms() {
+    fn default_text_plain_words_cover_only_the_fixed_forms() {
         use crate::domain::ProbeFamily;
         assert_eq!(
             super::evidence_lines::plain_default_missing("No strong discriminator was detected"),
             "No strong assertion was detected"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_default_missing(
+                "No exact error variant discriminator was detected"
+            ),
+            "No assertion on the exact error variant was detected"
         );
         assert_eq!(
             super::evidence_lines::plain_default_missing("Missing check value: 100"),

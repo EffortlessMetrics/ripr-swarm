@@ -96,8 +96,17 @@ const PLAIN_PHRASES: &[(&str, &str)] = &[
 const STRONG_DISCRIMINATOR_ENTRY: &str = "No strong discriminator was detected";
 const STRONG_ASSERTION_ENTRY: &str = "No strong assertion was detected";
 
+/// The classifier's fixed error-path twin of [`STRONG_DISCRIMINATOR_ENTRY`],
+/// kept byte-for-byte in JSON and `human-full` and said plainly here.
+const EXACT_VARIANT_DISCRIMINATOR_ENTRY: &str = "No exact error variant discriminator was detected";
+const EXACT_VARIANT_ASSERTION_ENTRY: &str = "No assertion on the exact error variant was detected";
+
 pub(crate) fn plain_default_missing(text: &str) -> String {
     text.replace(STRONG_DISCRIMINATOR_ENTRY, STRONG_ASSERTION_ENTRY)
+        .replace(
+            EXACT_VARIANT_DISCRIMINATOR_ENTRY,
+            EXACT_VARIANT_ASSERTION_ENTRY,
+        )
 }
 
 /// The next-step phrases `exact_oracle_gap_next_step` uses when a related test
