@@ -3521,10 +3521,11 @@ fn equality_predicate_without_old_line_stays_outside_the_gate() -> Result<(), St
     Ok(())
 }
 
-/// `!=` and `is` stay outside this gate (handle `==` only). Complementary
-/// `!=` -> `==` still discriminates every input, so it must keep `exposed`.
+/// `is` and operator flips stay outside this gate. Complementary `!=` ->
+/// `==` still discriminates every input, so it must keep `exposed`.
 #[test]
-fn equality_predicate_gate_does_not_swallow_inequality_or_identity_forms() -> Result<(), String> {
+fn equality_predicate_gate_does_not_swallow_operator_flips_or_identity_forms() -> Result<(), String>
+{
     let from_ne = classify_case(
         "def is_zero(value):\n    if value == 0:\n        return True\n    return False\n",
         "from src.subject import is_zero\n\ndef test_is_zero():\n    assert is_zero(5) == False\n",
@@ -3535,15 +3536,6 @@ fn equality_predicate_gate_does_not_swallow_inequality_or_identity_forms() -> Re
     assert_eq!(from_ne.class, ExposureClass::Exposed);
     assert!(from_ne.activation.observed_values.is_empty());
 
-    let ne_constant = classify_case(
-        "def ne(n):\n    if n != 10:\n        return True\n    return False\n",
-        "from src.subject import ne\n\ndef test_ne():\n    assert ne(20) == True\n",
-        2,
-        "    if n != 11:",
-        "    if n != 10:",
-    )?;
-    assert_eq!(ne_constant.class, ExposureClass::Exposed);
-
     let identity = classify_case(
         "def same(n):\n    if n is True:\n        return True\n    return False\n",
         "from src.subject import same\n\ndef test_same():\n    assert same(20) == False\n",
@@ -3552,6 +3544,273 @@ fn equality_predicate_gate_does_not_swallow_inequality_or_identity_forms() -> Re
         "    if n is True:",
     )?;
     assert_eq!(identity.class, ExposureClass::Exposed);
+
+    // An unchanged `!=` comparison beside another edit is not a moved
+    // constant: the gate leaves the oracle verdict alone.
+    let unchanged = classify_case(
+        "def ne(n, on):\n    if n != 10 and on:\n        return True\n    return False\n",
+        "from src.subject import ne\n\ndef test_ne():\n    assert ne(20, True) == True\n",
+        2,
+        "    if n != 10 and not on:",
+        "    if n != 10 and on:",
+    )?;
+    assert_eq!(unchanged.class, ExposureClass::Exposed, "{unchanged:?}");
+    Ok(())
+}
+
+const NE_SOURCE: &str = "def ne(n):\n    if n != 10:\n        return True\n    return False\n";
+
+/// #15287: `n != 11` -> `n != 10` changes the result only for 10 and 11.
+/// Input 20 enters the arm both ways, so a strong oracle must not credit
+/// `exposed`; an input on either constant does.
+#[test]
+fn inequality_constant_change_needs_an_input_on_either_constant() -> Result<(), String> {
+    for (argument, expected, exposed) in [
+        ("20", "True", false),
+        ("10", "False", true),
+        ("11", "True", true),
+    ] {
+        let finding = classify_case(
+            NE_SOURCE,
+            &format!(
+                "from src.subject import ne\n\ndef test_ne():\n    assert ne({argument}) == {expected}\n"
+            ),
+            2,
+            "    if n != 11:",
+            "    if n != 10:",
+        )?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{argument}: {finding:?}"
+        );
+        if !exposed {
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+            assert_eq!(
+                missing_boundary(&finding, "n == 10"),
+                Some(
+                    "No strong related test call places n equal to 10 or n equal to 11; observed n values: 20"
+                )
+            );
+        }
+    }
+    Ok(())
+}
+
+const MUSL_SOURCE: &str =
+    "def is_musl(tag):\n    if tag[:3] != \"mus\":\n        return False\n    return True\n";
+
+fn classify_musl(tests: &str) -> Result<Finding, String> {
+    classify_replaced_case(
+        MUSL_SOURCE,
+        tests,
+        2,
+        "    if tag[:4] != \"musl\":",
+        "    if tag[:3] != \"mus\":",
+    )
+}
+
+/// #15287: `tag[:4] != "musl"` -> `tag[:3] != "mus"` moves the slice bound
+/// and the compared literal together. Both issue inputs give the old and the
+/// new comparison the same result, so neither test notices the edit.
+#[test]
+fn slice_comparison_change_is_weak_when_every_input_gives_both_versions_one_result()
+-> Result<(), String> {
+    let literal = "from src.subject import is_musl\n\ndef test_musl():\n    assert is_musl(\"musllinux_1_1_x86_64\") is True\n\ndef test_many():\n    assert is_musl(\"manylinux_2_17_x86_64\") is False\n";
+    let named = "from src.subject import is_musl\n\nMUSL = \"musllinux_1_1_x86_64\"\nMANY = \"manylinux_2_17_x86_64\"\n\ndef test_musl():\n    assert is_musl(MUSL) is True\n\ndef test_many():\n    assert is_musl(MANY) is False\n";
+    for tests in [literal, named] {
+        let finding = classify_musl(tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{tests}: {finding:?}"
+        );
+        assert!(!observed(&finding, "tag[:3] == \"mus\""), "{finding:?}");
+    }
+    let finding = classify_musl(literal)?;
+    assert_eq!(
+        missing_boundary(&finding, "(tag[:3] == \"mus\") != (tag[:4] == \"musl\")"),
+        Some(
+            "No strong related test call gives `tag[:4] != \"musl\"` and `tag[:3] != \"mus\"` different results; observed tag[:3] values: \"man\", \"mus\""
+        ),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+/// The control: `"musx"` has the new prefix and not the old one, so the two
+/// versions return different values and the exact assertion notices.
+#[test]
+fn slice_comparison_change_is_exposed_by_an_input_the_two_versions_split() -> Result<(), String> {
+    let finding = classify_musl(
+        "from src.subject import is_musl\n\ndef test_musx():\n    assert is_musl(\"musx\") is True\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(observed(&finding, "tag[:3] == \"mus\""), "{finding:?}");
+    Ok(())
+}
+
+/// A sliced operand the owner rebinds, a slice the reader cannot evaluate and
+/// an input it cannot read never earn `exposed`.
+#[test]
+fn slice_comparison_change_fails_closed_on_unread_shapes() -> Result<(), String> {
+    let tests = "from src.subject import is_musl\n\ndef test_musx():\n    assert is_musl(\"musx\") is True\n";
+    // The owner lowercases the tag first: the call argument is not the value
+    // the slice reads.
+    let rebound = classify_replaced_case(
+        "def is_musl(tag):\n    tag = tag.lower()\n    if tag[:3] != \"mus\":\n        return False\n    return True\n",
+        tests,
+        3,
+        "    if tag[:4] != \"musl\":",
+        "    if tag[:3] != \"mus\":",
+    )?;
+    assert!(!observed(&rebound, "tag[:3] == \"mus\""), "{rebound:?}");
+    assert!(rebound.activation.observed_values.is_empty(), "{rebound:?}");
+    assert_ne!(rebound.class, ExposureClass::Exposed, "{rebound:?}");
+    // A stepped slice and a computed bound are not read.
+    for (before, after) in [
+        (
+            "    if tag[:4:1] != \"musl\":",
+            "    if tag[:3:1] != \"mus\":",
+        ),
+        ("    if tag[:n] != \"musl\":", "    if tag[:m] != \"mus\":"),
+        // Only the old comparison is unread: placing the new equality does
+        // not show the two versions differ.
+        ("    if tag[:n] != \"musl\":", "    if tag[:3] != \"mus\":"),
+    ] {
+        let source = MUSL_SOURCE.replace("    if tag[:3] != \"mus\":", after);
+        let finding = classify_replaced_case(&source, tests, 2, before, after)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{after}: {finding:?}"
+        );
+    }
+    // An escaped input is not sliced.
+    let finding = classify_musl(
+        "from src.subject import is_musl\n\ndef test_musx():\n    assert is_musl(\"mu\\x73x\") is True\n",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// A call that passes nothing takes the parameter's literal default, and the
+/// default is judged like any other input: one both versions treat alike
+/// earns nothing, one they split does.
+#[test]
+fn slice_comparison_change_reads_a_default_only_call() -> Result<(), String> {
+    for (default, exposed) in [("musllinux", false), ("musx", true)] {
+        let source = format!(
+            "def is_musl(tag=\"{default}\"):\n    if tag[:3] != \"mus\":\n        return False\n    return True\n"
+        );
+        let finding = classify_replaced_case(
+            &source,
+            "from src.subject import is_musl\n\ndef test_default():\n    assert is_musl() is True\n",
+            2,
+            "    if tag[:4] != \"musl\":",
+            "    if tag[:3] != \"mus\":",
+        )?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{default}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Two slices of one name are not independent: every input with `tag[:4] ==
+/// "mus"` also has `tag[:3] == "mus"`, so the repair target names the pair of
+/// results and not the new equality alone.
+#[test]
+fn slice_bound_change_names_the_two_results_as_the_repair_target() -> Result<(), String> {
+    let after = "    if tag[:4] != \"mus\":";
+    let source = MUSL_SOURCE.replace("    if tag[:3] != \"mus\":", after);
+    let finding = classify_replaced_case(
+        &source,
+        "from src.subject import is_musl\n\ndef test_many():\n    assert is_musl(\"many\") is False\n",
+        2,
+        "    if tag[:3] != \"mus\":",
+        after,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "(tag[:4] == \"mus\") != (tag[:3] == \"mus\")").is_some(),
+        "{finding:?}"
+    );
+    assert!(
+        missing_boundary(&finding, "tag[:4] == \"mus\"").is_none(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+/// An escape in a compared literal is not decoded, so it is never the read
+/// difference a changed `!=` comparison needs: `"\\u006dusl"` spells `musl`
+/// and `"musllinux"` matches both versions.
+#[test]
+fn slice_comparison_change_does_not_read_an_escaped_literal() -> Result<(), String> {
+    let finding = classify_replaced_case(
+        MUSL_SOURCE,
+        "from src.subject import is_musl\n\ndef test_musl():\n    assert is_musl(\"musllinux\") is True\n",
+        2,
+        "    if tag[:4] != \"\\u006dusl\":",
+        "    if tag[:3] != \"mus\":",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// When the text around the `!=` comparison changes with it, a call can split
+/// the whole conditions without splitting the comparisons. `(20, False)`
+/// enters neither comparison's equality and still tells `and` from `or`, so
+/// the comparison-only witness does not apply.
+#[test]
+fn inequality_change_with_changed_surroundings_stays_outside_the_gate() -> Result<(), String> {
+    let finding = classify_case(
+        "def ne(n, on):\n    if n != 10 or on:\n        return True\n    return False\n",
+        "from src.subject import ne\n\ndef test_ne():\n    assert ne(20, False) == True\n",
+        2,
+        "    if n != 11 and on:",
+        "    if n != 10 or on:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+/// Python slice bounds: negative and out-of-range bounds clamp.
+#[test]
+fn slice_comparison_reads_negative_and_clamped_bounds() -> Result<(), String> {
+    for (before, after, argument, exposed) in [
+        // "ab.py"[-3:] is ".py" and "ab.py"[-2:] is "py": both match.
+        ("tag[-3:] != \".py\"", "tag[-2:] != \"py\"", "ab.py", false),
+        // "apy"[-3:] is "apy" (no match) and "apy"[-2:] is "py" (match).
+        ("tag[-3:] != \".py\"", "tag[-2:] != \"py\"", "apy", true),
+        // A bound past the end clamps: "mu"[:4] is "mu", "mu"[:2] is "mu".
+        ("tag[:4] != \"mu\"", "tag[:2] != \"mu\"", "mu", false),
+        ("tag[:4] != \"mu\"", "tag[:2] != \"mu\"", "mus", true),
+    ] {
+        let after_line = format!("    if {after}:");
+        let source =
+            format!("def is_musl(tag):\n{after_line}\n        return False\n    return True\n");
+        // Every input here matches the new comparison, so the owner returns
+        // `True` after the edit.
+        let tests = format!(
+            "from src.subject import is_musl\n\ndef test_it():\n    assert is_musl(\"{argument}\") is True\n"
+        );
+        let finding = classify_replaced_case(
+            &source,
+            &tests,
+            2,
+            &format!("    if {before}:"),
+            &after_line,
+        )?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{after} with {argument}: {finding:?}"
+        );
+    }
     Ok(())
 }
 

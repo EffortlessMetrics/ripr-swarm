@@ -5,8 +5,11 @@
 //! assertion that calls the owner away from that boundary (`reserve(10, 3)`)
 //! still passes after the change, so reach plus a strong oracle does not
 //! discriminate it. The same rule covers an equality-to-equality constant
-//! change (`n == 11` -> `n == 10`): input 20 takes the else branch both ways.
-//! `!=` and `is` stay outside this gate.
+//! change (`n == 11` -> `n == 10`): input 20 takes the else branch both ways,
+//! and a `!=` comparison whose operands changed (`n != 11` -> `n != 10`,
+//! `tag[:4] != "musl"` -> `tag[:3] != "mus"`): only an input that gives the
+//! old and the new comparison different results notices it (#15287). `is`
+//! and operator flips stay outside this gate.
 //!
 //! This mirrors the Rust activation rule
 //! (`analysis/classify/activation.rs::missing_boundary_discriminator`):
@@ -160,9 +163,10 @@ pub(super) struct PythonBoundaryEvidence {
 }
 
 /// Boundary evidence for a changed Predicate line that contains a relational
-/// comparison (`<`, `<=`, `>`, `>=`) or a same-operator equality (`==` ->
-/// `==`). Returns None when the line has no such comparison (for example
-/// `if flag:`, `if x != 5:`, or `if x is None:`), leaving the caller's
+/// comparison (`<`, `<=`, `>`, `>=`), a same-operator equality (`==` ->
+/// `==`) or a changed same-operator inequality (`!=` -> `!=`). Returns None
+/// when the line has no such comparison (for example `if flag:`, an added
+/// `if x != 5:`, or `if x is None:`), leaving the caller's
 /// existing classification untouched. `relational_operators` still skips
 /// `==`/`!=` so returned equalities stay return-value probes.
 pub(super) fn python_boundary_evidence(
@@ -175,7 +179,8 @@ pub(super) fn python_boundary_evidence(
 ) -> Option<PythonBoundaryEvidence> {
     let condition = predicate_condition(line_text);
     let relational = relational_operators(&condition);
-    let (operators, old_equality_operands) = if relational.is_empty() {
+    let equality_gate = relational.is_empty();
+    let (operators, old_equality_operands, negated) = if equality_gate {
         let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
             // A single-operand test swap (`x is None` -> `not x`, #9186).
             use super::truthiness_swap::strip_trailing_comment;
@@ -194,17 +199,49 @@ pub(super) fn python_boundary_evidence(
                 focus,
             );
         };
-        (gate.operators, gate.old_operands)
+        (gate.operators, gate.old_operands, gate.negated)
     } else {
-        (relational, None)
+        (relational, None, false)
     };
     let operands = match operators.as_slice() {
+        [(start, len)] if equality_gate => comparison_operands(&condition, *start, *len),
         [(start, len)] => simple_comparison_operands(&condition, *start, *len),
         _ => None,
     };
+    // The comparison itself changed (`n == 11` -> `n == 10`, `tag[:4] !=
+    // "musl"` -> `tag[:3] != "mus"`): a call is a witness only when the old
+    // and the new comparison give it different results. An input that
+    // satisfies both, or neither, passes either way (#15287).
+    let changed_comparison = match (&old_equality_operands, &operands) {
+        (Some(old), Some(new)) => old != new,
+        // An old `!=` comparison the reader cannot take apart: no call can
+        // be shown to split it from the new one.
+        (None, Some(_)) => negated,
+        _ => false,
+    };
+    // When the two comparisons share no operand (a slice bound and its
+    // literal moved together), one input can satisfy both, so the equality
+    // alone is not the discriminator: the two results must differ.
+    // A slice of the same name is not independent of another slice of it
+    // either: `tag[:4] == "mus"` holds only where `tag[:3] == "mus"` does, so
+    // the new equality alone would name an input both versions treat alike.
+    let two_results = match (&old_equality_operands, &operands) {
+        (Some((old_left, old_right)), Some((left, right))) if changed_comparison => {
+            (old_left != left && old_right != right)
+                || [old_left, old_right, left, right]
+                    .into_iter()
+                    .any(|operand| literal_slice(operand).is_some())
+        }
+        _ => false,
+    };
     let discriminator = operands
         .as_ref()
-        .map(|(left, right)| format!("{left} == {right}"));
+        .map(|(left, right)| match &old_equality_operands {
+            Some((old_left, old_right)) if two_results => {
+                format!("({left} == {right}) != ({old_left} == {old_right})")
+            }
+            _ => format!("{left} == {right}"),
+        });
 
     let constants = unrebound_constants(owner, related_candidates);
     let StrongOwnerCallRows {
@@ -230,8 +267,8 @@ pub(super) fn python_boundary_evidence(
         && rows.iter().any(|row| {
             matches!(
                 (
-                    resolve_operand(left, row, &constants),
-                    resolve_operand(right, row, &constants),
+                    resolve_gate_operand(left, row, &constants),
+                    resolve_gate_operand(right, row, &constants),
                 ),
                 (Some(l), Some(r)) if literals_equal(&l, &r) == Some(false)
             )
@@ -259,7 +296,7 @@ pub(super) fn python_boundary_evidence(
         (!gaps
             && !rows.is_empty()
             && rows.iter().all(|row| {
-                resolve_operand(left, row, &constants)
+                resolve_gate_operand(left, row, &constants)
                     .is_some_and(|value| value.parse::<i128>().is_ok())
                     && super::loop_walk::sequence_oracle_observes_row(
                         row,
@@ -270,14 +307,25 @@ pub(super) fn python_boundary_evidence(
         .then_some(walk)
     });
     if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
-        for (operand, other) in [(left, right), (right, left)] {
+        // A changed `!=` comparison reads its old operands against the same
+        // call arguments, so a rebound old operand is as unplaceable as a
+        // rebound new one.
+        let old_pairs = old_equality_operands
+            .as_ref()
+            .filter(|_| negated)
+            .map(|(old_left, old_right)| [(old_left, old_right), (old_right, old_left)]);
+        for (operand, other) in [(left, right), (right, left)]
+            .into_iter()
+            .chain(old_pairs.into_iter().flatten())
+        {
             let small_bound = static_operand(other, &constants)
                 .and_then(|value| value.parse::<f64>().ok())
                 .is_some_and(|value| value.abs() < 9_007_199_254_740_992.0);
+            let operand = operand_name(operand);
             if owner
                 .parameters
                 .iter()
-                .any(|parameter| parameter.name == *operand)
+                .any(|parameter| parameter.name == operand)
                 && name_rebound_in_owner(source, owner, operand)
                 && walk.is_none()
                 && !numeric_coercion_rebinding(source, owner, operand, &rows, small_bound)
@@ -290,8 +338,10 @@ pub(super) fn python_boundary_evidence(
                 // the tests also pass inputs the reader could not see, the
                 // unread input fails closed the same as an unrebound one
                 // (#15287), still without naming a repair target.
+                // A changed `!=` comparison is credited only on a read
+                // difference, so it fails closed here too.
                 return Some(PythonBoundaryEvidence {
-                    activation: if unread_inputs {
+                    activation: if unread_inputs || negated {
                         BoundaryActivation::UnreadInput
                     } else {
                         BoundaryActivation::Unresolved
@@ -338,7 +388,9 @@ pub(super) fn python_boundary_evidence(
             })
         }));
     }
-    if observed_values.is_empty() {
+    // A changed `!=` comparison is judged on every recognized call, including
+    // one that passes nothing and takes the parameter's literal default.
+    if observed_values.is_empty() && (!negated || rows.is_empty()) {
         // A recognized strong call whose arguments went unread (a `*` unpack,
         // a bare name it could not bind) is test-side input the analysis could
         // not see. A call it did read (a list display, a constructor call) and
@@ -399,7 +451,7 @@ pub(super) fn python_boundary_evidence(
                 .cloned()
                 .unwrap_or_default(),
             _ => {
-                let mut values: Vec<_> = resolve_operand(operand, row, &constants)
+                let mut values: Vec<_> = resolve_gate_operand(operand, row, &constants)
                     .into_iter()
                     .collect();
                 if let Some(walk) = &walk
@@ -419,7 +471,7 @@ pub(super) fn python_boundary_evidence(
     // the resolved values hide a call that could be at the boundary.
     let unresolved = |operand: &str, row: &CallRow| match &filter {
         Some(filter) if filter.local == operand => !row.elements.contains_key(filter.iterable),
-        _ => resolve_operand(operand, row, &constants).is_none(),
+        _ => resolve_gate_operand(operand, row, &constants).is_none(),
     };
     let unplaced_call = gaps
         || rows.iter().any(|row| {
@@ -436,7 +488,7 @@ pub(super) fn python_boundary_evidence(
     // unresolved call-bound operand (a parameter, its attribute, or a
     // comprehension local over a parameter), makes placement unknown.
     let call_bound = |operand: &str| {
-        let root = operand
+        let root = operand_name(operand)
             .trim_start_matches('-')
             .split('.')
             .next()
@@ -464,15 +516,74 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .any(|operand| call_bound(operand) && unresolved(operand, row))
         });
+    let mut same_result = false;
     for row in &rows {
         let left_candidates = candidates(&left, row);
         let right_candidates = candidates(&right, row);
-        if let Some((left_value, right_value)) = left_candidates.iter().find_map(|left_value| {
+        let placed_new = left_candidates.iter().find_map(|left_value| {
             right_candidates
                 .iter()
                 .find(|right_value| literals_equal(left_value, right_value) == Some(true))
                 .map(|right_value| (left_value, right_value))
-        }) {
+        });
+        let old_values = old_equality_operands
+            .as_ref()
+            .and_then(|(old_left, old_right)| {
+                Some((
+                    resolve_gate_operand(old_left, row, &constants)?,
+                    resolve_gate_operand(old_right, row, &constants)?,
+                ))
+            });
+        let placed_old = old_values
+            .as_ref()
+            .filter(|(old_left, old_right)| literals_equal(old_left, old_right) == Some(true));
+        // A changed comparison is witnessed by a different result. When both
+        // sides are read, equal results credit nothing; an unread side keeps
+        // the equality the call does place, except for `!=`, where only a
+        // read difference counts.
+        let witness = if changed_comparison {
+            let new_equal = if placed_new.is_some() {
+                Some(true)
+            } else {
+                match (
+                    resolve_gate_operand(&left, row, &constants),
+                    resolve_gate_operand(&right, row, &constants),
+                ) {
+                    (Some(left_value), Some(right_value)) => {
+                        literals_equal(&left_value, &right_value)
+                    }
+                    _ => None,
+                }
+            };
+            let old_equal = old_values
+                .as_ref()
+                .and_then(|(old_left, old_right)| literals_equal(old_left, old_right));
+            // `literals_equal` compares string bodies as written, so an
+            // escape (`"\u006dusl"`) could read unequal to the text it
+            // spells. For `!=` such a value is unread.
+            let escaped = |value: &String| negated && value.contains('\\');
+            let escaped_operand = [&left, &right]
+                .into_iter()
+                .chain(old_equality_operands.iter().flat_map(|(l, r)| [l, r]))
+                .any(|operand| {
+                    resolve_gate_operand(operand, row, &constants).is_some_and(|v| escaped(&v))
+                });
+            let (new_equal, old_equal) = if escaped_operand {
+                (None, None)
+            } else {
+                (new_equal, old_equal)
+            };
+            match (new_equal, old_equal) {
+                (Some(new_equal), Some(old_equal)) => {
+                    same_result |= new_equal == old_equal;
+                    new_equal != old_equal
+                }
+                _ => !negated,
+            }
+        } else {
+            true
+        };
+        if witness && let Some((left_value, right_value)) = placed_new {
             observed_new = true;
             observed_values.push(ValueFact {
                 file: Some(row.file.clone()),
@@ -493,27 +604,23 @@ pub(super) fn python_boundary_evidence(
         }
         left_values.extend(left_candidates);
         right_values.extend(right_candidates);
-        if let Some((old_left, old_right)) = &old_equality_operands {
-            let old_left_value = resolve_operand(old_left, row, &constants);
-            let old_right_value = resolve_operand(old_right, row, &constants);
-            if let (Some(old_left_value), Some(old_right_value)) =
-                (&old_left_value, &old_right_value)
-                && literals_equal(old_left_value, old_right_value) == Some(true)
-            {
-                observed_old = true;
-                observed_values.push(ValueFact {
-                    file: Some(row.file.clone()),
-                    line: row.line,
-                    text: format!(
-                        "{} | {}; {}",
-                        row.text,
-                        operand_provenance(old_left, old_left_value, &constants),
-                        operand_provenance(old_right, old_right_value, &constants)
-                    ),
-                    value: format!("{old_left} == {old_right}"),
-                    context: ValueContext::FunctionArgument,
-                });
-            }
+        if witness
+            && let (Some((old_left, old_right)), Some((old_left_value, old_right_value))) =
+                (&old_equality_operands, placed_old)
+        {
+            observed_old = true;
+            observed_values.push(ValueFact {
+                file: Some(row.file.clone()),
+                line: row.line,
+                text: format!(
+                    "{} | {}; {}",
+                    row.text,
+                    operand_provenance(old_left, old_left_value, &constants),
+                    operand_provenance(old_right, old_right_value, &constants)
+                ),
+                value: format!("{old_left} == {old_right}"),
+                context: ValueContext::FunctionArgument,
+            });
         }
     }
     // A rewrite that keeps the predicate on every integer (`v >= 100` ->
@@ -602,6 +709,22 @@ pub(super) fn python_boundary_evidence(
     } else if unplaced_call_input {
         format!(
             "Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `{condition}`"
+        )
+    } else if let Some((old_left, old_right)) = &old_equality_operands
+        && same_result
+        && two_results
+    {
+        let operator = if negated { "!=" } else { "==" };
+        format!(
+            "No strong related test call gives `{old_left} {operator} {old_right}` and `{left} {operator} {right}` different results; {}",
+            [(&left, left_values), (&right, right_values)]
+                .into_iter()
+                .filter(|(operand, _)| static_operand(operand, &constants).is_none())
+                .map(|(operand, values)| {
+                    format!("observed {operand} values: {}", list_or_unresolved(values))
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
         )
     } else {
         // A literal operand is its own value and a module constant names its
@@ -748,6 +871,10 @@ pub(super) fn python_row_boundary_omission(
         let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
             return false;
         };
+        // A `!=` change has no single constant move to name by omission.
+        if gate.negated {
+            return false;
+        }
         let Some(old_pair) = gate.old_operands else {
             return false;
         };
@@ -1326,35 +1453,170 @@ fn relational_operators(text: &str) -> Vec<(usize, usize)> {
 struct EqualityGate {
     operators: Vec<(usize, usize)>,
     old_operands: Option<(String, String)>,
+    /// `!=` -> `!=`: only an input that gives the old and the new comparison
+    /// different results is a witness (#15287).
+    negated: bool,
 }
 
-/// `==` -> `==` only. Mixed old forms (`!=`, `is`, relational) stay outside
-/// the gate so complementary mutations keep today's verdict.
+/// `==` -> `==`, or `!=` -> `!=` with a changed comparison. Mixed old forms
+/// (`is`, relational, `==` against `!=`) stay outside the gate so
+/// complementary mutations keep today's verdict.
 fn equality_predicate_gate(condition: &str, old_line_text: Option<&str>) -> Option<EqualityGate> {
-    if contains_ungated_identity_or_inequality(condition) {
-        return None;
-    }
-    let operators = equality_operators(condition);
-    if operators.len() != 1 {
-        return None;
-    }
     // `==` -> `==` only: an added line has no old equality to compare.
     let old = old_line_text?;
     let old_condition = predicate_condition(old);
-    if contains_ungated_identity_or_inequality(&old_condition)
+    if live_keyword(condition, "is")
+        || live_keyword(&old_condition, "is")
         || !relational_operators(&old_condition).is_empty()
     {
         return None;
     }
-    let old_eq = equality_operators(&old_condition);
-    let [(start, len)] = old_eq.as_slice() else {
+    let negated = live_token(condition, "!=");
+    let operators_of = |text: &str| match (negated, live_token(text, "!=")) {
+        (false, false) => Some(equality_operators(text)),
+        // An `==` beside the `!=` is a second comparison the gate cannot read.
+        (true, true) if equality_operators(text).is_empty() => Some(inequality_operators(text)),
+        _ => None,
+    };
+    let operators = operators_of(condition)?;
+    let old_operators = operators_of(&old_condition)?;
+    let ([(start, len)], [(old_start, old_len)]) = (operators.as_slice(), old_operators.as_slice())
+    else {
         return None;
     };
-    let old_operands = simple_comparison_operands(&old_condition, *start, *len);
+    let old_operands = comparison_operands(&old_condition, *old_start, *old_len);
+    // The text around the `!=` comparison changed too (`n != 11 and on` ->
+    // `n != 10 or on`): a call can split the whole conditions without
+    // splitting the comparisons, so the comparison-only witness does not
+    // apply and the edit stays outside the gate.
+    if negated
+        && let (Some(old), Some(new)) =
+            (&old_operands, comparison_operands(condition, *start, *len))
+        && comparison_surroundings(&old_condition, *old_start, *old_len, old)
+            != comparison_surroundings(condition, *start, *len, &new)
+    {
+        return None;
+    }
+    // An unchanged `!=` comparison is not what the edit changed: an input on
+    // the equality skips the arm and says nothing about the changed text.
+    if negated
+        && old_operands.is_some()
+        && old_operands == comparison_operands(condition, *start, *len)
+    {
+        return None;
+    }
     Some(EqualityGate {
         operators,
         old_operands,
+        negated,
     })
+}
+
+/// The condition text outside one comparison, whitespace removed: what sits
+/// before its left operand and after its right operand.
+fn comparison_surroundings(
+    condition: &str,
+    operator_start: usize,
+    operator_len: usize,
+    (left, right): &(String, String),
+) -> Option<String> {
+    let before = condition.get(..operator_start)?.trim_end();
+    let after = condition.get(operator_start + operator_len..)?.trim_start();
+    let around = [
+        before.strip_suffix(left.as_str())?,
+        after.strip_prefix(right.as_str())?,
+    ];
+    Some(around.concat().split_whitespace().collect())
+}
+
+/// Byte offset and length of every `!=` comparison outside string literals
+/// and comments.
+fn inequality_operators(text: &str) -> Vec<(usize, usize)> {
+    let mut hidden = PythonHiddenCode::new(text);
+    text.match_indices("!=")
+        .filter(|(idx, _)| !hidden.hides(*idx))
+        .map(|(idx, token)| (idx, token.len()))
+        .collect()
+}
+
+/// The operands of an equality gate comparison: two simple operands
+/// ([`simple_comparison_operands`]), or, when the comparison is the whole
+/// condition, simple operands and literal-bounded slices of a name
+/// (`tag[:4] != "musl"`, #15287).
+fn comparison_operands(
+    condition: &str,
+    operator_start: usize,
+    operator_len: usize,
+) -> Option<(String, String)> {
+    simple_comparison_operands(condition, operator_start, operator_len).or_else(|| {
+        let left = condition.get(..operator_start)?.trim();
+        let right = condition.get(operator_start + operator_len..)?.trim();
+        let operand_ok =
+            |operand: &str| is_simple_operand(operand) || literal_slice(operand).is_some();
+        (operand_ok(left)
+            && operand_ok(right)
+            && (literal_slice(left).is_some() || literal_slice(right).is_some()))
+        .then(|| (left.to_string(), right.to_string()))
+    })
+}
+
+/// `name[lower:upper]` with optional integer-literal bounds and no step: the
+/// name and the two bounds.
+fn literal_slice(operand: &str) -> Option<(&str, Option<i64>, Option<i64>)> {
+    let (name, rest) = operand.split_once('[')?;
+    let (lower, upper) = rest.strip_suffix(']')?.split_once(':')?;
+    let bound = |text: &str| {
+        let text = text.trim();
+        if text.is_empty() {
+            return Some(None);
+        }
+        let digits = text.strip_prefix('-').unwrap_or(text);
+        (!digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit()))
+            .then(|| text.parse::<i64>().ok())
+            .flatten()
+            .map(Some)
+    };
+    super::static_limits::is_simple_python_identifier(name)
+        .then(|| Some((name, bound(lower)?, bound(upper)?)))?
+}
+
+/// The name a gate operand reads from the call: the sliced name, or the
+/// operand itself.
+fn operand_name(operand: &str) -> &str {
+    literal_slice(operand).map_or(operand, |(name, _, _)| name)
+}
+
+/// [`resolve_operand`], reading a literal-bounded slice of a name bound to a
+/// plain string literal as the string Python's slice yields. A string whose
+/// slice would need quoting or escaping stays unresolved.
+fn resolve_gate_operand(
+    operand: &str,
+    row: &CallRow,
+    constants: &[PythonModuleConstant],
+) -> Option<String> {
+    let Some((name, lower, upper)) = literal_slice(operand) else {
+        return resolve_operand(operand, row, constants);
+    };
+    let text = python_string_literal_value(&resolve_operand(name, row, constants)?)
+        .filter(|text| !text.contains('\\'))?;
+    let characters: Vec<char> = text.chars().collect();
+    let length = i64::try_from(characters.len()).ok()?;
+    let index = |bound: Option<i64>, default: i64| {
+        let bound = bound.unwrap_or(default);
+        usize::try_from(if bound < 0 {
+            (bound + length).max(0)
+        } else {
+            bound.min(length)
+        })
+        .ok()
+    };
+    let (lower, upper) = (index(lower, 0)?, index(upper, length)?);
+    let slice: String = characters.get(lower..upper.max(lower))?.iter().collect();
+    // ASCII only: a non-ASCII slice stays unresolved.
+    slice
+        .chars()
+        .all(|ch| ch == ' ' || (ch.is_ascii_graphic() && !matches!(ch, '"' | '\'')))
+        .then(|| format!("\"{slice}\""))
 }
 
 /// Byte offset and length of every `==` comparison outside string literals.
@@ -1401,10 +1663,6 @@ fn equality_operators(text: &str) -> Vec<(usize, usize)> {
         idx += 1;
     }
     operators
-}
-
-fn contains_ungated_identity_or_inequality(text: &str) -> bool {
-    live_token(text, "!=") || live_keyword(text, "is")
 }
 
 fn live_token(text: &str, token: &str) -> bool {
