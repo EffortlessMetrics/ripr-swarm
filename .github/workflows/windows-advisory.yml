@@ -1841,9 +1841,22 @@ jobs:
               stats = report.get('stats', {})
               if len(observed) != len(expected) or set(observed) != expected:
                   raise SystemExit('fixture producer PASS is missing native process controls')
-              if any(stats.get(key) != value for key, value in {'tests': 38, 'passes': 31, 'failures': 0, 'pending': 7}.items()):
+              expected_pending = {
+                  "Fixture producer process observation reports stopped when procfs reads ESRCH after a successful native probe",
+                  "Fixture producer process observation rechecks missing procfs evidence in the native namespace",
+                  "Fixture producer process observation propagates procfs and native permission and unexpected errors",
+                  "Fixture producer process observation distinguishes active processes from zombie and dead states",
+                  "Developer setup capability boundary a process reaped between the stat open and read is not alive",
+                  "Genuine fixture producer adapter preserves test, executable and queue validation before publishing the receipt",
+                  "Genuine fixture producer adapter zero executed producer tests cannot publish an accepted receipt",
+                  "Genuine fixture producer adapter timeout retains the underlying producer failure and restores signal handlers",
+              }
+              pending = [row['fullTitle'] for row in report.get('pending', [])]
+              if len(pending) != len(expected_pending) or set(pending) != expected_pending:
+                  raise SystemExit('fixture producer PASS skipped an unexpected set of POSIX-only controls')
+              if any(stats.get(key) != value for key, value in {'tests': 39, 'passes': 31, 'failures': 0, 'pending': 8}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
-              print('Verified 31 native process/setup controls; seven POSIX-only controls (three adapter, four procfs observation) are pending.')
+              print('Verified 31 native process/setup controls; eight POSIX-only controls (three adapter, four procfs observation, one developer setup ESRCH) are pending.')
           PY
 
       - name: Require selector consumer receipt, log and native status
