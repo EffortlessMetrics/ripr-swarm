@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "tests/test_version_req.rs checks >1.2 against 1.3, 2.0, 1.2, 1.1 and 0.9 through helper loops over the public matches. The >= mutant is left out: the line runs only when the majors differ, where >= and > agree. Spec cells: RIPR-SPEC-0118 example 2: an integration test reaches the changed owner matches_greater only through its assert_match_all helper and the crate's public matches, which the spec requires to read no_static_path with rust_integration_public_api_path_unresolved. Example 3 is the same limit on the real semver crate; this authored subject is the helper-chain shape of example 2.",
+  "reasoning": "tests/test_version_req.rs checks >1.2 against 1.3, 2.0, 1.2, 1.1 and 0.9 through helper loops over the public matches. The >= mutant is left out: the line runs only when the majors differ, where >= and > agree. Spec cells: RIPR-SPEC-0118 example 2: an integration test reaches the changed owner matches_greater only through its assert_match_all/assert_match_none helpers over the crate's public matches, which the spec requires to read no_static_path with rust_integration_public_api_path_unresolved. Example 3 is the same limit on the real semver crate; this authored subject is the helper-chain shape of example 2.",
   "labeling_observation": {
     "ripr_commit": "2059890",
     "full_checkout_verdict": "limited",
