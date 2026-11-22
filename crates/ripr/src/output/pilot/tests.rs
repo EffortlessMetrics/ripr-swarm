@@ -5975,3 +5975,72 @@ fn pilot_terminal_keeps_the_reached_gap_wording() {
     assert!(!terminal.contains("no test is seen calling"), "{terminal}");
     assert!(terminal.contains("has no test file to use"), "{terminal}");
 }
+
+/// #15278 review: an unreached effect-only gap (a call that may or may not
+/// run) leaves no value to assert, so the test to add observes the effect.
+#[test]
+fn pilot_terminal_asks_an_unreached_effect_gap_to_observe_the_effect() {
+    let mut entry = classified_in_owner(SeamGripClass::Ungripped, "src/lib.rs", "run", 11);
+    entry.seam = RepoSeam::new(
+        "src/lib.rs",
+        "run",
+        SeamKind::CallPresence,
+        110,
+        11,
+        "notify()",
+        RequiredDiscriminator::CallSite {
+            target: "notify()".to_string(),
+        },
+        ExpectedSink::SideEffect,
+    );
+    entry.evidence.seam_id = entry.seam.id().clone();
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(
+        terminal.contains(
+            "  test to add: one that calls `run` and observes the effect this line changes"
+        ),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("asserts the exact value"), "{terminal}");
+}
+
+/// #15278 review: with nothing ranked, pilot's closing line follows what
+/// `ripr check` read on a gripped changed spot, binds the printed command to
+/// pilot's root, and never reads a check that could not run as agreement.
+#[test]
+fn pilot_empty_ranking_follows_the_check_reading_of_a_gripped_change() {
+    let entries = [classified_with(
+        SeamGripClass::StronglyGripped,
+        "src/lib.rs",
+        10,
+        vec![],
+        vec![],
+    )];
+    let artifacts = pilot_artifacts();
+    let cases = [
+        (
+            Some(1),
+            "Pilot ranked no gap, but `ripr check` reads your changed code as a gap or cannot tell: run `ripr check --root ",
+        ),
+        (
+            None,
+            "Pilot ranked no gap, but ripr could not confirm what `ripr check` reads for your changed code: run `ripr check --root ",
+        ),
+        (Some(0), "No gap was found, so there is no test to add;"),
+    ];
+    for (reading, expected) in cases {
+        let change = changed("src/lib.rs", 10)
+            .with_seams_counted(&entries, None)
+            .with_check_reads_open(reading);
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(&change);
+        let terminal = render_pilot_terminal(&entries, context);
+        assert!(terminal.contains(expected), "{reading:?}:\n{terminal}");
+        assert_eq!(
+            terminal.contains("so there is no test to add"),
+            reading == Some(0),
+            "{reading:?}:\n{terminal}"
+        );
+    }
+}

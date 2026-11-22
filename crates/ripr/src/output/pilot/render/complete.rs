@@ -873,7 +873,8 @@ fn render_pilot_terminal_unescaped(
                 // #15278: no test calls the function, so the first step is a
                 // test that does; "no test file to use" would misdirect.
                 Some(name) => out.push_str(&format!(
-                    "  test to add: one that calls `{name}` and asserts the exact value this line changes; ripr will not write it, because no test reaches this code to build on\n"
+                    "  test to add: one that calls `{name}` and {}; ripr will not write it, because no test reaches this code to build on\n",
+                    unreached_check_phrase(entry.seam.expected_sink())
                 )),
                 None => out.push_str(&format!(
                     "  test to add: {TERMINAL_NO_REPAIR_TARGET_TEST}\n"
@@ -1130,12 +1131,17 @@ fn render_pilot_terminal_unescaped(
             ),
             // #15278: no ranked gap is not "no test to add" while check
             // reports a gap on the change.
-            None if change_check_reads_open(context) => out.push_str(
-                "Pilot ranked no gap, but `ripr check` reads your changed code as a gap or cannot tell: run `ripr check` and follow its next step.\n",
-            ),
-            None => out.push_str(
-                "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
-            ),
+            None => match change_check_follow_up(context) {
+                Some((CheckFollowUp::ReadsOpen, check)) => out.push_str(&format!(
+                    "Pilot ranked no gap, but `ripr check` reads your changed code as a gap or cannot tell: run `{check}` and follow its next step.\n"
+                )),
+                Some((CheckFollowUp::Unconfirmed, check)) => out.push_str(&format!(
+                    "Pilot ranked no gap, but ripr could not confirm what `ripr check` reads for your changed code: run `{check}` and follow its next step.\n"
+                )),
+                None => out.push_str(
+                    "No gap was found, so there is no test to add; rerun `ripr pilot` after the code or its tests change.\n",
+                ),
+            },
         }
         return out;
     }
@@ -1308,11 +1314,7 @@ fn current_change_label(
             base,
             seams: change.seams().unwrap_or_default(),
             diff_only: DiffOnlyNote::of(change),
-            check: format!(
-                "ripr check --root {}{}",
-                shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
-                change.check_selector()
-            ),
+            check: bound_check_command(context, change),
         }
     })
 }
@@ -1321,13 +1323,36 @@ fn current_change_label(
 /// either, when it has any or a seam limit may hide them (#5309). The
 /// pilot budget can drop those seams before the empty-ranking text counts
 /// what was withheld, so this reads the counts taken before the cut.
-/// Whether `ripr check` reads a gap or a limit on a changed spot the
-/// inventory reads as gripped (#15278).
-fn change_check_reads_open(context: PilotSummaryContext<'_>) -> bool {
-    context
-        .current_change
-        .and_then(PilotCurrentChange::seams)
-        .is_some_and(|seams| seams.check_reads_open > 0)
+/// What `ripr check` adds on a changed spot the inventory reads as gripped
+/// (#15278).
+enum CheckFollowUp {
+    /// Check reads a gap or a limit on the changed code.
+    ReadsOpen,
+    /// Check could not confirm its reading in pilot's deadline.
+    Unconfirmed,
+}
+
+/// The #15278 follow-up and the `ripr check` command bound to pilot's root
+/// and the change's diff selector, so it reads the same checkout.
+fn change_check_follow_up(context: PilotSummaryContext<'_>) -> Option<(CheckFollowUp, String)> {
+    let change = context.current_change?;
+    let seams = change.seams()?;
+    let follow_up = if seams.check_reads_open > 0 {
+        CheckFollowUp::ReadsOpen
+    } else if seams.check_unconfirmed {
+        CheckFollowUp::Unconfirmed
+    } else {
+        return None;
+    };
+    Some((follow_up, bound_check_command(context, change)))
+}
+
+fn bound_check_command(context: PilotSummaryContext<'_>, change: &PilotCurrentChange) -> String {
+    format!(
+        "ripr check --root {}{}",
+        shell_path(&crate::agent::loop_commands::bound_root_path(context.root)),
+        change.check_selector()
+    )
 }
 
 fn unranked_change_reason(context: PilotSummaryContext<'_>, code: bool) -> Option<String> {
@@ -1386,6 +1411,7 @@ impl CurrentChangeLabel {
             withheld,
             unanalyzed,
             check_reads_open,
+            check_unconfirmed,
         } = seams;
         let lines = |count| Self::changed_lines(base, code, count);
         // Seams past the inventory limit were never classified, so a reason
@@ -1449,6 +1475,10 @@ impl CurrentChangeLabel {
             reason.push_str(&format!(
                 "; but `ripr check` reads {which} as a gap or cannot tell (pilot judges the whole spot, check your changed lines), so follow `ripr check` for your change"
             ));
+        } else if check_unconfirmed {
+            reason.push_str(
+                "; but ripr could not confirm what `ripr check` reads for your changed code (pilot judges the whole spot, check your changed lines), so run `ripr check` for your change",
+            );
         }
         if touched > 0
             && let Some(note) = diff_only
@@ -1971,6 +2001,21 @@ fn unreached_owner_name(entry: &ClassifiedSeam) -> Option<&str> {
         .next()
         .map(str::trim)
         .filter(|name| !name.is_empty())
+}
+
+/// What a test that calls an unreached owner must check, by the seam's
+/// expected sink: an effect-only change (a call that may or may not run)
+/// leaves no value to assert.
+fn unreached_check_phrase(sink: crate::analysis::seams::ExpectedSink) -> &'static str {
+    use crate::analysis::seams::ExpectedSink;
+    match sink {
+        ExpectedSink::ReturnValue => "asserts the exact value this line changes",
+        ExpectedSink::OutputField => "asserts the exact field value this line changes",
+        ExpectedSink::ErrorChannel => "asserts the exact error this line changes",
+        ExpectedSink::SideEffect => {
+            "observes the effect this line changes (for example, that the call it makes happens)"
+        }
+    }
 }
 
 fn terminal_why_line(entry: &ClassifiedSeam) -> String {

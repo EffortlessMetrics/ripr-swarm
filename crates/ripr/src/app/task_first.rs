@@ -2313,15 +2313,16 @@ pub(crate) fn check_reading_of_gripped_seam(
 }
 
 /// How many strongly gripped seams on the change (`on_change`) the default
-/// `ripr check` reads as a gap or a limit (#15278), for `ripr pilot`. Check
-/// runs at most once, and only when such a seam exists. A check that cannot
-/// run counts none: pilot then makes no claim about check either way.
+/// `ripr check` reads as a gap or a limit (#15278), for `ripr pilot`.
+/// `check_findings` runs check at most once, and only when such a seam
+/// exists; the caller bounds it by pilot's deadline. `None` when such a seam
+/// exists but check produced no findings (it failed or ran out of time), so
+/// pilot cannot let "already gripped" stand unqualified.
 pub(crate) fn count_gripped_seams_check_reads_open(
-    root: &Path,
-    config: &crate::config::RiprConfig,
     classified: &[crate::analysis::ClassifiedSeam],
     on_change: impl Fn(&crate::analysis::ClassifiedSeam) -> bool,
-) -> usize {
+    check_findings: impl FnOnce() -> Option<Vec<crate::domain::Finding>>,
+) -> Option<usize> {
     let gripped: Vec<&crate::analysis::ClassifiedSeam> = classified
         .iter()
         .filter(|entry| {
@@ -2330,20 +2331,29 @@ pub(crate) fn count_gripped_seams_check_reads_open(
         })
         .collect();
     if gripped.is_empty() {
-        return 0;
+        return Some(0);
     }
-    let Ok(output) = super::gap_bound_repair::default_check_output(root, None, config) else {
-        return 0;
-    };
-    gripped
-        .into_iter()
-        .filter(|entry| {
-            matches!(
-                check_reading_from_findings(&output.findings, entry, classified),
-                CheckReadingOfGrippedSeam::Open { .. }
-            )
-        })
-        .count()
+    let findings = check_findings()?;
+    Some(
+        gripped
+            .into_iter()
+            .filter(|entry| {
+                matches!(
+                    check_reading_from_findings(&findings, entry, classified),
+                    CheckReadingOfGrippedSeam::Open { .. }
+                )
+            })
+            .count(),
+    )
+}
+
+/// The findings of the default human `ripr check` for `root`, as
+/// [`count_gripped_seams_check_reads_open`] reads them.
+pub(crate) fn default_check_findings(
+    root: &Path,
+    config: &crate::config::RiprConfig,
+) -> Result<Vec<crate::domain::Finding>, String> {
+    super::gap_bound_repair::default_check_output(root, None, config).map(|output| output.findings)
 }
 
 /// The reading of [`check_reading_of_gripped_seam`] from check's findings,

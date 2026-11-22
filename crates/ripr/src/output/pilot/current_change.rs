@@ -141,10 +141,12 @@ impl PilotCurrentChange {
     }
 
     /// Record how many gripped seams on the change `ripr check` reads as a
-    /// gap or a limit (#15278). No effect without a change.
-    pub(crate) fn with_check_reads_open(mut self, count: usize) -> Self {
+    /// gap or a limit (#15278); `None` when check could not confirm its
+    /// reading. No effect without a change.
+    pub(crate) fn with_check_reads_open(mut self, count: Option<usize>) -> Self {
         if let Self::Changed { seams, .. } = &mut self {
-            seams.check_reads_open = count;
+            seams.check_reads_open = count.unwrap_or(0);
+            seams.check_unconfirmed = count.is_none();
         }
         self
     }
@@ -459,6 +461,10 @@ pub(crate) struct ChangeSeams {
     /// (#15278). Pilot judges the whole spot and check the changed lines, so
     /// "already gripped" alone would contradict check for these.
     pub(crate) check_reads_open: usize,
+    /// Whether a gripped seam was on the change but `ripr check` could not
+    /// confirm its reading of the changed code (it failed or ran out of
+    /// pilot's deadline), so "already gripped" must not stand alone.
+    pub(crate) check_unconfirmed: bool,
 }
 
 /// Slash-separated path without leading `./`, so the seam inventory's paths

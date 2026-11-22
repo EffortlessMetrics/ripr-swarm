@@ -1098,7 +1098,8 @@ fn pilot_never_says_no_test_to_add_while_check_reports_a_weak_gap() -> Result<()
     );
     assert!(
         pilot.contains("but `ripr check` reads your changed code there as a gap or cannot tell")
-            && pilot.contains("Pilot ranked no gap, but `ripr check` reads your changed code"),
+            && pilot.contains("Pilot ranked no gap, but `ripr check` reads your changed code")
+            && pilot.contains("run `ripr check --root "),
         "pilot must point at check's reading of the change:\n{pilot}"
     );
     Ok(())
