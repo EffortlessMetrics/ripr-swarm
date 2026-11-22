@@ -175,6 +175,7 @@ pub(crate) fn assign_instance_factories(
                 instance_kind: TypeScriptInstanceKind::StaticFactory,
                 hops: 0,
                 cross_module: None,
+                closure: false,
             });
         }
         statics.sort();

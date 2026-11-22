@@ -786,6 +786,7 @@ impl ReExportIndex {
                             via_modules: chain.iter().cloned().collect(),
                             chain_names: Vec::new(),
                         }),
+                        closure: false,
                     });
                 }
                 frontier.push_back(SubclassFrame {
