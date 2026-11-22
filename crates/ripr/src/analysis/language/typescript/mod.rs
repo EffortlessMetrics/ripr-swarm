@@ -76,6 +76,7 @@ mod capability_disposition_tests;
 mod catch_arm_guard;
 mod changed_return;
 mod class_entries;
+mod class_heritage;
 mod classifier;
 mod committed_snapshot;
 mod commonjs_default_class;
@@ -1158,6 +1159,14 @@ impl TypeScriptAdapter {
             Some(&options.root),
         );
 
+        // A member called on an ES namespace import of a barrel resolves
+        // through the same chain a named import follows (#15923).
+        reexport_index.record_barrel_namespace_members(
+            &mut all_tests,
+            alias_map_ref,
+            Some(&options.root),
+        );
+
         // #13592: an owner of a changed file that no test calls directly is
         // also reached through exports of OTHER modules that call it by an
         // imported binding. Resolved only for changed files, through the
@@ -1181,6 +1190,20 @@ impl TypeScriptAdapter {
                 }
                 if !cross.entries.is_empty() {
                     owner.module_entries.extend(cross.entries);
+                    owner.module_entries.sort();
+                }
+            }
+        }
+
+        // #15924: a changed ordinary method or getter is also reached on an
+        // instance of a class that inherits it unchanged. Resolved only for
+        // changed files, through the re-export index's import identity.
+        for owner in &mut all_owners {
+            if owner.class_name.is_some() && changed_paths.contains(&normalized_path(&owner.file)) {
+                let subclasses =
+                    reexport_index.inheriting_subclasses(owner, alias_map_ref, Some(&options.root));
+                if !subclasses.is_empty() {
+                    owner.module_entries.extend(subclasses);
                     owner.module_entries.sort();
                 }
             }
