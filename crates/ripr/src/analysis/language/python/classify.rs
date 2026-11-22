@@ -1016,8 +1016,14 @@ fn classify_change_for_owner_inner<'a>(
             unpinned_equality_dunder_limit(owner, &related_candidates, alignment.credited.is_some())
         })
     };
+    // A literal keyword-argument line (`stacklevel=3,`) is read as the call it
+    // continues (#16018), so the limits that look for that call see it.
+    let limit_text = statement_text
+        .as_deref()
+        .filter(|_| super::no_behavior::is_literal_keyword_argument_line(line_text))
+        .unwrap_or(line_text);
     let static_limit = static_limit_for_focused_change(
-        line_text,
+        limit_text,
         old_line_text,
         log_evidence.as_ref(),
         &focus,

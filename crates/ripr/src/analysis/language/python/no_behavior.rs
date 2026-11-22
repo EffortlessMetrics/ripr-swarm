@@ -311,7 +311,9 @@ pub(super) fn bare_string_statement_text(
     // part of it either.
     let bare = without_trailing_comment(line_text)?.trim_end();
     let bare = bare.strip_suffix(',').unwrap_or(bare);
-    if !is_python_no_behavior_line_at(bare, false) || bare.trim().is_empty() {
+    if bare.trim().is_empty()
+        || !(is_python_no_behavior_line_at(bare, false) || is_literal_keyword_argument(bare))
+    {
         return None;
     }
     let source = source?;
@@ -337,6 +339,48 @@ pub(super) fn bare_string_statement_text(
         })
         .collect();
     (!lines.is_empty()).then(|| lines.join(" "))
+}
+
+/// [`is_literal_keyword_argument`] for a whole physical line, with its
+/// trailing comma and `# comment` removed as [`bare_string_statement_text`]
+/// removes them.
+pub(super) fn is_literal_keyword_argument_line(line_text: &str) -> bool {
+    without_trailing_comment(line_text).is_some_and(|code| {
+        let code = code.trim_end();
+        is_literal_keyword_argument(code.strip_suffix(',').unwrap_or(code))
+    })
+}
+
+/// `name=literal` alone (#16018): one keyword argument (or parameter default)
+/// whose value is a number, string, `True`, `False` or `None`, as a
+/// continuation line of a bracketed call spells it (`stacklevel=3`). On its own
+/// it is no statement, so it takes the enclosing statement's probe shape, the
+/// same shape the call has when written on one line.
+fn is_literal_keyword_argument(text: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let Some(tokens) = lex(text.trim(), Mode::Module)
+        .map(|result| result.ok().map(|(token, _)| token))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return false;
+    };
+    let tokens: Vec<_> = tokens
+        .into_iter()
+        .filter(|token| !matches!(token, Tok::Newline))
+        .collect();
+    let value = match tokens.as_slice() {
+        [Tok::Name { .. }, Tok::Equal, value] => value,
+        [Tok::Name { .. }, Tok::Equal, Tok::Minus | Tok::Plus, value]
+            if matches!(value, Tok::Int { .. } | Tok::Float { .. }) =>
+        {
+            value
+        }
+        _ => return false,
+    };
+    matches!(
+        value,
+        Tok::Int { .. } | Tok::Float { .. } | Tok::True | Tok::False | Tok::None
+    ) || matches!(value, Tok::String { kind, .. } if !kind.is_any_fstring())
 }
 
 /// `line_text` without its trailing `#` comment, cut at the end of the last
