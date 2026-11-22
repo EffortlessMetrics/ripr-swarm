@@ -15,6 +15,11 @@
 //! only cancels the active and pending tokens, so the analysis exits at its
 //! next checkpoint and its result is dropped fail-closed. It is idempotent
 //! and does not replace `shutdown`'s terminal diagnostics clear.
+//!
+//! The same signal releases handlers that are waiting for the client to
+//! answer a server-to-client request (#16091, [`SessionEnded`]): the answer
+//! can no longer arrive, and waiting out the request bound kept the exited
+//! process alive for about 28 s.
 
 use std::io;
 use std::pin::Pin;
@@ -25,6 +30,34 @@ use tokio::io::{AsyncRead, ReadBuf};
 
 /// Cancels in-flight analysis because the session is ending.
 pub(super) type SessionEndHook = Arc<dyn Fn() + Send + Sync>;
+
+/// Lets a handler that is waiting on the client learn that the session has
+/// ended (#16091). Once `exit` arrives or input ends, a server-to-client
+/// request can never be answered, and tower-lsp-server keeps the process
+/// alive until every in-flight handler returns, so a handler that waits out
+/// the full request bound holds the exited process open for that long.
+#[derive(Clone)]
+pub(super) struct SessionEnded(Arc<tokio::sync::watch::Sender<bool>>);
+
+impl Default for SessionEnded {
+    fn default() -> Self {
+        Self(Arc::new(tokio::sync::watch::Sender::new(false)))
+    }
+}
+
+impl SessionEnded {
+    /// Idempotent; wakes every current and future waiter.
+    pub(super) fn mark(&self) {
+        self.0.send_replace(true);
+    }
+
+    /// Resolves once the session has ended, immediately if it already has.
+    pub(super) async fn wait(&self) {
+        let mut ended = self.0.subscribe();
+        // The sender lives in `self`, so the channel cannot close first.
+        let _still_open = ended.wait_for(|ended| *ended).await;
+    }
+}
 
 /// Fires the hook once, however many session-end signals arrive.
 #[derive(Clone)]
@@ -108,6 +141,32 @@ mod tests {
             seen.fetch_add(1, Ordering::SeqCst);
         }));
         (end, count)
+    }
+
+    /// #16091: a waiter parked before the mark and one that arrives after it
+    /// both resolve; before the mark neither does.
+    #[tokio::test]
+    async fn session_ended_releases_waiters_parked_before_and_after_the_mark() -> Result<(), String>
+    {
+        let ended = SessionEnded::default();
+        let early = tokio::time::timeout(std::time::Duration::from_millis(50), ended.wait()).await;
+        if early.is_ok() {
+            return Err("a session that has not ended must not release waiters".to_string());
+        }
+        let parked = {
+            let ended = ended.clone();
+            tokio::spawn(async move { ended.wait().await })
+        };
+        tokio::task::yield_now().await;
+        ended.mark();
+        ended.mark();
+        tokio::time::timeout(std::time::Duration::from_secs(5), parked)
+            .await
+            .map_err(|_elapsed| "the parked waiter was not released".to_string())?
+            .map_err(|err| err.to_string())?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), ended.wait())
+            .await
+            .map_err(|_elapsed| "a waiter after the mark was not released".to_string())
     }
 
     #[test]
