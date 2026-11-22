@@ -128,7 +128,7 @@ fn literal_json_namespace_in_another_source_file_stays_uncredited() {
 }
 
 #[test]
-fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Result<(), String> {
+fn literal_json_configuration_and_lock_changes_revoke_the_next_analysis() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/owner_return_pin_json_real_literal/input");
     let manifest =
@@ -144,10 +144,13 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
         ],
     )?;
     let result = (|| -> Result<(), String> {
-        let authority = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+        // One authority serves one analysis and keeps its per-file verdict
+        // (#16038); each edit below is observed by the next analysis.
+        let authority = || crate::analysis::facts::drop_in::DropInManifests::new(&root);
         let file = Path::new("tests/save.rs");
+        let first = authority();
         assert!(
-            authority.verified_literal_json(file),
+            first.verified_literal_json(file),
             "canonical dependency resolves"
         );
         for config_path in [".cargo/config.toml", "tests/.cargo/config.toml"] {
@@ -156,9 +159,13 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
                 .map_err(|e| e.to_string())?;
             std::fs::write(&path, "[source.crates-io]\nreplace-with='fake'\n")
                 .map_err(|e| e.to_string())?;
-            assert!(!authority.verified_literal_json(file), "{config_path}");
+            assert!(!authority().verified_literal_json(file), "{config_path}");
+            assert!(
+                first.verified_literal_json(file),
+                "an analysis keeps the verdict it started with"
+            );
             std::fs::remove_file(path).map_err(|e| e.to_string())?;
-            assert!(authority.verified_literal_json(file));
+            assert!(authority().verified_literal_json(file));
         }
         let changed_lock = lock.replace(
             "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
@@ -166,9 +173,9 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
         );
         assert_ne!(changed_lock, lock);
         std::fs::write(root.join("Cargo.lock"), changed_lock).map_err(|e| e.to_string())?;
-        assert!(!authority.verified_literal_json(file));
+        assert!(!authority().verified_literal_json(file));
         std::fs::write(root.join("Cargo.lock"), &lock).map_err(|e| e.to_string())?;
-        assert!(authority.verified_literal_json(file));
+        assert!(authority().verified_literal_json(file));
         for dependency in [
             "serde_json={version='=1.0.151',optional=true}",
             "serde_json={version='=1.0.151',package='foreign'}",
@@ -177,12 +184,12 @@ fn literal_json_configuration_and_lock_changes_revoke_cached_identity() -> Resul
             let changed = manifest.replace("serde_json=\"=1.0.151\"", dependency);
             assert_ne!(changed, manifest);
             std::fs::write(root.join("Cargo.toml"), changed).map_err(|e| e.to_string())?;
-            assert!(!authority.verified_literal_json(file), "{dependency}");
+            assert!(!authority().verified_literal_json(file), "{dependency}");
         }
         std::fs::write(root.join("Cargo.toml"), &manifest).map_err(|e| e.to_string())?;
         std::fs::remove_file(root.join("Cargo.lock")).map_err(|e| e.to_string())?;
         assert!(
-            !authority.verified_literal_json(file),
+            !authority().verified_literal_json(file),
             "unlocked dependency"
         );
         Ok(())

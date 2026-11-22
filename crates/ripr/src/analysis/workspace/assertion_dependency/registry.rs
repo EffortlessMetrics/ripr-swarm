@@ -30,6 +30,12 @@ pub(crate) struct RegistryIdentity {
     metadata: serde_json::Value,
     package_id: String,
     manifest_digests: BTreeMap<PathBuf, String>,
+    /// Each metadata package's `manifest_path`, canonicalized once when the
+    /// identity is built, in `packages` order. `admits_manifest` used to
+    /// canonicalize every package path on every call; on a workspace whose
+    /// metadata lists hundreds of registry packages that made each per-file
+    /// question hundreds of syscalls (#14116).
+    canonical_manifest_paths: Vec<Option<PathBuf>>,
     proptest_target_configs: BTreeMap<PathBuf, String>,
     pub(crate) validation_digest: String,
 }
@@ -557,13 +563,9 @@ impl RegistryIdentity {
         };
         let owners: Vec<_> = packages
             .iter()
-            .filter(|p| {
-                p.get("manifest_path")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(|p| Path::new(p).canonicalize().ok())
-                    .as_deref()
-                    == Some(manifest)
-            })
+            .zip(&self.canonical_manifest_paths)
+            .filter(|(_, path)| path.as_deref() == Some(manifest))
+            .map(|(package, _)| package)
             .collect();
         let [owner] = owners.as_slice() else {
             return false;
@@ -815,6 +817,24 @@ pub(super) fn json_manifest_digests(
     Some(digests)
 }
 
+/// The canonical `manifest_path` of every metadata package, in order; `None`
+/// for one that no longer resolves, which then matches no owner manifest.
+fn canonical_manifest_paths(metadata: &serde_json::Value) -> Option<Vec<Option<PathBuf>>> {
+    Some(
+        metadata
+            .get("packages")?
+            .as_array()?
+            .iter()
+            .map(|package| {
+                package
+                    .get("manifest_path")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|path| Path::new(path).canonicalize().ok())
+            })
+            .collect(),
+    )
+}
+
 pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity> {
     // The lockfile only selects which audited release to prove; the resolved
     // metadata edge and checksum checks below remain the authority.
@@ -922,9 +942,11 @@ fn verified_registry_identity_result(
         if before != after {
             return None;
         }
+        let canonical_manifest_paths = canonical_manifest_paths(&metadata)?;
         Some(RegistryIdentity {
             crate_name,
             input_snapshot: after.clone(),
+            canonical_manifest_paths,
             metadata,
             package_id,
             manifest_digests: manifest_digests.clone(),
