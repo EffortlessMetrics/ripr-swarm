@@ -117,12 +117,21 @@ fn condition_of_single_head(line: &str) -> Option<&str> {
     }
     let condition = line.get(start?..end?)?.trim();
     let masked_condition = masked.get(start?..end?)?.trim();
+    // Masking blanks a literal's quotes too, so a condition that ends in a
+    // string or character literal (`s == "{"`) is shorter once masked. Its
+    // last token is then the literal, not an operator. Any other masked
+    // tail is a comment before the brace: not established.
+    let ends_in_literal = masked_condition.len() < condition.len();
+    if ends_in_literal && !condition.ends_with(['"', '\'']) {
+        return None;
+    }
     // A match guard (`x if a > 1 => S { .. }`) or an operator right before
     // the brace (`if a == { b } { .. }`) means the brace found is not this
     // head's block.
     if condition.is_empty()
         || masked_condition.contains("=>")
-        || masked_condition.ends_with(|last: char| "=<>!&|+-*/%^,.:".contains(last))
+        || (!ends_in_literal
+            && masked_condition.ends_with(|last: char| "=<>!&|+-*/%^,.:".contains(last)))
     {
         return None;
     }
@@ -158,6 +167,7 @@ mod tests {
             ("if s == \"{\" { a } // if b {", "s == \"{\""),
             ("if é >= ü { a }", "é >= ü"),
             ("if ready()? { a }", "ready()?"),
+            ("if c == '{' { a }", "c == '{'"),
         ] {
             assert_eq!(condition_of_single_head(line), Some(condition), "{line}");
         }
@@ -179,6 +189,8 @@ mod tests {
             "if unsafe { ready() } { a }",
             "if match k { 1 => true, _ => false } { a }",
             "if a == { b } { c }",
+            // A comment between the condition and the brace.
+            "if a == /* b */ { c } { d }",
             // No head, or a head only inside brackets.
             "total >= 100",
             "call(if a > 1 { 1 } else { 2 })",
