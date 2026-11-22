@@ -526,3 +526,113 @@ fn a_symlinked_tests_directory_fails_the_preflight_and_leaves_no_attempt() -> Re
     assert!(!started.id.is_empty());
     Ok(())
 }
+
+/// #13203: a proposal whose premise turns false between analysis and the
+/// baseline capture is stale and binds nothing. A git shim on `PATH` creates
+/// the proposed file at the capture's first `rev-parse --verify HEAD`, after
+/// the before phase has chosen the proposal, so the real binary must refuse
+/// with the cage owner's stale-proposal reason and leave no attempt.
+#[cfg(unix)]
+#[test]
+fn a_proposal_made_stale_before_the_baseline_is_captured_binds_nothing() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = fixture("proposal-stale-at-bind")?;
+    let root = &fixture.root;
+    let root_arg = root.display().to_string();
+    let seam = seam_id(root, &root_arg)?;
+    let shim_dir = root.with_file_name(format!(
+        "{}-git-shim",
+        root.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    ));
+    fs::create_dir_all(&shim_dir).map_err(|error| error.to_string())?;
+    let marker = shim_dir.join("marker");
+    let shim = shim_dir.join("git");
+    fs::write(
+        &shim,
+        r#"#!/bin/sh
+case "$*" in
+  *"rev-parse --verify HEAD"*)
+    if [ ! -e "$RIPR_TEST_MARKER" ]; then
+      printf 'fn appeared() {}\n' > "$RIPR_TEST_TARGET" || exit 90
+      : > "$RIPR_TEST_MARKER"
+    fi ;;
+esac
+exec "$RIPR_TEST_REAL_GIT" "$@"
+"#,
+    )
+    .map_err(|error| error.to_string())?;
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755))
+        .map_err(|error| error.to_string())?;
+    let original_path = std::env::var_os("PATH").ok_or("PATH is missing")?;
+    let real_git = std::env::split_paths(&original_path)
+        .map(|directory| directory.join("git"))
+        .find(|path| {
+            fs::metadata(path).is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+        .ok_or("git is missing from PATH")?;
+    let path = std::env::join_paths(
+        std::iter::once(shim_dir.clone()).chain(std::env::split_paths(&original_path)),
+    )
+    .map_err(|error| error.to_string())?;
+    let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        .current_dir(root)
+        .env("PATH", path)
+        .env("RIPR_TEST_REAL_GIT", real_git)
+        .env("RIPR_TEST_MARKER", &marker)
+        .env("RIPR_TEST_TARGET", root.join(PROPOSED_FILE))
+        .args([
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &root_arg,
+            "--seam-id",
+            &seam,
+            "--phase",
+            "before",
+        ])
+        .output()
+        .map_err(|error| format!("spawn ripr: {error}"))?;
+    let text = combined(&output);
+    let interposed = marker.exists();
+    let _ = fs::remove_dir_all(&shim_dir);
+    if !interposed {
+        return Err(format!("the shim never created the proposed file: {text}"));
+    }
+    assert!(!output.status.success(), "{text}");
+    assert!(
+        text.contains("the new-test proposal is stale")
+            && text.contains(&format!("names `{PROPOSED_FILE}`"))
+            && text.contains("already exists"),
+        "{text}"
+    );
+    let attempts = root.join("target/ripr/repair-attempts");
+    let left: Vec<_> = fs::read_dir(&attempts)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("repair-attempt-")
+                })
+                .map(|entry| entry.file_name())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        left.is_empty(),
+        "a stale proposal left attempts behind: {left:?}"
+    );
+    // The shim's file is untouched: the refusal neither credited nor removed it.
+    assert_eq!(
+        fs::read_to_string(root.join(PROPOSED_FILE)).map_err(|error| error.to_string())?,
+        "fn appeared() {}\n"
+    );
+    Ok(())
+}
