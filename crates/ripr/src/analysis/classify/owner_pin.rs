@@ -17768,6 +17768,19 @@ pub(super) fn imported_enum_variant_value(
     if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
         return false;
     }
+    index
+        .call_identity_memos
+        .enum_variant_value(name, enum_name, test_file, || {
+            imported_enum_variant_value_uncached(name, enum_name, test_file, index)
+        })
+}
+
+fn imported_enum_variant_value_uncached(
+    name: &str,
+    enum_name: &str,
+    test_file: &Path,
+    index: &RustIndex,
+) -> bool {
     let declaring_path = index.call_identity_memos.sole_type_declarer(enum_name, || {
         let mut matching = index.files().iter().filter(|(_, facts)| {
             facts.source.contains(enum_name)

@@ -26,42 +26,159 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     seam: &RepoSeam,
     context: &'context CompactGripContext<'index>,
 ) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
-    find_related_tests_in(seam, context, None)
+    find_related_tests_in(seam, context, RelationScope::All)
 }
 
 /// True when `seam` relates to some test whose context position is in
-/// `pool`, by a reason `counts` accepts (#12940). Same rules as
-/// [`find_related_tests_with_context`]: other candidates are dropped after
-/// matching and before the per-test checks, and every later step only
-/// removes a test on its own facts and keeps its reason, so a pool test is
-/// related here, with that reason, exactly when it is related there.
+/// `pool`, by a reason `counts` accepts (#12940). Same answer as filtering
+/// [`find_related_tests_with_context`] to the pool, reached without paying
+/// the per-test owner-call resolution for tests outside it.
+///
+/// Every reason admits a test on that test's own facts, with one exception:
+/// the crowded assertion-token ranking gives no slot to a test an owner-call
+/// reason already admitted. So the pool pass resolves owner calls for pool
+/// tests only, and is exact unless that ranking has to truncate. Leaving
+/// other tests' owner calls unresolved can only lengthen the ranking, so a
+/// pass that did not truncate would not have truncated with them resolved.
+/// A pass that did truncate is answered by the complete relation.
+///
+/// Direct owner calls depend on the owner alone, and a function usually
+/// carries several seams, so `direct_calls` keeps each owner's answer for
+/// the pool across the seams of one pass.
 pub(super) fn relates_to_pool_test(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     pool: &BTreeSet<usize>,
     counts: fn(RelationReason) -> bool,
+    direct_calls: &PoolDirectCalls,
 ) -> bool {
-    !find_related_tests_in(seam, context, Some((pool, counts))).is_empty()
+    let scope = RelationScope::PoolFirst(pool, counts, direct_calls);
+    let (related, exact) = related_tests_in(seam, context, scope);
+    if exact {
+        return !related.is_empty();
+    }
+    !find_related_tests_in(seam, context, RelationScope::Pool(pool, counts)).is_empty()
 }
 
-type RelationPool<'p> = (&'p BTreeSet<usize>, fn(RelationReason) -> bool);
+/// Per-owner direct-call answers for one pool (#12940). The key is the
+/// owner's address in the index the pass borrows, so an instance must not
+/// outlive that pass or serve a second pool.
+#[derive(Default)]
+pub(crate) struct PoolDirectCalls {
+    by_owner: std::sync::Mutex<BTreeMap<usize, Arc<BTreeMap<usize, RelationReason>>>>,
+}
 
-fn find_related_tests_in<'context, 'index>(
+impl PoolDirectCalls {
+    /// The pool tests whose direct call of `owner` resolves. Two workers may
+    /// compute one owner at the same time; both reach the same answer.
+    fn for_owner(
+        &self,
+        context: &CompactGripContext<'_>,
+        prefix: Option<&str>,
+        owner: &OwnerContext<'_>,
+        pool: &BTreeSet<usize>,
+    ) -> Arc<BTreeMap<usize, RelationReason>> {
+        let key = owner
+            .function
+            .map(|function| std::ptr::from_ref(function).addr());
+        if let Some(known) = key.and_then(|key| context::memo(&self.by_owner).get(&key).cloned()) {
+            return known;
+        }
+        let mut direct = BTreeMap::new();
+        match_direct_owner_call(&mut direct, context, prefix, owner, Some(pool));
+        let direct = Arc::new(direct);
+        // A cancelled walk stops early; its partial answer must not be kept.
+        if let Some(key) = key
+            && cancellation::checkpoint().is_ok()
+        {
+            context::memo(&self.by_owner).insert(key, Arc::clone(&direct));
+        }
+        direct
+    }
+}
+
+/// A pool and the reasons that count toward it.
+type PoolFilter<'p> = (&'p BTreeSet<usize>, fn(RelationReason) -> bool);
+
+/// Which tests a relation lookup answers for.
+#[derive(Clone, Copy)]
+pub(super) enum RelationScope<'p> {
+    /// Every test, by every reason.
+    All,
+    /// Pool tests related by a counted reason, under the complete rules.
+    Pool(&'p BTreeSet<usize>, fn(RelationReason) -> bool),
+    /// As [`Self::Pool`], resolving owner calls for pool tests only. The
+    /// lookup reports whether that shortcut kept the answer exact.
+    PoolFirst(
+        &'p BTreeSet<usize>,
+        fn(RelationReason) -> bool,
+        &'p PoolDirectCalls,
+    ),
+}
+
+impl<'p> RelationScope<'p> {
+    fn filter(self) -> Option<PoolFilter<'p>> {
+        match self {
+            Self::All => None,
+            Self::Pool(pool, counts) | Self::PoolFirst(pool, counts, _) => Some((pool, counts)),
+        }
+    }
+
+    /// The tests the owner-call matchers may resolve; `None` is every test.
+    fn owner_call_tests(self) -> Option<&'p BTreeSet<usize>> {
+        match self {
+            Self::All | Self::Pool(..) => None,
+            Self::PoolFirst(pool, ..) => Some(pool),
+        }
+    }
+}
+
+type RelatedTests<'context, 'index> = Vec<(&'context CompactTest<'index>, RelationReason)>;
+
+pub(super) fn find_related_tests_in<'context, 'index>(
     seam: &RepoSeam,
     context: &'context CompactGripContext<'index>,
-    pool: Option<RelationPool<'_>>,
-) -> Vec<(&'context CompactTest<'index>, RelationReason)> {
+    scope: RelationScope<'_>,
+) -> RelatedTests<'context, 'index> {
+    related_tests_in(seam, context, scope).0
+}
+
+/// The tests `scope` relates to `seam`, and whether that list is exactly
+/// what the complete rules give for the scope. Only
+/// [`RelationScope::PoolFirst`] can be inexact.
+pub(super) fn related_tests_in<'context, 'index>(
+    seam: &RepoSeam,
+    context: &'context CompactGripContext<'index>,
+    scope: RelationScope<'_>,
+) -> (RelatedTests<'context, 'index>, bool) {
     if cancellation::checkpoint().is_err() {
-        return Vec::new();
+        return (Vec::new(), true);
     }
     let owner = OwnerContext::resolve(seam, context);
     let target_tokens = assertion_target_tokens(seam);
     let prefix = owner.prefix.as_deref();
+    let only = scope.owner_call_tests();
+    // No reason admits a test outside the owner's package, so a pool with no
+    // test inside it cannot relate.
+    if let (Some(prefix), Some((pool, _))) = (prefix, scope.filter())
+        && !pool.iter().any(|index| {
+            context
+                .tests
+                .get(*index)
+                .is_some_and(|indexed| indexed.path_normalized.starts_with(prefix))
+        })
+    {
+        return (Vec::new(), true);
+    }
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
-    match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    if let RelationScope::PoolFirst(pool, _, direct_calls) = scope {
+        candidates.clone_from(&direct_calls.for_owner(context, prefix, &owner, pool));
+    } else {
+        match_direct_owner_call(&mut candidates, context, prefix, &owner, only);
+    }
     if cancellation::checkpoint().is_err() {
-        return Vec::new();
+        return (Vec::new(), true);
     }
     let inaccessible_direct: BTreeSet<usize> = context
         .owner_function(seam.file(), seam.display_line())
@@ -83,9 +200,9 @@ fn find_related_tests_in<'context, 'index>(
         .unwrap_or_default();
     candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
     if cancellation::checkpoint().is_err() {
-        return Vec::new();
+        return (Vec::new(), true);
     }
-    match_helper_owner_call(&mut candidates, context, prefix, &owner);
+    match_helper_owner_call(&mut candidates, context, prefix, &owner, only);
     match_target_affinity_owner_call(
         &mut candidates,
         seam,
@@ -93,25 +210,30 @@ fn find_related_tests_in<'context, 'index>(
         prefix,
         &owner,
         &target_tokens,
+        only,
     );
     if cancellation::checkpoint().is_err() {
-        return Vec::new();
+        return (Vec::new(), true);
     }
-    match_assertion_target_affinity(&mut candidates, context, prefix, &target_tokens);
+    let truncated =
+        match_assertion_target_affinity(&mut candidates, context, prefix, &target_tokens);
+    // The ranking counted tests whose owner calls were left unresolved, so
+    // its cut may differ from the complete one.
+    let exact = only.is_none() || !truncated;
     match_same_test_file(&mut candidates, context, prefix, &owner);
     match_same_module(&mut candidates, context, prefix, &owner);
     match_owner_named_test(&mut candidates, context, prefix, &owner);
     match_import_path_affinity(&mut candidates, context, prefix, &owner);
     match_fixture_owner_affinity(&mut candidates, context, prefix, &owner);
-    if let Some((pool, counts)) = pool {
+    if let Some((pool, counts)) = scope.filter() {
         candidates.retain(|test_index, reason| pool.contains(test_index) && counts(*reason));
         if candidates.is_empty() {
-            return Vec::new();
+            return (Vec::new(), exact);
         }
     }
 
     if cancellation::checkpoint().is_err() {
-        return Vec::new();
+        return (Vec::new(), true);
     }
 
     // An inaccessible direct call cannot regain oracle credit through a
@@ -193,9 +315,9 @@ fn find_related_tests_in<'context, 'index>(
     });
 
     if cancellation::checkpoint().is_err() {
-        return Vec::new();
+        return (Vec::new(), true);
     }
-    dedupe_related_candidates(candidates, context)
+    (dedupe_related_candidates(candidates, context), exact)
 }
 
 /// Cached facts about a seam's owning function that every relationship
@@ -389,6 +511,7 @@ pub(super) fn match_direct_owner_call(
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
     owner: &OwnerContext<'_>,
+    only: Option<&BTreeSet<usize>>,
 ) {
     if owner.name.is_empty() {
         return;
@@ -399,6 +522,9 @@ pub(super) fn match_direct_owner_call(
     for (position, test_index) in indices.iter().enumerate() {
         if position.is_multiple_of(32) && cancellation::checkpoint().is_err() {
             return;
+        }
+        if only.is_some_and(|only| !only.contains(test_index)) {
+            continue;
         }
         let Some(indexed) = context.tests.get(*test_index) else {
             continue;
@@ -464,6 +590,7 @@ pub(super) fn match_helper_owner_call(
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
     owner: &OwnerContext<'_>,
+    only: Option<&BTreeSet<usize>>,
 ) {
     if owner.name.is_empty() {
         return;
@@ -482,6 +609,9 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
+        if only.is_some_and(|only| !only.contains(test_index)) {
+            continue;
+        }
         if owner.inherent_receiver
             && !owner.inherent_owner.is_some_and(|function| {
                 context.inherent_helper_reaches_owner(*test_index, function)
@@ -506,6 +636,7 @@ pub(super) fn match_target_affinity_owner_call(
     prefix: Option<&str>,
     owner: &OwnerContext<'_>,
     target_tokens: &BTreeSet<String>,
+    only: Option<&BTreeSet<usize>>,
 ) {
     if requires_concrete_activation_values(seam)
         || owner.name.is_empty()
@@ -525,6 +656,9 @@ pub(super) fn match_target_affinity_owner_call(
         return;
     };
     for test_index in indices {
+        if only.is_some_and(|only| !only.contains(test_index)) {
+            continue;
+        }
         let Some(test) = context.tests.get(*test_index) else {
             continue;
         };
@@ -555,12 +689,13 @@ pub(super) fn test_assertion_mentions_any_target_token(
         .any(|token| test.assertion_tokens.contains(token))
 }
 
+/// Returns whether the ranking had to cut tests past the crowded limit.
 pub(super) fn match_assertion_target_affinity(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
     target_tokens: &BTreeSet<String>,
-) {
+) -> bool {
     let limit = crowded_relation_limit(context.tests.len());
     let mut matched_tokens: BTreeMap<usize, usize> = BTreeMap::new();
     for token in target_tokens {
@@ -601,7 +736,8 @@ pub(super) fn match_assertion_target_affinity(
     // order only keeps output deterministic; index position carries no
     // relevance.
     let mut ranked = matched_tokens.into_iter().collect::<Vec<_>>();
-    if ranked.len() > limit {
+    let truncated = ranked.len() > limit;
+    if truncated {
         ranked.sort_by(|(left_index, left), (right_index, right)| {
             right.cmp(left).then(left_index.cmp(right_index))
         });
@@ -616,6 +752,7 @@ pub(super) fn match_assertion_target_affinity(
             RelationReason::AssertionTargetAffinity,
         );
     }
+    truncated
 }
 
 pub(super) fn match_same_test_file(
