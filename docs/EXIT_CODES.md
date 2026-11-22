@@ -25,7 +25,7 @@ cannot complete, gate check exits `2` (config_error); it never passes. In `calib
 its output, or run the gate.
 
 An empty result warrants a look at the selected diff, warnings, and analysis
-limits. The [change-selection guide](QUICKSTART.md#choose-the-change-to-analyze)
+limits. The [change-selection guide](QUICKSTART.md#choose-the-change)
 covers working-tree, committed, and saved-diff inputs. For an older release,
 consult the versioned CLI documentation and the installed command help.
 

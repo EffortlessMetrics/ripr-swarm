@@ -107,7 +107,7 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 For the published 0.10.0 CLI, save the tracked edits to a patch and pass it
-to `ripr check --diff`. The [saved-diff recipe](docs/QUICKSTART.md#choose-the-change-to-analyze)
+to `ripr check --diff`. The [saved-diff recipe](docs/QUICKSTART.md#choose-the-change)
 also works when your clone has no `origin` remote.
 
 The [CLI quickstart](docs/QUICKSTART.md#cli-first-hour) covers choosing a base

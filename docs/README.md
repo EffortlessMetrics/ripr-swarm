@@ -27,7 +27,7 @@ result means.
 | Check language and workflow maturity | [Support tiers](status/SUPPORT_TIERS.md) · [Language adapter preview](LANGUAGE_ADAPTER_PREVIEW.md) | What is usable, preview, advisory, unavailable, or explicitly limited. |
 | Connect another client | [MCP workspace status](interop/mcp.md) · [Other LSP editors](interop/other-editors-lsp.md) · [Neovim LSP recipe](interop/neovim-lsp.md) | Read-only MCP status, Helix/Neovim/Zed setup, and a portable standard-LSP client path. |
 
-[Choose the change to analyze](QUICKSTART.md#choose-the-change-to-analyze) for
+[Choose the change](QUICKSTART.md#choose-the-change) for
 tracked local edits, committed changes, or a saved patch. When you retain JSON
 in CI, [capture the CLI status and diagnostics](EXIT_CODES.md#capture-failures-without-losing-the-diagnosis)
 alongside the report.

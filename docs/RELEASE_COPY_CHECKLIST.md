@@ -129,7 +129,7 @@ questions, not new wording, heading, or badge-count gates.
       candidate and advertised targets. Keep analyzer support claims separate.
 - [ ] Before adding a registry install command, confirm its package name,
       published version or dist-tag, and installed result on that channel under
-      the [source release authority](RELEASE_TRANSACTION.md#channels-outside-channel_order).
+      the [source release authority](RELEASE_TRANSACTION.md#npm-and-pypi).
 
 ## When something slips
 
