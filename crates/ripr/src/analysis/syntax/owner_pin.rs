@@ -1627,6 +1627,19 @@ fn macro_binding_sites_in_tree(
                                     && (!nested.bare_wrapper || names_the_prelude())
                             }
                             PassThroughCall::BareProptest => names_the_prelude(),
+                            PassThroughCall::StandardPin { root } => {
+                                // A bare `pin!` takes its root from the one
+                                // import that names it.
+                                root.or_else(|| bare_pin_import(&call, binding_free))
+                                    .is_some_and(|(root, external)| {
+                                        !drop_in_shadowed(root, external)
+                                            && (external || !plain_import_names().contains(root))
+                                            // No manifest binds `std` or
+                                            // `core` to another package.
+                                            && drop_in_verified(root)
+                                    })
+                                    && (!nested.bare_wrapper || names_the_prelude())
+                            }
                         }
                 })
                 .and_then(|_| scope_of(Some(call.syntax().clone())));
@@ -2154,6 +2167,11 @@ enum PassThroughCall {
     Qualified { krate: &'static str, external: bool },
     /// A bare `proptest!`, which must name the audited prelude's macro.
     BareProptest,
+    /// The standard `pin!`: `std::pin::pin!` or `core::pin::pin!` with its
+    /// root (and whether it is `::`-rooted), or a bare `pin!` (`None`) whose
+    /// one import must name it. Its expansion places its argument in an
+    /// expression and needs no lock audit: it ships with the toolchain.
+    StandardPin { root: Option<(&'static str, bool)> },
 }
 
 /// What a confined pass-through call's nested macro calls rely on, beyond
@@ -2215,6 +2233,16 @@ fn audited_pass_through_call(
             external,
         },
         None if !external && proptest_wrapper(unrooted) => PassThroughCall::BareProptest,
+        // #14116: `pin!(async { .. })` places its argument in an expression
+        // (`Pin { __pointer: &mut { $value } }`), so a `format!` in the
+        // future it pins binds nothing outside the call.
+        _ if unrooted == "std::pin::pin" => PassThroughCall::StandardPin {
+            root: Some(("std", external)),
+        },
+        _ if unrooted == "core::pin::pin" => PassThroughCall::StandardPin {
+            root: Some(("core", external)),
+        },
+        None if !external && unrooted == "pin" => PassThroughCall::StandardPin { root: None },
         _ => return None,
     };
     if tokens
@@ -2483,11 +2511,30 @@ fn bare_proptest_names_the_prelude(
     let Some(container) = call_module_items(call) else {
         return false;
     };
+    reach_adds_no_binding(call, &container, binding_free, &|path| {
+        matches!(
+            path,
+            "proptest" | "proptest::proptest" | "::proptest::proptest"
+        )
+    })
+}
+
+/// Whether nothing between `call` and the module whose items name its bare
+/// path (`container`) can bind that name ahead of the module's own items: no
+/// glob in a block or inline module on the way (an inner glob shadows the
+/// module's), and no item-position macro call there, other than one whose
+/// path `exempt` accepts, that might expand to an import or a definition.
+fn reach_adds_no_binding(
+    call: &ast::MacroCall,
+    container: &SyntaxNode,
+    binding_free: &BindingFreeFileIndex,
+    exempt: &dyn Fn(&str) -> bool,
+) -> bool {
     let in_reach = |node: &SyntaxNode| {
         node.parent().is_some_and(|scope| {
             call.syntax()
                 .ancestors()
-                .take_while(|ancestor| *ancestor != container)
+                .take_while(|ancestor| ancestor != container)
                 .chain(std::iter::once(container.clone()))
                 .any(|ancestor| ancestor == scope)
         })
@@ -2500,7 +2547,7 @@ fn bare_proptest_names_the_prelude(
                 .find_map(ast::Use::cast)
                 .is_some_and(|import| {
                     in_reach(import.syntax())
-                        && import.syntax().parent().as_ref() != Some(&container)
+                        && import.syntax().parent().as_ref() != Some(container)
                 })
     });
     let other_item_call = binding_free.calls.iter().any(|other| {
@@ -2522,13 +2569,84 @@ fn bare_proptest_names_the_prelude(
                     .chars()
                     .filter(|ch| !ch.is_whitespace())
                     .collect();
-                matches!(
-                    path.as_str(),
-                    "proptest" | "proptest::proptest" | "::proptest::proptest"
-                )
+                exempt(&path)
             })
     });
     !inner_glob && !other_item_call
+}
+
+/// #14116: the root of the one import that names a bare `pin!` call, a
+/// plain `use std::pin::pin;` or `use core::pin::pin;` among the items of
+/// the call's module, and whether it is `::`-rooted. `None` when anything
+/// else in the file can bind the bare name: another import or rename to
+/// `pin`, a `pin` definition (textual scope outranks an import), or a glob
+/// or item-position macro call between the call and its module. A
+/// definition in an ancestor file reports its own
+/// [`MacroBindingKind::WrapperRedefinition`] site.
+fn bare_pin_import(
+    call: &ast::MacroCall,
+    binding_free: &BindingFreeFileIndex,
+) -> Option<(&'static str, bool)> {
+    let is_pin = |name: &str| name.trim_start_matches("r#") == "pin";
+    let bound = |item: &ast::UseTree| -> Option<String> {
+        if let Some(rename) = item.rename() {
+            return rename.name().map(|name| name.text().to_string());
+        }
+        if item.star_token().is_some() || item.use_tree_list().is_some() {
+            return None;
+        }
+        let segments = use_tree_segments(item);
+        segments
+            .iter()
+            .rev()
+            .find(|segment| segment.as_str() != "self")
+            .cloned()
+    };
+    let mut imports = binding_free
+        .uses
+        .iter()
+        .filter(|item| bound(item).is_some_and(|name| is_pin(&name)));
+    let only = imports.next()?;
+    if imports.next().is_some() || only.rename().is_some() {
+        return None;
+    }
+    if binding_free
+        .rules
+        .iter()
+        .any(|rule| rule.name().is_some_and(|name| is_pin(name.text())))
+        || binding_free.site_nodes.iter().any(|node| {
+            ast::MacroDef::cast(node.clone())
+                .and_then(|item| item.name())
+                .is_some_and(|name| is_pin(name.text()))
+        })
+    {
+        return None;
+    }
+    let root = match use_tree_segments(only)
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["std", "pin", "pin"] => "std",
+        ["core", "pin", "pin"] => "core",
+        _ => return None,
+    };
+    let import = only.syntax().ancestors().find_map(ast::Use::cast)?;
+    let container = call_module_items(call)?;
+    if import.syntax().parent().as_ref() != Some(&container)
+        || !reach_adds_no_binding(call, &container, binding_free, &|_| false)
+    {
+        return None;
+    }
+    let external = import
+        .use_tree()?
+        .syntax()
+        .text()
+        .to_string()
+        .trim_start()
+        .starts_with("::");
+    Some((root, external))
 }
 
 /// The item list (or source file) of the module whose items name `call`'s
@@ -2572,10 +2690,10 @@ fn proptest_prelude_glob_reaches(
 }
 
 /// Whether `node` is a `macro_rules!` or `macro` definition that takes a
-/// [`PASS_THROUGH_WRAPPERS`] name and whose expansion may paste its caller's
-/// tokens: a transcriber holding any `$`, or a body this reading cannot
-/// split into rules. A definition that pastes nothing adds nothing a call's
-/// arguments can bind.
+/// [`PASS_THROUGH_WRAPPERS`] name (or the standard `pin`) and whose
+/// expansion may paste its caller's tokens: a transcriber holding any `$`,
+/// or a body this reading cannot split into rules. A definition that pastes
+/// nothing adds nothing a call's arguments can bind.
 fn redefines_pass_through_wrapper(node: &SyntaxNode) -> bool {
     let (name, body) = if let Some(rules) = ast::MacroRules::cast(node.clone()) {
         (
@@ -2588,9 +2706,11 @@ fn redefines_pass_through_wrapper(node: &SyntaxNode) -> bool {
     } else {
         return false;
     };
-    if !name
-        .is_some_and(|name| PASS_THROUGH_WRAPPERS.contains(&name.text().trim_start_matches("r#")))
-    {
+    if !name.is_some_and(|name| {
+        let name = name.text();
+        let name = name.trim_start_matches("r#");
+        PASS_THROUGH_WRAPPERS.contains(&name) || name == "pin"
+    }) {
         return false;
     }
     let Some(body) = body else {
