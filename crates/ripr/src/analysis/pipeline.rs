@@ -3681,9 +3681,9 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
     })
 }
 
-/// Limitation detail for a well-formed diff with only binary or file-mode
-/// changes; `ripr check --diff` keys its stderr hedge on it.
-pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.";
+// The well-formed binary- or mode-only detail; its owner is
+// `AnalysisLimitation::is_non_text_only` (#15862).
+use crate::analysis_outcome::NON_TEXT_ONLY_DETAIL;
 
 /// True when every git file section is a complete binary or mode-change
 /// section and no `@@` hunk exists: a valid diff that carries nothing ripr
@@ -3691,36 +3691,117 @@ pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but conta
 /// a malformed binary sentinel) keeps the generic malformed-diff wording.
 fn has_only_non_text_changes(diff_text: &str) -> bool {
     let mut sections = 0usize;
-    let mut binary = false;
-    let (mut old_mode, mut new_mode) = (false, false);
+    let mut section: Option<NonTextSection> = None;
     let mut all_ok = true;
-    let mut in_section = false;
     for line in diff_text.lines() {
+        let line = line.trim_end_matches('\r');
         if line.starts_with("@@") {
             return false;
         }
         if line.starts_with("diff --git ") {
-            if in_section {
-                all_ok &= binary || (old_mode && new_mode);
-            }
-            in_section = true;
+            all_ok &= section.is_none_or(|section| section.is_complete());
+            section = Some(NonTextSection::default());
             sections += 1;
-            binary = false;
-            old_mode = false;
-            new_mode = false;
             continue;
         }
-        if !in_section {
-            continue;
+        if let Some(section) = section.as_mut() {
+            section.read(line);
         }
-        binary |= is_binary_sentinel(line) || line == "GIT binary patch";
-        old_mode |= line.starts_with("old mode ");
-        new_mode |= line.starts_with("new mode ");
     }
-    if in_section {
-        all_ok &= binary || (old_mode && new_mode);
-    }
+    all_ok &= section.is_none_or(|section| section.is_complete());
     sections > 0 && all_ok
+}
+
+/// What one `diff --git` section has shown of a non-text change (#15862).
+#[derive(Clone, Copy, Default)]
+struct NonTextSection {
+    sentinel: bool,
+    old_mode: bool,
+    new_mode: bool,
+    patch: BinaryPatchState,
+}
+
+impl NonTextSection {
+    fn read(&mut self, line: &str) {
+        if self.patch == BinaryPatchState::Absent {
+            if line == "GIT binary patch" {
+                self.patch = BinaryPatchState::Header;
+                return;
+            }
+            self.sentinel |= is_binary_sentinel(line);
+            self.old_mode |= is_git_mode_line(line, "old mode ");
+            self.new_mode |= is_git_mode_line(line, "new mode ");
+            return;
+        }
+        self.patch = self.patch.after(line);
+    }
+
+    /// A started binary patch must be complete, whatever mode lines precede
+    /// it; otherwise a sentinel or a full mode pair is required.
+    fn is_complete(self) -> bool {
+        match self.patch {
+            BinaryPatchState::Absent => self.sentinel || (self.old_mode && self.new_mode),
+            state => state == BinaryPatchState::BlockEnd,
+        }
+    }
+}
+
+/// A `git diff --binary` patch: the `GIT binary patch` marker, then one or
+/// more blocks of a `literal <n>` or `delta <n>` line, base85 data lines and a
+/// blank line (#15862). Every data line is checked for shape; any other line
+/// inside the patch makes it invalid, and only a closed block completes it.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum BinaryPatchState {
+    #[default]
+    Absent,
+    Header,
+    Size,
+    Data,
+    BlockEnd,
+    Invalid,
+}
+
+impl BinaryPatchState {
+    fn after(self, line: &str) -> Self {
+        match self {
+            Self::Header | Self::BlockEnd if is_binary_patch_size(line) => Self::Size,
+            Self::Size | Self::Data if is_base85_data_line(line) => Self::Data,
+            Self::Data if line.is_empty() => Self::BlockEnd,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+/// `old mode <m>` / `new mode <m>` with a six-digit octal Git mode (#15862);
+/// `old mode invalid` is not a mode change.
+fn is_git_mode_line(line: &str, prefix: &str) -> bool {
+    line.strip_prefix(prefix)
+        .is_some_and(|mode| mode.len() == 6 && mode.bytes().all(|b| matches!(b, b'0'..=b'7')))
+}
+
+/// One line of Git's base85 binary payload: a length character (`A`-`Z` for
+/// 1-26 bytes, `a`-`z` for 27-52) then exactly `ceil(len / 4) * 5` characters
+/// of Git's base85 alphabet (#15862). The payload is not decoded.
+fn is_base85_data_line(line: &str) -> bool {
+    let Some((&first, encoded)) = line.as_bytes().split_first() else {
+        return false;
+    };
+    let decoded = match first {
+        b'A'..=b'Z' => usize::from(first - b'A') + 1,
+        b'a'..=b'z' => usize::from(first - b'a') + 27,
+        _ => return false,
+    };
+    encoded.len() == decoded.div_ceil(4) * 5
+        && encoded
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&()*+-;<=>?@^_`{|}~".contains(b))
+}
+
+fn is_binary_patch_size(line: &str) -> bool {
+    ["literal ", "delta "].iter().any(|prefix| {
+        line.strip_prefix(prefix)
+            .is_some_and(|size| !size.is_empty() && size.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 /// `Binary files <old> and <new> differ` with a non-empty path on each side.
@@ -5090,9 +5171,43 @@ mod tests {
                 "{sentinel}"
             );
         }
+        // Real `git diff --binary` output is recognized (#15862) ...
+        // A mode change carried with a complete binary patch.
         assert!(has_only_non_text_changes(
-            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n"
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nindex 8352675..1592e5c\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
         ));
+        // A new one-byte file: the forward `literal 1` and reverse `literal 0`
+        // data lines are both base85 lines git emitted.
+        assert!(has_only_non_text_changes(
+            "diff --git a/e b/e\nnew file mode 100644\nindex 0000000..f76dd23\nGIT binary patch\nliteral 1\nIcmZPo000310RR91\n\nliteral 0\nHcmV?d00001\n\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/logo.png b/logo.png\nindex 8352675..1592e5c 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/x b/x\r\nold mode 100644\r\nnew mode 100755\r\n"
+        ));
+        // ... but a bare marker, a payload-less size line and non-octal modes
+        // are not a complete non-text section.
+        for lookalike in [
+            "diff --git a/x b/x\nGIT binary patch\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n\n",
+            "diff --git a/x b/x\nGIT binary patch\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\nnot payload\n",
+            // A started patch must complete even beside a valid mode pair.
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nGIT binary patch\n",
+            // A malformed reverse block, or a forward block never closed.
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nnot payload\n\n",
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQ WCj2L2ml2D\n",
+            "diff --git a/x b/x\nold mode invalid\nnew mode invalid\n",
+            "diff --git a/x b/x\nold mode 100644\nnew mode 10075\n",
+            "diff --git a/x b/x\nold mode 100648\nnew mode 100755\n",
+        ] {
+            assert!(!has_only_non_text_changes(lookalike), "{lookalike}");
+        }
         // Incomplete or mixed sections keep the generic wording.
         assert!(!has_only_non_text_changes(
             "diff --git a/x b/x\nold mode 100644\n"

@@ -1,0 +1,4 @@
+crates/ripr/src/analysis/diff/load.rs|failed to read diff from stdin: {err}
+crates/ripr/src/analysis/diff/load.rs|git diff failed: {stderr}{hint}
+crates/ripr/src/analysis/diff/load.rs|packet diff is not valid UTF-8: {err}
+crates/ripr/src/analysis/diff/load.rs|refusing to diff `{range}`: a revision range cannot start with `-`

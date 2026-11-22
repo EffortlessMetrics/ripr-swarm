@@ -35,6 +35,7 @@ use serde_json::Value;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub(crate) mod complete_summary;
 pub(crate) mod test_run;
 
 pub(crate) const AGENT_STATUS_SCHEMA_VERSION: &str = "0.1";
@@ -1715,9 +1716,16 @@ fn pilot_python_repair_card_ready(root: &Path) -> Option<PilotPythonCard> {
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string)
     };
+    // #15302: a nested project's command is relative to its `verify_cwd`.
+    let verify_cwd = text_at("/verify_cwd");
     Some(PilotPythonCard {
         missing_discriminator: text_at("/missing_discriminator"),
-        verify_command: text_at("/verify_command"),
+        verify_command: text_at("/verify_command").map(|command| {
+            crate::output::python_repair_card::rooted_verify_display(
+                verify_cwd.as_deref(),
+                &command,
+            )
+        }),
     })
 }
 
@@ -3869,6 +3877,28 @@ pub(crate) fn render_agent_attempt_status_json(
         .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
+/// The one-line receipt reading shared by the status page and the
+/// already-complete `continue` summary (#15282).
+fn receipt_summary(receipt: &AgentStatusAttemptReceipt) -> String {
+    match receipt {
+        AgentStatusAttemptReceipt::Issued { path, reading } => format!(
+            "issued (`{}`, status `{}`, movement `{}`)",
+            path,
+            reading.status.as_deref().unwrap_or("unknown"),
+            reading.movement.as_deref().unwrap_or("unknown")
+        ),
+        AgentStatusAttemptReceipt::NotApplicable => "not applicable".to_string(),
+        AgentStatusAttemptReceipt::NotIssued => "not issued".to_string(),
+        AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
+            format!("superseded by `{by_attempt_id}`")
+        }
+        AgentStatusAttemptReceipt::Unreadable => "unreadable".to_string(),
+        AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
+            format!("unavailable: {reason}")
+        }
+    }
+}
+
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
     let attempt = &report.attempt;
     let mut rendered = String::new();
@@ -3903,24 +3933,7 @@ pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusRe
         ));
     }
     if let Some(receipt) = &attempt.receipt {
-        let summary = match receipt {
-            AgentStatusAttemptReceipt::Issued { path, reading } => format!(
-                "issued (`{}`, status `{}`, movement `{}`)",
-                path,
-                reading.status.as_deref().unwrap_or("unknown"),
-                reading.movement.as_deref().unwrap_or("unknown")
-            ),
-            AgentStatusAttemptReceipt::NotApplicable => "not applicable".to_string(),
-            AgentStatusAttemptReceipt::NotIssued => "not issued".to_string(),
-            AgentStatusAttemptReceipt::Superseded { by_attempt_id } => {
-                format!("superseded by `{by_attempt_id}`")
-            }
-            AgentStatusAttemptReceipt::Unreadable => "unreadable".to_string(),
-            AgentStatusAttemptReceipt::Unavailable { reason, .. } => {
-                format!("unavailable: {reason}")
-            }
-        };
-        rendered.push_str(&format!("Receipt: {summary}\n"));
+        rendered.push_str(&format!("Receipt: {}\n", receipt_summary(receipt)));
     }
 
     if let Some(next) = &report.next_action {
@@ -7946,6 +7959,29 @@ mod tests {
             !rendered.contains("```bash\nripr pilot --root"),
             "{rendered}"
         );
+
+        // #15302: a nested project's card names its directory.
+        #[cfg(not(windows))]
+        {
+            let nested = r#"{"status": "ready", "repair_cards_total": 1, "top_repair_card": {"missing_discriminator": "qty >= 5", "verify_command": "python -m pytest tests/test_price.py::test_discount", "verify_cwd": "py"}}"#;
+            write_file(
+                &root.join(PILOT_SUMMARY_ARTIFACT),
+                &summary("complete", "[]", nested, "null"),
+            )?;
+            let report = build_agent_status_report(&root, Path::new("."));
+            let warning = report
+                .warnings
+                .iter()
+                .find(|warning| warning.kind == "pilot_python_repair_card_no_agent_repair")
+                .ok_or_else(|| format!("expected a nested card warning: {:?}", report.warnings))?;
+            assert!(
+                warning.message.contains(
+                    "(`(cd -- py && python -m pytest tests/test_price.py::test_discount)`)"
+                ),
+                "{}",
+                warning.message
+            );
+        }
 
         // Controls: a ranked seam, a recorded repair start, an incomplete run,
         // or a ready status without cards keeps status on `select_seam`.
