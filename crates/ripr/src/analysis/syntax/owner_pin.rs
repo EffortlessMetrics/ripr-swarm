@@ -1039,7 +1039,14 @@ fn macro_binding_ambiguity_sets(
     // site of its own in this file; otherwise `assert!(.. assert_eq!(..) ..)`
     // would be named as a wrapper that may define `assert_eq`, a site the
     // admission scan never reports.
-    let union_bound: BTreeSet<String> = union.iter().map(|(name, _)| name.clone()).collect();
+    // A mention confined to an audited pass-through call (#14116) rebinds
+    // nothing outside that call, so it does not make the name's other calls
+    // in this file opaque either.
+    let union_bound: BTreeSet<String> = union
+        .iter()
+        .filter(|(_, site)| !confined_pass_through_site(site))
+        .map(|(name, _)| name.clone())
+        .collect();
     let singletons = singleton_names
         .into_iter()
         .flatten()
@@ -1053,6 +1060,12 @@ fn macro_binding_ambiguity_sets(
         })
         .collect();
     (union, singletons)
+}
+
+/// Whether `site` is a mention inside an audited pass-through call's
+/// arguments: the only `MacroArgument` site the scan reports with a scope.
+fn confined_pass_through_site(site: &MacroBindingSite) -> bool {
+    matches!(site.kind, MacroBindingKind::MacroArgument(_)) && site.scope.is_some()
 }
 
 /// The names one binding-site scan reads. `trusted` are the names whose
