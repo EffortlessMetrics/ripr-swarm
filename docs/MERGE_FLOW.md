@@ -167,8 +167,10 @@ Do not issue the call while a required result is pending so that the PR lands
 later on its own: that is the armed wait this route excludes, and a finding
 that arrives during the wait would not stop it. Read back that the PR entered
 the queue. The queue entry itself is a GraphQL field; over REST, read the PR
-timeline (`gh api repos/EffortlessMetrics/ripr-swarm/issues/<n>/timeline`) for
-an `added_to_merge_queue` event later than the call. If the PR shows auto-merge
+timeline for an `added_to_merge_queue` event later than the call
+(`gh api "repos/EffortlessMetrics/ripr-swarm/issues/<n>/timeline?per_page=100&page=<k>"`).
+The timeline is oldest first and paged, so read through the last page; the
+first page of a busy PR does not hold recent events. If the PR shows auto-merge
 armed without that event, a requirement
 was not met: disarm it with `-X DELETE` on the same path, verify the readback,
 and reconcile before trying again.
@@ -184,14 +186,19 @@ gh api -X POST repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/convert_to_draft
 
 The first call disarms auto-merge so nothing re-enqueues the PR; the second
 removes the queue entry, because queue membership does not survive a
-conversion to Draft. Read back a `removed_from_merge_queue` event on the PR
-timeline and `"draft": true` on the PR before treating the landing as
-contained. The removal event can trail the conversion by several minutes: on
-#16039 the conversion was recorded at 05:56Z on November 22, 2026 and the
-removal at 06:02Z. Until it appears, the withdrawal is not confirmed. A queue run that has already merged the PR cannot be withdrawn this
-way; check for a `merged` event first. Returning the PR to Ready does not
-re-enqueue it: after the repair, the review, qualification and enqueue
-conditions above apply again on the new head.
+conversion to Draft. Read back `"draft": true` on the PR and, on the last page
+of the PR timeline, a `removed_from_merge_queue` event later than the most
+recent `added_to_merge_queue`; an earlier withdrawal's event does not count.
+The removal event can trail the conversion by several minutes: on #16039 the
+conversion was recorded at 05:56Z on November 22, 2026 and the removal at
+06:02Z. Until it appears, the withdrawal is not confirmed. A queue run that has
+already merged the PR cannot be withdrawn this way; check for a `merged` event
+first.
+
+With the auto-merge request deleted, nothing is left to put the PR back in the
+queue when it returns to Ready. That step was not part of the #16039 receipt,
+so read the timeline once more after marking Ready. After the repair, the
+review, qualification and enqueue conditions above apply again on the new head.
 
 The ruling covers `ripr-swarm` only and changes no setting, required check or
 release authority.
