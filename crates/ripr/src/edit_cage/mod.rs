@@ -2170,8 +2170,9 @@ fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
 }
 
 /// The Git top-level a repair attempt would need when `root` is a proper
-/// subdirectory of its work tree, `None` for the exact top-level or when Git
-/// cannot say (those cases keep the attempt's own refusals). The before-phase
+/// subdirectory of its work tree, `None` for the exact top-level, for a root
+/// that is its own Cargo project, or when Git cannot say (those cases keep the
+/// attempt's own refusals). The before-phase
 /// entry uses it to refuse a subdirectory `--root` before writing anything;
 /// surfaces that print a repair start should share it too (#15488). It asks Git exactly as
 /// [`canonical_repository_root`] does (same command, environment and deadline),
@@ -2181,7 +2182,20 @@ pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
     let requested = fs::canonicalize(root).ok()?;
     let top = git_text(&requested, &["rev-parse", "--show-toplevel"]).ok()?;
     let top = fs::canonicalize(&top).ok()?;
-    (requested != top).then_some(top)
+    if requested == top {
+        return None;
+    }
+    // A root that is its own Cargo project nested inside another Cargo
+    // project is a standalone repository for repair-start purposes, not a
+    // subdirectory of the enclosing work tree (#15488). Requiring the
+    // enclosing top-level to be a Cargo project too keeps a bare Git repo's
+    // `crate/` subdirectory (no root Cargo.toml) refused, and the monorepo
+    // Python `backend/` (no Cargo.toml) refused, while a fixture `input/`
+    // keeps its start without the harness faking a Git top-level.
+    if requested.join("Cargo.toml").is_file() && top.join("Cargo.toml").is_file() {
+        return None;
+    }
+    Some(top)
 }
 
 /// The cage's refusal text for a non-top-level attempt root, produced before
