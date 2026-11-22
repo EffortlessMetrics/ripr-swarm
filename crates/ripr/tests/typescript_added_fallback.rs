@@ -371,3 +371,200 @@ fn a_fallback_on_a_computed_operand_is_never_read_as_supplied() -> Result<(), St
         )],
     )
 }
+
+#[test]
+fn a_fallback_inside_a_conditional_or_object_literal_is_still_detected() -> Result<(), String> {
+    // The default ends at a ternary `:` or a closing brace, and the padding
+    // before it stays with the line. A ternary arm is also a predicate
+    // probe, which the boundary witness keeps below `exposed` on its own, so
+    // only the detection (the named operand) is checked there.
+    let arm = "export function label(flag: boolean, name: string): string {\n  return flag ? name || 'anon' : 'other';\n}\n";
+    assert_rows(
+        "label",
+        arm,
+        (2, "  return flag ? name : 'other';"),
+        "name",
+        &[(
+            "arm-string",
+            "expect(label(true, 'bob')).toBe('bob');",
+            "weakly_exposed",
+        )],
+    )?;
+    let object = "export function wrap(name: string): { name: string } {\n  return { name: name || 'anon' };\n}\n";
+    assert_rows(
+        "wrap",
+        object,
+        (2, "  return { name: name };"),
+        "name",
+        &[
+            (
+                "object-string",
+                "expect(wrap('Bob')).toEqual({ name: 'Bob' });",
+                "weakly_exposed",
+            ),
+            (
+                "object-empty",
+                "expect(wrap('')).toEqual({ name: 'anon' });",
+                "exposed",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_ternary_around_the_fallback_is_not_a_fallback_only_edit() -> Result<(), String> {
+    // `(name || 'anon') ? 'present' : 'missing'` also differs for a truthy
+    // name, so the input-class limitation must not withhold the credit.
+    let owner = "export function label(name: string): string {\n  return name || 'anon' ? 'present' : 'missing';\n}\n";
+    let found = finding(
+        "ternary-wrap",
+        "label",
+        owner,
+        (2, "  return name;"),
+        "expect(label('Bob')).toBe('present');",
+    )?;
+    if found.text.contains("only differs when `name` is") {
+        return Err(format!(
+            "ternary-wrap: read as a fallback-only edit: {}",
+            found.text
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_concise_arrow_owner_reads_its_own_parameter() -> Result<(), String> {
+    assert_rows(
+        "label",
+        "export const label = (name: string) => name || 'anon';\n",
+        (1, "export const label = (name: string) => name;"),
+        "name",
+        &[
+            ("arrow-empty", "expect(label('')).toBe('anon');", "exposed"),
+            (
+                "arrow-string",
+                "expect(label('bob')).toBe('bob');",
+                "weakly_exposed",
+            ),
+        ],
+    )?;
+    assert_rows(
+        "title",
+        "export const title = (opts: { name?: string }): string => opts.name || 'untitled';\n",
+        (
+            1,
+            "export const title = (opts: { name?: string }): string => opts.name;",
+        ),
+        "opts.name",
+        &[
+            (
+                "arrow-field-absent",
+                "expect(title({})).toBe('untitled');",
+                "exposed",
+            ),
+            (
+                "arrow-field-present",
+                "expect(title({ name: 'a' })).toBe('a');",
+                "weakly_exposed",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_nested_callback_parameter_is_not_the_owner_parameter() -> Result<(), String> {
+    // The inner `name` shadows the owner's: `label('')` does not reach it.
+    let owner = "export function label(name: string, xs: string[]): string[] {\n  return xs.map((name) => name || 'anon');\n}\n";
+    assert_rows(
+        "label",
+        owner,
+        (2, "  return xs.map((name) => name);"),
+        "(name) => name",
+        &[(
+            "callback-shadow",
+            "expect(label('', ['a'])).toEqual(['a']);",
+            "weakly_exposed",
+        )],
+    )
+}
+
+#[test]
+fn a_dynamic_subscript_or_reassigned_operand_is_never_read_as_supplied() -> Result<(), String> {
+    let dynamic = "export function get(opts: Record<string, string>, key: string): string {\n  return opts[key] || 'none';\n}\n";
+    assert_rows(
+        "get",
+        dynamic,
+        (2, "  return opts[key];"),
+        "opts[key]",
+        &[(
+            "dynamic-key",
+            "expect(get({ key: '', name: 'a' }, 'name')).toBe('a');",
+            "weakly_exposed",
+        )],
+    )?;
+    let reassigned = "export function label(name: string): string {\n  name = name.trim();\n  return name || 'anon';\n}\n";
+    assert_rows(
+        "label",
+        reassigned,
+        (3, "  return name;"),
+        "name",
+        &[(
+            "reassigned-empty",
+            "expect(label('')).toBe('anon');",
+            "weakly_exposed",
+        )],
+    )
+}
+
+#[test]
+fn spreads_computed_keys_and_accessors_are_unreadable_literals() -> Result<(), String> {
+    let pick =
+        "export function pick(parts: string[]): string {\n  return parts[1] || 'default';\n}\n";
+    assert_rows(
+        "pick",
+        pick,
+        (2, "  return parts[1];"),
+        "parts[1]",
+        &[
+            (
+                "position-short",
+                "expect(pick(['a'])).toBe('default');",
+                "exposed",
+            ),
+            (
+                "position-empty",
+                "expect(pick(['a', ''])).toBe('default');",
+                "exposed",
+            ),
+            (
+                "position-after-spread",
+                "expect(pick([...['a', 'b'], ''])).toBe('b');",
+                "weakly_exposed",
+            ),
+            (
+                "position-commented-spread",
+                "expect(pick([/* c */ ...['a', 'b'], ''])).toBe('b');",
+                "weakly_exposed",
+            ),
+        ],
+    )?;
+    let title = "export function title(opts: { name?: string }): string {\n  return opts.name || 'untitled';\n}\n";
+    assert_rows(
+        "title",
+        title,
+        (2, "  return opts.name;"),
+        "opts.name",
+        &[
+            (
+                "computed-override",
+                "expect(title({ name: '', ['na' + 'me']: 'Bob' })).toBe('Bob');",
+                "weakly_exposed",
+            ),
+            (
+                "getter",
+                "expect(title({ get name() { return 'Bob'; } })).toBe('Bob');",
+                "weakly_exposed",
+            ),
+        ],
+    )
+}
