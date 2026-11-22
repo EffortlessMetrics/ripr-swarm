@@ -1908,3 +1908,226 @@ fn a_blanket_call_on_another_receiver_type_is_not_reach() -> Result<(), String> 
     );
     not_withheld(&lib, "other receiver type")
 }
+
+#[test]
+fn a_blanket_hop_beside_an_unrelated_local_of_the_owner_name_still_withholds() -> Result<(), String>
+{
+    // `let render = 0;` mentions the owner's name but does not call it, so the
+    // blanket hop is still the only reach (#13041 review).
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        let render = 0;
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+        assert_eq!(render, 0);
+    }
+",
+    );
+    withheld(
+        &lib,
+        BLANKET_BEFORE,
+        BLANKET_AFTER,
+        "unrelated local of the owner name",
+    )
+}
+
+#[test]
+fn a_trait_qualified_blanket_call_is_reach() -> Result<(), String> {
+    // `ToText::to_text(&-0.0f64)` names the entry trait outright (#13041 review).
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!(ToText::to_text(&-0.0f64), \"-0.0\");
+    }
+",
+    );
+    withheld(
+        &lib,
+        BLANKET_BEFORE,
+        BLANKET_AFTER,
+        "trait-qualified blanket call",
+    )
+}
+
+#[test]
+fn a_fully_qualified_blanket_call_is_reach() -> Result<(), String> {
+    // `<f64 as ToText>::to_text(&-0.0f64)` names the impl outright (#13041 review).
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!(<f64 as ToText>::to_text(&-0.0f64), \"-0.0\");
+    }
+",
+    );
+    withheld(
+        &lib,
+        BLANKET_BEFORE,
+        BLANKET_AFTER,
+        "fully qualified blanket call",
+    )
+}
+
+#[test]
+fn a_commented_self_call_in_the_blanket_body_is_not_reach() -> Result<(), String> {
+    // The blanket body's `self.render()` is only in a comment, so the entry
+    // does not call the owner (#13041 review).
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+",
+    )
+    .replacen(
+        "        self.render()",
+        "        // self.render()\n        String::new()",
+        1,
+    );
+    not_withheld(&lib, "commented self call")
+}
+
+#[test]
+fn a_self_call_split_across_lines_in_the_blanket_body_is_reach() -> Result<(), String> {
+    // A `self` receiver on one line and `.render()` on the next is still a
+    // self call (#13041 review). The transitive-reach limit can name the
+    // chain before the indirect-owner limit does, so accept any limit here;
+    // the unit control `blanket_impl_body_calls_self_method_reads_the_masked_body`
+    // pins the self-call reading itself.
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+",
+    )
+    .replacen(
+        "        self.render()",
+        "        self\n            .render()",
+        1,
+    );
+    let findings = edited(&lib, BLANKET_BEFORE, BLANKET_AFTER)?;
+    if !findings
+        .iter()
+        .any(|finding| finding.static_limit_kind.is_some())
+    {
+        return Err(format!(
+            "multi-line self call: expected a limit, got {:?}",
+            summary(&findings)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_blanket_hop_beyond_the_related_row_cap_still_withholds() -> Result<(), String> {
+    // Nine direct weak tests fill the eight-row reveal cap; the blanket test is
+    // dropped from `finding.related_tests` but must still be judged (#13041
+    // review).
+    let mut tests = String::new();
+    for i in 0..9 {
+        tests.push_str(&format!(
+            "    #[test]
+    fn weak_{i}() {{
+        assert!(!f64::render(&{i}.5).is_empty());
+    }}
+
+"
+        ));
+    }
+    tests.push_str(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+",
+    );
+    let lib = blanket(&tests);
+    withheld(
+        &lib,
+        BLANKET_BEFORE,
+        BLANKET_AFTER,
+        "blanket hop beyond the row cap",
+    )
+}
+
+#[test]
+fn a_blanket_call_inside_an_uninvoked_closure_is_not_reach() -> Result<(), String> {
+    // The entry call is the body of a closure the test never runs, so it does
+    // not reach the owner (#13041 review).
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        let unused = || (-0.0f64).to_text();
+        assert_eq!(1, 1);
+        let _ = unused;
+    }
+",
+    );
+    not_withheld(&lib, "uninvoked closure")
+}
+
+/// A blanket `impl<T: Render> ToText for T` beside two specialized `Render`
+/// impls on `Site<u8>` and `Site<u16>`; `tests` is the test module body.
+fn specialized_blanket(tests: &str) -> String {
+    format!(
+        "pub trait Render {{
+    fn render(&self) -> String;
+}}
+
+pub trait ToText {{
+    fn to_text(&self) -> String;
+}}
+
+impl<T: Render> ToText for T {{
+    fn to_text(&self) -> String {{
+        self.render()
+    }}
+}}
+
+pub struct Site<T>(pub T);
+
+impl Render for Site<u8> {{
+    fn render(&self) -> String {{
+        if self.0 == 0 {{
+            return \"zero\".to_string();
+        }}
+        format!(\"{{}}\", self.0)
+    }}
+}}
+
+impl Render for Site<u16> {{
+    fn render(&self) -> String {{
+        format!(\"{{}}\", self.0)
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+{tests}}}
+"
+    )
+}
+
+#[test]
+fn a_blanket_hop_on_a_specialized_owner_does_not_match_a_sibling_specialization()
+-> Result<(), String> {
+    // `impl Render for Site<u8>` and `impl Render for Site<u16>` both compact
+    // to `Site`; a `Site<u16>` receiver must not credit the `Site<u8>` owner
+    // (#13041 review). A specialized owner is refused outright, so the same
+    // `Site<u8>` receiver is also refused: the compact identity cannot tell
+    // the two impls apart, and refusing keeps the withhold decision
+    // fail-closed.
+    let lib = specialized_blanket(
+        "    #[test]
+    fn small_site_renders() {
+        let s: Site<u16> = Site(1u16);
+        assert_eq!(s.to_text(), \"1\");
+    }
+",
+    );
+    let before = "            return \"zero\".to_string();";
+    let after = "            return String::from(\"zero\");";
+    keeps_gap(&lib, before, after, "sibling specialization")
+}

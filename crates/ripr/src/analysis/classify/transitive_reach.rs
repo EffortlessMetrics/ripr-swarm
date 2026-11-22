@@ -4267,7 +4267,18 @@ fn self_method_call(text: &str, method: &str) -> bool {
 }
 
 fn blanket_impl_body_calls_self_method(function: &FunctionSummary, method: &str) -> bool {
-    calls_of(function).any(|call| call.name == method && self_method_call(&call.text, method))
+    // Synthetic facts (unit tests) may carry only call facts, with no body.
+    if function.body.is_empty() {
+        return calls_of(function)
+            .any(|call| call.name == method && self_method_call(&call.text, method));
+    }
+    // Read the whole masked body, not the per-line call facts: a call fact's
+    // text is the original source line, so a `self.method()` quoted in a
+    // comment or string would match, and a `self` receiver split across two
+    // lines would not (#13041 review). Masking erases comments and strings;
+    // the body keeps its newlines, so a multi-line receiver still reads.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    self_method_call(&masked, method)
 }
 
 /// The trait path of an impl header, exactly as written
@@ -4558,23 +4569,46 @@ pub(in crate::analysis) fn test_reaches_trait_owner_through_blanket_impl(
     if super::related_tests::impl_trait_name(&owner.id.0).is_none() {
         return false;
     }
+    // A specialized self type (`impl Render for Site<u8>`) compacts to `Site`,
+    // so a `Site<u16>` receiver would match the `Site<u8>` owner. Only a plain
+    // named self type has a compact identity that is also the complete one
+    // (#13041 review).
+    if super::related_tests::impl_self_type_is_specialized(&owner.id.0) {
+        return false;
+    }
     let Some(owner_impl_type) = super::related_tests::impl_self_type_name(&owner.id.0) else {
         return false;
     };
     if super::related_tests::owner_impl_identity_shadowed(test, owner, index) {
         return false;
     }
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
     index.functions().iter().any(|entry| {
         entry.id != owner.id
             && blanket_impl_entry_reaches_owner(entry, owner, index.functions().iter())
             && {
-                let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
-                super::related_tests::method_call_resolves_to_impl_type_in(
-                    test,
-                    &masked,
-                    entry.name.as_str(),
-                    &owner_impl_type,
-                )
+                // The entry's own trait is the dispatch trait of the test's
+                // call, so a qualified `ToText::to_text(&-0.0f64)` or
+                // `<f64 as ToText>::to_text(..)` resolves (#13041 review).
+                let entry_trait = blanket_impl_header(entry)
+                    .as_deref()
+                    .and_then(header_trait_path)
+                    .and_then(|path| bare_trait_name(&path).map(str::to_string));
+                entry_trait.is_some_and(|entry_trait| {
+                    // A call inside a closure the test never runs is not an
+                    // executable call site (#13041 review).
+                    let executable_call =
+                        super::related_tests::method_call_sites(&masked, entry.name.as_str())
+                            .any(|at| !super::related_tests::call_site_in_let_closure(&masked, at));
+                    executable_call
+                        && super::related_tests::method_call_resolves_to_impl_type_and_trait_in(
+                            test,
+                            &masked,
+                            entry.name.as_str(),
+                            &owner_impl_type,
+                            &entry_trait,
+                        )
+                })
             }
     })
 }
@@ -7736,7 +7770,14 @@ fn real() {}
     }
 
     fn make_impl_fn(name: &str, impl_segment: &str, calls: Vec<(&str, &str)>) -> FunctionSummary {
-        let mut function = make_fn_with_body(name, Vec::new(), String::new());
+        // The body carries the call texts so the body-based self-call reader
+        // sees the same source the call facts describe.
+        let body = calls
+            .iter()
+            .map(|(_, text)| *text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut function = make_fn_with_body(name, Vec::new(), body);
         function.id = SymbolId(format!("src/lib.rs::{impl_segment}::{name}"));
         function.item.has_self_param = true;
         function.calls = calls
@@ -7803,6 +7844,27 @@ fn real() {}
             blanket_impl_bound_paths(complex_header, "T"),
             vec!["Render".to_string()]
         );
+    }
+
+    #[test]
+    fn blanket_impl_body_calls_self_method_reads_the_masked_body() {
+        let mut entry = make_impl_fn("to_text", "impl <T: Render> ToText for T", vec![]);
+        entry.body = "fn to_text(&self) -> String {\n    self.render()\n}".into();
+        assert!(blanket_impl_body_calls_self_method(&entry, "render"));
+        // A `self` receiver split across lines is still a self call.
+        entry.body = "fn to_text(&self) -> String {\n    self\n        .render()\n}".into();
+        assert!(blanket_impl_body_calls_self_method(&entry, "render"));
+        // A call quoted in a comment or a string is not a self call.
+        entry.body =
+            "fn to_text(&self) -> String {\n    // self.render()\n    String::new()\n}".into();
+        assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
+        entry.body =
+            "fn to_text(&self) -> String {\n    let _ = \"self.render()\";\n    String::new()\n}"
+                .into();
+        assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
+        // Another receiver is not a self call.
+        entry.body = "fn to_text(&self) -> String {\n    other.render()\n}".into();
+        assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
     }
 
     #[test]

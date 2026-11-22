@@ -194,6 +194,23 @@ fn judged_for_owner(
             Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
         )
     });
+    // The blanket hop is judged from the uncapped test set: the reveal cap can
+    // drop a blanket-only test from `finding.related_tests`, and the hop itself
+    // is the reach authority (#13041 review). The entry-name prefilter keeps
+    // the per-test function scan off owners with no blanket entry.
+    let blanket_entry_names: Vec<String> =
+        if super::related_tests::impl_trait_name(&owner.id.0).is_some() {
+            super::transitive_reach::blanket_proxy_call_names_by_owner(index)
+                .remove(&owner.name)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+    let calls_blanket_entry = |test: &TestFact| {
+        test.calls
+            .iter()
+            .any(|call| blanket_entry_names.iter().any(|name| name == &call.name))
+    };
     for test in index.tests() {
         if is_ignored(test) || test.assertions.is_empty() {
             continue;
@@ -205,7 +222,7 @@ fn judged_for_owner(
         // is #13754's saving. Only the blanket hop (#6732) is defined by the
         // test NOT spelling the name, so it is judged here without the mask.
         if !test.body.contains(&*owner.name) {
-            if is_related(test, false)
+            if calls_blanket_entry(test)
                 && super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
                     test, owner, index,
                 )
@@ -239,7 +256,7 @@ fn judged_for_owner(
         // is judged even beside one that calls the owner by name: that direct
         // call can be weak while the blanket test discriminates, so the
         // direct assertion cannot establish a gap for the combined test set.
-        if is_related(test, false)
+        if calls_blanket_entry(test)
             && reaches_owner_only_through_blanket_impl(&code, owner, test, index)
         {
             judged.push((label(test), Form::BlanketImpl));
@@ -249,7 +266,7 @@ fn judged_for_owner(
 }
 
 /// #6732: the test reaches the trait-impl `owner` through a blanket impl entry
-/// and never spells the owner's name, so no `owner(..)` call exists for the
+/// and never calls the owner directly, so no `owner(..)` call exists for the
 /// owner pin to pair with the assertion. `code` is the masked test body.
 fn reaches_owner_only_through_blanket_impl(
     code: &str,
@@ -257,7 +274,19 @@ fn reaches_owner_only_through_blanket_impl(
     test: &TestFact,
     index: &RustIndex,
 ) -> bool {
-    identifier_offsets(code, &owner.name).next().is_none()
+    // A mere mention of the owner's name (a local `let render = 0;`, a path
+    // segment) is not a call, so it must not block the judgment; only a direct
+    // call does (#13041 review).
+    let calls_owner = identifier_offsets(code, &owner.name).any(|at| {
+        let after = code[at + owner.name.len()..].trim_start();
+        let turbofish = after
+            .strip_prefix("::")
+            .and_then(|rest| rest.trim_start().strip_prefix('<'))
+            .and_then(after_generic_arguments)
+            .is_some_and(|rest| rest.trim_start().starts_with('('));
+        after.starts_with(['(', '!']) || turbofish
+    });
+    !calls_owner
         && super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
             test, owner, index,
         )

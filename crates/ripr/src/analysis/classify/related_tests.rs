@@ -1783,7 +1783,8 @@ fn find_related_tests_with_candidates<'a>(
             #[cfg(test)]
             RelatedTestCandidates::FullScan => true,
         };
-        let reaches_owner_through_blanket_impl = test_in_owner_package
+        let reaches_owner_through_blanket_impl = workspace_complete
+            && test_in_owner_package
             && blanket_entry_possible
             && owner_fn.is_some_and(|owner| {
                 super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
@@ -5334,6 +5335,28 @@ pub(in crate::analysis) fn impl_self_type_name(owner_id: &str) -> Option<String>
     compact_impl_type_name(self_ty)
 }
 
+/// Whether an impl-method owner's self type carries type arguments
+/// (`impl Render for Site<u8>`), so its compact name (`Site`) is not the
+/// complete identity and a receiver of a sibling specialization would match
+/// it (#13041 review). A plain named self type is the only one whose compact
+/// name is also its complete identity.
+pub(in crate::analysis) fn impl_self_type_is_specialized(owner_id: &str) -> bool {
+    let Some(impl_rest) = owner_id.split("::impl ").nth(1) else {
+        return false;
+    };
+    let Some(impl_body) = impl_rest.rsplit_once("::").map(|(body, _)| body) else {
+        return false;
+    };
+    let self_ty = match impl_body.rsplit_once(" for ") {
+        Some((_, ty)) => ty,
+        None => impl_body,
+    };
+    let ty = self_ty.trim();
+    let ty = ty.strip_prefix('&').unwrap_or(ty).trim();
+    let ty = ty.strip_prefix("mut ").unwrap_or(ty).trim();
+    ty.contains('<')
+}
+
 /// Trait of a trait-impl method owner from its symbol id
 /// (`src/lib.rs::impl Render for f64::render` → `Render`). `None` for
 /// inherent impls and free functions, and for a generic trait
@@ -6239,7 +6262,10 @@ fn text_resolves_method_to_type(
 
 /// Byte offsets of every `method` token in `text` at an identifier boundary
 /// and followed (after whitespace) by `(`: each spelling that may call it.
-fn method_call_sites<'t>(text: &'t str, method: &'t str) -> impl Iterator<Item = usize> + 't {
+pub(in crate::analysis) fn method_call_sites<'t>(
+    text: &'t str,
+    method: &'t str,
+) -> impl Iterator<Item = usize> + 't {
     let mut search = 0usize;
     std::iter::from_fn(move || {
         if method.is_empty() {
@@ -6255,6 +6281,29 @@ fn method_call_sites<'t>(text: &'t str, method: &'t str) -> impl Iterator<Item =
         }
         None
     })
+}
+
+/// Whether the call of `method` at byte `at` of `masked` is the body of a
+/// closure bound by a `let` (`let f = || recv.method();`), which the test does
+/// not run unless the binding is later called. A call in an assertion operand
+/// or a plain initializer is executable (#13041 review). Fail-closed: a
+/// closure body we cannot bound counts as uninvoked.
+pub(in crate::analysis) fn call_site_in_let_closure(masked: &str, at: usize) -> bool {
+    let start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+    let statement = &masked[start..at];
+    let Some(let_at) = statement.rfind("let ") else {
+        return false;
+    };
+    let Some(eq) = statement[let_at..].find('=') else {
+        return false;
+    };
+    let initializer = statement[let_at + eq + 1..].trim_start();
+    let initializer = initializer
+        .strip_prefix("move ")
+        .unwrap_or(initializer)
+        .trim_start();
+    initializer.starts_with("||")
+        || (initializer.starts_with('|') && initializer[1..].contains('|'))
 }
 
 /// Whether the call of `method` spelled at byte `at` of `text` resolves its
@@ -6849,6 +6898,19 @@ pub(in crate::analysis) fn method_call_resolves_to_impl_type_in(
     impl_type: &str,
 ) -> bool {
     method_call_resolves_to_impl_in(test, masked_body, method, impl_type, None)
+}
+
+/// [`method_call_resolves_to_impl_type_in`] with the dispatch trait known, so
+/// a qualified `Trait::method(&receiver)` or `<Type as Trait>::method(..)`
+/// resolves to the impl (#13041 review).
+pub(in crate::analysis) fn method_call_resolves_to_impl_type_and_trait_in(
+    test: &TestSummary,
+    masked_body: &str,
+    method: &str,
+    impl_type: &str,
+    impl_trait: &str,
+) -> bool {
+    method_call_resolves_to_impl_in(test, masked_body, method, impl_type, Some(impl_trait))
 }
 
 fn method_call_resolves_to_impl_in(
@@ -10864,6 +10926,26 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             impl_self_type_name("src/lib.rs::size_hint").as_deref(),
             None
         );
+    }
+
+    #[test]
+    fn impl_self_type_is_specialized_reads_type_arguments() {
+        // A plain named self type is its own complete identity.
+        assert!(!impl_self_type_is_specialized(
+            "src/lib.rs::impl Render for f64::render"
+        ));
+        assert!(!impl_self_type_is_specialized(
+            "src/lib.rs::impl Iterator for WhileSome::size_hint"
+        ));
+        // A type argument makes the compact name (`Site`) incomplete.
+        assert!(impl_self_type_is_specialized(
+            "src/lib.rs::impl Render for Site<u8>::render"
+        ));
+        assert!(impl_self_type_is_specialized(
+            "src/lib.rs::impl Render for &Site<u8>::render"
+        ));
+        // A free function has no impl self type.
+        assert!(!impl_self_type_is_specialized("src/lib.rs::render"));
     }
 
     #[test]
