@@ -4821,8 +4821,10 @@ fn trusted_macro_sites_in(
     // (a bench's `#[macro_use] extern crate bencher;`) is kept per root.
     let mut by_root = CrateMacroBindings::new();
     let mut retained = WorkspaceMacroSiteIndex::default();
-    // One foreign glob import, `#[macro_use]` or unparsable file makes
-    // every trusted name ambiguous, and most workspaces have one. Scan
+    // One `#[macro_use]` or unparsable file makes every trusted name
+    // ambiguous. A foreign glob makes every name but the core prelude
+    // macros ambiguous (#16060), so it saturates only beside another site
+    // for those. Scan
     // the files that can do that first; once every name is ambiguous for
     // every test, no later file (scoped sites included) changes an answer,
     // so the rest are skipped. A refusal that needs a site completes the

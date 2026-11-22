@@ -232,6 +232,38 @@ and does not consult the edition. In a 2015-edition crate a non-root file's
 `extern crate dep as name;` could hide a foreign glob there. That is an accepted
 residual; the scan has no edition input.
 
+### A glob cannot rebind a core prelude macro (#16060)
+
+rustc rejects a bare macro call whose name both a glob import and the macro
+prelude supply: `error[E0659]: ... is ambiguous` ("a conflict between a name
+from a glob import and an outer scope"). This holds in every edition (2015,
+2018, 2021 and 2024 were checked with rustc 1.100), for a glob at file level,
+in a module reached through `use super::*` or another glob chain, for a glob
+of a workspace module or an outside crate, and under `#![no_std]`, whose
+prelude keeps `core`'s macros. A glob that brings an attribute named `test`
+fails the same way for `#[test]`, and so does a glob that brings a module
+named like an extern-prelude crate for a qualified `pretty_assertions::`
+call.
+
+So in a crate that compiles, a glob cannot silently replace these names at a
+bare call: `assert`, `assert_eq`, `assert_ne`, `debug_assert`,
+`debug_assert_eq`, `debug_assert_ne`, `matches`, `panic` and `unreachable`.
+A foreign glob reports no binding site for them, so it no longer refuses a
+test's standard assertions or makes a standard wrapper call (`assert!`
+around `assert_eq!`) a named wrapper. It still reports every other trusted
+name, including `vec` and `format`, which a `#![no_std]` prelude lacks, the
+claims and expect-test macros, and `json`.
+
+The rule does not reach a scope under `#[no_implicit_prelude]`, where a glob
+does bind the name without error; that attribute reports its own site for
+every trusted name. An explicit import, a `macro_rules!` definition, a
+`#[macro_use]` crate and an item-position macro keep their sites. `#![no_core]`
+crates (unstable, rustc-internal) are not modeled.
+
+A workspace with a foreign glob no longer saturates the binding-site scan from
+the glob alone, so the scan reads the rest of the index when no other site
+binds the core names.
+
 ### Audited pass-through wrappers confine their argument mentions (#14116)
 
 A trusted name mentioned in another macro's arguments is a binding site for

@@ -6686,7 +6686,7 @@ mod tests {
     }
 
     /// #5320: the owner-pin macro-binding union spans every indexed file, so
-    /// a dependent file's foreign glob import makes `assert_eq!` ambiguous
+    /// a dependent file's foreign glob import makes `vec!` ambiguous
     /// for the changed package's tests too. The narrowed scope withholds that
     /// file but folds its bindings in, so the equality-assertion decision
     /// matches the full closure's. The glob is load-bearing: without it the
@@ -6694,7 +6694,10 @@ mod tests {
     #[test]
     fn dependent_scope_folds_in_withheld_macro_bindings() -> Result<(), String> {
         use dependent_scope::DependentScopeMode;
+        // `vec!` is a name a glob can bind; a glob cannot rebind the bare
+        // `assert_eq!` (#16060).
         let gauge_test = "#[test]\nfn gauge_pins_both_arms() {\n    \
+                          let _ = vec![0u8];\n    \
                           assert_eq!(scope_a::quarble_gauge(true), true);\n    \
                           assert_eq!(scope_a::quarble_gauge(false), false);\n}\n";
         // A re-exported glob is workspace-wide; a private one at a crate

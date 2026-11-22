@@ -1824,6 +1824,7 @@ fn macro_binding_sites_in_tree(
                         ambiguous.extend(
                             all(line, MacroBindingKind::ForeignGlob(path), private)
                                 .into_iter()
+                                .filter(|(name, _)| !is_core_prelude_macro(name))
                                 .map(|(name, mut site)| {
                                     site.module_local = confined;
                                     (name, site)
@@ -1831,19 +1832,24 @@ fn macro_binding_sites_in_tree(
                         );
                         continue;
                     };
-                    ambiguous.extend(trusted.iter().map(|name| {
-                        (
-                            (*name).to_string(),
-                            MacroBindingSite {
-                                line,
-                                kind: MacroBindingKind::ForeignGlob(path.clone()),
-                                scope: Some(scope),
-                                scope_bytes: Some(scope_bytes),
-                                crate_local: private,
-                                module_local: false,
-                            },
-                        )
-                    }));
+                    ambiguous.extend(
+                        trusted
+                            .iter()
+                            .filter(|name| !is_core_prelude_macro(name))
+                            .map(|name| {
+                                (
+                                    (*name).to_string(),
+                                    MacroBindingSite {
+                                        line,
+                                        kind: MacroBindingKind::ForeignGlob(path.clone()),
+                                        scope: Some(scope),
+                                        scope_bytes: Some(scope_bytes),
+                                        crate_local: private,
+                                        module_local: false,
+                                    },
+                                )
+                            }),
+                    );
                     continue;
                 }
                 let name = if let Some(rename) = item.rename() {
@@ -2665,6 +2671,29 @@ fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
         .any(|glob| segments.iter().map(String::as_str).eq(glob.iter().copied()))
 }
 
+/// Whether `name` is a macro of `core`'s macro prelude, which every crate
+/// that compiles with an implicit prelude has, `#![no_std]` included.
+///
+/// A glob import cannot rebind a bare call of such a name (#16060): rustc
+/// rejects a call whose name both a glob import and the macro prelude
+/// supply (E0659, every edition). `#[no_implicit_prelude]` lifts that rule,
+/// and it reports its own site. A glob can still bind every other trusted
+/// name, `vec` and `format` too, which a `#![no_std]` prelude lacks.
+fn is_core_prelude_macro(name: &str) -> bool {
+    matches!(
+        name,
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+            | "matches"
+            | "panic"
+            | "unreachable"
+    )
+}
+
 /// Whether a plain `use` names a standard-library macro at its own path
 /// (`use std::vec;`, `use alloc::vec;`, `use core::assert_eq;`), so the name
 /// it binds is the standard macro (#15263). Only the crates that export the
@@ -2672,8 +2701,7 @@ fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
 fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
     let exporters: &[&str] = match name {
         "vec" | "format" => &["std", "alloc"],
-        "assert" | "assert_eq" | "assert_ne" | "debug_assert" | "debug_assert_eq"
-        | "debug_assert_ne" | "matches" | "panic" | "unreachable" => &["std", "core"],
+        name if is_core_prelude_macro(name) => &["std", "core"],
         _ => &[],
     };
     let segments = use_tree_segments(item);

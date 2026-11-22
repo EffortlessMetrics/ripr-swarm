@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A glob import from another crate (`use rayon::prelude::*;`, `use rmcp::model::*;`) no longer leaves every plain `assert!`, `assert_eq!` or `assert_ne!` in its reach "not credited". rustc rejects a bare call whose name both a glob and the standard prelude supply, so a glob cannot silently replace those macros. It still blocks names it can bind, such as `vec!`, `format!` and the claims macros, and `#[no_implicit_prelude]`, explicit imports, local definitions and `#[macro_use]` keep their refusals (#16060).
