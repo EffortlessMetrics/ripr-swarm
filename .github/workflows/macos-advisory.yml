@@ -52,13 +52,8 @@ concurrency:
 # compiling when the 40-minute limit cancelled the job, as on every night
 # from 2026-11-12. A cancelled job also skips its cache save, so no later
 # night started any warmer. The limit is unchanged; each job now carries
-# part of the work. Clippy fits (25 to 30 minutes cold). The library tests
-# did not fit as one job either: the `ripr` test build alone takes about 30
-# minutes and the tests about 14, and a dependency cache saves one minute of
-# that. So the build and the run are separate jobs: `lib-build` compiles the
-# test executable and hands it over as an artifact, `macos-advisory-lib-tests`
-# runs that executable. Both hosted jobs check out to the same path, so the
-# paths compiled into the executable hold in the second job.
+# half the work and saves its own cache. Clippy fits (25 to 30 minutes
+# cold). The library tests do not yet: see the step below.
 # The integration suites (cli_smoke, portable_consumer*, mcp_stdio) are not run
 # here; the TMPDIR-symlink experiment from #8391 is separate follow-up.
 
@@ -67,11 +62,11 @@ jobs:
     name: macos-advisory-${{ matrix.check }}
     if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: macos-15
-    timeout-minutes: 70
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        check: [clippy, lib-build]
+        check: [clippy, lib-tests]
 
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -111,26 +106,30 @@ jobs:
           echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/clippy.status"
           exit 0
 
-      # This job only builds, so the step may use the job's 40 minutes less
-      # setup and upload. The one `rustc` needs about 14 GB on a 7 GB runner;
-      # observed builds took 28 to over 34 minutes.
-      - name: Build the library test executable (advisory outcome)
-        if: matrix.check == 'lib-build'
-        timeout-minutes: 65
+      - name: Prepare locked JSON owner-return fixture dependencies
+        if: matrix.check == 'lib-tests'
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+
+      - name: Prepare locked proptest profile dependencies
+        if: matrix.check == 'lib-tests'
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
+      # This check does not fit the job limit yet (#8391). On 2026-11-21
+      # (run 44952411009) dependencies compiled in one minute, the `ripr`
+      # test build itself took 30, and 17,132 of 20,887 tests had run when the
+      # job was cancelled: about 45 minutes, and a dependency cache saves one
+      # of them. The step deadline makes that an evidence failure of this job
+      # with its log uploaded, instead of a cancelled job. Fitting it needs
+      # the build and the run in separate jobs.
+      - name: Library tests (advisory outcome)
+        if: matrix.check == 'lib-tests'
+        timeout-minutes: 34
         shell: bash
         run: |
-          mkdir -p "$RUNNER_TEMP/macos-advisory" "$RUNNER_TEMP/macos-lib-binary"
+          mkdir -p "$RUNNER_TEMP/macos-advisory"
           set +e
-          cargo test -p ripr --lib --no-run 2>&1 | tee "$RUNNER_TEMP/macos-advisory/lib-build.log"
-          echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/lib-build.status"
-          # Cargo names the one executable it built for `--lib`:
-          # `Executable unittests src/lib.rs (target/debug/deps/ripr-<hash>)`.
-          # The hosted log colors the word `Executable`, so the pattern does
-          # not anchor on the start of the line.
-          exe=$(sed -n 's/^.*Executable.* unittests src\/lib\.rs (\(.*\))$/\1/p' "$RUNNER_TEMP/macos-advisory/lib-build.log" | tail -n 1)
-          if [ -n "$exe" ] && [ -f "$exe" ]; then
-            cp "$exe" "$RUNNER_TEMP/macos-lib-binary/ripr-lib-tests"
-          fi
+          cargo test -p ripr --lib --no-fail-fast 2>&1 | tee "$RUNNER_TEMP/macos-advisory/lib-tests.log"
+          echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/lib-tests.status"
           exit 0
 
       - name: Summarize and enforce clippy evidence
@@ -154,116 +153,8 @@ jobs:
             echo "| clippy -p ripr -p xtask --all-targets | $(cat "$d/clippy.status") | advisory |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Summarize and enforce library build evidence
-        if: matrix.check == 'lib-build'
-        shell: bash
-        run: |
-          d="$RUNNER_TEMP/macos-advisory"
-          missing=0
-          for f in lib-build.log lib-build.status; do
-            if [ ! -s "$d/$f" ]; then
-              echo "::error::missing evidence file $f"
-              missing=1
-            fi
-          done
-          [ "$missing" -eq 0 ] || exit 1
-          {
-            echo "## macOS advisory"
-            echo
-            echo "| Check | Exit status | Detail |"
-            echo "| --- | --- | --- |"
-            echo "| test -p ripr --lib --no-run | $(cat "$d/lib-build.status") | builds the executable the library test job runs |"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ ! -s "$RUNNER_TEMP/macos-lib-binary/ripr-lib-tests" ]; then
-            echo "::error::the library test executable was not built; the library test job has nothing to run"
-            exit 1
-          fi
-
-      - name: Hand over the library test executable
-        if: matrix.check == 'lib-build'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: macos-advisory-lib-test-binary
-          path: ${{ runner.temp }}/macos-lib-binary/ripr-lib-tests
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload macOS advisory logs
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: macos-advisory-logs-${{ matrix.check }}
-          path: ${{ runner.temp }}/macos-advisory/
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # The library tests, run from the executable `lib-build` compiled. This is
-  # the same test binary `cargo test -p ripr --lib` would run, started the way
-  # Cargo starts it: from the package directory with `CARGO_MANIFEST_DIR` set.
-  macos-advisory-lib-tests:
-    name: macos-advisory-lib-tests
-    needs: macos-advisory
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'macos-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
-    runs-on: macos-15
-    timeout-minutes: 70
-
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-
-      # Tests start `cargo` and `rustc` on fixture workspaces.
-      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
-
-      - name: Record host
-        shell: bash
-        run: |
-          uname -a
-          sw_vers
-          rustc --version
-          cargo --version
-
-      - name: Prepare locked fallible-literal owner-return fixture dependencies
-        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
-
-      - name: Prepare locked JSON owner-return fixture dependencies
-        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
-
-      - name: Prepare locked proptest profile dependencies
-        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
-
-      # PROOF-ONLY (#16104): the json-release test borrows the workspace's own
-      # locked serde_json from CARGO_HOME.
-      - name: Prepare locked workspace dependencies
-        run: cargo fetch --locked
-
-      # No `continue-on-error`: without the executable there is no evidence,
-      # and the job says so by failing here.
-      - name: Fetch the library test executable
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          name: macos-advisory-lib-test-binary
-          path: ${{ runner.temp }}/macos-lib-binary
-
-      - name: Library tests (advisory outcome)
-        timeout-minutes: 34
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/macos-advisory"
-          chmod +x "$RUNNER_TEMP/macos-lib-binary/ripr-lib-tests"
-          export CARGO_MANIFEST_DIR="$GITHUB_WORKSPACE/crates/ripr"
-          export CARGO="$(command -v cargo)"
-          # `.cargo/config.toml` `[env]` points the temp directory at `target`.
-          mkdir -p "$GITHUB_WORKSPACE/target"
-          export TEMP="$GITHUB_WORKSPACE/target" TMP="$GITHUB_WORKSPACE/target" TMPDIR="$GITHUB_WORKSPACE/target"
-          cd "$CARGO_MANIFEST_DIR"
-          set +e
-          "$RUNNER_TEMP/macos-lib-binary/ripr-lib-tests" 2>&1 | tee "$RUNNER_TEMP/macos-advisory/lib-tests.log"
-          echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/lib-tests.status"
-          exit 0
-
       - name: Summarize and enforce library test evidence
+        if: matrix.check == 'lib-tests'
         shell: bash
         run: |
           d="$RUNNER_TEMP/macos-advisory"
@@ -276,20 +167,18 @@ jobs:
           done
           [ "$missing" -eq 0 ] || exit 1
           tests=$(cat "$d/lib-tests.status")
-          # Tests print nested lines; the suite owns the first `running` and the last result.
-          expected=$(sed -n 's/^running \([0-9]*\) tests\{0,1\}$/\1/p' "$d/lib-tests.log" | head -n 1)
           result=$(grep -E '^test result:' "$d/lib-tests.log" | tail -n 1 || true)
-          counts=$(printf '%s' "$result" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed; \([0-9]*\) failed; \([0-9]*\) ignored; .*/\1 \2 \3/p')
-          read -r passed failed ignored <<< "${counts:-0 0 0}"
+          passed=$(printf '%s' "$result" | sed -n 's/^test result: [a-zA-Z]*\. \([0-9]*\) passed.*/\1/p')
           {
             echo "## macOS advisory"
             echo
             echo "| Check | Exit status | Detail |"
             echo "| --- | --- | --- |"
-            echo "| ripr library test executable | $tests | ${result:-no test result line} |"
+            echo "| test -p ripr --lib | $tests | ${result:-no test result line} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "$expected" ] || [ "$passed" -eq 0 ] || [ "$((passed + failed + ignored))" -ne "$expected" ]; then
-            echo "::error::macOS library test run did not finish the ${expected:-unknown} tests it started (last result: ${result:-none}); evidence is not established"
+          if [ -z "$passed" ] || [ "$passed" -eq 0 ]; then
+            grep -q '^error: could not compile' "$d/lib-tests.log" && kind="did not compile (build failure, not a test failure)" || kind="executed zero tests; evidence is not established"
+            echo "::error::macOS library test run $kind"
             exit 1
           fi
 
@@ -297,7 +186,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: macos-advisory-logs-lib-tests
+          name: macos-advisory-logs-${{ matrix.check }}
           path: ${{ runner.temp }}/macos-advisory/
           if-no-files-found: ignore
           retention-days: 14
