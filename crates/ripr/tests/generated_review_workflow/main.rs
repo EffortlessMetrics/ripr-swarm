@@ -3,7 +3,7 @@ use std::fs;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[path = "common/mod.rs"]
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
@@ -3712,7 +3712,7 @@ fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
 }
 
 /// The composite action the generated workflow installs through (#5409).
-const RIPR_CHECK_ACTION: &str = include_str!("../../../.github/actions/ripr-check/action.yml");
+const RIPR_CHECK_ACTION: &str = include_str!("../../../../.github/actions/ripr-check/action.yml");
 
 /// The version the generated `Install ripr` step pins. The action tag and
 /// its `version` input must name the same release, and the step runs no

@@ -838,6 +838,23 @@ fn sample_diff() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample/example.diff")
 }
 
+/// `agent start --out` must stay inside `--root` (#15258), so tests that run
+/// against `fixtures/boundary_gap/input` write beneath that fixture's ignored
+/// `target/` directory instead of the system temp directory. Returns the
+/// directory and the root-relative `--out` spelling.
+fn agent_start_fixture_out(label: &str) -> (PathBuf, String) {
+    let unique = unique_temp_workspace(label);
+    let name = unique
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| label.to_string());
+    let relative = format!("target/ripr/{name}");
+    let dir = workspace_root()
+        .join("fixtures/boundary_gap/input")
+        .join(&relative);
+    (dir, relative)
+}
+
 /// Make a fixture root its own Git repository. Cargo pins TMPDIR under this
 /// checkout's `target/`, and `init --ci` refuses a root below a Git top level
 /// (#15389), so an adopter-shaped CI fixture must be the repository root.
@@ -9688,10 +9705,8 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
 #[test]
 fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn std::error::Error>> {
     let seam_id = "67fc764ba37d77bd";
-    let out_dir = unique_temp_workspace("agent-start");
-    let out = out_dir
-        .to_str()
-        .ok_or("workflow output path should be utf-8")?;
+    let (out_dir, out) = agent_start_fixture_out("agent-start");
+    let out = out.as_str();
 
     let output = run_ripr_in_workspace(&[
         "agent",
@@ -9746,10 +9761,8 @@ fn agent_start_writes_source_edit_free_workflow_packet() -> Result<(), Box<dyn s
 #[test]
 fn agent_start_unknown_seam_id_exits_3_while_other_failures_exit_2()
 -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = unique_temp_workspace("agent-start-unknown-seam");
-    let out = out_dir
-        .to_str()
-        .ok_or("workflow output path should be utf-8")?;
+    let (out_dir, out) = agent_start_fixture_out("agent-start-unknown-seam");
+    let out = out.as_str();
 
     let unknown = run_ripr_in_workspace(&[
         "agent",
@@ -9875,10 +9888,8 @@ fn agent_start_config_hidden_known_seam_is_a_policy_refusal()
 #[test]
 fn agent_start_packet_discloses_the_command_shell_assumption()
 -> Result<(), Box<dyn std::error::Error>> {
-    let out_dir = unique_temp_workspace("agent-start-shell-disclosure");
-    let out = out_dir
-        .to_str()
-        .ok_or("workflow output path should be utf-8")?;
+    let (out_dir, out) = agent_start_fixture_out("agent-start-shell-disclosure");
+    let out = out.as_str();
 
     let output = run_ripr_in_workspace(&[
         "agent",
@@ -37517,6 +37528,97 @@ fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Erro
     Ok(())
 }
 
+/// docs/EXIT_CODES.md: an unknown `--seam-id` is one typed refusal with one
+/// exit, `3`, on `agent repair --phase before` too. A stale cross-namespace
+/// id (`probe:`, `gap:`, `file:line`) used to exit `2` there while a plain
+/// unknown seam id and every sibling surface exited `3` (#15311).
+#[test]
+fn agent_repair_stale_cross_namespace_seam_id_is_a_typed_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, _diff) = agent_brief_sample_workspace("agent-repair-stale-seam-id")?;
+    // The workspace sits under this checkout's `target/`. A repair start
+    // refuses a root below a Git top-level (#15363) or without a concrete
+    // HEAD with exit 2 before it reads the seam id, so the fixture must be
+    // its own committed repository for the plain unknown id to reach the
+    // seam refusal.
+    init_git_fixture_repo(&root)?;
+    let root_path = root.display().to_string();
+    for seam_id in [
+        "probe:src_lib.rs:predicate:566edf6b",
+        "gap:0123456789abcdef",
+        "src/lib.rs:999",
+        "f3c9e4d21a0b7c88",
+    ] {
+        for json in [false, true] {
+            let mut args = vec![
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--root",
+                &root_path,
+                "--seam-id",
+                seam_id,
+            ];
+            if json {
+                args.push("--json");
+            }
+            let output = run_ripr(&args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(3),
+                "{seam_id} (json={json}) must take the refusal exit: {stderr}"
+            );
+            assert!(
+                output.stdout.is_empty(),
+                "agent repair --phase before refusals keep stdout empty: {:?}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
+    // The attempts directory may hold only its dot-named lock files.
+    let attempts = root.join("target/ripr/repair-attempts");
+    if attempts.exists() {
+        for entry in std::fs::read_dir(&attempts)? {
+            let name = entry?.file_name();
+            assert!(
+                name.to_string_lossy().starts_with('.'),
+                "a refused seam id starts no attempt: {name:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `ripr reports ci-summary` writes its Markdown bytes through its own
+/// writer; a closed reader must still get the shared quiet exit 2, not a
+/// "could not write the summary ... summary path" report.
+#[test]
+fn ci_summary_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    // Close the reader before spawning: dropping `Child::stdout` after spawn
+    // races with the child's write, and a summary that fits the pipe buffer
+    // would then exit 0.
+    let (reader, writer) = std::io::pipe()?;
+    drop(reader);
+    let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
+        .args(["reports", "ci-summary", "--root"])
+        .arg(&sample)
+        .args(["--base-ref", "main"])
+        .stdin(Stdio::null())
+        .stdout(writer)
+        .stderr(Stdio::piped())
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        stderr.trim().is_empty(),
+        "a closed reader must not produce an error report: {stderr}"
+    );
+    Ok(())
+}
+
 #[test]
 fn review_guidance_windows_preserve_output_and_bound_retained_payloads()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -37978,7 +38080,8 @@ fn init_warns_when_the_root_has_no_source_ripr_reads() -> Result<(), String> {
 /// root, the shallow doctor marker scan finds nothing at the root. With the
 /// `ripr.toml` that `init` writes there, doctor names the languages the config
 /// enables instead of "none detected"; without a config the ordinary line
-/// stays.
+/// stays. `init` only enables TypeScript when its adapter is compiled in.
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn doctor_names_config_enabled_languages_when_the_root_scan_finds_none() -> Result<(), String> {
     let repo = unique_temp_workspace("doctor-monorepo-languages");
@@ -38780,6 +38883,190 @@ fn tree_entries(dir: &Path) -> Result<Vec<PathBuf>, String> {
         }
     }
     Ok(found)
+}
+
+/// #15258: `--class` names report files, so a traversal-shaped value must be
+/// refused instead of writing outside `target/ripr/reports`.
+#[test]
+fn policy_preview_promote_refuses_a_class_that_is_not_a_plain_label() -> Result<(), std::io::Error>
+{
+    let root = unique_temp_workspace("preview-promote-bad-class");
+    std::fs::create_dir_all(&root)?;
+    let root_text = root.display().to_string();
+    for class in ["../../../../zz", "a/b", "a.b"] {
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &[
+                "policy",
+                "preview-promote",
+                "--root",
+                root_text.as_str(),
+                "--language",
+                "python",
+                "--class",
+                class,
+            ],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_ne!(output.status.code(), Some(0), "{class}: {stderr}");
+        assert!(
+            stderr.contains("--class must be letters"),
+            "{class}: {stderr}"
+        );
+        assert!(!root.join("target/zz.json").exists(), "{class} escaped");
+        assert!(!root.join("target/ripr/reports").exists(), "{class} wrote");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #15258: `agent start --out` is documented as relative to `--root`.
+#[test]
+fn agent_start_refuses_an_out_directory_outside_the_root() -> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("agent-start-out-escape");
+    std::fs::create_dir_all(&root)?;
+    let root_text = root.display().to_string();
+    let outside = unique_temp_workspace("agent-start-out-escape-target");
+    let outside_text = outside.display().to_string();
+    for out in ["../escape-15258", outside_text.as_str()] {
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &[
+                "agent",
+                "start",
+                "--root",
+                root_text.as_str(),
+                "--seam-id",
+                "any",
+                "--out",
+                out,
+            ],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_ne!(output.status.code(), Some(0), "{out}: {stderr}");
+        assert!(stderr.contains("agent start --out"), "{out}: {stderr}");
+        assert!(stderr.contains("outside --root"), "{out}: {stderr}");
+        assert!(
+            stderr.contains("--out target/ripr/workflow"),
+            "{out}: {stderr}"
+        );
+    }
+    assert!(!outside.exists(), "refused start created the outside dir");
+    let escaped = root
+        .parent()
+        .map(|parent| parent.join("escape-15258"))
+        .ok_or_else(|| std::io::Error::other("temp root has a parent"))?;
+    assert!(!escaped.exists(), "refused start created ../escape-15258");
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #15258 review: an absolute `--out` inside a root typed as `.` is still
+/// accepted. On Windows the canonical root is a verbatim `\\?\` path, so a
+/// lexical comparison would refuse this plain absolute path.
+#[test]
+fn agent_start_accepts_an_absolute_out_directory_inside_a_dot_root() -> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("agent-start-out-absolute-inside");
+    std::fs::create_dir_all(&root)?;
+    let inside = root.join("target").join("ripr").join("workflow");
+    let inside_text = inside.display().to_string();
+    for out in [inside_text.as_str(), "./target/ripr/workflow"] {
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &[
+                "agent",
+                "start",
+                "--root",
+                ".",
+                "--seam-id",
+                "any",
+                "--out",
+                out,
+            ],
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(!stderr.contains("outside --root"), "{out}: {stderr}");
+        // The guard passed and the command reached the seam lookup.
+        assert!(
+            stderr.contains("seam_id any was not found"),
+            "{out}: {stderr}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #15258: a symlink inside the root that points outside it must not let
+/// `--out link/x` write outside `--root`.
+#[cfg(unix)]
+#[test]
+fn agent_start_refuses_an_out_directory_through_a_symlink_outside_the_root()
+-> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("agent-start-out-symlink");
+    std::fs::create_dir_all(&root)?;
+    let outside = unique_temp_workspace("agent-start-out-symlink-target");
+    std::fs::create_dir_all(&outside)?;
+    std::os::unix::fs::symlink(&outside, root.join("link"))?;
+    let root_text = root.display().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &[
+            "agent",
+            "start",
+            "--root",
+            root_text.as_str(),
+            "--seam-id",
+            "any",
+            "--out",
+            "link/x",
+        ],
+    )?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let created = outside.join("x").exists();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&outside);
+    assert_ne!(output.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("outside --root"), "{stderr}");
+    assert!(!created, "refused start wrote through the symlink");
+    Ok(())
+}
+
+/// #15258 review: a dangling symlink inside the root does not canonicalize,
+/// so the ancestor walk must refuse it instead of stepping past it.
+#[cfg(unix)]
+#[test]
+fn agent_start_refuses_an_out_directory_through_a_dangling_symlink() -> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("agent-start-out-dangling");
+    std::fs::create_dir_all(&root)?;
+    let missing = unique_temp_workspace("agent-start-out-dangling-target");
+    std::os::unix::fs::symlink(&missing, root.join("link"))?;
+    let root_text = root.display().to_string();
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&root),
+        &[
+            "agent",
+            "start",
+            "--root",
+            root_text.as_str(),
+            "--seam-id",
+            "any",
+            "--out",
+            "link/x",
+        ],
+    )?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let created = missing.exists();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_dir_all(&missing);
+    assert_ne!(output.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("outside --root"), "{stderr}");
+    assert!(!created, "refused start created the dangling target");
+    Ok(())
 }
 
 /// #15326: a clean checkout of any default branch whose base resolves to the

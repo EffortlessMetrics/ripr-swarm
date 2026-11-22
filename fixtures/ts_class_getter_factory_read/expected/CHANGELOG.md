@@ -196,3 +196,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — ts_class_getter_factory_read (16)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless ts_class_getter_factory_read --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`

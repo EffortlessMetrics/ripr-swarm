@@ -1896,6 +1896,66 @@ mutant calibrates the rule; ripr reports only the static shape.
     helper substitution, which keeps its own module-attribute rule, and
     fixture definitions' imports are not rewritten.
 
+34. **An edited member of a literal membership collection needs an input
+    equal to that member** (#15632). The rule only withholds `exposed`; it
+    never credits and never moves another verdict up. It reads the parsed
+    owner module on the new side and on the old side (the new source with
+    the changed line restored) and engages on the one `<subject> in
+    <display>` or `<subject> not in <display>` comparison whose lines
+    include the changed line and whose members differ, wherever it sits in
+    the changed statement: an `if`/`elif`/`while` condition, an `and`/`or`
+    compound, `not (...)`, a parenthesized test, a one-line `if`, a
+    `return`, an assignment, or a display spanning several lines. The
+    display is a tuple, list or set of scalar literals (numbers,
+    `True`/`False`, `None`, plain strings without escapes), at least one
+    member is kept, and the subject text and operator match on both sides.
+    When the changed line also edits code outside the display (`and` to
+    `or`, added `not` or parentheses, a one-line `if` whose body changes),
+    or some member on either side is not such a literal (`"\t"`, `1e0`,
+    `0x1`, a name, `b"y"`), the change reads `weakly_exposed` without
+    reading rows, naming the first readable altered member when there is
+    one. A removed-only line inside a multi-line display is read from the
+    old file and the new one: the old comparison holding the line pairs with
+    the new comparison whose members are the old ones without the line's
+    elements, and the same hit rule applies; when no such new comparison is
+    found the change reads `weakly_exposed`. The subject is
+    a bare owner parameter `p`, or `p.lower()`, `p.casefold()`,
+    `p.upper()`, `p.strip()` or `str(p)`. The altered members are those
+    present on one side only under Python equality (`True == 1`,
+    `False == 0`, `1 == 1.0`): a removed member, an added member, or both
+    for a changed one. A strong related call row hits an altered member
+    when its literal input equals the member and the old and new membership
+    results for that input differ; a compound condition may still not flip
+    on that input, which the rule accepts because it never credits by
+    itself. A string input counts under a case normalization of the
+    parameter (`val = val.lower()`, `.casefold()`, `.upper()`, before the
+    comparison and outside any loop) or a transforming subject only when the
+    transform leaves it unchanged (for `strip`, an ASCII string with no
+    surrounding whitespace); a non-string counts under a normalization only
+    when each normalization line sits directly under
+    `if isinstance(<subject>, str):`, and never under a transforming
+    subject. Any other rebinding of the parameter before the comparison, a
+    walrus or `;`-separated statement binding it on the comparison line, any
+    rebinding inside a loop around it, and any rebinding after a `while`
+    comparison places no input. A plain `val = val in (...)` assigns after
+    the comparison reads the call input, so it keeps the input. Every altered
+    member needs a hit, or the change reads `weakly_exposed` with the first
+    unhit member named as the boundary discriminator (`val == "y"`),
+    including when no strong row binds a literal, some strong call goes
+    unread, or the rebinding is not modelled. A changed line that holds
+    only literal elements inside a display an `in` comparison owns, whose
+    old side cannot be paired (the restored old source does not parse, or
+    its comparisons do not match the new ones), reads `weakly_exposed` the
+    same way. Removing `1` while `True` stays alters nothing, so a row
+    passing `1` never hits it. Not engaged, so the existing verdict stands:
+    a whole-collection replacement (no member kept) with nothing else on the
+    line changed, a non-literal or computed display (`TRUTHY + ("t",)`, a
+    named constant), a subject that is not a parameter or one of the
+    transforms above (an alias bound from the parameter, `self.attr`,
+    `cfg["key"]`), and an owner source that does not parse. The membership
+    rule does not govern `match` arm patterns. See RIPR-SPEC-0260 and #15691
+    for match-arm evidence.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -2789,6 +2849,9 @@ strong assertions is retained.
   `py-grid-*-property` corpus cases.
 - `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
   pinned by `package_alias_tests.rs`.
+- `crates/ripr/src/analysis/language/python/membership_activation.rs`:
+  rule 34, read by `classify.rs` ahead of the boundary rule and pinned by
+  `membership_activation_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.

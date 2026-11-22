@@ -1046,7 +1046,7 @@ fn committed_changes(
             "--no-textconv",
             // Ambient `diff.ignoreSubmodules=all` would hide a committed
             // gitlink change from the attempt's changed-path set.
-            "--ignore-submodules=none",
+            crate::git::SUBMODULE_POINTERS_ONLY,
             "--name-status",
             "-z",
             baseline_head,
@@ -2338,20 +2338,12 @@ fn links_are_staged_publication_pair(path: &Path, metadata: &fs::Metadata) -> Re
 /// directory that cannot be read counts as having residue: currentness fails
 /// closed.
 pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        match fs::read_dir(directory) {
-            Ok(entries) => entries.into_iter().any(|entry| match entry {
-                Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
-                Err(_) => true,
-            }),
-            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = directory;
-        false
+    match fs::read_dir(directory) {
+        Ok(entries) => entries.into_iter().any(|entry| match entry {
+            Ok(entry) => entry.file_name().to_str().is_none_or(is_staging_name),
+            Err(_) => true,
+        }),
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
     }
 }
 
@@ -2359,34 +2351,24 @@ pub(crate) fn directory_has_staged_publication_residue(directory: &Path) -> bool
 /// refusal can name the file whose removal restores currentness. A directory
 /// that cannot be read yields none: the caller already failed closed on it.
 pub(crate) fn staged_publication_residue_names(directory: &Path) -> Vec<String> {
-    #[cfg(unix)]
-    {
-        let Ok(entries) = fs::read_dir(directory) else {
-            return Vec::new();
-        };
-        let mut names: Vec<String> = entries
-            .filter_map(Result::ok)
-            .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
-            .filter(|name| is_staging_name(name))
-            .collect();
-        names.sort();
-        names
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = directory;
-        Vec::new()
-    }
+    let Ok(entries) = fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+        .filter(|name| is_staging_name(name))
+        .collect();
+    names.sort();
+    names
 }
 
-#[cfg(unix)]
 fn is_staging_name(name: &str) -> bool {
     name.rsplit_once(".tmp-")
         .is_some_and(|(_, tail)| is_staging_suffix(&format!(".tmp-{tail}")))
 }
 
 /// `.tmp-<pid>-<nonce>` with decimal digits only.
-#[cfg(unix)]
 fn is_staging_suffix(rest: &str) -> bool {
     rest.strip_prefix(".tmp-")
         .and_then(|tail| tail.split_once('-'))
@@ -6222,6 +6204,27 @@ mod tests {
         assert!(
             !links_are_staged_publication_pair(&destination, &stale)?,
             "an external second link must stay refused"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn staged_publication_residue_is_detected_by_name_on_every_platform() -> Result<(), String> {
+        assert!(is_staging_name("after.check-findings.tmp-441-3"));
+        assert!(!is_staging_name("notes.tmp-x-1"));
+        assert!(!is_staging_name("after.check-findings.json"));
+        let fixture = git_fixture("staged-residue-by-name")?;
+        let dir = fixture.root.join("artifacts");
+        fs::create_dir_all(&dir).map_err(|err| format!("create dir: {err}"))?;
+        fs::write(dir.join("after.check-findings.json"), "{}\n")
+            .map_err(|err| format!("write destination: {err}"))?;
+        assert!(!directory_has_staged_publication_residue(&dir));
+        fs::write(dir.join("after.check-findings.tmp-441-3"), "{}\n")
+            .map_err(|err| format!("write staging: {err}"))?;
+        assert!(directory_has_staged_publication_residue(&dir));
+        assert_eq!(
+            staged_publication_residue_names(&dir),
+            vec!["after.check-findings.tmp-441-3".to_string()]
         );
         Ok(())
     }

@@ -6199,6 +6199,7 @@ mod seam_diagnostic_tests {
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
             typescript_package_root: None,
+            verify_cwd: None,
         }
     }
 
@@ -6961,6 +6962,7 @@ mod diagnostic_policy_tests {
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
             typescript_package_root: None,
+            verify_cwd: None,
         }
     }
 

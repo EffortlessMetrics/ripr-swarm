@@ -101,7 +101,7 @@ pub(in crate::analysis) use binding_return_flow::{
 };
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, assertion_is_discriminating, has_same_test_boundary_oracle_pairing,
-    observed_owner_call_rows_on_line, same_test_pairing_missing_summary,
+    observed_owner_call_rows_on_line, same_test_pairing_missing_summary, unpaired_return_gate,
     wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
