@@ -33,7 +33,10 @@ The selector receives:
 
 - a stable canonical identity;
 - a stable document identity;
-- the UTF-8 byte size of the normalized passive payload;
+- the UTF-8 byte size of the normalized passive payload. The normalized
+  payload leaves out the `data.evidence_identity` member stamped into seam
+  diagnostics: it names the refresh attempt (`snapshot:<generation>`), not
+  evidence, and its width grows with the age of the session;
 - optional inline-detail byte size;
 - producer-owned eligibility;
 - producer-owned repair-route, causal, and evidence-order ranks.
@@ -113,13 +116,22 @@ route. It also reports `diagnostic_budget_state` separately:
 
 When inline detail bytes are not produced by the diagnostic producer, the
 projection must say `inline_detail_measurement: "not_available"`; it must not
-present a fabricated zero as measured detail evidence. Producer selection
-ranks remain an explicit limitation until real diagnostic producers populate
-them.
+present a fabricated zero as measured detail evidence.
+
+The delivery bridge populates the causal rank from producer-stamped identity:
+a diff finding (a `finding_id`, no `seam_id`, not a gap-ledger row) is
+change-caused and ranks ahead of repository seam inventory rows and ledger
+rows. The repair-route and evidence ranks remain unset; that is an explicit
+limitation until real diagnostic producers populate them.
 
 ## Required invariants
 
 - Equal inputs in any discovery order produce equal results and bytes.
+- Equal evidence produces an equal selection and equal measured bytes at
+  every refresh generation of a session: a long-lived server and a server
+  started on the same workspace serve the same diagnostics.
+- A finding on a changed line is selected before any repository seam
+  inventory row, so a full refresh never omits it for inventory rows.
 - Adding a lower-ranked item does not reshuffle existing selected identities.
 - Every canonical input is present in exactly one selected or omitted result.
 - Profile-filtered items never consume an item or byte budget.
@@ -212,6 +224,18 @@ The marker exemption and its negative controls are covered by
 `crates/ripr/src/lsp/diagnostic_budget.rs::tests::preview_withheld_marker_is_budget_exempt`,
 and the producer cap by
 `crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_preview_markers_are_capped_per_snapshot`.
+Session-independent byte measurement is covered by
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::byte_budget_measures_a_seam_diagnostic_without_its_session_identity`
+and
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::byte_budget_selection_does_not_depend_on_session_age`,
+and the causal rank by
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::change_caused_finding_is_selected_before_seam_inventory_rows`
+and
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::only_a_diff_finding_gets_the_change_caused_rank`.
+Over the real wire,
+`crates/ripr/tests/lsp_lifecycle/incremental_differential.rs::long_lived_session_serves_what_a_fresh_session_serves`
+compares the pull report of a session past its tenth refresh with a fresh
+session's after each external edit, under an overflowing seam inventory.
 The focused omission payload, identity, alias, retraction, quarantine and
 previous-result controls live in
 `crates/ripr/src/lsp/backend/delivery_selection_parity_tests/omission_tests.rs`.

@@ -2,7 +2,8 @@
 //! `src/` (#15264) seeds diff probes like the same module under `src/`. Before
 //! the fix such a change read "no changed line is behavior ripr checks". A
 //! file outside `src/` that no target mounts, and one only a test target
-//! mounts, still seed nothing.
+//! mounts, still seed nothing. Children of a `#[path]` file resolve beside
+//! it, never under its stem directory (#15877).
 
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
 use std::path::{Path, PathBuf};
@@ -157,5 +158,38 @@ fn a_file_only_a_test_target_mounts_is_not_production() -> Result<(), String> {
     ])?;
     let files = fixture.finding_files()?;
     assert!(!seeds(&files, "support/helper.rs"), "{files:?}");
+    Ok(())
+}
+
+#[test]
+fn a_path_module_child_resolves_beside_the_file_not_under_its_stem() -> Result<(), String> {
+    // rustc makes a `#[path]` file a directory owner (#15877): `mod child;`
+    // in `src/impl/price.rs` loaded through `#[path]` compiles
+    // `src/impl/child.rs`. The same name under `src/impl/price/` is never
+    // built, so a change there seeds nothing while the built sibling seeds.
+    let fixture = Fixture::with_files(&[
+        ("Cargo.toml", MANIFEST),
+        (
+            "src/lib.rs",
+            "#[path = \"impl/price.rs\"]\npub mod price;\n",
+        ),
+        ("src/impl/price.rs", "pub mod child;\n"),
+        ("src/impl/child.rs", BULK),
+        ("src/impl/price/child.rs", BULK),
+        (
+            "diff.patch",
+            &format!(
+                "{}{}",
+                predicate_diff("src/impl/child.rs"),
+                predicate_diff("src/impl/price/child.rs")
+            ),
+        ),
+    ])?;
+    let files = fixture.finding_files()?;
+    assert!(seeds(&files, "src/impl/child.rs"), "built child: {files:?}");
+    assert!(
+        !seeds(&files, "src/impl/price/child.rs"),
+        "stem-directory file is never compiled: {files:?}"
+    );
     Ok(())
 }

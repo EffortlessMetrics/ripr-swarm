@@ -98,6 +98,7 @@ mod fast_check;
 #[cfg(test)]
 mod fast_check_tests;
 mod push_argument_guard;
+mod tap;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -109,6 +110,7 @@ mod fact_prefetch_tests;
 mod fact_store_tests;
 mod field_update_guard;
 mod fixture_receivers;
+mod function_replacement;
 mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
@@ -1344,8 +1346,17 @@ impl TypeScriptAdapter {
                     ambient_declaration_lines(&changed.path, source, &options.root, alias_map_ref)
                 })
                 .unwrap_or_default();
+            // Comment text is no probe, and the body rows of a block comment
+            // are comment text whatever they start with (#15913).
+            let added_without_code = deleted_lines::added_lines_without_code(
+                changed,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
+            );
             let is_probe_candidate = |line: usize, text: &str| {
                 !should_ignore_typescript_changed_line(text)
+                    && !added_without_code.contains(&line)
                     && !ambient
                         .iter()
                         .any(|(start, end)| (*start..=*end).contains(&line))
@@ -1396,7 +1407,17 @@ impl TypeScriptAdapter {
             // (#7524). The three guards below read the old line from one
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
-            let counterparts = changed.aligned_counterparts();
+            // An added run made only of comments, blank lines and lone
+            // brackets replaced nothing: the code it stands on was deleted.
+            // Its lines pair with nothing, so the removed line keeps its own
+            // base-side record instead of leaving no record at all (#15913).
+            let mut counterparts = changed.aligned_counterparts();
+            if !counterparts.is_empty() {
+                let codeless = changed
+                    .added_lines_in_quiet_runs(|added| added_without_code.contains(&added.line));
+                counterparts.retain(|added_line, _| !codeless.contains(added_line));
+            }
+            let counterparts = counterparts;
             let mut multiline_lines: Option<Option<MultilineRanges>> = None;
             // #11250: one facts lookup and one line-table build per
             // changed file, not per added line. `file_facts_cached`

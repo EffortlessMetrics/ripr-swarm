@@ -418,7 +418,7 @@ remain in their producing workflows.
 | Workflow / artifact | Consumer and retained evidence |
 | --- | --- |
 | `future-clippy.yml` / `ripr-future-clippy` | Maintainer investigation of lint readiness and instrumentation failures. Native status and identity are also printed in the job summary; the scan log is streamed to the job log. |
-| `macos-advisory.yml` / `macos-advisory-logs` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
+| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-tests` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
 | `windows-gate.yml` / `ripr-windows-gate-subset` | Maintainer investigation of the subset logs and statuses. `Ripr Windows Gate Result` consumes job outputs, not the uploaded artifact. |
 | `kani.yml` / `ripr-kani` | Maintainer inspection of the per-harness report. `cargo xtask kani` prints the same report to the job log and judges the run before upload. |
 
@@ -614,7 +614,14 @@ and single-platform CI was the root cause enabling both.
 
 `.github/workflows/windows-advisory.yml` (#2442) closes the gap:
 
-- **Scope.** `cargo test --workspace`, twice. No test or golden `cargo xtask`
+- **Scope.** `cargo test --workspace`, twice. Each sample is split by test
+  target: three `windows-advisory-integration` jobs run every integration
+  target (by first letter of its name, with complementary patterns), and the
+  `windows-advisory` job runs the unit targets and doctests, then joins all
+  parts into one verdict. The summarizer refuses a target two parts both ran
+  and checks each sample against the executables an unsplit
+  `cargo test --workspace --no-run` built, so a target no part selects fails
+  the lane. No test or golden `cargo xtask`
   gates and no blessing — a Windows lane that blessed or checked goldens would
   institutionalize the #2337 drift it exists to catch. There is one required
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
@@ -821,8 +828,15 @@ gating (#8055, #8060), `/var` -> `/private/var` temp paths and APFS case or
 normalization behavior surfaced only on a maintainer's local run.
 
 - **What runs.** On `macos-15`: `cargo clippy -p ripr -p xtask --all-targets
-  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`. The integration
-  suites are not part of this lane.
+  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`, each in its
+  own job (`macos-advisory-clippy`, `macos-advisory-lib-tests`) under the same
+  40-minute limit: as steps of one job they were cancelled by it every night
+  from 2026-11-12, before the tests had finished compiling. Clippy now
+  fits (25 to 30 minutes cold). The library tests do not yet: the `ripr` test
+  build alone takes about 30 minutes and its tests about 14, so that job
+  fails at its 34-minute step deadline as missing evidence until the build
+  and the run are separate jobs (#8391). The integration suites are not part
+  of this lane.
 - **Contract.** Clippy and test outcomes are advisory and appear in the job
   summary. A missing log or exit status, or a library run that executed zero
   tests, fails the job. It is not a required check.
@@ -3369,8 +3383,9 @@ Advance folds use fold-and-delete batches (`--write --limit 149` so each batch
 PR touches at most 150 changed files including `CHANGELOG.md`);
 `--keep-fragments` is for local inspection only because
 `check-changelog-fragments` rejects fragments duplicating `Unreleased` entries.
-It reuses the `check-changelog-fragments` validator, refuses malformed
-fragments by file name and is not part of `precommit`. `changelog.d/README.md`
+It runs the whole `check-changelog-fragments` check before it folds and
+refuses with nothing written when that fails, refuses malformed fragments by
+file name and is not part of `precommit`. `changelog.d/README.md`
 has the batch procedure.
 
 ## Install Receipt

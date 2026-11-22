@@ -1,0 +1,8 @@
+{
+  "name": "ripr-generator-promise-callback-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/total.test.ts"
+  }
+}

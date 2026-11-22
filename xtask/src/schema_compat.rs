@@ -143,13 +143,8 @@ fn repeats_scalar_properties(old: &serde_json::Map<String, Value>, branch: &Valu
         })
 }
 
-/// The other alternative supported by this proof is a syntactically valid
-/// required-name list. Do not let one true branch hide a malformed sibling.
-fn required_names_only(branch: &Value) -> bool {
-    let Some(branch) = branch.as_object().filter(|branch| branch.len() == 1) else {
-        return false;
-    };
-    let Some(names) = branch.get("required").and_then(Value::as_array) else {
+fn valid_required_names(value: &Value) -> bool {
+    let Some(names) = value.as_array() else {
         return false;
     };
     let mut seen = BTreeSet::new();
@@ -258,6 +253,32 @@ fn retains_local_reference(
         && closed_definition_graph(new_root)
         && arms.contains(prior)
         && arms.iter().all(|arm| definition(new_root, arm).is_some())
+}
+
+/// Once another arm covers every old instance, this sibling only has to be a
+/// well-formed predicate. Keep references, combinators and unknown keywords
+/// outside this proof; their evaluation may depend on the surrounding schema.
+fn supported_additive_arm(schema: &Value, remaining_depth: usize) -> bool {
+    let Some(depth) = remaining_depth.checked_sub(1) else {
+        return false;
+    };
+    schema.as_object().is_some_and(|object| {
+        object.iter().all(|(key, value)| match key.as_str() {
+            "const" => true,
+            "description" => value.is_string(),
+            "type" => value.as_str() == Some("string"),
+            "additionalProperties" => value.is_boolean(),
+            "required" => valid_required_names(value),
+            "minItems" | "maxItems" => value.as_u64().is_some(),
+            "items" => supported_additive_arm(value, depth),
+            "properties" => value.as_object().is_some_and(|properties| {
+                properties
+                    .values()
+                    .all(|child| supported_additive_arm(child, depth))
+            }),
+            _ => false,
+        })
+    })
 }
 
 fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
@@ -470,7 +491,7 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
                     for branch in branches {
                         if repeats_scalar_properties(old, branch) {
                             retained = true;
-                        } else if !required_names_only(branch) {
+                        } else if !supported_additive_arm(branch, 32) {
                             return false;
                         }
                     }
@@ -841,6 +862,20 @@ mod tests {
         if !accepted(&widened) {
             return Err("old property guard rejected".into());
         }
+        let closed = json!({
+            "description":"closed refusal",
+            "additionalProperties":false,
+            "required":["status","details"],
+            "properties":{
+                "status":{"const":"refused"},
+                "details":{"minItems":1,"maxItems":1,"items":{"properties":{"code":{"type":"string"}}}}
+            }
+        });
+        let mut bounded = widened.clone();
+        bounded["anyOf"] = json!([guard, closed]);
+        if !accepted(&bounded) {
+            return Err("retained guard with a well-formed closed sibling rejected".into());
+        }
         for bad in [
             json!({"properties":{"root":{"minLength":2}}}),
             json!({"properties":{"root":{"type":"integer"}}}),
@@ -859,6 +894,14 @@ mod tests {
             json!({"required":["status","status"]}),
             json!({"required":[true]}),
             json!({"format":"unknown"}),
+            json!({"properties":{"status":{"$ref":"#/$defs/missing"}}}),
+            json!({"properties":{"details":{"items":{"type":"unknown"}}}}),
+            json!({"properties":{"details":{"items":[]}}}),
+            json!({"properties":[]}),
+            json!({"additionalProperties":"false"}),
+            json!({"maxItems":-1}),
+            json!({"minItems":1.5}),
+            json!({"description":false}),
         ] {
             let mut candidate = widened.clone();
             candidate["anyOf"] = json!([guard, malformed]);
@@ -885,14 +928,11 @@ mod tests {
             serde_json::from_str(include_str!("../../schemas/ripr/check.schema.json"))
                 .map_err(|e| e.to_string())?;
         let guard = json!({"properties":{"root":{"type":"string","minLength":1}}});
-        let alternatives = json!([guard,{"required":["status","error"]}]);
         // Exercise both generations of the published file as #15842 lands.
         let obj = before.as_object_mut().ok_or("expected schema object")?;
-        if let Some(existing) = obj.remove("anyOf")
-            && existing != alternatives
-        {
-            return Err("check root alternatives changed".into());
-        }
+        let alternatives = obj
+            .remove("anyOf")
+            .unwrap_or_else(|| json!([guard,{"required":["status","error"]}]));
         before["properties"]["root"] = json!({"type":"string","minLength":1});
         let mut after = before.clone();
         after["properties"]["root"] = json!({"type":"string"});

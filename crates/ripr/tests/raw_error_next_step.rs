@@ -53,8 +53,22 @@ fn run(dir: &Path, args: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("run ripr {args:?}: {error}"))
 }
 
+/// Mirrors the product's human path rule on Windows: one `/` separator and
+/// no verbatim `\\?\` prefix. On Unix `\` is a filename character and the
+/// text is unchanged.
 fn slash(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
+    let text = path.display().to_string();
+    if !cfg!(windows) {
+        return text;
+    }
+    let unified = text.replace('\\', "/");
+    if let Some(rest) = unified.strip_prefix("//?/UNC/") {
+        format!("//{rest}")
+    } else if let Some(rest) = unified.strip_prefix("//?/") {
+        rest.to_string()
+    } else {
+        unified
+    }
 }
 
 /// Exact stderr, exit 2, and the shared floor: no errno tail, no serde type.

@@ -126,9 +126,20 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // `ripr agent packet --seam-id <id> --json`, the one-seam packet
+        // document. The `--gap-ledger` document and the
+        // `agent-seam-packets-json` check format share the constant but are
+        // not covered by this schema yet (#3920).
+        "agent-packet",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // The refusal envelope `ripr agent packet --json` writes when it
-        // cannot produce a seam packet. The packet's own version constant
-        // keys it; the packet document itself is not a published schema.
+        // cannot produce a seam packet, keyed with the packet's version.
         "agent-packet-refusal",
         &[producer(
             "crates/ripr/src/app.rs",
@@ -689,6 +700,17 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["check_artifact_unusable", "run_limitations"],
+    },
+    // `ripr agent packet --seam-id <id> --json`. The fixture is a capture of
+    // a write-targeted-test packet with the host's absolute root made
+    // portable; the producer-byte authority is `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-packet.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-packet.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["--seam-id", "write_targeted_test"],
     },
     // `ripr agent status --json`. The fixture is a capture of a finished
     // repair loop with the host's absolute root replaced by `.`; the

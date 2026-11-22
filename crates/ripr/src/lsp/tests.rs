@@ -1,7 +1,4 @@
-use super::actions::{
-    SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
-    resolve_action,
-};
+use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
 use super::backend::{
     Backend, RefreshLogSummary, WatchedFileChanges, deadline_exceeded_log_message,
     refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
@@ -597,7 +594,7 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
             serde_json::json!({
                 "globPattern": {
                     "baseUri": root_uri.as_str(),
-                    "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                    "pattern": "**/*.{rs,py,pm,pl,t,psgi,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
                 },
                 "kind": 2,
             }),
@@ -8295,7 +8292,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
 
         for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
             let mut retained = actions.clone();
-            disable_retained_analysis_actions(
+            super::actions::disable_retained_analysis_actions(
                 &mut retained,
                 &AnalysisHealth {
                     state,
@@ -8348,7 +8345,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
         .to_string();
     for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
         let mut retained = stale.clone();
-        disable_retained_analysis_actions(
+        super::actions::disable_retained_analysis_actions(
             &mut retained,
             &AnalysisHealth {
                 state,
@@ -35993,6 +35990,79 @@ fn untested_rust_edit_discloses_withheld_findings_and_reconciles_status() -> Res
     }
     if !full.snapshot.is_consistent() {
         return Err("full: snapshot must be consistent".to_string());
+    }
+    Ok(())
+}
+
+/// #15951: the empty-scope marker names the base the user requested, not the
+/// branch the run resolved. With no base requested the default base resolves
+/// to a branch name; the marker must say no base was passed, as hover and
+/// status do, instead of calling that branch the requested base.
+#[test]
+fn empty_scope_marker_names_the_requested_base_not_the_resolved_default() -> Result<(), String> {
+    let root = untested_rust_edit_fixture("empty-scope-marker-base")?;
+    run_lsp_scope_git(root.path(), &["branch", "-M", "main"])?;
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let uri = file_uri_for_path(&root.path().join("src/lib.rs"))
+        .map_err(|err| format!("uri for lib.rs failed: {err}"))?;
+    let marker_for = |base_ref: Option<&str>| -> Result<(Option<String>, String), String> {
+        let config = LspAnalysisConfig {
+            base_ref: base_ref.map(str::to_string),
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        let mut result = workspace_diagnostics_with_config(root.path(), &config, true)?;
+        if !result
+            .snapshot
+            .analysis_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+        {
+            return Err(format!(
+                "fixture must be an empty scope for base {base_ref:?}: {:?}",
+                result.snapshot.analysis_outcome
+            ));
+        }
+        // The production refresh binds the input identity before commit; the
+        // analysis entry point leaves it unset.
+        result.snapshot.input_identity = Some(LspAnalysisInputIdentity::from_refresh_inputs(
+            result.snapshot.root.clone(),
+            1,
+            &config,
+        ));
+        let items = super::diagnostics::delivered_diagnostics_for_uri(
+            &result.snapshot,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        );
+        let [marker] = items.as_slice() else {
+            return Err(format!("exactly one marker expected: {items:?}"));
+        };
+        Ok((result.snapshot.base.clone(), marker.message.clone()))
+    };
+
+    // No base requested: the run still resolves one, and the marker must not
+    // present it as requested.
+    let (resolved, message) = marker_for(None)?;
+    if resolved.as_deref() != Some("main") {
+        return Err(format!(
+            "fixture must resolve the default base to a branch name: {resolved:?}"
+        ));
+    }
+    if !message.contains("no base was passed, so the default base was used")
+        || message.contains("requested base")
+    {
+        return Err(format!(
+            "an unrequested base must not be named as requested: {message}"
+        ));
+    }
+
+    // A requested base is named verbatim.
+    let (_, message) = marker_for(Some("HEAD"))?;
+    if !message.contains("the saved diff against requested base `HEAD`")
+        || message.contains("no base was passed")
+    {
+        return Err(format!("a requested base must be named: {message}"));
     }
     Ok(())
 }

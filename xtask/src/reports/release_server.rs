@@ -855,7 +855,9 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
     // archive readback preserves the executable role's mode.
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
-        .system(zip::System::Unix);
+        // Same bytes on every build host: the crate would record DOS attributes on Windows.
+        .system(zip::System::Unix)
+        .unix_permissions(0o644);
 
     let entries = fs::read_dir(package_dir)
         .map_err(|err| format!("failed to read {}: {err}", package_dir.display()))?;

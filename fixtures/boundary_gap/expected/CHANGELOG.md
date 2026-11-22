@@ -1,5 +1,15 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.205 for the history-sync composition (#12876)
+
+The public-source import composes with protected main through its 1.189
+generation (a std- or core-rooted import of an exempt macro name keeps a
+generated test's invocation scopes), which moves the composed analyzer cache
+schema to 1.205. The portable unchanged-attempt snapshots, their content
+commitment, the dependent verify commitments and the receipt byte hashes move
+with it. Weak grip, unchanged movement and fail-closed first-action routing
+remain unchanged.
+
 ## Pending — corpus cache generation 1.204 for the history-sync composition (#12857)
 
 The public-source import composes with protected main through its 1.187

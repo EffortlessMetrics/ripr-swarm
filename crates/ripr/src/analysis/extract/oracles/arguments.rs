@@ -196,6 +196,16 @@ pub(crate) fn assertion_compares_only_literals(line: &str) -> bool {
         .all(|operand| operand_is_literal_only(operand))
 }
 
+/// #15476: the compared operands of the outermost equality or boolean
+/// assertion macro (`assert_eq!(a, b)` gives `[a, b]`, `assert!(c)` gives
+/// `[c]`), without its diagnostic arguments. `None` for any other macro.
+pub(crate) fn assertion_compared_operands(line: &str) -> Option<Vec<String>> {
+    match assertion_comparison(line)? {
+        AssertionComparison::Operands { left, right, .. } => Some(vec![left, right]),
+        AssertionComparison::Condition(condition) => Some(vec![condition]),
+    }
+}
+
 /// Every word of the masked operand is a numeric literal (its suffix
 /// included: `1u32`, `0x1F`) or `true`/`false`. Masking blanks string,
 /// character and comment text, so their contents never count as words.
