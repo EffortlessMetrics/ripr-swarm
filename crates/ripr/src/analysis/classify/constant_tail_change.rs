@@ -442,11 +442,19 @@ fn guard_prelude_identity(source: &str, line: usize, owner: &str) -> bool {
         ast::Module::cast(node.clone()).is_some_and(|module| module.item_list().is_none())
             || ast::Attr::cast(node.clone()).is_some_and(|attr| {
                 let target = attr.syntax().parent();
-                match compact(&attr.syntax().text().to_string()).as_str() {
-                    "#[cfg(test)]" => !target.is_some_and(|item| {
-                        ast::Module::can_cast(item.kind())
-                            && crate::analysis::syntax::source_item_builtin_name_holds("cfg", &item)
-                    }),
+                let text = attr.syntax().text().to_string();
+                match compact(&text).as_str() {
+                    _ if crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(
+                        &text,
+                    ) =>
+                    {
+                        !target.is_some_and(|item| {
+                            ast::Module::can_cast(item.kind())
+                                && crate::analysis::syntax::source_item_builtin_name_holds(
+                                    "cfg", &item,
+                                )
+                        })
+                    }
                     "#[test]" => !target.is_some_and(|item| {
                         ast::Fn::can_cast(item.kind())
                             && crate::analysis::syntax::source_item_builtin_name_holds(

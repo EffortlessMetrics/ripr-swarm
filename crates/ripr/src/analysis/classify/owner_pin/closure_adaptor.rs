@@ -209,7 +209,8 @@ pub(super) fn admitted_split_string_tail(
                 .chars()
                 .filter(|c| !c.is_whitespace())
                 .collect();
-            !matches!(text.as_str(), "#[test]" | "#[cfg(test)]")
+            text != "#[test]"
+                && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
         })
         || source.contains("macro_rules")
         || parsed_source
