@@ -1696,7 +1696,7 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
             }
             continue;
         }
-        if let Some(args) = attr_call_args(attr, "case") {
+        if let Some(args) = rstest_case_attr_args(attr) {
             // `#[case]` without args - no scalar values to capture.
             if args.is_empty() {
                 continue;
@@ -1739,8 +1739,8 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
     // rstest binds case values positionally to the `#[case]` parameters
     // only; the others are fixtures. Without any `#[case]` marker every
     // parameter counts, as before #4601. (Rows written inside the legacy
-    // `#[rstest(a, case(..))]` attribute and named `#[case::name(..)]`
-    // rows are not parsed, so they bind nothing.)
+    // `#[rstest(a, case(..))]` attribute are not parsed, so they bind
+    // nothing; named `#[case::name(..)]` rows bind like plain ones.)
     let params = extract_fn_params(&test.body);
     let params = if params.iter().any(|param| param.is_case) {
         params.into_iter().filter(|param| param.is_case).collect()
@@ -1777,7 +1777,7 @@ fn test_case_bound_context(test: &TestSummary, ident: &str) -> Option<(Vec<Vec<S
     Some((cases, position))
 }
 
-/// Number of rstest `#[case(..)]` rows on `test`.
+/// Number of rstest `#[case(..)]` / `#[case::name(..)]` rows on `test`.
 pub(crate) fn rstest_case_row_count(test: &TestSummary) -> usize {
     let (cases, _) = extract_rstest_case_params(test);
     cases.len()
@@ -1939,6 +1939,31 @@ fn attr_call_args<'a>(attr: &'a str, name: &str) -> Option<&'a str> {
     Some(args)
 }
 
+/// Arguments of an rstest case row: `#[case(..)]` or its named form
+/// `#[case::description(..)]`, which rstest documents for readable test
+/// names and which carries the same positional row.
+fn rstest_case_attr_args(attr: &str) -> Option<&str> {
+    if let Some(args) = attr_call_args(attr, "case") {
+        return Some(args);
+    }
+    let inner = attr_inner(attr)?;
+    let open = inner.find('(')?;
+    // A path may be spaced (`case :: equal`), as the syntax reader accepts.
+    let path = inner[..open]
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+    let description = path.strip_prefix("case::")?;
+    let identifier = description.strip_prefix("r#").unwrap_or(description);
+    let mut chars = identifier.chars();
+    let starts = chars.next().is_some_and(|c| c == '_' || c.is_alphabetic());
+    if !starts || !chars.all(|c| c == '_' || c.is_alphanumeric()) {
+        return None;
+    }
+    let args = inner[open..].strip_prefix('(')?.strip_suffix(')')?.trim();
+    Some(args)
+}
+
 fn attr_inner(attr: &str) -> Option<&str> {
     let inner = attr.trim().strip_prefix("#[")?.strip_suffix(']')?.trim();
     Some(inner)
@@ -1962,6 +1987,9 @@ struct FnParam {
     name: String,
     is_case: bool,
     is_mut: bool,
+    /// rstest injects this parameter from a `#[fixture]`: it carries no
+    /// attribute, or only `#[from(..)]` / `#[with(..)]`.
+    is_fixture: bool,
 }
 
 /// Parameters of the `fn` header in `body`. Parameter attributes
@@ -1994,12 +2022,18 @@ fn extract_fn_params(body: &str) -> Vec<FnParam> {
     for part in split_top_level(raw) {
         let mut part = part.trim();
         let mut is_case = false;
+        let mut is_fixture = true;
         while let Some(rest) = part.strip_prefix("#[") {
             let Some(end) = balanced_attribute_end(rest) else {
                 break;
             };
             let attribute = rest[..end].trim();
             is_case |= attribute == "case" || attribute == "rstest::case";
+            is_fixture &= ["from", "with"].iter().any(|fixture| {
+                attribute
+                    .strip_prefix(fixture)
+                    .is_some_and(|rest| rest.trim_start().starts_with('('))
+            });
             part = rest[end + 1..].trim_start();
         }
         if part.is_empty() || part == "self" || part.starts_with("&self") {
@@ -2018,9 +2052,38 @@ fn extract_fn_params(body: &str) -> Vec<FnParam> {
             },
             is_case,
             is_mut,
+            is_fixture,
         });
     }
     out
+}
+
+/// Names of the fixture-injected parameters of an `#[rstest]` test: rstest
+/// fills each from the `#[fixture]` of that name (or the one `#[from(..)]`
+/// names), whose value ripr does not read at the call site (#15343).
+pub(crate) fn rstest_fixture_parameters(test: &TestSummary) -> Vec<String> {
+    // Only a bare `#[rstest]`: the legacy `#[rstest(a, case(..))]` form
+    // binds its named parameters from its own rows.
+    if !test.attrs.iter().any(|attr| {
+        attr_inner(attr) == Some("rstest") || attr_inner(attr) == Some("rstest::rstest")
+    }) {
+        return Vec::new();
+    }
+    let params = extract_fn_params(&test.body);
+    // Without a `#[case]` marker, case rows bind every parameter
+    // positionally (see `extract_rstest_case_params`), so none is a fixture.
+    let has_rows = test.attrs.iter().any(|attr| {
+        attr_call_args(attr, "case").is_some()
+            || attr_inner(attr).is_some_and(|inner| inner.starts_with("case::"))
+    });
+    if has_rows && !params.iter().any(|param| param.is_case) {
+        return Vec::new();
+    }
+    params
+        .into_iter()
+        .filter(|param| param.is_fixture && !param.name.is_empty())
+        .map(|param| param.name)
+        .collect()
 }
 
 /// Offset of the `]` closing an attribute whose `#[` was already

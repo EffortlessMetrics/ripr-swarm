@@ -165,6 +165,113 @@ fn spec_0231_rule_8_code_after_divergence_is_unreached() {
 }
 
 #[test]
+fn spec_0231_rule_8_constant_diverging_statements_end_the_block() {
+    // #14968: a `let`-`else` whose one-variant pattern cannot match its
+    // literal value always runs its diverging `else`, and a literal
+    // `Err(..)?` or `None?` always returns early. A `return` at the root of
+    // that `else` block is one RIPR-SPEC-0197 execution admission reads, so
+    // a strong assertion after it stays for that refusal; after any other
+    // constant divergence every oracle is dropped.
+    for (head, kind) in [
+        (
+            "let Some(_x) = None else { return; };",
+            Unreached::AdmissionRefused,
+        ),
+        (
+            "let Some(_x) = None::<i32> else { return; };",
+            Unreached::AdmissionRefused,
+        ),
+        (
+            "let Ok(_x) = Err::<i32, i32>(1) else { return; };",
+            Unreached::AdmissionRefused,
+        ),
+        (
+            "let Err(_e) = Ok::<i32, ()>(1) else { panic!(\"ok\") };",
+            Unreached::Unrefused,
+        ),
+        (
+            "let None = Some(1) else { return };",
+            Unreached::AdmissionRefused,
+        ),
+        (
+            "let None = Some(1) else { if c() { return; } panic!() };",
+            Unreached::Unrefused,
+        ),
+        (
+            "{ const None: Option<()> = Some(()); } None?;",
+            Unreached::Unrefused,
+        ),
+        (
+            "const None: Option<()> = Some(()); Err(())?;",
+            Unreached::Unrefused,
+        ),
+        (
+            "#[cfg(any())] const None: Option<()> = Some(()); None?;",
+            Unreached::Unrefused,
+        ),
+        ("Err::<(), i32>(1)?;", Unreached::Unrefused),
+        ("Err(\"stop\")?;", Unreached::Unrefused),
+        ("None::<i32>?;", Unreached::Unrefused),
+    ] {
+        let reading = format!("fn t() {{\n    {head}\n    check(300).unwrap_err();\n}}");
+        assert_not_credited(&[reading.as_str()], "check(300)", head);
+        assert_eq!(
+            unreached(&reading),
+            vec![(3, kind)],
+            "{head}: only the following statement is unreached"
+        );
+        let strong = format!("fn t() {{\n    {head}\n    assert_eq!(score(2), 4);\n}}");
+        if kind == Unreached::AdmissionRefused {
+            assert_credited(&[strong.as_str()], "score(2)", head);
+        } else {
+            assert_not_credited(&[strong.as_str()], "score(2)", head);
+        }
+    }
+    // Controls: a value that can match, a pattern that is not one variant, a
+    // computed value, an `Ok(..)?`, and an `Err` that is not `?`-propagated.
+    assert_credited(
+        &[
+            "fn t() {\n    let Some(_x) = Some(1) else { return; };\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let Some(_x) = maybe() else { return; };\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let Some(_) | None = None::<i32> else { return; };\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let Ok(_x) = Ok::<i32, i32>(1) else { return; };\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let _x = None::<i32>;\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    Ok::<(), i32>(())?;\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    let _e = Err::<(), i32>(1);\n    check(300).unwrap_err();\n}",
+            "fn t() {\n    Some(1)?;\n    check(300).unwrap_err();\n}",
+        ],
+        "check(300)",
+        "statement that may complete",
+    );
+}
+
+#[test]
+fn a_rebinding_or_an_associated_item_preserves_builtin_divergence() {
+    for (head, tail) in [
+        (
+            "fn t() -> Result<(), ()> { fn Err(_: ()) -> Result<(), ()> { Ok(()) } { let Err = Result::<(), ()>::Err; Err(())?;",
+            "} Ok(()) }",
+        ),
+        (
+            "fn t() -> Result<(), ()> { fn Err(_: ()) -> Result<(), ()> { Ok(()) } let Err = Result::<(), ()>::Err; Err(())?;",
+            "Ok(()) }",
+        ),
+        (
+            "fn t() { struct H; impl H { const None: Option<()> = Some(()); fn p() -> Option<()> { None?;",
+            "Some(()) } } }",
+        ),
+        (
+            "fn t() { struct H; impl H { fn Err(_: ()) -> Result<(), ()> { Ok(()) } fn p() -> Result<(), ()> { Err(())?;",
+            "Ok(()) } } }",
+        ),
+    ] {
+        let body = format!("{head}\ncheck(300).unwrap_err();\n{tail}");
+        assert_eq!(unreached(&body), vec![(2, Unreached::Unrefused)], "{head}");
+        assert_not_credited(&[&body], "check(300)", head);
+    }
+}
+
+#[test]
 fn spec_0231_rule_8_leaves_admission_governed_assertions_to_their_refusal() {
     // A strong `assert_eq!` (or strong `assert!`) in a literal-false block, an
     // uncalled closure or after a `return` stays: RIPR-SPEC-0197 refuses

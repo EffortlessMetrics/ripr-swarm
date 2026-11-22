@@ -703,6 +703,7 @@ fn static_limited_weakly_exposed_alone_keeps_stop() {
 fn reach_limited_weak(id: &str, line: usize) -> Finding {
     let mut limited = weak_gap(id, line);
     limited.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    limited.related_tests[0].relation_reason = Some(crate::domain::RelationReason::DirectOwnerCall);
     limited
 }
 
@@ -741,20 +742,20 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
 }
 
 /// #14483: the `open=` row names the first bound weak row of the best shared
-/// observation tier, so a listed-first owner-named weak row with no call path
-/// gives way to a weak row that reaches the change; without the miss the
-/// listed-first row is named again.
+/// observation tier, so a listed-first assertion on a different value
+/// gives way to the row that can observe the change. With equal observation
+/// tiers, the listed-first row is named again.
 #[test]
 fn the_open_row_names_a_weak_row_that_can_observe_the_change() {
     let mut open = reach_limited_weak("probe:fortnight", 264);
     open.related_tests[0].name = "reaches_the_change".to_string();
     open.related_tests[0].line = 9;
-    let mut unreached = open.related_tests[0].clone();
-    unreached.name = "named_after_the_owner".to_string();
-    unreached.line = 3;
-    unreached.relation_reason = Some(crate::domain::RelationReason::OwnerNamedTest);
-    unreached.miss = Some(RelatedTestMiss::NoCallPath);
-    open.related_tests.insert(0, unreached);
+    let mut other_value = open.related_tests[0].clone();
+    other_value.name = "listed_first".to_string();
+    other_value.line = 3;
+    other_value.relation_reason = Some(crate::domain::RelationReason::HelperOwnerCall);
+    other_value.miss = Some(RelatedTestMiss::AssertionNotObserving);
+    open.related_tests.insert(0, other_value);
     let text = rendered(&output(vec![open.clone()]));
     assert!(text.contains("\nopen="), "{text}");
     assert!(
@@ -763,10 +764,7 @@ fn the_open_row_names_a_weak_row_that_can_observe_the_change() {
     );
     open.related_tests[0].miss = Some(RelatedTestMiss::WeakAssertion);
     let text = rendered(&output(vec![open]));
-    assert!(
-        text.contains("\nt1=tests/t.rs:3 named_after_the_owner "),
-        "{text}"
-    );
+    assert!(text.contains("\nt1=tests/t.rs:3 listed_first "), "{text}");
 }
 
 /// #11825: more open findings than `MAX_GAP_LINES` print the cap and an
@@ -888,21 +886,22 @@ fn all_no_static_path_run_matches_the_human_surface_route() {
     );
 }
 
-/// #12058 negative: an unrelated weak test that is related only by file or
-/// module proximity does not make a reach-limited finding open; it stays
-/// `stop=`. The same row bound to the owner (a direct call or an owner-named
-/// test) still opens it. #13238: the stopped proximity case still gets the
-/// bounded record and drill-in; only `open=` is withheld.
+/// #12058: a weak row must be bound to the changed owner to open the finding.
+/// Without that binding, keep the limit and its drill-in.
 #[test]
-fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
+fn reach_limit_with_an_unbound_weak_row_keeps_stop() {
     use crate::domain::RelationReason;
     for reason in [
-        RelationReason::SameTestFile,
-        RelationReason::SameModule,
-        RelationReason::WeakTokenSubstring,
+        None,
+        Some(RelationReason::SameTestFile),
+        Some(RelationReason::SameModule),
+        Some(RelationReason::WeakTokenSubstring),
+        Some(RelationReason::OwnerNamedTest),
+        Some(RelationReason::SeamCalleeCall),
     ] {
         let mut limited = reach_limited_weak("probe:unrelated", 264);
-        limited.related_tests[0].relation_reason = Some(reason);
+        limited.related_tests[0].file = PathBuf::from("src/lib.rs");
+        limited.related_tests[0].relation_reason = reason;
         let text = rendered(&output(vec![limited]));
         assert!(text.contains("\nstop="), "{reason:?}: {text}");
         assert!(!text.contains("open="), "{reason:?}: {text}");
@@ -916,7 +915,6 @@ fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
     for reason in [
         RelationReason::DirectOwnerCall,
         RelationReason::HelperOwnerCall,
-        RelationReason::OwnerNamedTest,
     ] {
         let mut limited = reach_limited_weak("probe:bound", 264);
         limited.related_tests[0].relation_reason = Some(reason);
@@ -1414,6 +1412,98 @@ fn explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next() {
     );
 }
 
+/// A `missing=-` gap (no concrete discriminator, one related test): the row
+/// lacks the owner and the pre-change text, so the explain projection prints
+/// them and drops the `next=` pointer to a JSON packet that would add nothing.
+fn undiscriminated_gap() -> Finding {
+    let mut gap = weak_gap("probe:a", 2);
+    gap.activation.missing_discriminators.clear();
+    gap.probe.owner = Some(crate::domain::SymbolId(
+        "src/lib.rs::round_to_nickel".to_string(),
+    ));
+    gap.probe.before = Some("cents / 5 * 5".to_string());
+    gap.probe.expression = "(cents + 2) / 5 * 5".to_string();
+    gap
+}
+
+#[test]
+fn explain_agent_undiscriminated_gap_carries_owner_and_before_and_skips_context() {
+    let text = explained(&undiscriminated_gap());
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.contains(&"owner=round_to_nickel"), "{text}");
+    assert!(lines.contains(&"before=cents / 5 * 5"), "{text}");
+    assert!(
+        lines.iter().any(|l| l.starts_with("open=a test-side")),
+        "{text}"
+    );
+    assert!(!text.contains("next="), "{text}");
+}
+
+#[test]
+fn explain_agent_keeps_context_pointer_when_the_packet_holds_more() {
+    // A concrete missing discriminator: its reason and observed inputs live
+    // only in the packet.
+    let mut with_missing = undiscriminated_gap();
+    with_missing.activation.missing_discriminators =
+        weak_gap("probe:a", 2).activation.missing_discriminators;
+    assert!(explained(&with_missing).contains("\nnext=ripr context "));
+    // More than one related test: the packet lists the rest.
+    let mut many = undiscriminated_gap();
+    many.related_tests_matched_total = Some(3);
+    assert!(explained(&many).contains("\nnext=ripr context "));
+    // A finding that is not an open test-side gap keeps the pointer.
+    let mut done = finding("probe:ok", ExposureClass::Exposed, 4);
+    done.probe.owner = Some(crate::domain::SymbolId("src/lib.rs::f".to_string()));
+    assert!(explained(&done).contains("\nnext=ripr context "));
+}
+
+#[test]
+fn explain_agent_prints_observed_inputs_only_when_it_drops_the_context_pointer() {
+    let fact_in = |value: &str, context| crate::domain::ValueFact {
+        line: 3,
+        text: format!("f({value})"),
+        value: value.to_string(),
+        context,
+    };
+    let fact = |value: &str| fact_in(value, crate::domain::ValueContext::FunctionArgument);
+    let mut gap = undiscriminated_gap();
+    assert!(!explained(&gap).contains("seen="), "no values, no line");
+    // An assertion expectation is labeled apart from an exercised input.
+    gap.activation.observed_values = vec![
+        fact("cents = 7"),
+        fact_in("6", crate::domain::ValueContext::AssertionArgument),
+    ];
+    let text = explained(&gap);
+    assert!(
+        text.lines()
+            .any(|l| l == "seen=cents = 7 (function_argument); 6 (assertion_argument)"),
+        "{text}"
+    );
+    assert!(!text.contains("next="), "{text}");
+    gap.activation.observed_values = (0..8).map(|n| fact(&n.to_string())).collect();
+    let text = explained(&gap);
+    assert!(
+        text.lines().any(|l| l
+            == "seen=0 (function_argument); 1 (function_argument); 2 (function_argument); \
+                3 (function_argument); 4 (function_argument); 5 (function_argument) (+2 more)"),
+        "{text}"
+    );
+    // When the pointer stays, the packet carries the values; no seen= line.
+    gap.related_tests_matched_total = Some(3);
+    let text = explained(&gap);
+    assert!(!text.contains("seen="), "{text}");
+    assert!(text.contains("\nnext=ripr context "), "{text}");
+}
+
+#[test]
+fn explain_agent_before_line_is_omitted_when_it_repeats_the_expression() {
+    let mut gap = undiscriminated_gap();
+    gap.probe.before = Some(gap.probe.expression.clone());
+    assert!(!explained(&gap).contains("before="));
+    gap.probe.owner = None;
+    assert!(!explained(&gap).contains("owner="));
+}
+
 #[test]
 fn explain_agent_exposed_finding_is_done_not_open() {
     let text = explained(&finding("probe:ok", ExposureClass::Exposed, 4));
@@ -1439,6 +1529,49 @@ fn explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim()
     // value must not be offered as something to assert.
     assert!(!text.contains("|missing=pct == 50|"), "{text}");
     assert!(!text.contains("open="), "{text}");
+}
+
+#[test]
+fn explain_agent_reach_limit_requires_exact_contributing_weak_test_binding() {
+    use crate::domain::{RelatedTestRole, RelationReason};
+
+    let mut limited = reach_limited_weak("probe:binding", 264);
+    limited.related_tests[0].name = "unrelated_same_file".to_string();
+    limited.related_tests[0].file = PathBuf::from("src/lib.rs");
+    let mut bound = limited.related_tests[0].clone();
+    bound.name = "discount_smoke".to_string();
+    bound.oracle = Some("assert!(discount(10, 100).is_ok());".to_string());
+    bound.oracle_kind = OracleKind::SmokeOnly;
+    bound.oracle_strength = OracleStrength::Smoke;
+    bound.relation_reason = Some(RelationReason::DirectOwnerCall);
+    bound.role = RelatedTestRole::ExaminedOnly;
+    limited.related_tests.push(bound);
+
+    for reason in [
+        None,
+        Some(RelationReason::SameTestFile),
+        Some(RelationReason::OwnerNamedTest),
+        Some(RelationReason::SeamCalleeCall),
+    ] {
+        limited.related_tests[0].relation_reason = reason;
+        let text = explained(&limited);
+        assert!(text.contains("\nstop="), "{reason:?}: {text}");
+        assert!(!text.contains("\nopen="), "{reason:?}: {text}");
+        assert!(
+            text.contains("\nlimit=rust_transitive_reach_unresolved\n"),
+            "{text}"
+        );
+    }
+
+    limited.related_tests[1].role = RelatedTestRole::Contributing;
+    let text = explained(&limited);
+    assert!(
+        text.contains("\nopen=a static limit leaves reach unconfirmed"),
+        "{text}"
+    );
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(text.contains(" discount_smoke "), "{text}");
+    assert!(!text.contains("unrelated_same_file"), "{text}");
 }
 
 #[test]
@@ -2611,6 +2744,107 @@ fn refusal_record_names_the_identity_and_only_a_runnable_next_command() {
         assert!(!forged.contains("next="), "{forged:?}");
         assert_eq!(forged.matches("verify=").count(), 1, "{forged:?}");
         assert_eq!(forged.lines().count(), 3, "{forged:?}");
+    }
+}
+
+/// #14713: a predicate probe on one struct-literal field initializer folds
+/// into the field_construction row for that initializer when the predicate
+/// names no missing value of its own; any other difference keeps both rows.
+#[test]
+fn predicate_on_a_field_initializer_folds_into_its_field_construction_row() {
+    let mut field = weak_gap("probe:field_construction:a", 10);
+    field.probe.family = ProbeFamily::FieldConstruction;
+    field.probe.expression = "verbose: flag == \"-v\" || flag == \"--verbose\"".to_string();
+    field.activation.missing_discriminators[0].value = field.probe.expression.clone();
+    // The producer's `missing` lines for this pair (struct_field eval).
+    field.missing = vec![
+        format!("Missing check value: {}", field.probe.expression),
+        "No strong discriminator was detected".to_string(),
+    ];
+    let mut predicate = weak_gap("probe:predicate:b", 10);
+    predicate.probe.family = ProbeFamily::Predicate;
+    predicate.probe.expression = "flag == \"-v\" || flag == \"--verbose\"".to_string();
+    predicate.activation.missing_discriminators.clear();
+    predicate.missing = vec!["No strong discriminator was detected".to_string()];
+    // As in the producer's output, the predicate words the same test's miss
+    // differently; the test's identity is what the rows share.
+    predicate.related_tests[0].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+    let text = rendered(&output(vec![field.clone(), predicate.clone()]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 1, "{text}");
+    assert!(text.contains(" findings=2 gaps=1 folded_gaps=1 "), "{text}");
+    assert!(text.contains("|id=probe:field_construction:a\n"), "{text}");
+    assert!(!text.contains("probe:predicate:b"), "{text}");
+    assert!(
+        text.contains("|findings=2|exposed=0|"),
+        "verification still counts every finding: {text}"
+    );
+
+    // Either arrival order folds, and `next=` names the printed field row.
+    let text = rendered(&output(vec![predicate.clone(), field.clone()]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 1, "{text}");
+    assert!(
+        text.contains("probe:field_construction:a\n") && !text.contains("probe:predicate:b"),
+        "the next step names the printed row, not the folded one: {text}"
+    );
+
+    // A predicate that names its own missing value is a second test.
+    let mut own_value = predicate.clone();
+    own_value.activation.missing_discriminators =
+        weak_gap("x", 10).activation.missing_discriminators;
+    let text = rendered(&output(vec![field.clone(), own_value]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+
+    // Advice only the predicate gives keeps its row: the boundary-input
+    // line the classifier adds for a predicate whose infection is unproven.
+    let mut own_advice = predicate.clone();
+    own_advice
+        .missing
+        .push("No detected boundary input for the changed predicate".to_string());
+    let text = rendered(&output(vec![field.clone(), own_advice]));
+    assert_eq!(text.matches("\nweakly_exposed|").count(), 2, "{text}");
+    assert!(text.contains("|id=probe:predicate:b\n"), "{text}");
+
+    // A different value, line, class, test, oracle or stage keeps both rows.
+    let mut other_value = predicate.clone();
+    other_value.probe.expression = "flag == \"-v\"".to_string();
+    let mut other_line = predicate.clone();
+    other_line.probe.location = SourceLocation::new("src/lib.rs", 11, 1);
+    let mut other_test = predicate.clone();
+    other_test.related_tests[0].name = "discount_other".to_string();
+    let mut other_oracle = predicate.clone();
+    other_oracle.related_tests[0].oracle = Some("assert!(discount(10, 100) < 90);".to_string());
+    let mut other_stage = predicate.clone();
+    other_stage.ripr.propagate = StageEvidence::new(StageState::Unknown, Confidence::Low, "p");
+    let mut other_class = predicate.clone();
+    other_class.class = ExposureClass::ReachableUnrevealed;
+    for variant in [
+        other_value,
+        other_line,
+        other_test,
+        other_oracle,
+        other_stage,
+        other_class,
+    ] {
+        let text = rendered(&output(vec![field.clone(), variant]));
+        assert!(!text.contains("folded_gaps="), "{text}");
+    }
+
+    // A field expression that is not one `<field>: <value>` initializer
+    // (a path, or a nested struct literal) never folds a predicate.
+    for expression in [
+        "a::b == c",
+        "Options { verbose: flag == \"-v\" || flag == \"--verbose\" }",
+    ] {
+        let mut not_initializer = field.clone();
+        not_initializer.probe.expression = expression.to_string();
+        let mut matching = predicate.clone();
+        matching.probe.expression = expression
+            .split_once(':')
+            .map_or(expression, |(_, rest)| rest)
+            .trim()
+            .to_string();
+        let text = rendered(&output(vec![not_initializer, matching]));
+        assert!(!text.contains("folded_gaps="), "{expression}: {text}");
     }
 }
 

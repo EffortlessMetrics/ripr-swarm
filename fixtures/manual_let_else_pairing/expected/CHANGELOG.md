@@ -68,3 +68,37 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — manual_let_else_pairing (7)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless manual_let_else_pairing --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — manual_let_else_pairing (8)
+
+Reason:
+RIPR-SPEC-0001: #7807 a removed line read as static_unknown only for lack of context is not reported again when its block replacement's modeled probe carries the whole removed text as before
+
+Command:
+`cargo xtask goldens bless manual_let_else_pairing --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — manual_let_else_pairing (9)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless manual_let_else_pairing --reason "..."`
+
+Updated:
+- `expected/check.json`

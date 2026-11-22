@@ -755,8 +755,8 @@ pub(crate) struct CaseRow {
     pub(crate) changed_since_labeling: bool,
     pub(crate) observed_classifications: Vec<String>,
     pub(crate) outcome: Outcome,
-    /// The tests catch the change, every spec example the case cites is a
-    /// `Reject` example and the case accepts `limited`: its spec withholds the
+    /// The tests catch the change, every spec example the case cites requires
+    /// an abstention and the case accepts `limited`: its spec withholds the
     /// only credit that could resolve it, so an abstention here is the
     /// specified behavior, not a miss analyzer work could remove
     /// (RIPR-SPEC-0219, [`abstention_expected`]). Absent when false.
@@ -794,8 +794,8 @@ pub(crate) struct Report {
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
     /// Abstained rows that are not [`CaseRow::abstention_expected`]: the
-    /// abstentions analyzer work could remove without breaking a spec's
-    /// `Reject` example. Same denominator as `abstention_rate`, so the
+    /// abstentions analyzer work could remove without breaking a spec
+    /// example. Same denominator as `abstention_rate`, so the
     /// abstention-expected share is the difference (RIPR-SPEC-0219).
     pub(crate) avoidable_abstention_rate: Ratio,
     pub(crate) contradiction_rate: Ratio,
@@ -843,8 +843,8 @@ pub(crate) struct OriginRates {
     pub(crate) ideal_rate: Ratio,
     pub(crate) abstention_rate: Ratio,
     /// Abstained rows that are not [`CaseRow::abstention_expected`]: the
-    /// abstentions analyzer work could remove without breaking a spec's
-    /// `Reject` example. Same denominator as `abstention_rate`, so the
+    /// abstentions analyzer work could remove without breaking a spec
+    /// example. Same denominator as `abstention_rate`, so the
     /// abstention-expected share is the difference (RIPR-SPEC-0219).
     pub(crate) avoidable_abstention_rate: Ratio,
     /// [`Report::abstention_by_cause`] for this origin's rows only.
@@ -930,6 +930,9 @@ pub(crate) fn case_row(
         .iter()
         .any(|f| f.pointer("/probe/line").and_then(Value::as_u64) != Some(case.anchor.line as u64));
     let observed = case_verdict(&anchored);
+    if let Some(err) = spec_abstention_violation(case, observed, reject_examples) {
+        return Err(err);
+    }
     let mut classes: Vec<String> = anchored
         .iter()
         .filter_map(|f| f.get("classification").and_then(Value::as_str))
@@ -995,13 +998,17 @@ pub(crate) fn case_row(
 
 /// Whether the case's spec asks for the abstention: the tests catch the
 /// change (ideal `credited`), the case cites at least one spec example, every
-/// cited example is an abstaining `Reject` example (one that pins the outcome
-/// as unresolved, not one that only forbids a route to credit; see
-/// [`coverage::abstaining_reject_examples`]), and the case lists `limited`
+/// cited example requires an abstention (an `[abstain]`-marked example, or a
+/// `Reject` example that pins the outcome as unresolved, not one that only
+/// forbids a route to credit; see [`coverage::abstaining_reject_examples`]),
+/// and the case lists `limited`
 /// among its acceptable verdicts. Such an example withholds credit, so with
 /// credit ruled out the only verdicts left are `limited`/`silent`. When the
-/// tests miss the change (ideal `gap`), a gap still obeys the Reject example,
-/// so that abstention stays avoidable.
+/// tests miss the change (ideal `gap`), a gap still obeys a Reject example,
+/// so that abstention stays avoidable. A gap against an `[abstain]` example is
+/// a spec disagreement the run does not refuse: [`spec_abstention_violation`]
+/// guards only the credit, the direction that would turn a required
+/// abstention into a wrong actionable signal.
 pub(crate) fn abstention_expected(case: &Case, reject_examples: &BTreeSet<String>) -> bool {
     case.truth.state.ideal() == Verdict::Credited
         && !case.spec_examples.is_empty()
@@ -1015,9 +1022,34 @@ pub(crate) fn abstention_expected(case: &Case, reject_examples: &BTreeSet<String
             .contains(&Verdict::Limited)
 }
 
+/// A case whose cited spec examples all require an abstention cannot read
+/// `credited`: either the analyzer broke the spec or an example that also
+/// describes a credited row was marked and has to be split (RIPR-SPEC-0219).
+/// Both the run and the committed rows refuse it, so a marked example keeps
+/// pinning one outcome.
+pub(crate) fn spec_abstention_violation(
+    case: &Case,
+    observed: Verdict,
+    reject_examples: &BTreeSet<String>,
+) -> Option<String> {
+    (observed == Verdict::Credited
+        && !case.spec_examples.is_empty()
+        && case
+            .spec_examples
+            .iter()
+            .all(|id| reject_examples.contains(id)))
+    .then(|| {
+        format!(
+            "case {} reads `credited`, but every spec example it cites ({}) requires an abstention; split the example or restore the spec's behavior",
+            case.case_id,
+            case.spec_examples.join(", ")
+        )
+    })
+}
+
 /// `anchor_lines` maps a case id to its anchor line's text, read from the
-/// patched run copy. `reject_examples` holds the abstaining `Reject`
-/// acceptance examples of the corpus's specs ([`abstention_expected`]).
+/// patched run copy. `reject_examples` holds the acceptance examples of the
+/// corpus's specs that require an abstention ([`abstention_expected`]).
 pub(crate) fn build_report(
     corpus: &Corpus,
     checks: &[(String, Value)],
@@ -1178,7 +1210,7 @@ pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
         .map(|subject| (subject.subject_id.as_str(), subject))
         .collect();
     // The abstention-expected flag is derived from the case and the specs'
-    // abstaining `Reject` examples; a committed row cannot carry a flag its
+    // examples that require an abstention; a committed row cannot carry a flag its
     // definition does not support (RIPR-SPEC-0219).
     let reject_examples = coverage::abstaining_reject_example_ids_for_corpus(dir)?;
     for row in &rows {
@@ -1188,6 +1220,9 @@ pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
         let subject = subjects
             .get(case.subject_id.as_str())
             .ok_or_else(|| format!("case {} has no subject `{}`", case.case_id, case.subject_id))?;
+        if let Some(err) = spec_abstention_violation(case, row.observed_verdict, &reject_examples) {
+            return Err(err);
+        }
         if row.subject_id != case.subject_id
             || row.truth != case.truth.state
             || row.origin != subject.origin
@@ -1244,7 +1279,7 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
             &report.abstention_rate,
         ),
         (
-            "Avoidable abstentions (abstained, not asked for by a spec Reject example)",
+            "Avoidable abstentions (abstained, not asked for by a spec example)",
             &report.avoidable_abstention_rate,
         ),
         ("Findings with a contradiction", &report.contradiction_rate),
@@ -3703,12 +3738,20 @@ pub(crate) fn classify_affected_path(path: &str) -> AffectedPath {
         }
         return AffectedPath::All;
     }
-    // The verdict-corpus harness itself is shared by every corpus.
-    if (path.starts_with("xtask/src/reports/verdict_corpus") && basename.ends_with(".rs"))
-        || matches!(
-            path,
-            "xtask/src/reports/fixtures.rs" | "xtask/src/command.rs" | "xtask/src/dispatch.rs"
-        )
+    // The scorer, fixture builders and process runner serve every corpus.
+    // A Rust file in those xtask modules can change a non-Rust fixture run.
+    if basename.ends_with(".rs")
+        && (path.starts_with("xtask/src/reports/verdict_corpus")
+            || path.starts_with("xtask/src/reports/fixtures/")
+            || path.starts_with("xtask/src/run/")
+            || matches!(
+                path,
+                "xtask/src/reports/fixtures.rs"
+                    | "xtask/src/run.rs"
+                    | "xtask/src/main.rs"
+                    | "xtask/src/command.rs"
+                    | "xtask/src/dispatch.rs"
+            ))
     {
         return AffectedPath::All;
     }
@@ -4145,3 +4188,7 @@ pub(crate) mod known_false;
 #[cfg(test)]
 #[path = "verdict_corpus_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "verdict_corpus_stage_axes_tests.rs"]
+mod stage_axes_tests;

@@ -1,3 +1,5 @@
+#[cfg(any(feature = "lang-perl", feature = "lang-python"))]
+use super::language::LanguageAdapter;
 #[cfg(feature = "lang-perl")]
 use super::language::PerlAdapter;
 #[cfg(feature = "lang-python")]
@@ -5,9 +7,8 @@ use super::language::PythonAdapter;
 #[cfg(feature = "lang-typescript")]
 use super::language::TypeScriptAdapter;
 use super::language::{
-    LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope,
-    RustAdapter, diff_limit_env, is_script_language, positive_limit_from_env, route,
-    unanalyzed_source_language,
+    LanguageDiffResult, LanguageId, LanguageRepoResult, PartialDiffScope, RustAdapter,
+    diff_limit_env, is_script_language, positive_limit_from_env, route, unanalyzed_source_language,
 };
 use super::{
     AnalysisOptions, AnalysisResult, LanguageRun, LanguageRunStatus, PreviewLanguageAdvisory, diff,
@@ -17,6 +18,10 @@ use crate::analysis::cancellation;
 use crate::analysis::committed_source;
 use crate::analysis::diff_scope_filter::{DiffIntake, DiffScopeFilter};
 
+use crate::analysis::diff_intake_disclosure::{
+    BINARY_SOURCE_RECOVERY, binary_rendered_source_paths, binary_source_detail,
+    deleted_files_disclosure,
+};
 use crate::analysis::language_outcome::{
     DiffLanguageAggregate, LanguageAggregate, LanguageAnalysisOutcomeV1, diff_scope_label,
 };
@@ -426,6 +431,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             result.uncommitted_source_paths = overlay.dirty_source_paths();
             result.untracked_source_paths = overlay.untracked_source_paths();
             result.ignored_source_paths = overlay.ignored_source_paths();
+            drop_never_analyzed_untracked_paths(&mut result, language_config);
         }
         result.analyzed_revisions = analyzed_revisions;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -629,6 +635,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         let (untracked, ignored) = excluded?;
         result.untracked_source_paths = untracked;
         result.ignored_source_paths = ignored;
+        drop_never_analyzed_untracked_paths(&mut result, language_config);
         result.analyzed_revisions = analyzed;
         bind_effective_base(&mut result, loaded.effective_base)?;
         Ok(result)
@@ -685,6 +692,48 @@ impl ProbeWorkerObserver {
         self.wait_for_worker
             .load(std::sync::atomic::Ordering::Acquire)
     }
+}
+
+thread_local! {
+    /// Deferred user-visible disclosures for the current analysis thread. While
+    /// a capture is installed, [`disclose!`] buffers instead of printing so a
+    /// caller that may discard the run (the last-commit fallback retry) prints
+    /// them only if it keeps the result (#15330).
+    static DEFERRED_DISCLOSURES: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Print one analysis disclosure on stderr, or buffer it under
+/// [`capture_disclosures`].
+pub(crate) fn emit_disclosure(message: String) {
+    let unbuffered = DEFERRED_DISCLOSURES.with(|slot| match slot.borrow_mut().as_mut() {
+        Some(buffer) => {
+            buffer.push(message);
+            None
+        }
+        None => Some(message),
+    });
+    if let Some(message) = unbuffered {
+        eprintln!("{message}");
+    }
+}
+
+macro_rules! disclose {
+    ($($arg:tt)*) => {
+        emit_disclosure(format!($($arg)*))
+    };
+}
+
+/// Run `work`, buffering the disclosures it would print on stderr and
+/// returning them beside its result. The caller prints them only when it
+/// adopts the result.
+pub(crate) fn capture_disclosures<T>(work: impl FnOnce() -> T) -> (T, Vec<String>) {
+    let previous = DEFERRED_DISCLOSURES.with(|slot| slot.borrow_mut().replace(Vec::new()));
+    let result = work();
+    let captured = DEFERRED_DISCLOSURES
+        .with(|slot| std::mem::replace(&mut *slot.borrow_mut(), previous))
+        .unwrap_or_default();
+    (result, captured)
 }
 
 #[cfg(test)]
@@ -986,15 +1035,6 @@ fn unanalyzed_source_language_limitation(
             paths.len()
         ))?,
     ))
-}
-
-fn deletion_disclosure_message(deleted_file_count: usize) -> Option<String> {
-    (deleted_file_count > 0).then(|| {
-        format!(
-            "ripr: diff deleted {deleted_file_count} file(s); deletion-only diffs produce no probes \
-             (deleted behavior has no new-side code to analyze)."
-        )
-    })
 }
 
 /// The truncated-stream disclosure message (#4375): `N` file section(s)
@@ -1360,7 +1400,8 @@ fn enforce_changed_language_line_limit(
          reduce the diff scope, split the extraction PR, run a narrower diff, or raise the \
          limit via {limit_env}=<number>. To analyze a subset, pass `--path <glob>` and/or \
          `--exclude <glob>` to `ripr check` (repeatable, repository-relative; files left out \
-         are reported as not analyzed)."
+         are reported as not analyzed). From a pre-commit hook, set those flags in the \
+         hook's `args:`, or skip this hook for one commit with `SKIP=ripr git commit ...`."
     ))
 }
 
@@ -1450,8 +1491,17 @@ fn run_pipeline_for_diff_text_with_language_config(
     let diff_scope = intake.scope;
     // #9331: the scope is applied as each section's path registers, so the
     // parse-time file bound measures only what was asked for.
-    let parsed_diff =
+    let mut parsed_diff =
         diff::parse_unified_diff_bounded_scoped(diff_text, |path| diff_scope.admits(path))?;
+    // #15121: a file the diff creates by copy is new code the patch does not
+    // carry; read it as an added file before any guard or adapter counts it.
+    // A hunkless copy that was read as an added file is a text change, even
+    // when its section also carries a file-mode change.
+    let copied_lines_read = diff::expand_copy_destinations(
+        &mut parsed_diff.changed_files,
+        &parsed_diff.copy_destination_paths,
+        &options.root,
+    )?;
     // #7663: ripr's own reports and caches under `target/ripr` are tool
     // artifacts, not user source. Standard Python `.gitignore` templates do
     // not cover `target/`, so `git add -A` can commit them; once committed,
@@ -1495,7 +1545,25 @@ fn run_pipeline_for_diff_text_with_language_config(
             .sample
             .push(file.path.to_string_lossy().replace('\\', "/"));
     }
-    if out_of_scope.count > 0 && changed_files.is_empty() {
+    // #15268: a scoped path the parser refused (edited in two sections of a
+    // patch series) did match the scope; its located limitation, not a
+    // "matched nothing" error, is the answer.
+    // #15268: the parser read the input as a diff and refused named files
+    // (in any language), so an empty result is never the garbage reading.
+    let parser_refused_named_files = parsed_diff
+        .limitations
+        .iter()
+        .any(names_parsed_file_limitation);
+    let refused_in_scope = parsed_diff.limitations.iter().any(|limitation| {
+        names_parsed_file_limitation(limitation)
+            && limitation.path.as_deref().is_some_and(|path| {
+                let path = std::path::Path::new(path);
+                diff_scope.admits(path)
+                    && !diff::is_ripr_artifact_path_under(path, &artifact_roots)
+                    && diff_limitation_in_scope(limitation, languages)
+            })
+    });
+    if out_of_scope.count > 0 && changed_files.is_empty() && !refused_in_scope {
         return Err(scope_matched_nothing_error(diff_scope, &out_of_scope));
     }
     // #10796: the scoped intake completed — publish the adapter-facing scoped
@@ -1507,12 +1575,13 @@ fn run_pipeline_for_diff_text_with_language_config(
         .into_iter()
         .filter(|limitation| diff_limitation_in_scope(limitation, languages))
         // A per-file parser limitation (combined hunk, conflict markers) on a
-        // file the operator scoped out must not invalidate the files kept.
+        // file the operator scoped out must not invalidate the files kept,
+        // and one on ripr's own artifacts (#7663) is not user scope either.
         .filter(|limitation| {
-            limitation
-                .path
-                .as_deref()
-                .is_none_or(|path| diff_scope.admits(std::path::Path::new(path)))
+            limitation.path.as_deref().is_none_or(|path| {
+                let path = std::path::Path::new(path);
+                diff_scope.admits(path) && !diff::is_ripr_artifact_path_under(path, &artifact_roots)
+            })
         })
         .collect::<Vec<_>>();
     if out_of_scope.count > 0 {
@@ -1521,6 +1590,8 @@ fn run_pipeline_for_diff_text_with_language_config(
     let mut harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection> =
         Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
+    let deleted_paths = parsed_diff.deleted_paths;
+    let binary_paths = parsed_diff.binary_paths;
     let submodule_file_count = parsed_diff.submodule_file_count;
     let symlink_file_count = parsed_diff.symlink_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
@@ -2158,7 +2229,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // Emit as stderr disclosures — these are not Findings (no probe was
     // generated), but the user needs to know what was not analyzed.
     for message in unanalyzed_disclosures(non_source_message, &changed_files) {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
     // RIPR-SPEC-0347 (#8999): changed trybuild `tests/ui` fixtures are compile-time
     // expectations ripr does not read as oracles. Advisory stderr text only; no
@@ -2166,35 +2237,36 @@ fn run_pipeline_for_diff_text_with_language_config(
     if let Some(message) =
         trybuild_fixtures::trybuild_fixture_disclosure_message(&options.root, &changed_files)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
-    emit_submodule_disclosure(submodule_file_count, |message| eprintln!("{message}"));
+    emit_submodule_disclosure(submodule_file_count, |message| disclose!("{message}"));
     if let Some(message) = symlink_disclosure_message(symlink_file_count) {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     emit_rename_disclosure(renamed_file_count, pure_rename_file_count, |message| {
-        eprintln!("{message}");
+        disclose!("{message}");
     });
 
     // #7663: name every ripr-artifact file the intake dropped, so the counts
     // below never silently disagree with the commit the diff came from.
     if !own_artifact_files.is_empty() {
-        eprintln!(
+        disclose!(
             "{}",
             ripr_artifact_disclosure(&options.root, &artifact_roots, &own_artifact_files)
         );
     }
 
-    if findings.is_empty()
-        && rust_changed_files == 0
-        && changed_files_by_language
+    // #15324: name the deleted files whatever else changed.
+    let other_changes = rust_changed_files > 0
+        || changed_files_by_language
             .iter()
-            .all(|(_, count)| *count == 0)
-        && let Some(message) = deletion_disclosure_message(deleted_file_count)
+            .any(|(_, count)| *count > 0);
+    if findings.is_empty()
+        && let Some(message) = deleted_files_disclosure(&deleted_paths, other_changes)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     // Disclose when the diff parsed to zero changed files (#2425): the input
@@ -2217,8 +2289,12 @@ fn run_pipeline_for_diff_text_with_language_config(
             .iter()
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
+        // A parser limitation that names a file (#15268: a path edited in
+        // two sections of a patch series) already says why nothing was read;
+        // the generic "verify the diff is valid" guess would contradict it.
+        && !parser_refused_named_files
     {
-        eprintln!(
+        disclose!(
             "{}",
             zero_file_diff_disclosure(
                 diff_text,
@@ -2239,24 +2315,25 @@ fn run_pipeline_for_diff_text_with_language_config(
         && is_truncated_diff_stream(truncated_file_sections)
         && let Some(message) = truncated_diff_disclosure_message(truncated_file_sections)
     {
-        eprintln!("{message}");
+        disclose!("{message}");
     }
 
     // Rename metadata can register a binary file without any text hunks.
     // That path must retain the same non-text refusal as an unrenamed blob.
+    let non_text_only = !copied_lines_read && has_only_non_text_changes(diff_text);
     if !diff_text.trim().is_empty()
-        && ((changed_files.is_empty() && renamed_file_count == 0)
-            || has_only_non_text_changes(diff_text))
+        && ((changed_files.is_empty() && renamed_file_count == 0) || non_text_only)
         && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
         && limitations.len() == supplied_evidence_limitations
+        && !parser_refused_named_files
     {
         // The schema token stays `malformed_diff` (a new limitation kind is a
         // schema change); a well-formed diff with only binary or mode changes
         // gets its own wording so the recovery does not tell the reader to
         // fix a valid diff.
-        let (recovery, detail) = if has_only_non_text_changes(diff_text) {
+        let (recovery, detail) = if non_text_only {
             (
                 "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed.",
                 NON_TEXT_ONLY_DETAIL,
@@ -2345,6 +2422,32 @@ fn run_pipeline_for_diff_text_with_language_config(
         );
     }
 
+    // #15324: a source file git printed as binary (a `-diff` or `binary`
+    // attribute, or a NUL byte) carried no hunk, so its change was not
+    // analyzed. The result must not read as complete over it. The parser
+    // already dropped paths outside the requested scope; ripr's own artifacts
+    // and a copy destination read whole as added source are not unread.
+    let binary_sources = binary_rendered_source_paths(&binary_paths, |path| {
+        diff::is_ripr_artifact_path_under(path, &artifact_roots)
+            || changed_files
+                .iter()
+                .any(|file| file.path == path && !file.added_lines.is_empty())
+    });
+    if !binary_sources.is_empty() {
+        limitations.push(
+            AnalysisLimitation::new(
+                AnalysisLimitationKind::LanguageScopeUnsupported,
+                AnalysisStage::DiffParse,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    BINARY_SOURCE_RECOVERY,
+                )?,
+            )
+            .with_affected_items(binary_sources.len() as u64)?
+            .with_detail(binary_source_detail(&binary_sources))?,
+        );
+    }
+
     sort::sort_findings(&mut findings);
     cancellation::checkpoint()?;
     let mut summary_result = summary::summarize_findings(rust_changed_files, &findings);
@@ -2387,6 +2490,13 @@ fn run_pipeline_for_diff_text_with_language_config(
                 .saturating_add(file.removed_lines.len())
         })
         .sum::<usize>();
+    let mut changed_line_index = crate::analysis_outcome::ChangedLineIndex::default();
+    for file in changed_files.iter() {
+        changed_line_index.record(
+            super::stable_path_text(&file.path),
+            file.added_lines.iter().map(|line| line.new_side_line),
+        );
+    }
     let kind = if limitations.iter().any(|limitation| {
         matches!(
             limitation.kind,
@@ -2513,6 +2623,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         rust_consumed_sources,
         owner_opt_outs,
         language_view: Some(language_view),
+        changed_lines: Some(changed_line_index),
         preview_fact_caches,
     })
 }
@@ -2829,6 +2940,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         // reports every owner.
         owner_opt_outs: Vec::new(),
         language_view: Some(language_view),
+        changed_lines: None,
         preview_fact_caches: Vec::new(),
     })
 }
@@ -3268,6 +3380,55 @@ fn ripr_artifact_disclosure(
     )
 }
 
+/// Drop untracked paths no adapter would analyze from the working-tree
+/// disclosures (#15902).
+///
+/// An installed `node_modules/` tree that `.gitignore` does not cover shows up
+/// as hundreds of untracked routed files. The adapter's own excluded-path
+/// authority never analyzes them, tracked or not, so naming them as
+/// unanalyzed working-tree source is wrong twice: `git add -N` cannot make
+/// them analyzable, and the "unanalyzed working tree" state it sets withholds
+/// the repair start without a reason. The decision is
+/// [`is_excluded_from_diff_and_workspace_index`]: only a path that neither
+/// the diff loop nor the workspace walk reads is dropped, so a path declared
+/// in `handwritten_files` stays disclosed, and so does an untracked file
+/// under a TypeScript `docs/` directory, which the walk still indexes as
+/// test evidence. Rust has no such authority and keeps every untracked path.
+/// Tracked dirty files are never dropped: `--worktree` does read those.
+fn drop_never_analyzed_untracked_paths(
+    result: &mut AnalysisResult,
+    language_config: &crate::config::LanguagesConfig,
+) {
+    let never_analyzed =
+        never_analyzed_untracked_paths(&result.untracked_source_paths, language_config);
+    if never_analyzed.is_empty() {
+        return;
+    }
+    result
+        .untracked_source_paths
+        .retain(|path| !never_analyzed.contains(path));
+    result
+        .uncommitted_source_paths
+        .retain(|path| !never_analyzed.contains(path));
+}
+
+/// The untracked routed paths their own language adapter refuses to analyze.
+fn never_analyzed_untracked_paths(
+    untracked: &[String],
+    language_config: &crate::config::LanguagesConfig,
+) -> std::collections::BTreeSet<String> {
+    untracked
+        .iter()
+        .filter(|path| {
+            let path = std::path::Path::new(path.as_str());
+            route(path).is_some_and(|language| {
+                is_excluded_from_diff_and_workspace_index(language, path, language_config)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Whether a changed preview-language path is refused by its adapter's own
 /// excluded-path or generated-name authority before counting.
 ///
@@ -3310,17 +3471,52 @@ fn is_excluded_from_typescript_preview_analysis(
     path: &std::path::Path,
     language_config: &crate::config::LanguagesConfig,
 ) -> bool {
+    is_excluded_from_typescript_workspace_index(path, language_config)
+        || (crate::config::is_typescript_docs_site_path(path)
+            && !crate::config::is_declared_handwritten_typescript_path(
+                &language_config.typescript.handwritten_files,
+                path,
+            ))
+}
+
+/// Whether the TypeScript/JS workspace walk also refuses `path`, so it can
+/// supply neither a changed owner nor test evidence. This is the diff-loop
+/// authority without the `docs/` rule, which is diff-only (#13088): the walk
+/// keeps indexing `docs/` because libraries keep tests there.
+fn is_excluded_from_typescript_workspace_index(
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
     crate::config::is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(
             &language_config.typescript.excluded_file_patterns,
             path,
         )
-        || ((crate::config::is_detectable_excluded_typescript_path(path)
-            || crate::config::is_typescript_docs_site_path(path))
+        || (crate::config::is_detectable_excluded_typescript_path(path)
             && !crate::config::is_declared_handwritten_typescript_path(
                 &language_config.typescript.handwritten_files,
                 path,
             ))
+}
+
+/// Whether `path` is read by neither the diff loop nor the workspace walk of
+/// its language adapter (#15902). Narrower than
+/// [`is_excluded_from_preview_analysis`] for TypeScript/JS, where `docs/` is
+/// skipped as changed scope but still indexed. The Python walk applies the
+/// same three authorities as its diff loop, so the two agree there.
+fn is_excluded_from_diff_and_workspace_index(
+    language: LanguageId,
+    path: &std::path::Path,
+    language_config: &crate::config::LanguagesConfig,
+) -> bool {
+    match language {
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            is_excluded_from_typescript_workspace_index(path, language_config)
+        }
+        LanguageId::Python | LanguageId::Rust | LanguageId::Perl => {
+            is_excluded_from_preview_analysis(language, path, language_config)
+        }
+    }
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -3571,9 +3767,9 @@ fn partial_scope_limitation(scope: &PartialDiffScope) -> Result<AnalysisLimitati
     })
 }
 
-/// Limitation detail for a well-formed diff with only binary or file-mode
-/// changes; `ripr check --diff` keys its stderr hedge on it.
-pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.";
+// The well-formed binary- or mode-only detail; its owner is
+// `AnalysisLimitation::is_non_text_only` (#15862).
+use crate::analysis_outcome::NON_TEXT_ONLY_DETAIL;
 
 /// True when every git file section is a complete binary or mode-change
 /// section and no `@@` hunk exists: a valid diff that carries nothing ripr
@@ -3581,36 +3777,117 @@ pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but conta
 /// a malformed binary sentinel) keeps the generic malformed-diff wording.
 fn has_only_non_text_changes(diff_text: &str) -> bool {
     let mut sections = 0usize;
-    let mut binary = false;
-    let (mut old_mode, mut new_mode) = (false, false);
+    let mut section: Option<NonTextSection> = None;
     let mut all_ok = true;
-    let mut in_section = false;
     for line in diff_text.lines() {
+        let line = line.trim_end_matches('\r');
         if line.starts_with("@@") {
             return false;
         }
         if line.starts_with("diff --git ") {
-            if in_section {
-                all_ok &= binary || (old_mode && new_mode);
-            }
-            in_section = true;
+            all_ok &= section.is_none_or(|section| section.is_complete());
+            section = Some(NonTextSection::default());
             sections += 1;
-            binary = false;
-            old_mode = false;
-            new_mode = false;
             continue;
         }
-        if !in_section {
-            continue;
+        if let Some(section) = section.as_mut() {
+            section.read(line);
         }
-        binary |= is_binary_sentinel(line) || line == "GIT binary patch";
-        old_mode |= line.starts_with("old mode ");
-        new_mode |= line.starts_with("new mode ");
     }
-    if in_section {
-        all_ok &= binary || (old_mode && new_mode);
-    }
+    all_ok &= section.is_none_or(|section| section.is_complete());
     sections > 0 && all_ok
+}
+
+/// What one `diff --git` section has shown of a non-text change (#15862).
+#[derive(Clone, Copy, Default)]
+struct NonTextSection {
+    sentinel: bool,
+    old_mode: bool,
+    new_mode: bool,
+    patch: BinaryPatchState,
+}
+
+impl NonTextSection {
+    fn read(&mut self, line: &str) {
+        if self.patch == BinaryPatchState::Absent {
+            if line == "GIT binary patch" {
+                self.patch = BinaryPatchState::Header;
+                return;
+            }
+            self.sentinel |= is_binary_sentinel(line);
+            self.old_mode |= is_git_mode_line(line, "old mode ");
+            self.new_mode |= is_git_mode_line(line, "new mode ");
+            return;
+        }
+        self.patch = self.patch.after(line);
+    }
+
+    /// A started binary patch must be complete, whatever mode lines precede
+    /// it; otherwise a sentinel or a full mode pair is required.
+    fn is_complete(self) -> bool {
+        match self.patch {
+            BinaryPatchState::Absent => self.sentinel || (self.old_mode && self.new_mode),
+            state => state == BinaryPatchState::BlockEnd,
+        }
+    }
+}
+
+/// A `git diff --binary` patch: the `GIT binary patch` marker, then one or
+/// more blocks of a `literal <n>` or `delta <n>` line, base85 data lines and a
+/// blank line (#15862). Every data line is checked for shape; any other line
+/// inside the patch makes it invalid, and only a closed block completes it.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum BinaryPatchState {
+    #[default]
+    Absent,
+    Header,
+    Size,
+    Data,
+    BlockEnd,
+    Invalid,
+}
+
+impl BinaryPatchState {
+    fn after(self, line: &str) -> Self {
+        match self {
+            Self::Header | Self::BlockEnd if is_binary_patch_size(line) => Self::Size,
+            Self::Size | Self::Data if is_base85_data_line(line) => Self::Data,
+            Self::Data if line.is_empty() => Self::BlockEnd,
+            _ => Self::Invalid,
+        }
+    }
+}
+
+/// `old mode <m>` / `new mode <m>` with a six-digit octal Git mode (#15862);
+/// `old mode invalid` is not a mode change.
+fn is_git_mode_line(line: &str, prefix: &str) -> bool {
+    line.strip_prefix(prefix)
+        .is_some_and(|mode| mode.len() == 6 && mode.bytes().all(|b| matches!(b, b'0'..=b'7')))
+}
+
+/// One line of Git's base85 binary payload: a length character (`A`-`Z` for
+/// 1-26 bytes, `a`-`z` for 27-52) then exactly `ceil(len / 4) * 5` characters
+/// of Git's base85 alphabet (#15862). The payload is not decoded.
+fn is_base85_data_line(line: &str) -> bool {
+    let Some((&first, encoded)) = line.as_bytes().split_first() else {
+        return false;
+    };
+    let decoded = match first {
+        b'A'..=b'Z' => usize::from(first - b'A') + 1,
+        b'a'..=b'z' => usize::from(first - b'a') + 27,
+        _ => return false,
+    };
+    encoded.len() == decoded.div_ceil(4) * 5
+        && encoded
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&()*+-;<=>?@^_`{|}~".contains(b))
+}
+
+fn is_binary_patch_size(line: &str) -> bool {
+    ["literal ", "delta "].iter().any(|prefix| {
+        line.strip_prefix(prefix)
+            .is_some_and(|size| !size.is_empty() && size.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 /// `Binary files <old> and <new> differ` with a non-empty path on each side.
@@ -3626,6 +3903,12 @@ fn is_binary_sentinel(line: &str) -> bool {
     };
     rest.match_indices(" and ")
         .any(|(at, sep)| at > 0 && at + sep.len() < rest.len())
+}
+
+/// A diff-parse limitation located at a file: the parser read the input as
+/// a diff and refused named content, so the input is not garbage.
+pub(crate) fn names_parsed_file_limitation(limitation: &AnalysisLimitation) -> bool {
+    limitation.producer_stage == AnalysisStage::DiffParse && limitation.path.is_some()
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.
@@ -4974,9 +5257,43 @@ mod tests {
                 "{sentinel}"
             );
         }
+        // Real `git diff --binary` output is recognized (#15862) ...
+        // A mode change carried with a complete binary patch.
         assert!(has_only_non_text_changes(
-            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n"
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nindex 8352675..1592e5c\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
         ));
+        // A new one-byte file: the forward `literal 1` and reverse `literal 0`
+        // data lines are both base85 lines git emitted.
+        assert!(has_only_non_text_changes(
+            "diff --git a/e b/e\nnew file mode 100644\nindex 0000000..f76dd23\nGIT binary patch\nliteral 1\nIcmZPo000310RR91\n\nliteral 0\nHcmV?d00001\n\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/logo.png b/logo.png\nindex 8352675..1592e5c 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n"
+        ));
+        assert!(has_only_non_text_changes(
+            "diff --git a/x b/x\r\nold mode 100644\r\nnew mode 100755\r\n"
+        ));
+        // ... but a bare marker, a payload-less size line and non-octal modes
+        // are not a complete non-text section.
+        for lookalike in [
+            "diff --git a/x b/x\nGIT binary patch\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\n\n",
+            "diff --git a/x b/x\nGIT binary patch\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 0\nnot payload\n",
+            // A started patch must complete even beside a valid mode pair.
+            "diff --git a/x b/x\nold mode 100644\nnew mode 100755\nGIT binary patch\n",
+            // A malformed reverse block, or a forward block never closed.
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nnot payload\n\n",
+            "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2\n",
+            "diff --git a/x b/x\nGIT binary patch\nliteral 3\nKcmZQ WCj2L2ml2D\n",
+            "diff --git a/x b/x\nold mode invalid\nnew mode invalid\n",
+            "diff --git a/x b/x\nold mode 100644\nnew mode 10075\n",
+            "diff --git a/x b/x\nold mode 100648\nnew mode 100755\n",
+        ] {
+            assert!(!has_only_non_text_changes(lookalike), "{lookalike}");
+        }
         // Incomplete or mixed sections keep the generic wording.
         assert!(!has_only_non_text_changes(
             "diff --git a/x b/x\nold mode 100644\n"
@@ -5659,7 +5976,10 @@ mod tests {
     }
 
     /// #13894 N3: a preview-language file matching the operator's
-    /// `excluded_file_patterns` is a scope note on a complete outcome.
+    /// `excluded_file_patterns` is a scope note on a complete outcome. The
+    /// Python adapter must be compiled in; the rust-only counterpart is
+    /// `uncompiled_preview_adapter_with_configured_exclusion_stays_partial`.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn preview_excluded_file_pattern_is_a_scope_note_on_a_complete_outcome() -> Result<(), String> {
         let root = temp_root("analysis-outcome-preview-excluded")?;
@@ -5734,6 +6054,7 @@ mod tests {
             .ok_or_else(|| "outcome must be projected".to_string())
     }
 
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     fn assert_configured_scope_note(
         outcome: &crate::analysis_outcome::AnalysisOutcome,
         path: &str,
@@ -5756,6 +6077,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
     fn assert_generated_name_stays_partial(outcome: &crate::analysis_outcome::AnalysisOutcome) {
         assert_eq!(
             outcome.kind,
@@ -5773,6 +6095,7 @@ mod tests {
 
     /// #13894 review: a configured `excluded_file_patterns` match wins over the
     /// built-in generated NAME convention (Python), like the Rust branch.
+    #[cfg(feature = "lang-python")]
     #[test]
     fn configured_pattern_wins_over_generated_name_for_python() -> Result<(), String> {
         let enabled = [LanguageId::Rust, LanguageId::Python];
@@ -5805,6 +6128,63 @@ mod tests {
             &unconfigured,
         )?;
         assert_generated_name_stays_partial(&outcome);
+        Ok(())
+    }
+
+    /// #15601 C3: in a binary without the Python adapter, an enabled Python
+    /// language cannot run at all, so a changed Python file is never judged
+    /// by the preview skip rules. Even when the operator's
+    /// `excluded_file_patterns` match it, the outcome stays partial on the
+    /// typed adapter-unavailable limitation; it must not read as a complete
+    /// outcome with a configured scope note, nor as a preview-adapter skip.
+    #[cfg(not(feature = "lang-python"))]
+    #[test]
+    fn uncompiled_preview_adapter_with_configured_exclusion_stays_partial() -> Result<(), String> {
+        let enabled = [LanguageId::Rust, LanguageId::Python];
+        let configured = crate::config::LanguagesConfig {
+            enabled: enabled.to_vec(),
+            python: crate::config::PythonLanguageConfig {
+                excluded_file_patterns: vec!["fixtures/**".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let outcome = preview_skip_outcome(
+            "preview-excluded-uncompiled",
+            "fixtures/data.py",
+            &enabled,
+            &configured,
+        )?;
+        assert_eq!(
+            outcome.kind,
+            AnalysisOutcomeKind::PartialWithLimitations,
+            "{:?}",
+            outcome.limitations
+        );
+        let unavailable = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+            })
+            .ok_or_else(|| format!("python must be unavailable: {:?}", outcome.limitations))?;
+        assert!(
+            unavailable
+                .bounded_detail
+                .as_deref()
+                .unwrap_or_default()
+                .contains("python"),
+            "{unavailable:?}"
+        );
+        assert!(
+            !outcome.limitations.iter().any(|limitation| matches!(
+                limitation.kind,
+                AnalysisLimitationKind::RequestedScopeExcluded
+                    | AnalysisLimitationKind::LanguageScopeUnsupported
+            )),
+            "{:?}",
+            outcome.limitations
+        );
         Ok(())
     }
 
@@ -6007,29 +6387,6 @@ mod tests {
                 "1 generated or vendored Rust file(s) skipped from static analysis by the generated-file conventions, generator headers, `cargo vendor` crates or configured patterns"
             )
         );
-        Ok(())
-    }
-
-    #[test]
-    fn deletion_disclosure_names_deleted_files_and_non_claim() -> Result<(), String> {
-        let message = deletion_disclosure_message(2)
-            .ok_or_else(|| "deleted files must produce a disclosure".to_string())?;
-        if !message.contains("deleted 2 file(s)") {
-            return Err(format!(
-                "disclosure must name the deleted-file count: {message}"
-            ));
-        }
-        if !message.contains("deletion-only diffs produce no probes") {
-            return Err(format!(
-                "disclosure must name the no-probe limitation: {message}"
-            ));
-        }
-        if !message.contains("no new-side code to analyze") {
-            return Err(format!("disclosure must carry the non-claim: {message}"));
-        }
-        if deletion_disclosure_message(0).is_some() {
-            return Err("zero deleted files must not produce a disclosure".to_string());
-        }
         Ok(())
     }
 
@@ -8267,6 +8624,38 @@ index 0000000..1111111 100644
             .collect()
     }
 
+    /// #15902: an untracked file inside a tree the adapter never analyzes
+    /// (an unignored `node_modules/`) is not unanalyzed working-tree source.
+    /// The controls keep the disclosure honest: an untracked hand-written
+    /// source file, a path the repository declared hand-written, a test under
+    /// `docs/` (skipped as changed scope but still indexed as test evidence),
+    /// and a Rust file (Rust has no excluded-path authority) all stay
+    /// disclosed.
+    #[test]
+    fn untracked_paths_the_adapter_never_analyzes_are_not_disclosed_as_source() {
+        let untracked = [
+            "docs/pricing.test.ts",
+            "node_modules/dep/index.ts",
+            "node_modules/dep/lib/util.js",
+            "node_modules/kept/handwritten.ts",
+            "node_modules/tool/build.rs",
+            "src/extra.ts",
+        ]
+        .map(str::to_string);
+        let mut config = crate::config::LanguagesConfig::default();
+        config
+            .typescript
+            .handwritten_files
+            .push("node_modules/kept/handwritten.ts".to_string());
+        let dropped: Vec<String> = never_analyzed_untracked_paths(&untracked, &config)
+            .into_iter()
+            .collect();
+        assert_eq!(
+            dropped,
+            ["node_modules/dep/index.ts", "node_modules/dep/lib/util.js"]
+        );
+    }
+
     /// #4372: the enabled preview advisory ("N TypeScript files analyzed under
     /// preview support") counts only changed files that survive the adapter's
     /// own #3743 excluded-path and generated-name authority. A vendored,
@@ -9678,6 +10067,85 @@ index 0000000..1111111 100644
             detail.contains(&format!("and {} more", FLOODED_VENDOR_FILES - 3)),
             "{detail}"
         );
+        Ok(())
+    }
+
+    /// #15268: `src/lib.rs` edited in two sections of a series, `src/big.rs` once.
+    fn repeated_lib_series() -> String {
+        let edit = |hunk: &str| {
+            format!(
+                "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n{hunk}"
+            )
+        };
+        // `git log -p` output: a commit header separates the two edits.
+        format!(
+            "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -1 +1 @@\n-pub fn big_0() -> u32 {{ 1 }}\n+pub fn big_0() -> u32 {{ 0 }}\n",
+            edit(
+                "@@ -1 +1 @@\n-pub fn f(x: i32) -> bool { x > 1 }\n+pub fn f(x: i32) -> bool { x >= 1 }\n"
+            ),
+            edit("@@ -0,0 +1 @@\n+// added later\n"),
+        )
+    }
+
+    #[test]
+    fn a_scope_keeping_only_a_refused_series_file_reports_its_limitation() -> Result<(), String> {
+        let result = run_scoped("series-scope", &["src/lib.rs"], &[], &repeated_lib_series())?
+            .map_err(|error| {
+                format!("a matched but refused path must not read as no match: {error}")
+            })?;
+        let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+        assert!(!outcome.kind.is_complete(), "{outcome:?}");
+        let refused = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                    && limitation.recovery.kind == AnalysisRecoveryKind::UseTwoWayDiff
+            })
+            .ok_or("the refused series file must be named")?;
+        assert_eq!(refused.path.as_deref(), Some("src/lib.rs"));
+        // Control: a scope that truly matches nothing is still refused.
+        let refusal = run_scoped(
+            "series-scope-miss",
+            &["nowhere"],
+            &[],
+            &repeated_lib_series(),
+        )?
+        .err()
+        .ok_or("a scope matching nothing must be refused")?;
+        assert!(
+            refusal.starts_with("scope_filter_matched_nothing:"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_series_editing_artifacts_or_docs_twice_is_not_a_limitation() -> Result<(), String> {
+        // #15268 review: only an analyzed-language path is refused. ripr's own
+        // reports (#7663) and a README edited in two commits stay out of scope.
+        for path in ["target/ripr/pilot/pilot-summary.md", "README.md"] {
+            let section = |hunk: &str| {
+                format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}")
+            };
+            let diff = format!(
+                "{}commit 0123456789abcdef0123456789abcdef01234567\n\n{}",
+                section("@@ -1 +1 @@\n-old\n+new\n"),
+                section("@@ -0,0 +1 @@\n+added\n")
+            );
+            let result = run_scoped("series-nonsource", &[], &[], &diff)?
+                .map_err(|error| format!("{path}: {error}"))?;
+            let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+            assert!(outcome.kind.is_complete(), "{path}: {outcome:?}");
+            assert!(
+                !outcome
+                    .limitations
+                    .iter()
+                    .any(|limitation| limitation.recovery.kind
+                        == AnalysisRecoveryKind::UseTwoWayDiff),
+                "{path}: {outcome:?}"
+            );
+        }
         Ok(())
     }
 

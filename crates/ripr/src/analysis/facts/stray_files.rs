@@ -14,8 +14,8 @@
 //! anywhere, a macro that builds `mod` or `include!` operands, an unreadable
 //! manifest, or a package whose crate root is not indexed.
 
-use super::model::RustIndex;
-use std::collections::BTreeSet;
+use super::{model::RustIndex, role_composition::may_build_mount_operands};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
 /// Directories Cargo autodiscovers or the module tree owns. A file below one
@@ -51,27 +51,34 @@ pub(super) fn never_compiled(
     index: &RustIndex,
     workspace_root: &Path,
     manifest_dirs: &BTreeSet<PathBuf>,
-    candidates: &[PathBuf],
+    candidates: &[(PathBuf, PathBuf)],
 ) -> BTreeSet<PathBuf> {
     let mut out = BTreeSet::new();
-    if candidates.is_empty() {
+    if candidates.is_empty()
+        || crate::analysis::committed_source::current_overlay().is_some_and(|overlay| {
+            overlay
+                .dirty_paths()
+                .any(|path| Path::new(path).ends_with("Cargo.toml"))
+        })
+    {
         return out;
     }
     // Names compare ASCII-case-insensitively: a case-insensitive filesystem
     // resolves `#[path]` operands that differ from the file only in case.
     let candidate_names: BTreeSet<String> = candidates
         .iter()
-        .filter_map(|file| file.file_name().and_then(|name| name.to_str()))
+        .filter_map(|(file, _)| file.file_name().and_then(|name| name.to_str()))
         .map(str::to_ascii_lowercase)
         .collect();
     let mut referenced_names: BTreeSet<String> = BTreeSet::new();
     let mut declared_modules: BTreeSet<String> = BTreeSet::new();
-    for facts in index.files().values() {
+    let mut uncertain_source = None;
+    for (path, facts) in index.files().iter() {
         let source: &str = &facts.source;
-        if builds_module_operands(source) {
-            return out;
-        }
-        if spells_a_path_with_escapes(source) {
+        if (spells_a_path_with_escapes(source) || may_build_mount_operands(source))
+            && uncertain_source.replace(path).is_some()
+        {
+            // At least one source other than each candidate could mount it.
             return out;
         }
         collect_referenced_file_names(
@@ -81,20 +88,27 @@ pub(super) fn never_compiled(
         );
         collect_declared_modules(source, &mut declared_modules);
     }
-    let mut manifests: BTreeSet<PathBuf> = manifest_dirs
-        .iter()
-        .map(|dir| dir.join("Cargo.toml"))
-        .collect();
-    manifests.insert(workspace_root.join("Cargo.toml"));
-    for manifest in &manifests {
-        let path = if manifest.is_absolute() {
-            manifest.clone()
-        } else {
-            workspace_root.join(manifest)
-        };
-        match std::fs::read_to_string(&path) {
+    // A virtual workspace can govern the package from an intermediate
+    // directory that owns no indexed Rust files.
+    let mut dirs = manifest_dirs.clone();
+    dirs.insert(PathBuf::new());
+    for (_, package) in candidates {
+        dirs.extend(package.ancestors().map(Path::to_path_buf));
+    }
+    let mut manifests = BTreeMap::new();
+    for dir in dirs {
+        let path = workspace_root.join(&dir).join("Cargo.toml");
+        match crate::bounded_input::read_metadata_toml(&path) {
             Ok(text) => {
-                if spells_a_path_with_escapes(&text) {
+                let Ok(manifest) = toml::from_str::<toml::Value>(&text) else {
+                    return BTreeSet::new();
+                };
+                if spells_a_path_with_escapes(&text)
+                    || manifest
+                        .get("package")
+                        .and_then(|package| package.get("workspace"))
+                        .is_some()
+                {
                     return BTreeSet::new();
                 }
                 collect_referenced_file_names(
@@ -102,16 +116,26 @@ pub(super) fn never_compiled(
                     &candidate_names,
                     &mut referenced_names,
                 );
+                manifests.insert(dir, manifest);
             }
-            // A workspace without a root manifest is fine; any other
-            // unreadable manifest is doubt.
-            Err(_) if path == workspace_root.join("Cargo.toml") => {}
+            // An optional ancestor can have no manifest. Any other read
+            // failure leaves its Cargo scope uncertain.
+            Err(error)
+                if !manifest_dirs.contains(&dir)
+                    && error.kind() == std::io::ErrorKind::NotFound
+                    && std::fs::symlink_metadata(&path)
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
             Err(_) => return BTreeSet::new(),
         }
     }
     // A package's build script is a crate root whose name the manifest may
     // not repeat; its text is already among the indexed sources.
-    for file in candidates {
+    for (file, _) in candidates {
+        // A candidate's own unresolved operand cannot be a route into it.
+        // An uncertain operand in any other source still keeps it.
+        if uncertain_source.is_some_and(|source| source != file) {
+            continue;
+        }
         let Some(name) = file.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
@@ -130,21 +154,92 @@ pub(super) fn never_compiled(
             out.insert(file.clone());
         }
     }
+    if !out.is_empty()
+        && !cargo_scope_is_covered(index, workspace_root, &manifests, candidates, &out)
+    {
+        out.clear();
+    }
     out
 }
 
-/// True when a source may assemble a `mod` or `include!` operand the text
-/// cannot name: any `$` beside a `mod`/`include` word (macro metavariables,
-/// whatever comments, strings or whitespace sit between them), or an
-/// `include!` whose operand is not a plain string literal.
-fn builds_module_operands(source: &str) -> bool {
-    if source.contains('$') && (source.contains("mod") || source.contains("include")) {
-        return true;
+fn cargo_scope_is_covered(
+    index: &RustIndex,
+    analysis_root: &Path,
+    manifests: &BTreeMap<PathBuf, toml::Value>,
+    candidates: &[(PathBuf, PathBuf)],
+    outside: &BTreeSet<PathBuf>,
+) -> bool {
+    use crate::analysis::workspace::{
+        covered_rust_source_manifest_dirs, explicit_target_roots_are_covered,
+        standalone_packages_have_no_source_aliases,
+    };
+
+    let mut packages = BTreeSet::new();
+    let mut workspaces = BTreeSet::new();
+    for (file, package) in candidates {
+        if !outside.contains(file) {
+            continue;
+        }
+        packages.insert(package.clone());
+        if let Some(workspace) = package.ancestors().find(|ancestor| {
+            manifests
+                .get(*ancestor)
+                .is_some_and(|manifest| manifest.get("workspace").is_some())
+        }) {
+            workspaces.insert(workspace.to_path_buf());
+        }
     }
-    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
-    compact
-        .match_indices("include!(")
-        .any(|(at, matched)| !compact[at + matched.len()..].starts_with('"'))
+    let indexed = |path: &Path| index.files().get(path).is_some();
+    if workspaces.is_empty() {
+        if !standalone_packages_have_no_source_aliases(analysis_root, &packages) {
+            return false;
+        }
+    } else {
+        if !workspaces.iter().all(|dir| {
+            manifests
+                .get(dir)
+                .and_then(|manifest| manifest.get("workspace"))
+                .is_some_and(|workspace| {
+                    workspace.is_table()
+                        && workspace.get("members").is_none_or(local_member_patterns)
+                })
+        }) {
+            return false;
+        }
+        // Sibling mounts need no Cargo dependency edge. Reuse the bounded
+        // path inventory once and require each listed manifest to have been
+        // examined, even for a member with no indexed Rust sources.
+        let Some(dirs) = covered_rust_source_manifest_dirs(analysis_root, &workspaces, indexed)
+        else {
+            return false;
+        };
+        packages.extend(dirs);
+    }
+    packages.iter().all(|dir| {
+        manifests.get(dir).is_some_and(|manifest| {
+            explicit_target_roots_are_covered(manifest, dir, analysis_root, indexed)
+        })
+    })
+}
+
+/// The indexed-member inventory handles literals and a trailing `/*`.
+/// Other patterns, external paths and Cargo's skipped output directories
+/// cannot support a negative reachability verdict here.
+fn local_member_patterns(members: &toml::Value) -> bool {
+    members.as_array().is_some_and(|members| {
+        members.iter().all(|member| {
+            member.as_str().is_some_and(|member| {
+                let member = member.trim_end_matches('/');
+                let directory = member.strip_suffix("/*").unwrap_or(member);
+                !directory.is_empty()
+                    && !directory.contains(['*', '?', '['])
+                    && Path::new(directory).components().all(|component| {
+                        matches!(component, Component::CurDir | Component::Normal(_))
+                            && component.as_os_str() != "target"
+                    })
+            })
+        })
+    })
 }
 
 /// `source` with every block and line comment replaced by one space; block
@@ -209,7 +304,7 @@ fn collect_referenced_file_names(
 /// backslash before its operand closes (an escape such as `\x2e`, `\u{72}`,
 /// a line continuation or a Windows separator), so the operand could spell a
 /// name the substring scan cannot match.
-fn spells_a_path_with_escapes(text: &str) -> bool {
+pub(super) fn spells_a_path_with_escapes(text: &str) -> bool {
     ["path", "include!"].iter().any(|key| {
         text.match_indices(key).any(|(at, _)| {
             let window = &text[at..];
@@ -224,7 +319,7 @@ fn spells_a_path_with_escapes(text: &str) -> bool {
 
 /// Every identifier following a `mod` keyword, in any position. Comments and
 /// strings count too: this only ever adds doubt.
-fn collect_declared_modules(source: &str, out: &mut BTreeSet<String>) {
+pub(super) fn collect_declared_modules(source: &str, out: &mut BTreeSet<String>) {
     collect_modules_in(source, out);
     collect_modules_in(&without_comments(source), out);
 }
@@ -347,7 +442,7 @@ mod tests {
             "m!{ ($n:ident) => { mod/*c*/$n; } }",
             "m!{ ($n:ident) => { include!\n($n); } }",
         ] {
-            assert!(builds_module_operands(source), "{source}");
+            assert!(may_build_mount_operands(source), "{source}");
         }
         for source in [
             "m!{ ($n:ident) => { mod /* /* */ */ $n; } }",
@@ -355,10 +450,10 @@ mod tests {
             "include!(concat!(\"hay\", \".rs\"));",
             "include!(env!(\"X\"));",
         ] {
-            assert!(builds_module_operands(source), "{source}");
+            assert!(may_build_mount_operands(source), "{source}");
         }
-        assert!(!builds_module_operands("mod plain;\n// mod\nfn f() {}"));
-        assert!(!builds_module_operands("include!(\"gen.rs\");"));
+        assert!(!may_build_mount_operands("mod plain;\n// mod\nfn f() {}"));
+        assert!(!may_build_mount_operands("include!(\"gen.rs\");"));
     }
 }
 
@@ -593,9 +688,20 @@ mod index_tests {
     }
 
     #[test]
-    fn leaf_addition_that_links_a_withheld_file_rebuilds_like_fresh() -> Result<(), String> {
+    fn an_unindexed_declared_root_keeps_stray_tests() -> Result<(), String> {
         let manifest = "[[bench]]\nname='entry'\npath='benchmarks/entry.rs'\nharness=false\n";
-        let (root, files) = fixture("reuse", &[("Cargo.toml", manifest), (HAY, HAY_SOURCE)])?;
+        let index = run(
+            "unindexed-root",
+            &[("Cargo.toml", manifest), (HAY, HAY_SOURCE)],
+        )?;
+        assert!(!outside(&index, HAY));
+        assert!(test_files(&index).contains(&HAY.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn leaf_addition_that_links_a_withheld_file_rebuilds_like_fresh() -> Result<(), String> {
+        let (root, files) = fixture("reuse", &[(HAY, HAY_SOURCE)])?;
         let load = |paths: &[PathBuf]| -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
             paths
                 .iter()
@@ -613,10 +719,12 @@ mod index_tests {
             outside(&cached.index, HAY),
             "premise: withheld before the addition"
         );
-        let entry = "#[path = \"haystacks/code/rust-library.rs\"]\nmod hay;\nfn main() {}\n";
-        fs::write(root.join("benchmarks/entry.rs"), entry).map_err(|error| error.to_string())?;
+        // A default-layout target first becomes a possible parent when it
+        // exists. A manifest-declared root would keep uncertainty beforehand.
+        let entry = "#[path = \"../benchmarks/haystacks/code/rust-library.rs\"]\nmod hay;\n";
+        fs::write(root.join("tests/entry.rs"), entry).map_err(|error| error.to_string())?;
         let mut all = files.clone();
-        all.push(PathBuf::from("benchmarks/entry.rs"));
+        all.push(PathBuf::from("tests/entry.rs"));
         let target = load(&all)?;
         let reused = crate::analysis::facts::reuse_cached_index_with_loaded_files(
             cached,

@@ -88,15 +88,21 @@ pub(crate) fn unresolved_edge_guidance(finding: &Finding) -> Option<String> {
             .find_map(|line| line.trim().strip_prefix(prefix).map(str::trim))
             .filter(|value| !value.is_empty())
     };
+    // The proc-macro abstention names its own cause and next step; the helper
+    // path retained beside it must not offer a second explanation (#15309).
+    if finding
+        .evidence
+        .iter()
+        .any(|line| line.trim().starts_with("proc_macro_expansion:"))
+    {
+        return None;
+    }
     let edge = detail(crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX)?;
     let boundary = detail(crate::domain::LIMITATION_HELPER_BOUNDARY_PREFIX)
         .map(|boundary| format!(" ({boundary})"))
         .unwrap_or_default();
-    let route = detail(crate::domain::LIMITATION_ANALYZER_ROUTE_PREFIX)
-        .map(|route| format!(" Route analyzer work to `{route}`."))
-        .unwrap_or_default();
     Some(format!(
-        "Tests cannot close this static-analysis limitation: ripr cannot trace {edge}{boundary}. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.{route}"
+        "Tests cannot close this static-analysis limitation: ripr cannot trace {edge}{boundary}. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test."
     ))
 }
 
@@ -140,10 +146,10 @@ mod tests {
             step.contains("entry `parse_duration` -> owner `parse_unit`"),
             "{step}"
         );
-        assert!(
-            step.contains("analysis/rust-public-api-transitive-reach"),
-            "{step}"
-        );
+        // The internal route id stays in the structured limitation fields,
+        // not in the plain-words next step (#15309).
+        assert!(!step.contains("analysis/"), "{step}");
+        assert!(!step.contains("Route analyzer work"), "{step}");
         assert!(step.contains("private helper `parse_unit`"), "{step}");
         assert!(!step.contains("add a direct test"), "{step}");
         finding.static_limit_kind =
@@ -157,6 +163,22 @@ mod tests {
             reconcile_next_step(&finding),
             "add a direct test for parse_unit"
         );
+    }
+
+    #[test]
+    fn proc_macro_abstention_keeps_its_own_next_step_over_the_helper_path() {
+        let mut finding = complete_ts_finding();
+        finding.language = Some(LanguageId::Rust);
+        finding.language_status = None;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustTransitiveReachUnresolved);
+        finding.evidence = vec![
+            "limitation_first_unresolved_edge: entry `derive_error` -> owner `check` through a transitive Rust helper path".to_string(),
+            "proc_macro_expansion: changed code is in a proc-macro crate; tests reach it through derive or attribute expansion".to_string(),
+        ];
+        finding.recommended_next_step = Some("This is proc-macro code".to_string());
+        assert_eq!(unresolved_edge_guidance(&finding), None);
+        assert_eq!(reconcile_next_step(&finding), "This is proc-macro code");
     }
 
     #[test]

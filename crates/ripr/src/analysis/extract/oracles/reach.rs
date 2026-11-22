@@ -13,7 +13,14 @@
 //! - the statements after an unconditional `return`, `panic!`,
 //!   `unreachable!`, `todo!`, `unimplemented!` or `std::process::exit(..)`
 //!   statement, up to the end of the same block or the first item
-//!   declaration (a nested `fn` stays callable from earlier code).
+//!   declaration (a nested `fn` stays callable from earlier code);
+//! - the statements after a statement that always diverges on a constant
+//!   (#14968): a `let`-`else` whose single-variant pattern can never match
+//!   its literal value (`let Some(x) = None else { .. };`, `Ok` against
+//!   `Err(..)`, `Err` against `Ok(..)`, `None` against `Some(..)`, each
+//!   optionally with a turbofish), or a statement that starts with a literal
+//!   `Err(..)?` or `None?`. A `return` at the root of that `else` block is
+//!   one execution admission reads, so it governs like a plain `return`.
 //!
 //! Unbalanced delimiters, and regions inside a macro invocation's input,
 //! read as reached. Both adapters filter their oracle facts through
@@ -141,6 +148,8 @@ fn dead_regions(masked: &str, groups: &Groups) -> Vec<Region> {
             "let" if at_statement_start => {
                 if let Some(statement_end) = uncalled_closure_statement_end(masked, end, groups) {
                     dead.push(Region::refused(index, statement_end));
+                } else if let Some(region) = after_refuted_let_else(masked, end, groups) {
+                    dead.push(region);
                 }
             }
             _ if at_statement_start => {
@@ -185,12 +194,16 @@ struct Groups {
     /// Groups that are a macro invocation's input (`name!(..)`, `name! {..}`,
     /// `macro_rules! name {..}`).
     macro_inputs: Vec<(usize, usize)>,
+    /// An unadorned local value item's name and the block in which it is visible,
+    /// including uses before its declaration.
+    variant_items: Vec<(Option<usize>, &'static str)>,
 }
 
 impl Groups {
     fn new(bytes: &[u8]) -> Option<Self> {
         let mut close = std::collections::HashMap::new();
         let mut macro_inputs = Vec::new();
+        let mut variant_items = Vec::new();
         let mut stack: Vec<(u8, usize)> = Vec::new();
         for (index, &byte) in bytes.iter().enumerate() {
             match byte {
@@ -210,17 +223,79 @@ impl Groups {
                         macro_inputs.push((open, index));
                     }
                 }
+                b'c' | b'f' if index == 0 || !is_ident_byte(bytes[index - 1]) => {
+                    let end = ident_end(bytes, index);
+                    // An attributed item may be compiled out (e.g. #[cfg(any())]).
+                    if matches!(&bytes[index..end], b"const" | b"fn")
+                        && last_code_byte_before(bytes, index)
+                            .is_none_or(|at| matches!(bytes[at], b'{' | b';' | b'}'))
+                    {
+                        let name = skip_whitespace(bytes, end);
+                        if let Some(variant) = variant_name(&bytes[name..ident_end(bytes, name)]) {
+                            let scope = stack.last().map(|&(_, open)| open);
+                            variant_items.push((scope, variant));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
         stack.is_empty().then_some(Self {
             close,
             macro_inputs,
+            variant_items,
         })
     }
 
     fn close_of(&self, open: usize) -> Option<usize> {
         self.close.get(&open).copied()
+    }
+
+    /// Only claim a bare item in the very block that declares it. An
+    /// associated item in an enclosing impl is not a method-local binding.
+    fn local_variant_item(&self, masked: &str, at: usize, variant: &str) -> bool {
+        if self.variant_items.is_empty() {
+            return false;
+        }
+        let scope = self
+            .close
+            .iter()
+            .filter_map(|(&open, &close)| (open < at && at < close).then_some(open))
+            .max();
+        if !self
+            .variant_items
+            .iter()
+            .any(|&(owner, name)| owner == scope && name == variant)
+        {
+            return false;
+        }
+        // A completed let in this block can rebind a function name, even
+        // when the item declaration appears later. Skip nested blocks and
+        // look only at the binding pattern, never the initializer.
+        let bytes = masked.as_bytes();
+        let mut pos = scope.map_or(0, |open| open + 1);
+        while pos < at {
+            if let Some(close) = self.close_of(pos) {
+                pos = close + 1;
+            } else if (pos == 0 || !is_ident_byte(bytes[pos - 1]))
+                && let Some(end) = word_end(bytes, pos, "let")
+            {
+                if let Some(semi) = statement_semicolon(bytes, end, self)
+                    && semi < at
+                {
+                    let pattern_end = top_level_assignment(bytes, end, semi, self).unwrap_or(semi);
+                    if names_word(&masked[end..pattern_end], variant) {
+                        return false;
+                    }
+                    pos = semi + 1;
+                } else {
+                    pos = end;
+                }
+            } else {
+                pos += 1;
+            }
+        }
+        true
     }
 
     fn inside_macro_input(&self, start: usize, end: usize) -> bool {
@@ -311,7 +386,8 @@ fn uncalled_closure_statement_end(
 /// region after the statement when it diverges unconditionally.
 fn after_diverging_statement(masked: &str, start: usize, groups: &Groups) -> Option<Region> {
     let bytes = masked.as_bytes();
-    let head_end = diverging_head_end(masked, start)?;
+    let head_end = diverging_head_end(masked, start)
+        .or_else(|| constant_try_head_end(masked, start, groups))?;
     let semicolon = statement_semicolon(bytes, head_end, groups)?;
     let region_start = semicolon + 1;
     let region_end = region_end_in_block(masked, region_start, groups)?;
@@ -320,6 +396,192 @@ fn after_diverging_statement(masked: &str, start: usize, groups: &Groups) -> Opt
         end: region_end,
         admission_refused: masked[start..].starts_with("return"),
     })
+}
+
+/// After `let` at `after_let`: the never-executed region after a
+/// `let PATTERN = VALUE else { .. };` statement whose pattern is one variant
+/// (`Some(..)`, `Ok(..)`, `Err(..)` or `None`) that the literal `VALUE` of
+/// another variant can never match, so the `else` block always runs and
+/// diverges (#14968).
+fn after_refuted_let_else(masked: &str, after_let: usize, groups: &Groups) -> Option<Region> {
+    let bytes = masked.as_bytes();
+    let semicolon = statement_semicolon(bytes, after_let, groups)?;
+    let equals = top_level_assignment(bytes, after_let, semicolon, groups)?;
+    let else_at = top_level_else(masked, equals + 1, semicolon, groups)?;
+    let block = skip_whitespace(bytes, else_at + "else".len());
+    if bytes.get(block) != Some(&b'{')
+        || skip_whitespace(bytes, groups.close_of(block)? + 1) != semicolon
+    {
+        return None;
+    }
+    let pattern = whole_variant(masked, after_let, equals, groups)?;
+    let value = whole_variant(masked, equals + 1, else_at, groups)?;
+    let refuted = matches!(
+        (pattern, value),
+        ("Some", "None") | ("None", "Some") | ("Ok", "Err") | ("Err", "Ok")
+    );
+    if !refuted {
+        return None;
+    }
+    let region_start = semicolon + 1;
+    let region_end = region_end_in_block(masked, region_start, groups)?;
+    // RIPR-SPEC-0197 execution admission reads a `return` at the root of
+    // the `else` block as an earlier return and names it, so a strong
+    // assertion after it stays for that refusal, as after a plain `return`.
+    Some(Region {
+        start: region_start,
+        end: region_end,
+        admission_refused: block_has_root_return(masked, block, groups)?,
+    })
+}
+
+/// Whether the block opening at `open` holds a `return` at its own depth,
+/// outside any nested group.
+fn block_has_root_return(masked: &str, open: usize, groups: &Groups) -> Option<bool> {
+    let bytes = masked.as_bytes();
+    let close = groups.close_of(open)?;
+    let mut at = open + 1;
+    while at < close {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => at = groups.close_of(at)? + 1,
+            byte if is_ident_start(byte) && !is_ident_byte(bytes[at - 1]) => {
+                if word_end(bytes, at, "return").is_some() {
+                    return Some(true);
+                }
+                at = ident_end(bytes, at);
+            }
+            _ => at += 1,
+        }
+    }
+    Some(false)
+}
+
+/// At a statement start: the end of a literal `Err(..)?` or `None?` head
+/// (optionally with a turbofish), which always returns early (#14968).
+fn constant_try_head_end(masked: &str, start: usize, groups: &Groups) -> Option<usize> {
+    let bytes = masked.as_bytes();
+    let (variant, end) = variant_head(masked, start, groups)?;
+    let question = skip_whitespace(bytes, end);
+    (matches!(variant, "Err" | "None") && bytes.get(question) == Some(&b'?'))
+        .then_some(question + 1)
+}
+
+/// The variant when `masked[start..end]`, trimmed, is exactly one literal
+/// `None`, `Some(..)`, `Ok(..)` or `Err(..)` (optionally with a turbofish).
+fn whole_variant(masked: &str, start: usize, end: usize, groups: &Groups) -> Option<&'static str> {
+    let bytes = masked.as_bytes();
+    let at = skip_whitespace(bytes, start);
+    let mut trimmed_end = end;
+    while trimmed_end > at && bytes[trimmed_end - 1].is_ascii_whitespace() {
+        trimmed_end -= 1;
+    }
+    let (variant, head_end) = variant_head(masked, at, groups)?;
+    (head_end == trimmed_end).then_some(variant)
+}
+
+fn variant_name(word: &[u8]) -> Option<&'static str> {
+    match word {
+        b"None" => Some("None"),
+        b"Some" => Some("Some"),
+        b"Ok" => Some("Ok"),
+        b"Err" => Some("Err"),
+        _ => None,
+    }
+}
+
+/// At `start`: a `None`, `Some(..)`, `Ok(..)` or `Err(..)` variant
+/// expression or pattern, optionally with a turbofish, and its end.
+fn variant_head(masked: &str, start: usize, groups: &Groups) -> Option<(&'static str, usize)> {
+    let bytes = masked.as_bytes();
+    if start > 0 && is_ident_byte(bytes[start - 1]) {
+        return None;
+    }
+    let name_end = ident_end(bytes, start);
+    let variant = variant_name(&bytes[start..name_end])?;
+    if groups.local_variant_item(masked, start, variant) {
+        return None;
+    }
+    let mut at = name_end;
+    if masked[at..].starts_with("::<") {
+        at = turbofish_end(bytes, at + 2, groups)?;
+    }
+    if variant == "None" {
+        return bytes
+            .get(at)
+            .is_none_or(|byte| !is_ident_byte(*byte))
+            .then_some((variant, at));
+    }
+    let open = skip_whitespace(bytes, at);
+    if bytes.get(open) != Some(&b'(') {
+        return None;
+    }
+    Some((variant, groups.close_of(open)? + 1))
+}
+
+/// From the `<` at `open`: the end (exclusive) of its matching `>`, skipping
+/// nested `(..)` and `[..]` groups. `None` at a `{`, `;` or a closer.
+fn turbofish_end(bytes: &[u8], open: usize, groups: &Groups) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut at = open;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'<' => depth += 1,
+            b'>' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at + 1);
+                }
+            }
+            b'(' | b'[' => at = groups.close_of(at)?,
+            b'{' | b';' | b')' | b']' | b'}' => return None,
+            _ => {}
+        }
+        at += 1;
+    }
+    None
+}
+
+/// The first top-level `=` in `from..to` that is an assignment, not part of
+/// `==`, `!=`, `<=`, `>=` or `=>`.
+fn top_level_assignment(bytes: &[u8], from: usize, to: usize, groups: &Groups) -> Option<usize> {
+    let mut at = from;
+    while at < to {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => at = groups.close_of(at)?,
+            b'=' => {
+                let before = at.checked_sub(1).map(|index| bytes[index]);
+                let after = bytes.get(at + 1).copied();
+                if !matches!(before, Some(b'=' | b'!' | b'<' | b'>'))
+                    && !matches!(after, Some(b'=' | b'>'))
+                {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    None
+}
+
+/// The first top-level `else` keyword in `from..to`.
+fn top_level_else(masked: &str, from: usize, to: usize, groups: &Groups) -> Option<usize> {
+    let bytes = masked.as_bytes();
+    let mut at = from;
+    while at < to {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => at = groups.close_of(at)?,
+            byte if is_ident_start(byte) && !(at > 0 && is_ident_byte(bytes[at - 1])) => {
+                if word_end(bytes, at, "else").is_some() {
+                    return Some(at);
+                }
+                at = ident_end(bytes, at) - 1;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    None
 }
 
 /// The end of a diverging statement's head: `return`, a diverging macro

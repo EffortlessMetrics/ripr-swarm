@@ -573,6 +573,17 @@ fn return_value_sink(
         );
     }
     if !is_obvious_return_expression(&probe.expression) {
+        // #15274: a comparison that is the owner's whole tail is the returned
+        // value whatever its operands spell (`n >= LIMIT` has no literal,
+        // call or arithmetic), as its predicate twin on the same line reads
+        // it. An expression that spells a value keeps the sink below.
+        if let Some(tail) = predicate_as_owner_tail(probe, owner_fn)
+            && is_ordering_comparison(&tail.text)
+            && owner_fn
+                .is_some_and(|function| compares_one_parameter_to_items(&tail.text, function))
+        {
+            return flow_sink(FlowSinkKind::ReturnValue, tail.text, tail.line, owner);
+        }
         return flow_sink(
             FlowSinkKind::Unknown,
             "unknown sink",
@@ -586,6 +597,81 @@ fn return_value_sink(
         probe.location.line,
         owner,
     )
+}
+
+/// Whether a comparison tail orders its operands (`<`, `<=`, `>`, `>=`). An
+/// ordering has a boundary, and the boundary readers downstream hold a
+/// returned ordering to it: a test far from the boundary stays
+/// `weakly_exposed`. An equality over names has none, so `a == b` rewritten
+/// as `b == a` would be credited by any truth assertion on the owner, such as
+/// a reflexivity loop (verdict-corpus case `grid-equality-property`).
+fn is_ordering_comparison(expression: &str) -> bool {
+    expression.contains(['<', '>'])
+        && !["<<", ">>", "->", "=>", "::<"]
+            .iter()
+            .any(|other| expression.contains(other))
+}
+
+/// Whether a comparison tail sets exactly one owner parameter against items
+/// (`n >= LIMIT`, `n >= limits::MAX`): the shape whose literal twin
+/// (`n >= 1000`) the boundary readers already hold a test to. The parameter
+/// must not be rebound in the body. Everything else keeps the unknown sink:
+/// - a local (`let end = ..; end >= start`) is computed inside the owner, and
+///   no reader here maps a test's arguments to it (RIPR-SPEC-0158);
+/// - two parameters (`width <= limit`) put the boundary where the arguments
+///   meet, and the returned-value readers do not pair them, so far rows would
+///   be credited (verdict-corpus case `macro-table-far-rows`);
+/// - a field (`n >= self.max`) is fixed by state no call argument spells.
+fn compares_one_parameter_to_items(expression: &str, function: &FunctionSummary) -> bool {
+    let parameters = super::activation::signature_parameters(function);
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let rebinds = |name: &str| {
+        masked.lines().skip(1).any(|line| {
+            line.split("let ").skip(1).any(|rest| {
+                let pattern = rest.split('=').next().unwrap_or(rest);
+                identifiers(pattern).any(|(word, _, _)| word == name)
+            })
+        })
+    };
+    let mut parameter_uses = 0usize;
+    let all_read = identifiers(expression).all(|(word, before, after)| {
+        if before == Some('.') {
+            return false;
+        }
+        if before == Some(':') || after.starts_with("::") {
+            // A path segment is not a binding of its own.
+            return true;
+        }
+        if parameters.iter().any(|parameter| parameter == word) {
+            parameter_uses += 1;
+            return !rebinds(word);
+        }
+        // What is left is an item when it is spelled like one.
+        !word.chars().any(|ch| ch.is_ascii_lowercase()) && !rebinds(word)
+    });
+    all_read && parameter_uses == 1
+}
+
+/// Each identifier in `text` with the character before it and the text after
+/// it.
+fn identifiers(text: &str) -> impl Iterator<Item = (&str, Option<char>, &str)> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        loop {
+            let rest = text.get(at..)?;
+            let start = at + rest.find(|ch: char| ch.is_ascii_alphabetic() || ch == '_')?;
+            let before = text[..start].chars().next_back();
+            let len = text[start..]
+                .find(|ch: char| !is_word(ch))
+                .unwrap_or(text.len() - start);
+            at = start + len;
+            if before.is_some_and(is_word) {
+                continue;
+            }
+            return Some((&text[start..at], before, text[at..].trim_start()));
+        }
+    })
 }
 
 fn match_arm_sink(
@@ -821,7 +907,16 @@ fn predicate_as_owner_tail(
     let ast::Expr::BinExpr(binary) = &comparison else {
         return None;
     };
-    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+    // #15027: an `||` chain carries the predicate's value to the return only
+    // when the edit appends one equality arm on the same parameter
+    // (`n == 1` to `n == 1 || n == 2`). Any input equal to the new literal
+    // then flips the whole chain, so the chain's change is the returned
+    // change. Every other connective tail keeps no sink: a changed operand
+    // of `x > 1 || y` may be masked by `y`.
+    let op = binary.op_kind();
+    let appended_arm = matches!(op, Some(ast::BinaryOp::LogicOp(ast::LogicOp::Or)))
+        && super::infection::appended_equality_arm(probe, owner).is_some();
+    if !matches!(op, Some(ast::BinaryOp::CmpOp(_))) && !appended_arm {
         return None;
     }
     let actual = comparison.syntax().text().to_string();
@@ -928,6 +1023,20 @@ fn tail_if_branch_value(
     if inline_body.is_none() && rest != ["}"] {
         return None;
     }
+    // The `if` must open its own statement. A line that ends in an operator
+    // (`force ||`) makes it one operand of a wider tail, and that tail can
+    // return without evaluating either arm.
+    if inline_body.is_none() {
+        let before = masked
+            .lines()
+            .take(offset)
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .last()?;
+        if !before.ends_with(['{', ';', '}']) {
+            return None;
+        }
+    }
     // Branch spans come from the masked line (strings/comments cannot hide a
     // brace there); branch text comes from the raw line at the same offsets,
     // because masking blanks string and char literals that are valid values.
@@ -989,7 +1098,7 @@ fn tail_if_branch_value(
         }
         if raw_branch.is_empty()
             || !(looks_like_branch_tail_expression(raw_branch)
-                || is_plain_identifier(raw_branch)
+                || is_plain_path(raw_branch)
                 || is_quoted_literal(raw_branch))
         {
             return None;
@@ -1002,6 +1111,24 @@ fn tail_if_branch_value(
         .iter()
         .skip(1)
         .any(|text| *text == texts[0] && !branch_is_diverging(text))
+    {
+        return None;
+    }
+    // Two paths that end in the same segment may spell one item
+    // (`Level::High` and `crate::Level::High`); nothing here resolves them, so
+    // the arms are not read as different values.
+    let last_segment = |text: &str| {
+        text.contains("::")
+            .then(|| text.rsplit("::").next())
+            .flatten()
+            .filter(|_| is_plain_path(text))
+            .map(str::to_string)
+    };
+    if let Some(first) = last_segment(&texts[0])
+        && texts
+            .iter()
+            .skip(1)
+            .any(|text| last_segment(text).as_ref() == Some(&first))
     {
         return None;
     }
@@ -1165,6 +1292,14 @@ fn is_plain_identifier(text: &str) -> bool {
             .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
 }
 
+/// A plain identifier or a `::` path of plain identifiers (`Level::High`,
+/// `Self::MAX`, `limits::DEFAULT`): a unit variant, constant or binding
+/// named as the branch's whole value (#15274). Generic arguments, a leading
+/// `::` and a qualified `<T as Trait>::X` path are not read.
+fn is_plain_path(text: &str) -> bool {
+    text.split("::").all(is_plain_identifier)
+}
+
 fn nearest_return(owner_fn: Option<&FunctionSummary>, probe_line: usize) -> Option<LocalTextFact> {
     owner_fn.and_then(|function| {
         function
@@ -1299,7 +1434,56 @@ fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
 /// A nested block inside an arm (`if a { if b { .. } else { .. } } else { .. }`)
 /// is not judged: the outer arms say nothing about the inner predicate, so the
 /// reading declines and the caller keeps its established behavior.
+///
+/// Every seam on one line asks this about the same line, so a long line's
+/// answer is kept per thread (#15189).
 fn inline_arms_all_agree(line: &str) -> bool {
+    thread_local! {
+        static LAST_LINE: LastTextAnswer = const { std::cell::Cell::new(None) };
+    }
+    remembered_answer(&LAST_LINE, line, scan_inline_arms_all_agree)
+}
+
+/// One thread's last long text and a pure reading's answer for it.
+type LastTextAnswer = std::cell::Cell<Option<(String, bool)>>;
+
+/// `scan(text)`, kept in `last` for a long text: every seam of an owner
+/// asks the same reading of the same body or line, which a 1,900-arm
+/// `else if` chain otherwise re-read once per arm (#15189). A text shorter
+/// than the floor is cheaper to scan than to copy. `Cell::take` keeps this
+/// free of borrow panics.
+fn remembered_answer(
+    last: &'static std::thread::LocalKey<LastTextAnswer>,
+    text: &str,
+    scan: fn(&str) -> bool,
+) -> bool {
+    const MEMO_MIN_BYTES: usize = 1024;
+    if text.len() < MEMO_MIN_BYTES {
+        return scan(text);
+    }
+    let (kept, answer) = last
+        .with(std::cell::Cell::take)
+        .filter(|(kept, _)| kept == text)
+        .unwrap_or_else(|| (text.to_string(), scan(text)));
+    last.with(|cell| cell.set(Some((kept, answer))));
+    answer
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test-only counts of the full readings behind the per-thread memos on
+    /// this thread, so a test can assert repeated seams do not re-read
+    /// (#15189): `(inline arm scans, body mutation scans)`.
+    static FLOW_SCANS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// The uncached reading behind [`inline_arms_all_agree`].
+fn scan_inline_arms_all_agree(line: &str) -> bool {
+    #[cfg(test)]
+    FLOW_SCANS.with(|cell| {
+        let (arms, bodies) = cell.get();
+        cell.set((arms + 1, bodies));
+    });
     let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
     if masked.len() != line.len() {
         return false;
@@ -1370,7 +1554,23 @@ pub(in crate::analysis) fn predicate_branch_side_effect_only(
 /// through a mutable alias, can change a value the owner later returns, so
 /// independence from the return cannot be established. Fail closed (#5384): keep the
 /// established return-value sink for such owners.
+///
+/// Every predicate probe of an owner asks this about the same body, so a
+/// long body's answer is kept per thread (#15189).
 fn body_may_mutate_locals(body: &str) -> bool {
+    thread_local! {
+        static LAST_BODY: LastTextAnswer = const { std::cell::Cell::new(None) };
+    }
+    remembered_answer(&LAST_BODY, body, scan_body_may_mutate_locals)
+}
+
+/// The uncached reading behind [`body_may_mutate_locals`].
+fn scan_body_may_mutate_locals(body: &str) -> bool {
+    #[cfg(test)]
+    FLOW_SCANS.with(|cell| {
+        let (arms, bodies) = cell.get();
+        cell.set((arms, bodies + 1));
+    });
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     masked.contains("&mut") || masked.contains("let mut ") || masked.contains("ref mut ")
 }
@@ -2195,9 +2395,28 @@ fn is_obvious_return_expression(text: &str) -> bool {
         || trimmed.contains('(')
         || trimmed.contains('"')
         || trimmed.chars().any(|ch| ch.is_ascii_digit())
+        // #15029: a char literal is a value as plainly as a digit or a
+        // string literal is (`c == ',' || c == ';'`).
+        || contains_char_literal(trimmed)
         || [" + ", " - ", " * ", " / ", " % "]
             .iter()
             .any(|operator| trimmed.contains(operator))
+}
+
+/// Whether `text` holds a char literal: `'x'` or an escape such as `'\\n'`.
+/// A lifetime (`'a`) has no closing quote right after its first char, so it
+/// is not one.
+fn contains_char_literal(text: &str) -> bool {
+    text.match_indices('\'').any(|(at, _)| {
+        let mut chars = text[at + 1..].chars();
+        match chars.next() {
+            // An escape: the escaped char, then a closing quote within the
+            // longest escape (`\\u{10FFFF}`).
+            Some('\\') => chars.next().is_some() && chars.take(9).any(|ch| ch == '\''),
+            Some('\'') | None => false,
+            Some(_) => chars.next() == Some('\''),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -2207,6 +2426,133 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::ReturnFact;
     use std::path::PathBuf;
+
+    /// #15189: a long line's memoized arm reading equals the scan, also
+    /// when lines alternate and when only an arm's string differs.
+    #[test]
+    fn memoized_inline_arm_reading_equals_the_scan_for_long_lines() -> Result<(), String> {
+        let chain = |arm_text: &str, last: &str| {
+            let mut line = String::from("if a == 0 { r = 1; }");
+            for arm in 1..200 {
+                line.push_str(&format!(" else if a == {arm} {{ {arm_text} }}"));
+            }
+            line.push_str(&format!(" else {{ {last} }}"));
+            line
+        };
+        let lines = [
+            chain("r = 1;", "r = 1;"),
+            chain("r = 1;", "r = 2;"),
+            chain("r = \"yes\";", "r = \"low\";"),
+            chain("r = 1; // { note", "r = 1;"),
+            "if a { r = 1; } else { r = 1; }".to_string(),
+        ];
+        if !lines[..4].iter().all(|line| line.len() >= 1024) {
+            return Err("chains must be long enough to enter the memo".to_string());
+        }
+        for round in 0..3 {
+            for line in &lines {
+                let expected = scan_inline_arms_all_agree(line);
+                for _repeat in 0..round + 1 {
+                    if inline_arms_all_agree(line) != expected {
+                        return Err(format!(
+                            "round {round}: memo differs from the scan for {line:?}"
+                        ));
+                    }
+                }
+            }
+        }
+        if !inline_arms_all_agree(&lines[0]) || inline_arms_all_agree(&lines[1]) {
+            return Err("an all-agreeing chain and a differing chain read the same".to_string());
+        }
+        Ok(())
+    }
+
+    /// #15189: every seam of one long `else if` line asks the arm reading
+    /// through the memo, so the full scan runs once, not once per seam.
+    #[test]
+    fn one_long_line_is_scanned_for_inline_arms_once_across_its_seams() -> Result<(), String> {
+        let mut line = String::from("if a == 0 { 0 }");
+        for arm in 1..64 {
+            line.push_str(&format!(" else if a == {arm} {{ {arm} }}"));
+        }
+        line.push_str(" else { a }");
+        if line.len() < 1024 {
+            return Err(format!(
+                "line is {} bytes, below the memo floor",
+                line.len()
+            ));
+        }
+        FLOW_SCANS.with(|cell| cell.set((0, 0)));
+        for seam in 0..64 {
+            if inline_arms_all_agree(&line) {
+                return Err(format!("seam {seam}: differing arms read as agreeing"));
+            }
+        }
+        let (arm_scans, _) = FLOW_SCANS.with(std::cell::Cell::get);
+        if arm_scans != 1 {
+            return Err(format!(
+                "64 seams ran {arm_scans} full arm scans, expected 1"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #15189: every predicate probe of one long body asks the mutation
+    /// reading through the memo, so the full scan runs once per body.
+    #[test]
+    fn one_long_body_is_scanned_for_local_mutation_once_across_its_probes() -> Result<(), String> {
+        let filler = "    if a == 3 { 3 } else { 4 };\n".repeat(64);
+        let body = format!("{{\n{filler}    let mut z = 1;\n}}");
+        FLOW_SCANS.with(|cell| cell.set((0, 0)));
+        for probe in 0..1900 {
+            if !body_may_mutate_locals(&body) {
+                return Err(format!(
+                    "probe {probe}: `let mut` body read as not mutating"
+                ));
+            }
+        }
+        let (_, body_scans) = FLOW_SCANS.with(std::cell::Cell::get);
+        if body_scans != 1 {
+            return Err(format!(
+                "1,900 probes ran {body_scans} full body scans, expected 1"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #15189: a long body's memoized mutation reading equals the scan, also
+    /// when bodies alternate and when the only `&mut` sits in a comment.
+    #[test]
+    fn memoized_body_mutation_reading_equals_the_scan_for_long_bodies() -> Result<(), String> {
+        let filler = "    if a == 1 { 1 } else { 2 };\n".repeat(64);
+        let bodies = [
+            format!("{{\n{filler}    bump(&mut x);\n}}"),
+            format!("{{\n{filler}    // bump(&mut x);\n}}"),
+            format!("{{\n{filler}    let mut y = 1;\n}}"),
+            format!("{{\n{filler}}}"),
+        ];
+        for round in 0..3 {
+            for body in &bodies {
+                if body.len() < 1024 {
+                    return Err("bodies must be long enough to enter the memo".to_string());
+                }
+                let expected = scan_body_may_mutate_locals(body);
+                for _repeat in 0..round + 1 {
+                    if body_may_mutate_locals(body) != expected {
+                        return Err(format!("round {round}: memo differs from the scan"));
+                    }
+                }
+            }
+        }
+        let answers: Vec<bool> = bodies
+            .iter()
+            .map(|body| body_may_mutate_locals(body))
+            .collect();
+        if answers != [true, false, true, false] {
+            return Err(format!("mutation readings were {answers:?}"));
+        }
+        Ok(())
+    }
 
     /// #7063: a turbofish `Err::<T, E>(..)` constructs the same error as
     /// `Err(..)`, so its return-value sink is the error variant, not the
@@ -2264,6 +2610,313 @@ mod tests {
                 "{discarded}: {sinks:?}"
             );
         }
+    }
+
+    /// #15029: a char-literal chain on the owner's tail sinks to the return
+    /// like its integer twin; a lifetime is not a char literal.
+    #[test]
+    fn char_literal_tail_reaches_the_return_sink() {
+        for text in [
+            "c == ',' || c == ';'",
+            "c == '\\n'",
+            "c == '\\''",
+            "c == '\\u{1F600}'",
+        ] {
+            assert!(contains_char_literal(text), "{text}");
+            assert!(is_obvious_return_expression(text), "{text}");
+        }
+        for text in ["x as &'a str", "a || b", "'", "''", "'a"] {
+            assert!(!contains_char_literal(text), "{text}");
+        }
+        let owner = tail_owner("pub fn is_sep(c: char) -> bool {\n    c == ',' || c == ';'\n}");
+        let probe = probe(ProbeFamily::ReturnValue, "c == ',' || c == ';'", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert_eq!(sinks.len(), 1, "{sinks:?}");
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{sinks:?}");
+    }
+
+    /// #15274: the return-value probe of a comparison that is the owner's
+    /// whole tail reaches the return sink whatever its operands spell, as
+    /// its predicate twin does.
+    #[test]
+    fn name_only_comparison_tail_reaches_the_return_sink() {
+        for (body, expression) in [
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn under(n: u32) -> bool {\n    n < limits::MAX\n}",
+                "n < limits::MAX",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    (n >= LIMIT)\n}",
+                "n >= LIMIT",
+            ),
+        ] {
+            assert!(!is_obvious_return_expression(expression), "{expression}");
+            let owner = tail_owner(body);
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, 2),
+                Some(&owner),
+            );
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{body}");
+            assert_eq!(sinks[0].text, expression, "{body}");
+            assert_eq!(sinks[0].line, 2, "{body}");
+        }
+    }
+
+    /// A tail over a local, or over a parameter the body rebinds, is computed
+    /// inside the owner: no reader maps a test's arguments to it, so crediting
+    /// the return would credit a boundary nobody established (RIPR-SPEC-0158
+    /// example 5, verdict-corpus case `spec-b-0158-dynamic-default`).
+    #[test]
+    fn name_only_comparison_tail_over_a_local_keeps_the_unknown_sink() {
+        for (body, expression) in [
+            (
+                "pub fn hit(input: &str, delim: char) -> bool {\n    let floor = input.len().min(1);\n    let end = input.rfind(delim).map_or(floor, |idx| idx);\n    let start = delim.len_utf8();\n    end >= start\n}",
+                "end >= start",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    let n = n / 2;\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    let (n, _) = split(n);\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    let LIMIT = n;\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let line = body.lines().count() - 1;
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, line),
+                Some(&owner),
+            );
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}");
+        }
+        // Two parameters, a field, or no parameter at all: no reader pairs a
+        // test's arguments to that boundary.
+        for (signature, expression) in [
+            ("width: usize, limit: usize", "width <= limit"),
+            ("n: u32, limits: &Limits", "n < limits.max"),
+            ("&self, n: u32", "n >= self.max"),
+            ("_n: u32", "FLOOR >= LIMIT"),
+        ] {
+            let body = format!("pub fn fits({signature}) -> bool {{\n    {expression}\n}}");
+            let owner = tail_owner(&body);
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, 2),
+                Some(&owner),
+            );
+            assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}");
+        }
+        // An equality over names has no boundary to hold a test to.
+        for expression in ["a == b", "b != a"] {
+            let body = format!("pub fn same(a: &str, b: &str) -> bool {{\n    {expression}\n}}");
+            let owner = tail_owner(&body);
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, 2),
+                Some(&owner),
+            );
+            assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}");
+        }
+        // A statement that binds nothing the tail reads changes nothing.
+        let owner = tail_owner(
+            "pub fn over_limit(n: u32) -> bool {\n    let _guard = enter();\n    n >= LIMIT\n}",
+        );
+        let sinks = local_flow_sinks(
+            &probe(ProbeFamily::ReturnValue, "n >= LIMIT", 3),
+            Some(&owner),
+        );
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{sinks:?}");
+    }
+
+    /// #15274: a tail that spells a value keeps the sink it had, with its
+    /// literals intact. Reading it through the comparison-tail reader would
+    /// blank them (`c ==     || c == `) and break the witness match.
+    #[test]
+    fn literal_comparison_tail_keeps_its_own_return_sink_text() {
+        for (body, expression) in [
+            (
+                "pub fn is_sep(c: char) -> bool {\n    c == ',' || c == ';'\n}",
+                "c == ',' || c == ';'",
+            ),
+            (
+                "pub fn is_flag(flag: &str) -> bool {\n    flag == \"-v\"\n}",
+                "flag == \"-v\"",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    n >= 1000\n}",
+                "n >= 1000",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, 2),
+                Some(&owner),
+            );
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{body}");
+            assert_eq!(sinks[0].text, expression, "{body}");
+        }
+    }
+
+    /// #15274: only the owner's whole one-comparison tail is read. A unit
+    /// owner, a `let`-bound comparison, a connective tail whose other operand
+    /// can mask the change, a comparison that is a statement, and a probe
+    /// retargeted from other changed text keep the unknown sink.
+    #[test]
+    fn name_only_comparison_off_the_owner_tail_keeps_the_unknown_sink() {
+        for (body, expression, after) in [
+            (
+                "pub fn check(n: u32) {\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over(n: u32) -> bool {\n    let over = n >= LIMIT;\n    over\n}",
+                "n >= LIMIT",
+                "let over = n >= LIMIT;",
+            ),
+            (
+                "pub fn over(n: u32, ready: bool) -> bool {\n    n >= LIMIT && ready\n}",
+                "n >= LIMIT && ready",
+                "n >= LIMIT && ready",
+            ),
+            (
+                "pub fn over(n: u32, ready: bool) -> bool {\n    n >= LIMIT\n        && ready\n}",
+                "n >= LIMIT",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over(n: u32) -> bool {\n    n >= LIMIT;\n    true\n}",
+                "n >= LIMIT",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over(n: u32) -> bool {\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+                "limit()",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::ReturnValue, expression, 2);
+            probe.after = Some(after.to_string());
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}: {sinks:?}");
+        }
+        // Another function's probe never borrows this owner's tail.
+        let owner = tail_owner("pub fn over_limit(n: u32) -> bool {\n    n >= LIMIT\n}");
+        let mut foreign = probe(ProbeFamily::ReturnValue, "n >= LIMIT", 2);
+        foreign.owner = Some(SymbolId("src/lib.rs::other".to_string()));
+        let sinks = local_flow_sinks(&foreign, Some(&owner));
+        assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{sinks:?}");
+    }
+
+    /// #15274: a tail `if` whose arms are paths (unit variants, constants)
+    /// decides the returned value like one whose arms are literals.
+    #[test]
+    fn tail_if_with_path_branches_flows_to_the_returned_value() {
+        for (body, sink) in [
+            (
+                "pub fn level(n: u32) -> Level {\n    if n > 10 { Level::High } else { Level::Low }\n}",
+                "Level::High",
+            ),
+            (
+                "pub fn cap(n: u32) -> u32 {\n    if n > 10 { limits::tier::HIGH } else { Self::LOW }\n}",
+                "limits::tier::HIGH",
+            ),
+            (
+                "pub fn level(n: u32) -> Level {\n    if n > 10 { Level::High } else if n > 5 { Level::Mid } else { Level::Low }\n}",
+                "Level::High",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", 2), Some(&owner));
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{body}");
+            assert_eq!(sinks[0].text, sink, "{body}");
+            assert_eq!(sinks[0].line, 2, "{body}");
+        }
+        for path in ["Level::High", "Self::MAX", "limits::DEFAULT", "value", "_x"] {
+            assert!(is_plain_path(path), "{path}");
+        }
+        for path in [
+            "",
+            "::core::MAX",
+            "Level::",
+            "Level::<T>::High",
+            "<T as Limit>::MAX",
+            "Level::High as u8",
+            "a.b",
+            "Level :: High",
+            "9lives",
+        ] {
+            assert!(!is_plain_path(path), "{path}");
+        }
+    }
+
+    /// #15274: arms that return the same path leave the condition without a
+    /// returned value to decide, and a path the reader does not read whole
+    /// is no plain value.
+    #[test]
+    fn tail_if_with_unread_or_equal_path_branches_fails_closed() {
+        for body in [
+            "pub fn level(n: u32) -> Level {\n    if n > 10 { Level::Low } else { Level::Low }\n}",
+            "pub fn level(n: u32) -> u8 {\n    if n > 10 { <A as Limit>::MAX } else { <B as Limit>::MAX }\n}",
+            "pub fn level(n: u32) -> u8 {\n    if n > 10 { Tier::<A>::MAX } else { Tier::<B>::MAX }\n}",
+            "pub fn level(n: u32) {\n    if n > 10 { Level::High } else { Level::Low }\n}",
+            // Two spellings of one variant.
+            "pub fn level(n: u32) -> Level {\n    if n > 10 { Level::High } else { crate::Level::High }\n}",
+            "pub fn level(n: u32) -> Level {\n    if n > 10 { Self::High } else { Level::High }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", 2), Some(&owner));
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tail_if_that_is_an_operand_of_a_wider_tail_fails_closed() {
+        for body in [
+            "pub fn level(n: u32, force: bool) -> bool {\n    force ||\n    if n > 10 { Mode::HIGH } else { Mode::LOW }\n}",
+            "pub fn level(n: u32, force: bool) -> bool {\n    force ||\n    // the boundary\n    if n > 10 { true } else { false }\n}",
+            "pub fn level(n: u32, base: u32) -> u32 {\n    base +\n    if n > 10 { 1 } else { 0 }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let line = body.lines().count() - 1;
+            let sinks =
+                local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", line), Some(&owner));
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+        // The same `if` after a finished statement is the tail itself.
+        let owner = tail_owner(
+            "pub fn level(n: u32) -> Level {\n    let _ = n;\n    if n > 10 { Level::High } else { Level::Low }\n}",
+        );
+        let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", 3), Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "{sinks:?}"
+        );
     }
 
     #[test]
@@ -2378,6 +3031,81 @@ mod tests {
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
         probe.owner = Some(owner.id.clone());
         probe.location.file = std::path::PathBuf::from("src/other.rs");
+        assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
+    }
+
+    /// #15027: a returned `||` tail reaches the return sink only when it is
+    /// an appended equality arm on the same parameter; other connective tails
+    /// keep no sink because an operand may be masked.
+    #[test]
+    fn appended_equality_arm_tail_reaches_return_sink_and_other_or_tails_do_not() {
+        for (body, before, after) in [
+            (
+                "pub fn gate(n: u32) -> bool { n == 1 || n == 2 }",
+                "n == 1",
+                "n == 1 || n == 2",
+            ),
+            (
+                "pub fn gate(c: char) -> bool { c == ',' || c == ';' }",
+                "c == ','",
+                "c == ',' || c == ';'",
+            ),
+            (
+                "pub fn gate(flag: &str) -> bool { flag == \"-v\" || flag == \"--verbose\" }",
+                "flag == \"-v\"",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, after, 1);
+            probe.before = Some(before.to_string());
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue && sink.line == 1),
+                "{body}: {sinks:?}"
+            );
+        }
+        for (body, before, after) in [
+            (
+                "pub fn gate(x: u32, y: bool) -> bool { x >= 1 || y }",
+                "x >= 1",
+                "x >= 1 || y",
+            ),
+            (
+                "pub fn gate(n: u32, m: u32) -> bool { n == 1 || m == 2 }",
+                "n == 1",
+                "n == 1 || m == 2",
+            ),
+            (
+                "pub fn gate(flag: Flag) -> bool { flag == \"-v\" || flag == \"--verbose\" }",
+                "flag == \"-v\"",
+                "flag == \"-v\" || flag == \"--verbose\"",
+            ),
+            (
+                "pub fn gate(n: f64) -> bool { n == 1 || n == 2 }",
+                "n == 1",
+                "n == 1 || n == 2",
+            ),
+            (
+                "pub fn gate(n: u32) -> bool { n == 1 || n == 2 || n == 3 }",
+                "n == 1",
+                "n == 1 || n == 2 || n == 3",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let mut probe = probe(ProbeFamily::Predicate, after, 1);
+            probe.before = Some(before.to_string());
+            assert_eq!(
+                predicate_as_owner_tail(&probe, Some(&owner)),
+                None,
+                "{body}"
+            );
+        }
+        // Without a recorded pre-edit text the chain is not an appended arm.
+        let owner = tail_owner("pub fn gate(n: u32) -> bool { n == 1 || n == 2 }");
+        let probe = probe(ProbeFamily::Predicate, "n == 1 || n == 2", 1);
         assert_eq!(predicate_as_owner_tail(&probe, Some(&owner)), None);
     }
 

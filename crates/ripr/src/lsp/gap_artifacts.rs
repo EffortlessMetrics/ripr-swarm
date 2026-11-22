@@ -405,7 +405,7 @@ fn validate_workspace_gap_artifact(
     relative: &str,
     context: &GapArtifactValidationContext<'_>,
 ) -> Option<Result<ValidatedGapArtifact, GapArtifactRejection>> {
-    let text = match std::fs::read_to_string(root.join(relative)) {
+    let text = match crate::bounded_input::read_repository_artifact(root.join(relative)) {
         Ok(text) => text,
         Err(err) if err.kind() == ErrorKind::NotFound => return None,
         Err(_) => {
@@ -2499,7 +2499,9 @@ fn test_runner_arguments<'a>(words: &'a [&'a str]) -> Option<&'a [&'a str]> {
         | ["pnpm", "exec", binary @ ..]
         | ["bun", "run", binary @ ..]
         | ["yarn", binary @ ..] => match binary {
-            ["jest" | "ava", arguments @ ..] | ["vitest", "run", arguments @ ..] => Some(arguments),
+            ["jest" | "ava" | "mocha", arguments @ ..] | ["vitest", "run", arguments @ ..] => {
+                Some(arguments)
+            }
             _ => None,
         },
         _ => None,
@@ -2607,6 +2609,8 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         StaticLimitKind::TypescriptWorkspaceReadLimited,
         StaticLimitKind::RustFutureNeverPolled,
+        StaticLimitKind::ActivationBoundaryInputUnresolved,
+        StaticLimitKind::RustGatedDoctestUnread,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -2668,6 +2672,55 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// A checkout can commit `target/ripr/reports/*.json` itself, including as
+    /// a symlink to `/dev/zero` or (from an archive) a FIFO. Validation must
+    /// refuse both promptly instead of reading forever or blocking (#15275).
+    #[cfg(unix)]
+    #[test]
+    fn non_regular_workspace_gap_artifacts_are_refused_without_reading() -> Result<(), String> {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-gap-artifact-nonregular-{}-{nanos}",
+            std::process::id()
+        ));
+        let reports = root.join("target/ripr/reports");
+        fs::create_dir_all(&reports).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink("/dev/zero", root.join(DEFAULT_ACTIONABLE_GAPS_OUT))
+            .map_err(|e| e.to_string())?;
+        let fifo = root.join(DEFAULT_FIRST_USEFUL_ACTION_OUT);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map_err(|e| format!("mkfifo: {e}"))?;
+        assert!(made.success(), "mkfifo failed");
+        // Run on a thread so a regression fails instead of hanging the suite.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probe = root.clone();
+        std::thread::spawn(move || {
+            let report = validate_workspace_gap_artifact_report(
+                &probe,
+                &[LanguageId::Rust],
+                &crate::config::RiprConfig::default(),
+            );
+            let _ = tx.send(report.rejections);
+        });
+        let rejections = rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .map_err(|e| format!("non-regular gap artifacts were read or blocked: {e}"))?;
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            rejections,
+            vec![
+                GapArtifactRejection::MalformedArtifact("gap artifact file must be readable"),
+                GapArtifactRejection::MalformedArtifact("gap artifact file must be readable"),
+            ]
+        );
+        Ok(())
+    }
 
     /// Windows consumer regression for the URI/identity owner, kept in this
     /// module because the Windows advisory subset runs `lsp::gap_artifacts`
@@ -4570,6 +4623,8 @@ mod tests {
             "pnpm exec vitest run src/util.test.ts",
             "yarn jest tests/math.test.ts",
             "yarn ava tests/math.test.ts",
+            "npx --no-install mocha test/age.spec.js",
+            "yarn mocha test/age.spec.js",
             "bun run vitest run src/foo.test.ts",
             "bun test tests/math.test.ts",
             "node --test tests/math.test.ts",

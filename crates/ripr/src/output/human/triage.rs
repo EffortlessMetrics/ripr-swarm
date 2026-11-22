@@ -24,6 +24,8 @@ use crate::output::python_repair_card::python_repair_card;
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use std::collections::BTreeSet;
 
+mod removal_action;
+
 /// A changed Python predicate that holds several relational comparisons, as
 /// the boundary analysis names it in the Missing check (`The changed predicate
 /// `rate < 0 or rate >= 1` holds 2 relational comparisons; ...`). #13790 only
@@ -338,6 +340,27 @@ fn no_diff_finding_safe_action_line(triage: &HumanTriage<'_>, all_noticed: bool)
     )
 }
 
+/// True when a rendered finding digest carries a `Next step` line (either
+/// prefix form the digest uses).
+fn digest_prints_next_step(digest: &str) -> bool {
+    digest
+        .lines()
+        .any(|line| line.starts_with("  Next step: ") || line.starts_with("  Next step — "))
+}
+
+/// The `Safe next action` line for a selected test gap (#14173). The digest
+/// below already states the concrete instruction as `Next step`, so the line
+/// points there instead of repeating the State line in internal words. When
+/// the digest prints no `Next step`, it names the digest lines a reader can
+/// act from (the `Why` reason and the related test). The static advisory boundary stays on both.
+fn top_gap_safe_action_line(digest_has_next_step: bool) -> &'static str {
+    if digest_has_next_step {
+        "  Safe next action: follow the Next step below; this is static advisory evidence only\n"
+    } else {
+        "  Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only\n"
+    }
+}
+
 pub(crate) fn render_human_triage(
     out: &mut String,
     triage: &HumanTriage<'_>,
@@ -358,6 +381,12 @@ pub(crate) fn render_human_triage(
         "  State: {}\n",
         if all_noticed {
             "no test gap found"
+        } else if triage.selected.is_none()
+            && triage.state == HumanTriageState::NoActionableGap
+            && removal_action::is_removal_only(&triage.omitted)
+        {
+            // #15335: name why nothing is selected for a removal-only run.
+            removal_action::REMOVAL_ONLY_STATE
         } else {
             triage.state.plain_label()
         }
@@ -367,10 +396,15 @@ pub(crate) fn render_human_triage(
     // disagree about which command is recommended.
     let recommend_start = check_case == NextActionCheckCase::PreviewAdvisory
         && recommends_gap_repair_start(triage.selected, drill_in);
+    // #14173: the digest is rendered once, before the action line, so that
+    // line can point at the `Next step` only when the digest prints one.
+    let digest = triage
+        .selected
+        .map(|finding| render_finding_digest_with_config(finding, config, &output.root));
     match check_case {
-        NextActionCheckCase::TopGap => out.push_str(
-            "  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only\n",
-        ),
+        NextActionCheckCase::TopGap => out.push_str(top_gap_safe_action_line(
+            digest.as_deref().is_some_and(digest_prints_next_step),
+        )),
         NextActionCheckCase::CandidateFilterHidAll => {
             // #4320: findings exist but the #3281 candidate filter hid
             // every one — the run is not a policy suppression. Claiming
@@ -380,6 +414,10 @@ pub(crate) fn render_human_triage(
             // currentness distinction — `unresolved_subject` is the
             // explicit unknown, not base-side evidence.
             out.push_str(&no_selection_safe_action_line(&triage.omitted));
+            // #15617: a removal-only run also lists what was removed.
+            if let Some(rows) = removal_action::removal_only_rows(&output.root, &triage.omitted) {
+                out.push_str(&rows);
+            }
         }
         NextActionCheckCase::SuppressedByPolicy => {
             // #13819: a run whose findings an owner opt-out withheld names
@@ -453,8 +491,15 @@ pub(crate) fn render_human_triage(
                     Some(finding)
                         if let Some(blocker) = typescript_dynamic_blocker_for(finding) =>
                     {
+                        let advice = if blocker.contains("expects `undefined`") {
+                            "check by hand that the test covers this change"
+                        } else if blocker.contains("contains variables") {
+                            "pin the member values as literals, or check by hand that the test covers this change"
+                        } else {
+                            "replace that expected value with a literal, or check by hand that the test covers this change"
+                        };
                         out.push_str(&format!(
-                            "  Safe next action: {blocker}; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
+                            "  Safe next action: {blocker}; {advice}, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it\n"
                         ));
                     }
                     // #7384: TypeScript named limitations deliberately leave
@@ -524,7 +569,10 @@ pub(crate) fn render_human_triage(
                     ));
                 }
             } else if let Some(base) = output.base.as_deref()
-                && head_is_on_branch(&output.root, base)
+                && (head_is_on_branch(&output.root, base)
+                    // #15326: a clone's `origin/<branch>` base at HEAD's own
+                    // commit, under the shared #7644 identity rule.
+                    || crate::analysis::base_is_checked_out_head(&output.root, base, None))
             {
                 // #13036: when HEAD has a parent, the usual intent is "check the
                 // last commit", so print that command instead of leaving it to
@@ -580,12 +628,8 @@ pub(crate) fn render_human_triage(
             }
         }
     }
-    if let Some(finding) = triage.selected {
-        out.push_str(&render_finding_digest_with_config(
-            finding,
-            config,
-            &output.root,
-        ));
+    if let (Some(finding), Some(digest)) = (triage.selected, digest) {
+        out.push_str(&digest);
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             // #13502: a candidate-tree subject cannot be replayed by `explain`.
             if !navigation.finding_routes_withheld() {
@@ -761,7 +805,7 @@ pub(crate) fn render_human_triage(
                             // target seam is not one in the seam view, so say
                             // that and point at the existing test instead.
                             out.push_str(
-                                "No test stub here: the seam a stub would target is not a reported gap in the seam view; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`\n",
+                                "No test stub here: the spot a stub would target is not a reported gap; strengthen the assertion of the test that already reaches the changed line, then rerun `ripr check`\n",
                             );
                         } else {
                             out.push_str(&format!("No test stub here: {reason}\n"));
@@ -860,7 +904,10 @@ pub(crate) fn render_human_triage(
             let mut row = String::new();
             row.push_str(&format!(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
-                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
+                crate::output::path::human_location_text(
+                    &output.root,
+                    &finding.probe.location.file
+                ),
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
@@ -1087,7 +1134,7 @@ fn grouped_hidden_row(
     let label = if kinds.len() == 1 { "kind" } else { "kinds" };
     Some(format!(
         "    - {}:{} ({}{}); {} changed behaviors{}; {}: {}; reason: {}\n",
-        crate::analysis::finding_location_text(root, &first.probe.location.file),
+        crate::output::path::human_location_text(root, &first.probe.location.file),
         lines,
         first.class.plain_label_with_stage(),
         currentness,
@@ -1354,7 +1401,7 @@ fn repair_already_noticed(navigation: &crate::app::FindingNavigation) -> bool {
 
 /// True when the repair advisory on screen (if any) says there is no repair
 /// start for this finding. Refusals that name a route or a recovery
-/// (`SeveralBindingSeams`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
+/// (`SeveralBindingSeams`, `SeveralSpotsOnChangedLine`, `Ineligible`, `SeamLimit`, `ClassificationFailed`,
 /// `GapRouteUnavailable`, `SeamRouteUnavailable`, `ConfigUnreadable`, and `NoBindingSeam` with seams
 /// in the file, which points at `ripr pilot`) must not sit beside "ripr has no
 /// repair route".
@@ -1363,6 +1410,7 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
         navigation.repair_route_refusal(),
         Some(
             RepairRouteRefusal::SeveralBindingSeams
+                | RepairRouteRefusal::SeveralSpotsOnChangedLine { .. }
                 | RepairRouteRefusal::Ineligible { .. }
                 | RepairRouteRefusal::SeamLimit
                 | RepairRouteRefusal::ClassificationFailed
@@ -1869,6 +1917,9 @@ fn no_selection_hidden_line(omitted: &[&Finding]) -> String {
 
 /// The safe-next-action line for a run where nothing was candidate-actionable.
 fn no_selection_safe_action_line(omitted: &[&Finding]) -> String {
+    if let Some(line) = removal_action::removal_only_safe_action_line(omitted) {
+        return line;
+    }
     match no_selection_mix(omitted) {
         NoSelectionMix::AllBaseSide => {
             "  Safe next action: all findings are base-side evidence, not candidate edit targets; rerun with --format human-full to inspect the full evidence before treating this run as actionable\n".to_string()
@@ -2625,37 +2676,29 @@ pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
         && weak_assertion_row(finding).is_some()
 }
 
-/// The first contributing related-test row whose oracle is too weak to tell
-/// the old value from the new (`weak` or `smoke`). Selected on the row's oracle
-/// strength, never on `miss`, which is display-only. A row related to the
-/// finding by file or module proximity alone (`same_test_file`, `same_module`,
-/// `weak_token_substring`) is not bound to the changed owner, so an unrelated
-/// weak test beside a reach-limited finding does not make it open (#12058); a
-/// row with no recorded relation keeps the earlier behavior.
-///
-/// "Bound" here is deliberately narrower than
-/// [`crate::domain::RelationReason::establishes_reach`]. A finding behind
-/// `rust_transitive_reach_unresolved` is one whose reach the producer could not
-/// establish, while `establishes_reach` is true only for relations that capture
-/// a path to the owner (direct call, helper call, re-export chain, and
-/// `assertion_target_affinity` for a non-function owner). Keying on it would
-/// make `open=` fire for almost no reach-limited finding, defeating #11825. So
-/// only the three file/module proximity relations are excluded;
-/// `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
-/// `seam_callee_call` and `assertion_target_affinity` still count as bound to
-/// the owner here. This is a reasoned choice, not measured against a corpus.
+/// The first contributing related-test row with a weak or smoke oracle.
+/// Behind a Rust transitive-reach limit, require a relation that ties the
+/// row to the changed function. A file, a name or a call to the seam's
+/// callee alone cannot support the open advisory (#12058).
 ///
 /// Among the bound weak rows, the first of the best shared
 /// [`crate::domain::RelatedTest::observation_tier`] is named (#14483), so a
 /// listed-first row with no call path never names the test to open while a
-/// weak row that reaches the change is listed. Whether a row exists is
-/// unchanged.
+/// weak row that reaches the change is listed.
 pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
+    let requires_owner_binding =
+        finding.static_limit_kind == Some(StaticLimitKind::RustTransitiveReachUnresolved);
     let bound_weak = finding.related_tests.iter().filter(|test| {
-        test.is_contributing()
-            && !test
+        let bound = if requires_owner_binding {
+            test.relation_reason
+                .is_some_and(|reason| reason.establishes_reach(true))
+        } else {
+            !test
                 .relation_reason
                 .is_some_and(crate::domain::RelationReason::is_proximity_only)
+        };
+        test.is_contributing()
+            && bound
             && matches!(
                 test.oracle_strength,
                 crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
@@ -2765,7 +2808,7 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    fn test_finding(id: &str) -> Finding {
+    pub(super) fn test_finding(id: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
             confidence_basis: Vec::new(),
@@ -3132,6 +3175,11 @@ mod tests {
             RepairRouteRefusal::SeamLimit,
             RepairRouteRefusal::ClassificationFailed,
             RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 },
+            // #15157: a tie on the changed line is a choice ripr will not
+            // make, not a missing route.
+            RepairRouteRefusal::SeveralSpotsOnChangedLine {
+                spots: vec!["a < b".to_string(), "c == d".to_string()],
+            },
             RepairRouteRefusal::GapRouteUnavailable { reason: "no base" },
             RepairRouteRefusal::ConfigUnreadable,
         ];
@@ -4050,6 +4098,67 @@ mod tests {
             "{out}"
         );
         assert!(out.contains("src/lib.rs"), "{out}");
+    }
+
+    const TOP_GAP_POINTER: &str =
+        "  Safe next action: follow the Next step below; this is static advisory evidence only";
+    const TOP_GAP_NO_POINTER: &str = "  Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only";
+
+    /// #14173: a selected gap whose digest prints a `Next step` gets an action
+    /// line that points at it; the old internal phrase is gone.
+    #[test]
+    fn top_gap_action_points_at_the_next_step_the_digest_prints() {
+        let mut gap = finding_at("finding:gap", "src/lib.rs", ExposureClass::WeaklyExposed);
+        gap.recommended_next_step =
+            Some("Add an exact assertion for the changed value".to_string());
+        let output = test_output(vec![gap]);
+        let triage = select_human_triage(&output, &RiprConfig::default());
+        assert_eq!(triage.state, HumanTriageState::TopGap);
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(digest_prints_next_step(&out), "{out}");
+        assert_eq!(
+            out.lines()
+                .find(|line| line.starts_with("  Safe next action: ")),
+            Some(TOP_GAP_POINTER),
+            "{out}"
+        );
+        assert!(!out.contains("non-exposed"), "{out}");
+    }
+
+    /// #14173 negative control: the pointer wording is chosen from the
+    /// rendered digest, so a digest with no `Next step` line never gets it,
+    /// and either prefix form of the line counts.
+    #[test]
+    fn top_gap_action_never_points_at_an_absent_next_step() {
+        assert_eq!(
+            top_gap_safe_action_line(false).trim_end_matches('\n'),
+            TOP_GAP_NO_POINTER
+        );
+        assert_eq!(
+            top_gap_safe_action_line(true).trim_end_matches('\n'),
+            TOP_GAP_POINTER
+        );
+        assert!(!digest_prints_next_step(
+            "  File: ./src/lib.rs:2\n  Related test: tests/a.rs:4 t\n  Evidence: reach yes\n"
+        ));
+        // A `Next step` mention inside another line is not the line itself.
+        assert!(!digest_prints_next_step(
+            "  no repair start offered: follow the Next step above\n"
+        ));
+        assert!(digest_prints_next_step(
+            "  File: ./src/lib.rs:2\n  Next step: Add an exact assertion\n"
+        ));
+        assert!(digest_prints_next_step(
+            "  Next step — Static limit: inspect the helper\n"
+        ));
     }
 
     /// #14080: a complete-with-findings outcome for `finding_count` findings.

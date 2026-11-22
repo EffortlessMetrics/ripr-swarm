@@ -16,16 +16,16 @@ use crate::analysis::classify::{
     getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
     helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
     method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, outer_imported_names, owner_returns_record,
-    owner_touches_field_only_at, package_prefix, parameter_rebound, predicate_initialized_field,
-    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
-    reach_evidence, returned_array_construction_plain, reveal_outcome,
-    same_test_pairing_missing_summary, setter_plainly_writes, signature_parameters,
-    unconditional_owner_insert_field, unexercised_mask_bits, use_may_rebind_owner,
-    wrapper_return_boundary_pinned,
+    oracle_crediting_relations, outer_imported_names, owner_record_read_masked_anywhere,
+    owner_returns_record, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    predicate_initialized_field, propagation_evidence_with_witness,
+    pushed_collection_compared_whole, pushed_literal_path, reach_evidence,
+    returned_array_construction_plain, reveal_outcome, same_test_pairing_missing_summary,
+    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
+    unexercised_mask_bits, use_may_rebind_owner, wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::{
-    extract_identifier_tokens, mask_comments_and_strings, placeholder_bound_variables,
+    PlaceholderScope, assertion_reads_placeholder, mask_comments_and_strings,
 };
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
@@ -80,9 +80,11 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// `classify` keeps such a finding out of `reachable_unrevealed` (#12900).
     pub(in crate::analysis) proximity_reach_of_named_owner: bool,
     /// #11870: a related test reads the field this probe's assignment writes
-    /// with a weak relational check, under the one start policy the seam side
-    /// asks too (`assigned_field_weak_read_start`). Only then does a weakly
-    /// exposed field assignment keep its class instead of abstaining.
+    /// with a weak relational check, under the start policy the seam side asks
+    /// too (`assigned_field_weak_read_start`), or reads only other fields of
+    /// the receiver (RIPR-SPEC-0228 examples 3, 4 and 6;
+    /// `assigned_field_gap_is_placed`). Only then does a weakly exposed field
+    /// assignment keep its class instead of abstaining.
     pub(in crate::analysis) assigned_field_weakly_read: bool,
     /// When the reveal is not fully established: where a refused related
     /// assertion is, why it was refused, and whether its text calls the
@@ -339,6 +341,16 @@ impl ClassifiedProbeEvidence {
                 owner: context.owner_fn.map(|owner| owner.id.clone()),
             }];
         }
+        // #14852: a returned constant replaced by a different constant
+        // reaches the owner's return; its sink carries the raw tail text.
+        if flow_sinks
+            .iter()
+            .all(|sink| sink.kind == FlowSinkKind::Unknown)
+            && let (Some(owner), Some(change)) =
+                (context.owner_fn, context.constant_tail_change.as_ref())
+        {
+            flow_sinks = vec![change.return_sink(owner)];
+        }
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
                 context.index.files().get(&owner.file).and_then(|file| {
@@ -370,6 +382,19 @@ impl ClassifiedProbeEvidence {
             context.owner_fn.and_then(|owner| {
                 crate::analysis::classify::constant_tail_witness(context.probe, owner, &flow_sinks)
             })
+        })
+        .or_else(|| {
+            context
+                .owner_fn
+                .zip(context.constant_tail_change.as_ref())
+                .and_then(|(owner, change)| {
+                    crate::analysis::classify::constant_tail_change_witness(
+                        context.probe,
+                        owner,
+                        &flow_sinks,
+                        change,
+                    )
+                })
         })
         .or_else(|| {
             context.owner_fn.and_then(|owner| {
@@ -620,10 +645,93 @@ impl ClassifiedProbeEvidence {
                 literal_length_boundary: gathered.literal_length_boundary.as_ref(),
                 slice_counter_boundary: gathered.slice_counter_boundary.as_ref(),
                 unary_tail: context.unary_tail.as_ref(),
+                literal_condition: context.literal_condition.as_ref(),
             },
             owner_has_other_callers,
             assertion_macros_rebound,
         );
+        // #15034: the #8659 invisibility reading declines when another
+        // function holds the owner, since that caller may feed other inputs.
+        // A pure forwarding wrapper (`pub fn w(a) -> T { owner(a) }`, the
+        // owner's only holder and itself held by nothing) feeds exactly its
+        // own arguments, so a test's `w(args)` is `owner(args)` and the same
+        // fold applies. Withholding only: any other shape keeps the reading.
+        let infect = match (context.owner_fn, context.probe.before.as_deref()) {
+            (Some(owner), Some(before))
+                if owner_has_other_callers
+                    && !assertion_macros_rebound
+                    && matches!(context.probe.family, ProbeFamily::ReturnValue)
+                    && matches!(infect.state, StageState::Yes) =>
+            {
+                forwarding_wrapper_invisibility(
+                    context.index,
+                    owner,
+                    before,
+                    &context.probe.expression,
+                    &test_summaries,
+                )
+                .unwrap_or(infect)
+            }
+            _ => infect,
+        };
+        // #15272: a credited infection does not survive related tests that
+        // assert the owner only where it and its base side return the same
+        // value. Withholding only.
+        let infect = match (context.owner_fn, context.owner_baseline.as_deref()) {
+            (Some(owner), Some(baseline))
+                if matches!(infect.state, StageState::Yes) && !assertion_macros_rebound =>
+            {
+                crate::analysis::classify::agreeing_inputs_infection(
+                    owner,
+                    baseline,
+                    &test_summaries,
+                    owner_has_other_callers,
+                    context.index,
+                )
+                .unwrap_or(infect)
+            }
+            _ => infect,
+        };
+        // #15770: every related call must skip this exact edit. Confirm that
+        // replacing the expression did not also move the guard.
+        let infect = if infect.state == StageState::Yes
+            && context.probe.family == ProbeFamily::ReturnValue
+            && context.workspace_complete
+            && !owner_has_other_callers
+            && !assertion_macros_rebound
+            && let Some(owner) = context.owner_fn
+            && let Some(old) = context.owner_sole_change.as_deref()
+            && !old.contains(['{', '}', ';'])
+            && context.probe.before.as_deref().map(str::trim) == Some(old.trim())
+            && context
+                .probe
+                .location
+                .line
+                .checked_sub(owner.start_line)
+                .and_then(|line| owner.body.lines().nth(line))
+                .map(str::trim)
+                == Some(context.probe.expression.trim())
+            && !context.related_tests.is_empty()
+            && context.related_tests.iter().all(|(test, reason)| {
+                *reason == RelationReason::DirectOwnerCall
+                    && crate::analysis::test_grip_evidence::tuple_branch_reached(
+                        owner,
+                        &context.probe.expression,
+                        context.probe.location.line,
+                        test,
+                        context.index,
+                        true,
+                    ) == Some(false)
+            }) {
+            StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                "Every related test selects the other branch of the tuple-field guard",
+            )
+        } else {
+            infect
+        };
+
         // #10980: when the whole-test contradiction withheld EVERY credited
         // activation path that establishes reach (#7007), the stage
         // discloses the withholding instead of reading the withheld tests'
@@ -754,6 +862,11 @@ impl ClassifiedProbeEvidence {
             }
             None => (flow_sinks, propagation_witness),
         };
+        // #15104: the changed whole-body constant tail is the owner's return,
+        // but a `cfg` gate may compile this owner out for a twin the tests
+        // run instead (the shared owner's gate decision). No direct-return
+        // edge on it completes, whichever witness proposed one.
+        let propagation_witness = propagation_witness.filter(|_| !context.owner_may_be_swapped);
         let valid_witness = propagation_witness
             .as_ref()
             .and_then(|diagnostic| match diagnostic {
@@ -848,6 +961,23 @@ impl ClassifiedProbeEvidence {
                         ),
                     )
                 }
+            }
+            _ => propagate,
+        };
+        // #15104: nor may the sinks alone credit it (fail closed).
+        let propagate = match context.owner_fn {
+            Some(owner)
+                if context.owner_may_be_swapped
+                    && matches!(propagate.state, StageState::Yes | StageState::Weak) =>
+            {
+                StageEvidence::new(
+                    StageState::Unknown,
+                    Confidence::Low,
+                    format!(
+                        "Propagation unknown: a `cfg` gate may compile `{}` out for a twin the related tests run instead (cfg_gated_owner)",
+                        owner.name
+                    ),
+                )
             }
             _ => propagate,
         };
@@ -1046,8 +1176,8 @@ impl ClassifiedProbeEvidence {
             })
             .unwrap_or_default();
         // #5830/#7024: names of functions that transitively call the owner,
-        // computed once per owner per run through the attached memo and only
-        // when an assertion asks. The memo answers under its borrow without
+        // computed once per owner per run through the attached memo, when an
+        // assertion asks or when the related-test window is ordered (#15026). The memo answers under its borrow without
         // cloning; unit-test contexts without a memo keep the per-probe cell.
         let owner_callers = std::cell::OnceCell::new();
         let expected_reaches_owner = |ty: Option<&str>, name: &str| {
@@ -1255,6 +1385,88 @@ impl ClassifiedProbeEvidence {
             .as_deref()
             .filter(|_| matches!(context.probe.family, ProbeFamily::Predicate))
             .and_then(|line| predicate_initialized_field(line, &context.probe.expression));
+        // #13037: an exact pin of a bare owner call whose literal arguments
+        // statically run the owner into the branch returning the changed
+        // expression observes that expression's value. Same execution,
+        // macro-binding and `use` admission as the bool field pin; reveal adds
+        // the import and cross-package defeats. The owner's name must also be
+        // unique in a complete index, so a bare call cannot reach a same-named
+        // free function, test stub or associated function instead (#8059).
+        let owner_constants = context.owner_fn.and_then(|owner| {
+            context
+                .index
+                .files()
+                .get(&owner.file)
+                .map(|facts| facts.source.to_string())
+        });
+        let owner_name_unique = context.workspace_complete
+            && context
+                .owner_fn
+                .is_some_and(|owner| callee_is_unique(&owner.name, context.index));
+        // A file that rebinds a primitive type name (`type i32 = u8;`, or a
+        // `use` naming one) can change the width a primitive-spelled type in
+        // the owner has, which the fold cannot see (#14950 review).
+        // The scan reads the whole file, so it runs at most once per probe
+        // and only for a probe the pin can admit: asked eagerly, every
+        // probe of a file read the file again (#15621).
+        let owner_types_are_primitive = std::cell::OnceCell::new();
+        let owner_types_are_primitive = || {
+            *owner_types_are_primitive.get_or_init(|| {
+                context.owner_fn.is_some_and(|owner| {
+                    owner_constants.as_deref().is_some_and(|source| {
+                        owner
+                            .start_line
+                            .checked_sub(1)
+                            .and_then(|index| source.lines().nth(index))
+                            .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                            && !file_may_rebind_primitive_type(source)
+                    })
+                })
+            })
+        };
+        let reached_tail_pin = |test: &TestSummary, assertion: &OracleFact| {
+            matches!(context.probe.family, ProbeFamily::ReturnValue)
+                && owner_name_unique
+                && owner_types_are_primitive()
+                && bool_field_pin_admitted(test, assertion)
+                && context.owner_fn.is_some_and(|owner| {
+                    // An integration test may pin the owner through its own
+                    // library path with no `use` (`pkg::owner(..)`). The fold
+                    // reads a bare owner call only, so the established path
+                    // is read as that call; any other qualified spelling
+                    // stays unevaluated.
+                    let qualified_owner_path =
+                        crate::analysis::classify::own_crate_qualified_owner_path(
+                            context.index,
+                            test,
+                            owner,
+                        );
+                    crate::analysis::test_grip_evidence::return_seam_tail_reached_by_call(
+                        owner,
+                        &context.probe.expression,
+                        context.probe.location.line,
+                        &assertion.text,
+                        qualified_owner_path.as_deref(),
+                        test,
+                        &|name| {
+                            // Only a top-level owner reads the file's
+                            // top-level constants by bare name; a nested
+                            // module resolves the name through its own
+                            // imports (#14950 review).
+                            owner_constants
+                                .as_deref()
+                                .filter(|source| {
+                                    owner
+                                        .start_line
+                                        .checked_sub(1)
+                                        .and_then(|index| source.lines().nth(index))
+                                        .is_some_and(|line| !line.starts_with(char::is_whitespace))
+                                })
+                                .and_then(|source| top_level_constant(source, name))
+                        },
+                    )
+                })
+        };
         let reveal = reveal_outcome(
             context.probe,
             reveal_expression,
@@ -1318,6 +1530,7 @@ impl ClassifiedProbeEvidence {
                                 )
                             })
                 },
+                reached_tail_pin: &reached_tail_pin,
                 assertion_admitted: &assertion_admitted,
                 assertion_has_known_implicit_observer: &|test, assertion| {
                     if !matches!(
@@ -1381,6 +1594,13 @@ impl ClassifiedProbeEvidence {
                         owner_reach
                             .get_or_init(|| proximity_reach.owner_reach(&owner.name))
                             .assertion_pins_other_function(owner, test, assertion, &text)
+                    })
+                },
+                closed_constant_call: &|test, assertion, path| {
+                    context.owner_fn.is_some_and(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .assertion_calls_closed_constant(owner, test, assertion, path)
                     })
                 },
                 owner_parameters: &owner_parameters,
@@ -1571,6 +1791,11 @@ impl ClassifiedProbeEvidence {
             },
             arm_selector.as_ref(),
             context.diff_touched,
+            &|test| {
+                test.calls
+                    .iter()
+                    .any(|call| expected_reaches_owner(None, call.name.as_str()))
+            },
         );
         let complete_proximity_oracles_only = reveal.complete_proximity_oracles_only;
         let (observe, discriminate, mut related_tests, matched_total) = (
@@ -1741,7 +1966,26 @@ impl ClassifiedProbeEvidence {
                 context.owner_fn,
                 &test_summaries,
                 &activation,
-                &assertion_admitted,
+                // #14726: a predicate that sets one record field pairs only
+                // with an assertion every owner-record read of which is
+                // that field or the whole record (#14562).
+                // `assert_eq!(opts("--verbose").retries, 3)` feeds the
+                // boundary input but reads another field, and
+                // `assert_eq!((boundary.retries, opts("-v").verbose), ..)`
+                // reads the field only from a call on another input.
+                &|test, assertion| {
+                    assertion_admitted(test, assertion)
+                        && !pairing_bool_field.zip(context.owner_fn).is_some_and(
+                            |(field, owner)| {
+                                owner_record_read_masked_anywhere(
+                                    test,
+                                    &assertion.text,
+                                    &owner.name,
+                                    field,
+                                )
+                            },
+                        )
+                },
                 // The same owner-pin decision and binding defeats reveal
                 // applied, so pairing cannot credit a pin reveal refused.
                 &|test, assertion| {
@@ -1801,6 +2045,26 @@ impl ClassifiedProbeEvidence {
             )
         } else {
             discriminate
+        };
+        let propagate = if matches!(propagate.state, StageState::Yes | StageState::Weak)
+            && let Some(reason) = context.owner_fn.and_then(|owner| {
+                crate::analysis::classify::unpaired_return_gate(
+                    context.probe,
+                    owner,
+                    &test_summaries,
+                    context.index,
+                    |test, assertion| {
+                        assertion_admitted(test, assertion)
+                            && (crate::analysis::classify::assertion_is_discriminating(assertion)
+                                || owner_pin_admits(test, assertion))
+                            && !import_defeats(test, &owner.name)
+                            && !cross_package_defeats(test, &owner.name)
+                    },
+                )
+            }) {
+            StageEvidence::new(StageState::Unknown, Confidence::Low, reason)
+        } else {
+            propagate
         };
         // The missing-field fact is the authority on whether an assertion
         // observes the constructed field. A token that merely coincides with
@@ -1908,6 +2172,18 @@ impl ClassifiedProbeEvidence {
         } else {
             discriminate
         };
+        // #14936: a deleted `if <cond> { return <constant>; }` whose constant
+        // is the candidate owner's whole-body constant tail returns the same
+        // value on both sides for every input the guard took, so an exact pin
+        // on the owner's return does not discriminate the deletion.
+        let discriminate = if matches!(context.probe.family, ProbeFamily::ReturnValue)
+            && discriminate.state == StageState::Yes
+            && let Some(agreement) = context.deleted_guard_agreement.as_ref()
+        {
+            StageEvidence::new(StageState::Weak, Confidence::Medium, agreement.summary())
+        } else {
+            discriminate
+        };
         // Tests kept only as suggested locations never run the owner, so
         // they neither activate the change nor observe it.
         let reach_ruled_out = reach.state == StageState::No
@@ -1980,7 +2256,7 @@ impl ClassifiedProbeEvidence {
                             .filter(|(_, reason)| reason.establishes_reach(true))
                             .map(|(test, _)| *test)
                             .collect();
-                        crate::analysis::classify::assigned_field_weak_read_start(
+                        crate::analysis::classify::assigned_field_gap_is_placed(
                             owner,
                             &context.probe.expression,
                             &path,
@@ -2202,15 +2478,19 @@ impl ClassifiedProbeEvidence {
         // assertion earns nothing instead of reading "no assertion".
         if assertion_refusal.is_none() && discriminate.state != StageState::Yes {
             for (test, _) in &context.related_tests {
-                let placeholders = placeholder_bound_variables(test.body.as_str());
-                if placeholders.is_empty() {
-                    continue;
-                }
+                let scope = PlaceholderScope::from_body(test.body.as_str());
+                // #14883: the same read test the lowering uses, so a message
+                // word or a string literal naming the placeholder is not a read.
                 let Some(assertion) = test.assertions.iter().find(|assertion| {
                     assertion.strength == OracleStrength::Unknown
-                        && extract_identifier_tokens(&assertion.text)
-                            .iter()
-                            .any(|token| placeholders.contains(token))
+                        && assertion_reads_placeholder(
+                            &assertion.text,
+                            &scope.on_line(
+                                test.body.as_str(),
+                                assertion.line.saturating_sub(test.start_line),
+                                &assertion.text,
+                            ),
+                        )
                 }) else {
                     continue;
                 };
@@ -2348,6 +2628,19 @@ impl ClassifiedProbeEvidence {
             .iter()
             .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
 
+        // A file or module link can hide a real call through an entry point.
+        // Report only that reach was not established for this assertion-free row.
+        for test in &mut related_tests {
+            if test.miss == Some(RelatedTestMiss::NoAssertion)
+                && matches!(
+                    test.relation_reason,
+                    Some(RelationReason::SameTestFile | RelationReason::SameModule)
+                )
+                && !implicit_dispatch_tests.contains(&(test.file.clone(), test.name.clone()))
+            {
+                test.miss = Some(RelatedTestMiss::NoCallPath);
+            }
+        }
         super::super::classify::split_assertion_not_credited_misses(
             context,
             pin_syntax,
@@ -2612,7 +2905,9 @@ impl ClassifiedProbeEvidence {
         // confirmed read of that field after the owner call. A weak reading
         // there means ripr could not tell whether a related assertion reads
         // the field (a helper, a projection, a getter it cannot resolve), so
-        // it abstains as before instead of claiming a gap.
+        // it abstains as before instead of claiming a gap. A weak relational
+        // read of the field, or reads of only other fields (examples 3, 4 and
+        // 6), placed by `assigned_field_gap_is_placed`, keep the class.
         if class == ExposureClass::WeaklyExposed
             && matches!(probe.family, ProbeFamily::FieldConstruction)
             && crate::analysis::classify::field_assignment_target(&probe.expression).is_some()
@@ -3041,6 +3336,412 @@ fn other_function_holds_owner(
     })
 }
 
+/// #15034: the weak infection reading for an owner reached only through one
+/// pure forwarding wrapper, when every related test pins the wrapper at
+/// literal inputs where the owner's change and its baseline fold to the same
+/// value. `None` keeps the caller's reading.
+fn forwarding_wrapper_invisibility(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    before: &str,
+    after: &str,
+    test_summaries: &[&TestSummary],
+) -> Option<StageEvidence> {
+    let (wrapper, arguments) = sole_forwarding_wrapper(index, owner, test_summaries)?;
+    // Every related test must call the wrapper, and none may name the owner:
+    // the fold reads only the wrapper's calls, so an owner call or a test
+    // reaching through some other path would go unread.
+    if test_summaries.iter().any(|test| {
+        mentions_identifier(&test.body, &owner.name)
+            || !mentions_identifier(&test.body, &wrapper.name)
+    }) {
+        return None;
+    }
+    // The stand-in is the owner seen from the wrapper's signature: when the
+    // wrapper passes its parameters straight through it is the owner renamed;
+    // when it passes closed integer expressions (`round(cents * 10)`), each
+    // owner parameter in the body, the change and its baseline is replaced by
+    // its argument, so the fold evaluates the composition at the wrapper's
+    // literal inputs.
+    let computed = inlined_owner(owner, wrapper, &arguments).is_some();
+    let hands = if computed {
+        "which computes the owner's arguments from its own"
+    } else {
+        "which passes its arguments straight to the owner"
+    };
+    let (stand_in, before, after) = match inlined_owner(owner, wrapper, &arguments) {
+        None => (
+            FunctionSummary {
+                name: wrapper.name.clone(),
+                ..owner.clone()
+            },
+            before.to_string(),
+            after.to_string(),
+        ),
+        Some(substitute) => {
+            let header = &wrapper.body[..mask_comments_and_strings(&wrapper.body).find('{')?];
+            let masked_owner = mask_comments_and_strings(&owner.body);
+            let open = masked_owner.find('{')?;
+            let close = masked_owner.rfind('}')?;
+            let inner = owner.body.get(open + 1..close)?;
+            (
+                FunctionSummary {
+                    name: wrapper.name.clone(),
+                    body: format!("{header}{{{}}}", substitute(inner)?).into(),
+                    ..owner.clone()
+                },
+                substitute(before)?,
+                substitute(after)?,
+            )
+        }
+    };
+    match crate::analysis::test_grip_evidence::change_is_invisible_to_every_assertion(
+        &stand_in,
+        &before,
+        &after,
+        test_summaries,
+    )? {
+        crate::analysis::test_grip_evidence::InvisibilityReason::SameValueAtEveryAssertedInput => {
+            Some(StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                format!(
+                    "Every related test calls `{}`, {hands}, with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference",
+                    wrapper.name
+                ),
+            ))
+        }
+        crate::analysis::test_grip_evidence::InvisibilityReason::RelationalTruthUnchanged => {
+            Some(StageEvidence::new(
+                StageState::Weak,
+                Confidence::Medium,
+                format!(
+                    "Every related test's assertions on `{}`, {hands}, hold with the same truth value on the baseline and the change, so no assertion tells the versions apart",
+                    wrapper.name
+                ),
+            ))
+        }
+    }
+}
+
+/// The one production function other than the related tests that holds
+/// `owner`, when it is a free function whose whole body is `owner(p1, .., pn)`
+/// over its own plain parameters in declaration order, with the owner taking
+/// the same number of parameters, and nothing else (no function, test-file
+/// helper or macro body) holds the wrapper itself.
+fn sole_forwarding_wrapper<'a>(
+    index: &'a RustIndex,
+    owner: &FunctionSummary,
+    test_summaries: &[&TestSummary],
+) -> Option<(&'a FunctionSummary, Vec<String>)> {
+    use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
+    let is_related_test = |function: &FunctionSummary| {
+        test_summaries
+            .iter()
+            .any(|test| test.file == function.file && test.name == function.name)
+    };
+    let holders = |name: &str, except: &FunctionSummary| {
+        index
+            .functions()
+            .iter()
+            .filter(|function| {
+                function.id != except.id
+                    && !is_related_test(function)
+                    && (function.calls.iter().any(|call| call.name == name)
+                        || mentions_identifier(function.body.as_str(), name))
+            })
+            .collect::<Vec<_>>()
+    };
+    let owner_holders = holders(&owner.name, owner);
+    let [wrapper] = owner_holders.as_slice() else {
+        return None;
+    };
+    let wrapper = *wrapper;
+    if owner.item.container != FunctionContainer::Free
+        || owner.source_role != FunctionSourceRole::Production
+        || wrapper.item.container != FunctionContainer::Free
+        || wrapper.source_role != FunctionSourceRole::Production
+        || wrapper.name == owner.name
+        || index
+            .functions()
+            .iter()
+            .filter(|function| function.name == wrapper.name || function.name == owner.name)
+            .count()
+            != 2
+        || !holders(&wrapper.name, wrapper).is_empty()
+        || index.files().values().any(|file| {
+            macro_rules_bodies(&file.source).iter().any(|body| {
+                mentions_identifier(body, &wrapper.name) || mentions_identifier(body, &owner.name)
+            })
+        })
+        || !names_stay_in_their_readers(index, &[owner, wrapper], test_summaries, owner, wrapper)
+    {
+        return None;
+    }
+    let wrapper_parameters = plain_parameter_names(&wrapper.body)?;
+    let owner_parameters = plain_parameter_names(&owner.body)?;
+    let tail = whole_body_text(&wrapper.body)?;
+    let arguments = tail
+        .strip_prefix(owner.name.as_str())?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')?;
+    let arguments = split_top_level_commas(arguments)?;
+    // Each argument is the wrapper's parameter itself or a closed integer
+    // expression over the wrapper's parameters (`cents * 10 + 2`), and every
+    // wrapper parameter reaches the owner.
+    let closed_integer = |argument: &str| {
+        argument.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(
+                    character,
+                    '_' | ' ' | '+' | '-' | '*' | '/' | '%' | '(' | ')'
+                )
+        }) && identifier_tokens(argument).all(|token| {
+            wrapper_parameters
+                .iter()
+                .any(|parameter| parameter == token)
+                || token.chars().all(|character| character.is_ascii_digit())
+        })
+    };
+    (arguments.len() == owner_parameters.len()
+        && arguments.iter().all(|argument| closed_integer(argument))
+        && wrapper_parameters.iter().all(|parameter| {
+            arguments
+                .iter()
+                .any(|argument| identifier_tokens(argument).any(|token| token == parameter))
+        }))
+    .then_some((wrapper, arguments))
+}
+
+/// The identifier-or-number tokens of `text`.
+fn identifier_tokens(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| !token.is_empty())
+}
+
+/// `text` split at its top-level commas, each part trimmed, or `None` for an
+/// unbalanced or empty part.
+fn split_top_level_commas(text: &str) -> Option<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for character in text.chars() {
+        match character {
+            '(' => depth += 1,
+            ')' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                parts.push(std::mem::take(&mut current).trim().to_string());
+                continue;
+            }
+            _ => {}
+        }
+        current.push(character);
+    }
+    if depth != 0 {
+        return None;
+    }
+    parts.push(current.trim().to_string());
+    (!parts.iter().any(String::is_empty)).then_some(parts)
+}
+
+/// When the wrapper passes anything other than its own parameters in order,
+/// a substitution that replaces each owner parameter by `(argument)` in a
+/// piece of the owner's text. `None` when the arguments are the parameters
+/// passed straight through. The substitution answers `None` for text it
+/// cannot rewrite safely: a `let`, closure, `match`, nested `fn`, path or
+/// macro, or a wrapper parameter name the owner's body uses for something
+/// other than an owner parameter (it would be captured).
+fn inlined_owner<'a>(
+    owner: &'a FunctionSummary,
+    wrapper: &'a FunctionSummary,
+    arguments: &'a [String],
+) -> Option<impl Fn(&str) -> Option<String> + 'a> {
+    let wrapper_parameters = plain_parameter_names(&wrapper.body)?;
+    let owner_parameters = plain_parameter_names(&owner.body)?;
+    if *arguments == wrapper_parameters[..] {
+        return None;
+    }
+    Some(move |text: &str| {
+        let masked = mask_comments_and_strings(text);
+        if masked != text
+            || masked.contains("::")
+            // A range (`0..n`) puts its bound right after a `.`, which the
+            // field-access rule below would leave unsubstituted.
+            || masked.contains("..")
+            || masked.contains('|')
+            || masked.contains('!')
+            || identifier_tokens(&masked).any(|token| {
+                matches!(
+                    token,
+                    "let" | "match" | "fn" | "move" | "loop" | "while" | "for"
+                ) || (wrapper_parameters
+                    .iter()
+                    .any(|parameter| parameter == token)
+                    && !owner_parameters.iter().any(|parameter| parameter == token))
+            })
+        {
+            return None;
+        }
+        let mut rewritten = String::with_capacity(text.len());
+        let mut token = String::new();
+        let mut previous: Option<char> = None;
+        let flush = |token: &mut String, rewritten: &mut String, after_dot: bool| {
+            match owner_parameters
+                .iter()
+                .position(|parameter| parameter == token)
+            {
+                Some(index) if !after_dot => {
+                    rewritten.push('(');
+                    rewritten.push_str(&arguments[index]);
+                    rewritten.push(')');
+                }
+                _ => rewritten.push_str(token),
+            }
+            token.clear();
+        };
+        let mut token_after_dot = false;
+        for character in text.chars() {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                if token.is_empty() {
+                    token_after_dot = previous == Some('.');
+                }
+                token.push(character);
+            } else {
+                if !token.is_empty() {
+                    flush(&mut token, &mut rewritten, token_after_dot);
+                }
+                rewritten.push(character);
+            }
+            previous = Some(character);
+        }
+        if !token.is_empty() {
+            flush(&mut token, &mut rewritten, token_after_dot);
+        }
+        Some(rewritten)
+    })
+}
+
+/// Whether every occurrence of the owner's or the wrapper's name in the index
+/// sits in the text of the owner, the wrapper or a related test, or on a plain
+/// unaliased `use` line outside them. Occurrences are counted, not lines, so a
+/// `static TOTAL: fn(u32) -> u32 = cash_total;` on the wrapper's own closing
+/// line still counts as outside it. Any other mention (a `static`, a `const`,
+/// a trait impl or an aliased import) can feed the wrapper or owner an input
+/// the fold never reads, so the wrapper reading declines.
+fn names_stay_in_their_readers(
+    index: &RustIndex,
+    readers: &[&FunctionSummary],
+    test_summaries: &[&TestSummary],
+    owner: &FunctionSummary,
+    wrapper: &FunctionSummary,
+) -> bool {
+    let occurrences = |text: &str| {
+        mask_comments_and_strings(text)
+            .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+            .filter(|token| *token == owner.name || *token == wrapper.name)
+            .count()
+    };
+    let inside_reader = |path: &Path, line: usize| {
+        readers.iter().any(|function| {
+            function.file == path && (function.start_line..=function.end_line).contains(&line)
+        }) || test_summaries
+            .iter()
+            .any(|test| test.file == path && (test.start_line..=test.end_line).contains(&line))
+    };
+    index.files().iter().all(|(path, file)| {
+        let source: &str = &file.source;
+        if !source.contains(owner.name.as_str()) && !source.contains(wrapper.name.as_str()) {
+            return true;
+        }
+        let in_readers: usize = readers
+            .iter()
+            .filter(|function| function.file == *path)
+            .map(|function| occurrences(function.body.as_str()))
+            .chain(
+                test_summaries
+                    .iter()
+                    .filter(|test| test.file == *path)
+                    .map(|test| occurrences(test.body.as_str())),
+            )
+            .sum();
+        let on_plain_use_lines: usize = mask_comments_and_strings(source)
+            .lines()
+            .enumerate()
+            .filter(|(at, line)| {
+                let trimmed = line.trim_start();
+                (trimmed.starts_with("use ") || trimmed.starts_with("pub use "))
+                    && !trimmed
+                        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                        .any(|t| t == "as")
+                    && !trimmed.contains('{')
+                    && !trimmed.contains('}')
+                    && trimmed.trim_end().ends_with(';')
+                    // One declaration only: `use a::b; static T: .. = w;`
+                    // would otherwise lend the pointer the `use` allowance.
+                    && trimmed.matches(';').count() == 1
+                    && !inside_reader(path, at + 1)
+            })
+            .map(|(_, line)| occurrences(line))
+            .sum();
+        occurrences(source) == in_readers + on_plain_use_lines
+    })
+}
+
+/// The plain identifier parameter names of the function text `function`
+/// (`fn name(a: T, b: U)`), or `None` for a receiver, a pattern, a generic
+/// signature or an unreadable list.
+fn plain_parameter_names(function: &str) -> Option<Vec<String>> {
+    let masked = mask_comments_and_strings(function);
+    let name_end = masked.find("fn ")? + 3;
+    let open = name_end + masked[name_end..].find('(')?;
+    if masked[name_end..open].contains('<') {
+        return None;
+    }
+    let close = open + masked[open..].find(')')?;
+    let inside = &masked[open + 1..close];
+    if inside.contains(['(', '<', '[', '{']) {
+        return None;
+    }
+    inside
+        .split(',')
+        .map(str::trim)
+        .filter(|parameter| !parameter.is_empty())
+        .map(|parameter| {
+            let (pattern, _) = parameter.split_once(':')?;
+            let pattern = pattern.trim();
+            (!pattern.is_empty()
+                && pattern != "self"
+                && pattern != "_"
+                && pattern
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                && !pattern.starts_with(|ch: char| ch.is_ascii_digit()))
+            .then(|| pattern.to_string())
+        })
+        .collect()
+}
+
+/// The text between the outermost braces of the function text `function`,
+/// trimmed, when it holds no statement (no `;`, no nested block) and no
+/// comment.
+fn whole_body_text(function: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(function);
+    if masked.len() != function.len() {
+        return None;
+    }
+    let open = masked.find('{')?;
+    let close = masked.rfind('}')?;
+    let inner = function.get(open + 1..close)?;
+    // Masking blanks comments and literals in place, so any difference between
+    // the masked and the written body is a comment or a literal: refuse both.
+    if masked.get(open + 1..close)? != inner {
+        return None;
+    }
+    let inner = inner.trim();
+    (!inner.is_empty() && !inner.contains([';', '{', '}'])).then(|| inner.to_string())
+}
+
 /// True when `name` occurs as a whole identifier in the code of `text`,
 /// ignoring comments and string contents.
 fn mentions_identifier(text: &str, name: &str) -> bool {
@@ -3147,6 +3848,130 @@ pub(in crate::analysis) fn assertion_text_with_local_initializers(
     text
 }
 
+/// #13037: whether `source` may give a primitive type name another meaning
+/// in a top-level owner: a `type` item named like a primitive, a `use` that
+/// names a primitive (an import or an `as` rebinding), a top-level glob
+/// `use` that could bring either in, or a macro that could expand to one.
+fn file_may_rebind_primitive_type(source: &str) -> bool {
+    const PRIMITIVES: [&str; 13] = [
+        "bool", "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128",
+        "isize",
+    ];
+    // A raw identifier is the same identifier: `type r#i32 = u8;` rebinds
+    // `i32` (#14950 review).
+    let masked = crate::analysis::extract::mask_comments_and_strings(source).replace("r#", "");
+    // A macro can expand to such a `type` or `use` item without spelling it:
+    // a `macro_rules!` definition, or a top-level item macro invocation.
+    if masked.contains("macro_rules")
+        || masked.lines().any(|line| {
+            !line.starts_with(char::is_whitespace)
+                && line
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == ':'))
+                    .next()
+                    .is_some_and(|head| {
+                        !head.is_empty()
+                            && line
+                                .get(head.len()..)
+                                .is_some_and(|rest| rest.trim_start().starts_with('!'))
+                    })
+        })
+    {
+        return true;
+    }
+    let words: Vec<(usize, &str)> = masked
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .scan(0usize, |offset, word| {
+            let start = *offset;
+            *offset += word.len() + 1;
+            Some((start, word))
+        })
+        .filter(|(_, word)| !word.is_empty())
+        .collect();
+    words.windows(2).any(|pair| {
+        let (start, word) = pair[0];
+        match word {
+            // `type i32 = u8;`
+            "type" => PRIMITIVES.contains(&pair[1].1),
+            // Every `use` up to its `;`, across lines: one that names a
+            // primitive, or any glob.
+            "use" => {
+                let Some(rest) = masked.get(start..) else {
+                    return true;
+                };
+                let statement = rest.split(';').next().unwrap_or(rest);
+                // A glob changes a top-level owner's scope only from the top
+                // level (an indented `use super::*;` in a test module does
+                // not), and the owner itself must be top level.
+                let line_start = masked
+                    .get(..start)
+                    .and_then(|before| before.rfind('\n'))
+                    .map_or(0, |index| index + 1);
+                let top_level = masked
+                    .get(line_start..)
+                    .is_some_and(|line| !line.starts_with(char::is_whitespace));
+                (statement.contains('*') && top_level)
+                    || statement
+                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .any(|part| PRIMITIVES.contains(&part))
+            }
+            _ => false,
+        }
+    })
+}
+
+/// #13037: the initializer text and declared type of `name` when the file
+/// declares it exactly once, as a top-level (unindented) `const` the owner reads by its
+/// bare name, and imports no other binding of that name. A declaration nested
+/// in a `mod`, `impl` or fn, or a `use` naming it, could be a different
+/// binding from the one the owner sees, so it does not resolve.
+fn top_level_constant(source: &str, name: &str) -> Option<(String, String)> {
+    let value = crate::analysis::value_resolution::named_constant(source, name)
+        .value()?
+        .to_string();
+    let masked = crate::analysis::extract::mask_comments_and_strings(source);
+    // A glob import can bring a different binding of the name into the
+    // owner's scope without naming it (#14950 review).
+    if masked.lines().any(|line| {
+        (line.starts_with("use ") || line.starts_with("pub use ")) && line.contains('*')
+    }) {
+        return None;
+    }
+    let mut top_level = 0usize;
+    let mut declared_type = None;
+    for line in masked.lines() {
+        let words: Vec<&str> = line
+            .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| !word.is_empty())
+            .collect();
+        if !words.contains(&name) {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("use ")
+            || trimmed.starts_with("pub use ")
+            || words.first() == Some(&"use")
+        {
+            return None;
+        }
+        let declares = ["const", "static"].iter().any(|keyword| {
+            words
+                .windows(2)
+                .any(|pair| pair[0] == *keyword && pair[1] == name)
+        });
+        if declares {
+            // A `static` (possibly `mut`) can change before the owner reads
+            // it, so only a `const` resolves.
+            if line.starts_with(char::is_whitespace) || words.contains(&"static") {
+                return None;
+            }
+            top_level += 1;
+            let after_name = line.split_once(&format!("{name}:"))?.1;
+            declared_type = Some(after_name.split_once('=')?.0.trim().to_string());
+        }
+    }
+    (top_level == 1).then_some((value, declared_type?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::evidence_summaries;
@@ -3163,6 +3988,246 @@ mod tests {
         RelationReason, SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
+
+    /// #15034: the wrapper reading needs every related test to call the
+    /// wrapper and none to name the owner, and declines when a macro body
+    /// names the wrapper.
+    #[test]
+    fn the_forwarding_wrapper_reading_reads_only_wrapper_only_tests() -> Result<(), String> {
+        let read_with = |argument: &str, extra: &str, test_body: &str| -> Result<bool, String> {
+            let source = format!(
+                "fn round_to_nickel(cents: u32) -> u32 {{\n    (cents + 2) / 5 * 5\n}}\n\npub fn cash_total(cents: u32) -> u32 {{\n    round_to_nickel({argument})\n}}{extra}\n#[test]\nfn stays() {{\n{test_body}\n}}\n"
+            );
+            let path = PathBuf::from("src/lib.rs");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, &source)?;
+            let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: facts.functions.clone(),
+                tests: facts.tests.clone(),
+                files: [(path, facts)].into_iter().collect(),
+                ..Default::default()
+            });
+            crate::analysis::facts::compose_fixture_source_roles(
+                &mut index,
+                std::path::Path::new(""),
+            );
+            let owner = index
+                .functions()
+                .iter()
+                .find(|function| function.name == "round_to_nickel")
+                .ok_or("missing owner")?;
+            let test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "stays")
+                .ok_or("missing test")?;
+            Ok(super::forwarding_wrapper_invisibility(
+                &index,
+                owner,
+                "cents / 5 * 5",
+                "(cents + 2) / 5 * 5",
+                &[test],
+            )
+            .is_some_and(|evidence| evidence.state == StageState::Weak))
+        };
+        let read = |extra: &str, test_body: &str| read_with("cents", extra, test_body);
+        assert!(read("", "    assert_eq!(cash_total(105), 105);")?);
+        // A computed argument is inlined: `cents + 1` at 105 hands the owner
+        // 106, where both versions give 105; at 103 it hands 104, where they
+        // give 100 and 105.
+        assert!(read_with(
+            "cents + 1",
+            "",
+            "    assert_eq!(cash_total(105), 105);"
+        )?);
+        assert!(!read_with(
+            "cents + 1",
+            "",
+            "    assert_eq!(cash_total(103), 105);"
+        )?);
+        assert!(read_with(
+            "cents * 3",
+            "",
+            "    assert_eq!(cash_total(0), 0);"
+        )?);
+        // The changed values differ at 103, so the reading declines.
+        assert!(!read("", "    assert_eq!(cash_total(103), 105);")?);
+        // A test that also names the owner, or never calls the wrapper.
+        assert!(!read(
+            "",
+            "    assert_eq!(cash_total(105), 105);\n    assert_eq!(round_to_nickel(105), 105);"
+        )?);
+        assert!(!read("", "    assert_eq!(105, 105);")?);
+        // A function pointer outside any function body feeds the wrapper an
+        // input the fold never reads (Devin review on #15070).
+        assert!(!read(
+            "\nstatic TOTAL: fn(u32) -> u32 = cash_total;\n",
+            "    assert_eq!(cash_total(105), TOTAL(103));"
+        )?);
+        // The same pointer on the wrapper's closing line is still outside the
+        // wrapper (exact-head review on #15070).
+        assert!(!read(
+            " static TOTAL: fn(u32) -> u32 = cash_total;",
+            "    assert_eq!(cash_total(105), TOTAL(103));"
+        )?);
+        // Nor does a pointer after a `use` on one line.
+        assert!(!read(
+            "\nuse std::fmt::Debug; static TOTAL: fn(u32) -> u32 = cash_total;",
+            "    assert_eq!(cash_total(105), TOTAL(103));"
+        )?);
+        // A macro body that names the wrapper may feed it other inputs.
+        assert!(!read(
+            "\nmacro_rules! total {\n    ($c:expr) => { cash_total($c + 1) };\n}\n",
+            "    assert_eq!(cash_total(105), 105);"
+        )?);
+        Ok(())
+    }
+
+    /// #15034: only a sole, uniquely named, unheld free wrapper whose body
+    /// forwards its own parameters in order is read as the owner.
+    #[test]
+    fn only_a_sole_pure_forwarding_wrapper_stands_in_for_the_owner() {
+        let function = |name: &str, file: &str, body: &str| FunctionFact {
+            id: SymbolId(format!("{file}::{name}")),
+            name: name.to_string(),
+            file: PathBuf::from(file),
+            start_line: 1,
+            end_line: body.lines().count(),
+            body: body.into(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
+            returns: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            source_role: FunctionSourceRole::Production,
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            item: crate::analysis::facts::FunctionItemFact {
+                container: crate::analysis::facts::FunctionContainer::Free,
+                has_self_param: false,
+                has_body: true,
+            },
+            impl_context: Default::default(),
+        };
+        let owner = function(
+            "round",
+            "src/lib.rs",
+            "fn round(cents: u32) -> u32 {\n    (cents + 2) / 5 * 5\n}",
+        );
+        let wrapper = |body: &str| function("total", "src/lib.rs", body);
+        let pure = "pub fn total(cents: u32) -> u32 {\n    round(cents)\n}";
+        let read = |functions: Vec<FunctionFact>| {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions,
+                ..Default::default()
+            });
+            super::sole_forwarding_wrapper(&index, &owner, &[]).map(|(found, _)| found.name.clone())
+        };
+        assert_eq!(
+            read(vec![owner.clone(), wrapper(pure)]),
+            Some("total".to_string())
+        );
+        // A closed integer expression over the wrapper's parameters is a
+        // computed argument the reading inlines.
+        assert_eq!(
+            read(vec![
+                owner.clone(),
+                wrapper("pub fn total(cents: u32) -> u32 {\n    round(cents * 10 + 1)\n}")
+            ]),
+            Some("total".to_string())
+        );
+        for body in [
+            "pub fn total(cents: u32) -> u32 {\n    round(cents.min(3))\n}",
+            "pub fn total(cents: u32) -> u32 {\n    round(LIMIT)\n}",
+            "pub fn total(cents: u32) -> u32 {\n    round(cents as u32)\n}",
+            "pub fn total(cents: u32) -> u32 {\n    round(cents + LIMIT)\n}",
+            "pub fn total(a: u32, b: u32) -> u32 {\n    round(b)\n}",
+            "pub fn total(cents: u32) -> u32 {\n    return round(cents);\n}",
+            "pub fn total<T: Into<u32>>(cents: T) -> u32 {\n    round(cents.into())\n}",
+        ] {
+            assert_eq!(read(vec![owner.clone(), wrapper(body)]), None, "{body}");
+        }
+        // The substitution parenthesizes each argument and refuses a range,
+        // whose bound follows a `.` and would be left unsubstituted.
+        let computed = function(
+            "total",
+            "src/lib.rs",
+            "pub fn total(cents: u32) -> u32 {\n    round(cents * 2)\n}",
+        );
+        let arguments = vec!["cents * 2".to_string()];
+        let substitute = super::inlined_owner(&owner, &computed, &arguments);
+        assert_eq!(
+            substitute
+                .as_ref()
+                .and_then(|substitute| substitute("(cents + 2) / 5 * 5")),
+            Some("((cents * 2) + 2) / 5 * 5".to_string())
+        );
+        assert_eq!(
+            substitute
+                .as_ref()
+                .and_then(|substitute| substitute("(0..cents).sum()")),
+            None
+        );
+        // A second holder of the owner, a holder of the wrapper, or a second
+        // function named like the wrapper declines.
+        let second_owner_holder = function(
+            "other",
+            "src/lib.rs",
+            "pub fn other(c: u32) -> u32 {\n    round(c * 2)\n}",
+        );
+        let wrapper_holder = function(
+            "helper",
+            "tests/it.rs",
+            "fn helper() -> u32 {\n    total(103)\n}",
+        );
+        let twin = function(
+            "total",
+            "src/other.rs",
+            "pub fn total(cents: u32) -> u32 {\n    cents\n}",
+        );
+        for extra in [second_owner_holder, wrapper_holder, twin] {
+            assert_eq!(
+                read(vec![owner.clone(), wrapper(pure), extra.clone()]),
+                None,
+                "{}",
+                extra.name
+            );
+        }
+    }
+
+    /// #15034: the forwarding-wrapper reader takes only plain identifier
+    /// parameters and a body that is one expression.
+    #[test]
+    fn a_pure_forwarding_wrapper_is_read_by_its_parameters_and_body() {
+        assert_eq!(
+            super::plain_parameter_names("pub fn cash_total(cents: u32, mode: Mode) -> u32 {"),
+            Some(vec!["cents".to_string(), "mode".to_string()])
+        );
+        for refused in [
+            "pub fn f(&self, a: u32) -> u32 {",
+            "pub fn f<T>(a: T) -> u32 {",
+            "pub fn f((a, b): (u32, u32)) -> u32 {",
+            "pub fn f(_: u32) -> u32 {",
+            "pub fn f(mut a: u32) -> u32 {",
+            "pub fn f(a: [u8; 2]) -> u32 {",
+        ] {
+            assert_eq!(super::plain_parameter_names(refused), None, "{refused}");
+        }
+        assert_eq!(
+            super::whole_body_text(
+                "pub fn cash_total(cents: u32) -> u32 {\n    round_to_nickel(cents)\n}"
+            ),
+            Some("round_to_nickel(cents)".to_string())
+        );
+        for refused in [
+            "pub fn w(c: u32) -> u32 {\n    let d = c;\n    owner(d)\n}",
+            "pub fn w(c: u32) -> u32 {\n    { owner(c) }\n}",
+            "pub fn w(c: u32) -> u32 {\n    owner(c) // note\n}",
+            "pub fn w(c: u32) -> u32 {\n    owner(c);\n}",
+            "pub fn w(c: u32) -> u32 {\n}",
+        ] {
+            assert_eq!(super::whole_body_text(refused), None, "{refused}");
+        }
+    }
 
     // --- #3731 review (G1): the cross-package same-name defeat ---
 

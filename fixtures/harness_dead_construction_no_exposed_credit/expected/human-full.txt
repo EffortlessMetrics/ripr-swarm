@@ -25,7 +25,7 @@ Changed
   before: raw.parse().unwrap_or(0)
   after:  raw.parse().unwrap_or(1)
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::parse_limit
@@ -52,7 +52,7 @@ Changed
   before: parse_limit(raw) > 0
   after:  parse_limit(raw) > 1
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::limit_exceeds_default
@@ -103,7 +103,6 @@ Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:predicate:f16a58e4
   ripr context --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:predicate:f16a58e4
-
 
 Note: ripr found no static test path for any of the 3 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 3 changed expression(s), and 0 statically linked related

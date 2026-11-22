@@ -6,6 +6,7 @@
 //! that exact attempt. Store location is owned by [`store`]: before, status,
 //! and after resolve one store identity instead of joining a hardcoded path.
 
+pub(crate) mod retained_run;
 mod store;
 
 use crate::agent::loop_commands::{bound_root, display_path, root_path_display, shell_arg};
@@ -46,6 +47,7 @@ const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// dependencies.
 const CARGO_WORKSPACE_LOCKFILE: &str = "Cargo.lock";
 
+pub(crate) use store::path_escapes_root;
 pub(crate) use store::{
     RepairAttemptStoreAccess, RepairAttemptStoreCurrentness, RepairAttemptStoreIdentity,
     RepairAttemptStoreLocationClass, RepairAttemptStoreRef, quoted_store_flag,
@@ -491,7 +493,8 @@ pub(crate) fn receipt_binding_from(
             "missing attempt; start one with `ripr agent repair`, then rerun".to_string()
         })?
     };
-    let mut policy = edit_cage_policy_from_packet(
+    let mut policy = edit_cage_policy_from_packet_in(
+        &root,
         std::str::from_utf8(&packet)
             .map_err(|error| format!("repair packet is not UTF-8: {error}; pass the JSON packet that `ripr agent repair` wrote"))?,
         seam_id,
@@ -718,17 +721,28 @@ fn recompute_after_verdict_binding_of_delta(
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
     // attempt; any other movement still breaks the binding.
-    let protected = if manifest.gap_binding.is_some() {
-        GAP_WORKFLOW_PROJECTIONS.as_slice()
+    let mut protected: Vec<&str> = if manifest.gap_binding.is_some() {
+        GAP_WORKFLOW_PROJECTIONS.to_vec()
     } else {
-        &[]
+        Vec::new()
     };
+    // A finish since #15060 leaves the derived scan bundle out of its bound
+    // delta, so a later re-check's rewrite of it is ignored here too. A staged
+    // copy is kept and protected from the later-write filter, so it still
+    // breaks the binding. A receipt whose bound verdict lists the bundle was
+    // finished before that rule and keeps its original reading.
+    let bundle = crate::edit_cage::derived_cache_bundle_path(&baseline)
+        .filter(|path| !after.verdict.changed_paths.contains(path));
+    if let Some(bundle) = &bundle {
+        crate::edit_cage::omit_derived_cache_bundle(&mut delta, &baseline);
+        protected.push(bundle.as_str());
+    }
     let normalize = |delta: &crate::edit_cage::AttemptDelta| {
         crate::edit_cage::without_later_operational_writes_protecting(
             baseline.policy(),
             delta,
             &after.verdict.changed_paths,
-            protected,
+            &protected,
         )
     };
     let matches = |delta: &crate::edit_cage::AttemptDelta| -> Result<_, String> {
@@ -827,6 +841,9 @@ fn recompute_after_verdict_binding_of_delta(
                 &baseline,
                 &manifest_relative_path(manifest),
             )?;
+            if bundle.is_some() {
+                crate::edit_cage::omit_derived_cache_bundle(&mut candidate, &baseline);
+            }
             let candidate = normalize(&candidate);
             // The absent gap projection and present A-to-B receipt slot
             // are disjoint identities; both may need reconstruction before
@@ -3223,10 +3240,38 @@ fn test_surface_requirement() -> &'static str {
 /// recognition itself is the producer-owned typed fact
 /// (`analysis::workspace::is_test_surface_path`); this layer owns only the
 /// policy decision and its diagnostic.
+#[cfg(test)]
 pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
 ) -> Result<EditCagePolicy, String> {
+    edit_cage_policy_from_packet_with(packet, seam_id, &|_| false)
+}
+
+/// [`edit_cage_policy_from_packet`] with the workspace's manifest authority
+/// (#15910): the selected target may also be the entry file of a Cargo
+/// `[[test]]` target the package manifest declares outside the test layouts
+/// (`crate::analysis::is_declared_cargo_test_surface`). The manifest is read
+/// here, at the gate, so the packet's own text never widens the surface; the
+/// policy records the answer (`declared_cargo_test_target`) and the baseline
+/// capture asks the manifest again.
+pub(crate) fn edit_cage_policy_from_packet_in(
+    root: &Path,
+    packet: &str,
+    seam_id: &str,
+) -> Result<EditCagePolicy, String> {
+    edit_cage_policy_from_packet_with(packet, seam_id, &|path| {
+        crate::analysis::is_declared_cargo_test_surface(root, path)
+    })
+}
+
+pub(crate) fn edit_cage_policy_from_packet_with(
+    packet: &str,
+    seam_id: &str,
+    declared_test_target: &dyn Fn(&str) -> bool,
+) -> Result<EditCagePolicy, String> {
+    // A path-shaped test surface, or a manifest-declared `[[test]]` entry.
+    let is_test_surface = |path: &str| is_test_surface_path(path) || declared_test_target(path);
     let value: serde_json::Value = serde_json::from_str(packet).map_err(|error| {
         format!("decode repair packet for the allowed-files check failed: {error}")
     })?;
@@ -3237,6 +3282,7 @@ pub(crate) fn edit_cage_policy_from_packet(
             "repair packet seam does not match requested seam `{seam_id}`"
         ));
     }
+    let ledger_envelope = is_gap_ledger_packet(&value);
     // `agent packet` emits a repo packet containing a `packets` list, while
     // language adapters may emit a single packet. Select the only actionable
     // packet without treating the report envelope as edit-cage authority.
@@ -3293,16 +3339,26 @@ pub(crate) fn edit_cage_policy_from_packet(
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?,
     };
+    // Seam packets spell paths as stable path text. A gap-ledger packet
+    // keeps its record's spelling: native for TypeScript and Python (read as
+    // written), stable path text for a Rust record (decoded).
+    let stable_paths = !(ledger_envelope || is_gap_ledger_packet(value))
+        || value.get("language").and_then(serde_json::Value::as_str) == Some("rust");
+    let packet_path = |text: &str| packet_path_text(text, stable_paths);
+    let selected_target_text = packet_path(selected_target_text)?;
+    let selected_target_text = selected_target_text.as_str();
     // The one exception (#5210): a production Rust file may be the selected
     // target only as its one governed inline `#[cfg(test)]` module. The
     // policy then confines the edit to that module; the baseline capture
     // refuses a file without exactly one such module, and the after-phase
     // verdict admits only a pure insertion of test functions into it.
-    let inline_test_module_target = !is_test_surface_path(selected_target_text)
+    let inline_test_module_target = !is_test_surface(selected_target_text)
         && is_inline_test_module_candidate(selected_target_text);
-    let external_test_file_target = is_test_surface_path(selected_target_text)
+    let external_test_file_target = is_test_surface(selected_target_text)
         && Path::new(selected_target_text).extension() == Some(std::ffi::OsStr::new("rs"));
-    if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
+    let declared_cargo_test_target =
+        external_test_file_target && !is_test_surface_path(selected_target_text);
+    if !is_test_surface(selected_target_text) && !inline_test_module_target {
         return Err(format!(
             "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
             test_surface_requirement()
@@ -3318,6 +3374,7 @@ pub(crate) fn edit_cage_policy_from_packet(
             .map(|path| {
                 path.as_str()
                     .ok_or_else(|| format!("repair packet {name} contains a non-string path"))
+                    .and_then(packet_path)
                     .and_then(crate::edit_cage::CagePathRule::exact)
             })
             .collect()
@@ -3329,13 +3386,14 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .ok_or_else(|| "repair packet allowed_edit_surface must be an array".to_string())?;
             let mut allowed = Vec::new();
             for (index, entry) in entries.iter().enumerate() {
-                let path = entry.as_str().ok_or_else(|| {
+                let path = packet_path(entry.as_str().ok_or_else(|| {
                     "repair packet allowed_edit_surface contains a non-string path".to_string()
-                })?;
+                })?)?;
+                let path = path.as_str();
                 // Only the selected target itself may be the confined inline
                 // module file; every other allowed path is a test surface.
                 let confined_selected_target = index == 0 && inline_test_module_target;
-                if !is_test_surface_path(path) && !confined_selected_target {
+                if !is_test_surface(path) && !confined_selected_target {
                     return Err(format!(
                         "repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit path"
                     ));
@@ -3350,7 +3408,9 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .and_then(|test| test.get("file"))
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
-            if !is_test_surface_path(file) && !inline_test_module_target {
+            let file = packet_path(file)?;
+            let file = file.as_str();
+            if !is_test_surface(file) && !inline_test_module_target {
                 return Err(format!(
                     "repair packet recommended test `{file}` is not a test surface"
                 ));
@@ -3410,8 +3470,10 @@ pub(crate) fn edit_cage_policy_from_packet(
             let proposed_file = value
                 .get("recommended_test")
                 .and_then(|test| test.get("file"))
-                .and_then(serde_json::Value::as_str);
-            if proposed_file != Some(selected_target.path()) {
+                .and_then(serde_json::Value::as_str)
+                .map(packet_path)
+                .transpose()?;
+            if proposed_file.as_deref() != Some(selected_target.path()) {
                 return Err(format!(
                     "repair packet new-test proposal file {proposed_file:?} does not match the selected edit target `{}`",
                     selected_target.path()
@@ -3436,8 +3498,47 @@ pub(crate) fn edit_cage_policy_from_packet(
         untracked_build_lockfile,
         inline_test_module_target,
         external_test_file_target,
+        declared_cargo_test_target,
         new_test_proposal,
     })
+}
+
+/// A packet's path text in its native spelling. Seam packets render every
+/// file through the shared stable-path encoder, which escapes a literal `%` as
+/// `%25` so the text stays lossless; the edit cage compares rules with the
+/// paths Git reports and the baseline capture opens the file, so both need
+/// the decoded name. Without this, `src/a%b.rs` became the rule
+/// `src/a%25b.rs`, a file that does not exist.
+///
+/// A decoded backslash refuses: on Unix it is a literal file-name byte
+/// (`%5C`), and the cage normalizer would read it as a separator, so
+/// `tests/a%5Cb.rs` would become the rule for a different file,
+/// `tests/a/b.rs`.
+fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String> {
+    if !stable_path_text {
+        return Ok(text.to_string());
+    }
+    let decoded = crate::analysis::decode_stable_path_text(text);
+    let decoded = decoded
+        .to_str()
+        .ok_or_else(|| {
+            format!(
+                "repair packet path `{text}` does not name a UTF-8 path; rename the file to a UTF-8 name, then regenerate the packet"
+            )
+        })?;
+    if decoded.contains('\\') && !text.contains('\\') {
+        return Err(format!(
+            "repair packet path `{text}` names a file with a backslash in its name, which the edit cage cannot confine; rename the file to remove the backslash, then regenerate the packet"
+        ));
+    }
+    Ok(decoded.to_string())
+}
+
+/// A packet the gap decision ledger rendered. Its paths come from the
+/// record's own spelling: the TypeScript and Python adapters write native
+/// paths, while Rust records carry stable path text from their evidence.
+fn is_gap_ledger_packet(value: &serde_json::Value) -> bool {
+    value.get("source").and_then(serde_json::Value::as_str) == Some("gap_decision_ledger")
 }
 
 /// A non-test-surface selected target that may still be routed as its inline
@@ -3548,7 +3649,13 @@ fn explicit_store_locator(
         return Ok(None);
     };
     let scoped = format!("{relative}/{}", attempt_id.as_str());
-    Ok(Some(crate::edit_cage::CagePathRule::subtree(&scoped)?))
+    let rule = crate::edit_cage::CagePathRule::subtree(&scoped).map_err(|reason| {
+        format!(
+            "--store {} is refused: {reason}; pass --store naming a directory inside --root, for example `--store target/ripr/repair-attempts`",
+            display_path(Path::new(&relative))
+        )
+    })?;
+    Ok(Some(rule))
 }
 
 /// Captures the edit-cage baseline and writes it to a workflow compatibility
@@ -4084,6 +4191,9 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
         &manifest_relative_path(&manifest),
     )?;
     crate::edit_cage::omit_owned_workflow_backups(&mut delta, &baseline, backups)?;
+    // The derived module-tree scan bundle is rewritten by every check; it is
+    // not attempt evidence, so the finish does not bind its bytes (#15060).
+    crate::edit_cage::omit_derived_cache_bundle(&mut delta, &baseline);
     let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
@@ -4097,6 +4207,51 @@ pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
             "repair attempt {} {REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL}",
             attempt_id.as_str()
         ));
+    }
+    // #13203 slice C at the finish authority: the after-phase gate skips a
+    // proposal whose file is absent, leaving it to the cage. If the file
+    // appears after that check, the cage evaluated here can be compliant
+    // with no focused run, so refuse from this same evaluated state.
+    // The same holds for a result whose file the gate did not see: the
+    // gate's passing-run check is skipped with it, so the finish re-applies
+    // that check to the record it would retain (#15033).
+    if verdict.status == crate::edit_cage::EditCageVerdictStatus::Compliant
+        && let Some(proposal) = &baseline.policy().new_test_proposal
+    {
+        let Some(focused) = focused else {
+            return Err(format!(
+                "repair attempt {} {REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL}",
+                attempt_id.as_str()
+            ));
+        };
+        let inline_baseline = if proposal.kind
+            == crate::analysis::new_test_target::NewTestKind::InlineUnit
+        {
+            let source = baseline.inline_test_region_source().ok_or_else(|| {
+                    format!(
+                        "attempt `{}` follows an inline proposal but retains no baseline text of `{}`; start a new attempt",
+                        attempt_id.as_str(),
+                        proposal.file
+                    )
+                })?;
+            Some(crate::app::focused_run::baseline_test_names(
+                &proposal.file,
+                source,
+            )?)
+        } else {
+            None
+        };
+        crate::app::focused_run::require_passing_recorded_run(
+            &focused.record,
+            attempt_id.as_str(),
+            inline_baseline.as_ref(),
+        )
+        .map_err(|error| {
+            format!(
+                "repair attempt {} {REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX}{error}",
+                attempt_id.as_str()
+            )
+        })?;
     }
     if !current {
         verdict.status = crate::edit_cage::EditCageVerdictStatus::Incomparable;
@@ -4872,6 +5027,31 @@ pub(crate) const REPAIR_ATTEMPT_CHANGED_UNDERFOOT_TAIL: &str =
 /// The result was checked against another HEAD or test-file snapshot than the
 /// one the cage captured. No after verdict has been committed.
 pub(crate) const REPAIR_ATTEMPT_FOCUSED_IDENTITY_TAIL: &str = "focused test result no longer matches the captured HEAD or test file; rerun the focused test and retry the after phase with --test-result FILE";
+
+/// The finish authority's own refusal for an attempt that follows a new-test
+/// proposal but reached the finish without a focused result (#13203 slice C).
+/// No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL: &str = "follows a new-test proposal, so it cannot finish without a focused test result; rerun the after phase with `--test-result FILE`";
+
+/// The finish authority's refusal of a proposal attempt's focused result that
+/// is not a counted passing run of a new test (#15033). The checked reason
+/// follows this prefix. No after verdict has been committed.
+pub(crate) const REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX: &str =
+    "cannot finish its new-test proposal: ";
+
+pub(crate) fn repair_attempt_proposal_focused_required_is_refusal(error: &str) -> bool {
+    let Some((id, tail)) = error
+        .strip_prefix("repair attempt ")
+        .and_then(|sentence| sentence.split_once(' '))
+    else {
+        return false;
+    };
+    RepairAttemptId::parse(id).is_ok()
+        && (tail == REPAIR_ATTEMPT_PROPOSAL_FOCUSED_REQUIRED_TAIL
+            || tail
+                .strip_prefix(REPAIR_ATTEMPT_PROPOSAL_RUN_REFUSED_PREFIX)
+                .is_some_and(|reason| !reason.is_empty()))
+}
 
 pub(crate) fn repair_attempt_focused_identity_is_retry_refusal(error: &str) -> bool {
     let Some((id, tail)) = error
@@ -5710,6 +5890,43 @@ fn operational_write_rules(
     Ok(rules)
 }
 
+/// Whether file content carries the governed inline `#[cfg(test)]` module
+/// marker. The preflight must treat multiline attribute spellings the same as
+/// one-line gates (#11808); the cfg owner already parses both when given the
+/// full attribute text.
+fn file_content_contains_plain_test_gate(content: &str) -> bool {
+    if content
+        .lines()
+        .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim()))
+    {
+        return true;
+    }
+    let mut index = 0usize;
+    while index < content.len() {
+        let Some(relative) = content[index..].find("#[") else {
+            break;
+        };
+        index += relative;
+        let Some(end) = crate::analysis::outer_attribute_end(&content[index..]) else {
+            // Ambiguous text must fall through to the exact policy; do not
+            // rescan each nested opener in an unterminated attribute.
+            return true;
+        };
+        let attribute = content[index..index + end].trim();
+        if crate::analysis::attribute_is_plain_test_gate(attribute) {
+            return true;
+        }
+        // An apparent opener can itself be inside a literal or comment. If
+        // its extent contains another opener, it may have swallowed a real
+        // gate; defer rather than refusing or rescanning overlapping suffixes.
+        if attribute[2..].contains("#[") {
+            return true;
+        }
+        index += end;
+    }
+    false
+}
+
 fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
     // Canonical test-surface recognition first: the policy constructor
     // admits only `is_test_surface_path` targets (or the confined #5210
@@ -5717,7 +5934,7 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
     // repair target. This also carries every TypeScript adapter convention
     // (`*.test.*`, `*.spec.*`, `test-*`, `*.test-d.*`, `*.cy.*`, `__tests__`)
     // without forking that taxonomy here.
-    if is_test_surface_path(path) {
+    if crate::analysis::is_test_surface(root, path) {
         return false;
     }
     let candidate = Path::new(path);
@@ -5758,9 +5975,7 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
         return false;
     }
     match std::fs::read_to_string(&candidate_path) {
-        Ok(content) => !content
-            .lines()
-            .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim())),
+        Ok(content) => !file_content_contains_plain_test_gate(&content),
         Err(_) => false,
     }
 }
@@ -5950,6 +6165,18 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_store_traversal_refusal_names_the_flag() -> Result<(), String> {
+        let id = RepairAttemptId::parse("repair-attempt-aaaaaaaaaaaaaaaaaaaaaaaa".to_string())?;
+        let refused = explicit_store_locator(Path::new("."), Some(Path::new("../x")), Some(&id));
+        let Err(message) = refused else {
+            return Err("a traversing --store must be refused".to_string());
+        };
+        assert!(message.contains("--store ../x is refused"), "{message}");
+        assert!(message.contains("pass --store naming"), "{message}");
+        Ok(())
+    }
     use crate::testing::fixture_git::fixture_git_ok as run_git;
     use crate::testing::verify_fixture::{mint_bound_receipt, mint_bound_receipt_pair};
 
@@ -6321,6 +6548,122 @@ mod tests {
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
         if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
             return Err("a production recommended test constructed a cage policy".to_string());
+        }
+        Ok(())
+    }
+
+    /// A packet spells paths in stable path text, so a literal `%` in a file
+    /// name arrives as `%25`. The cage rules and the baseline capture need
+    /// the native name: `src/a%25b.rs` names no file on disk.
+    #[test]
+    fn cage_policy_decodes_a_percent_escaped_packet_path() -> Result<(), String> {
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["src/a%25b.rs"],
+            "forbidden_files": ["src/c%25d.rs"],
+            "recommended_test": { "file": "src/a%25b.rs", "target_kind": "new_inline_test_module" }
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "src/a%b.rs"
+            || !policy.inline_test_module_target
+            || policy.allowed_edit_surface.first().map(|rule| rule.path()) != Some("src/a%b.rs")
+            || policy.forbidden_paths.first().map(|rule| rule.path()) != Some("src/c%d.rs")
+            || policy
+                .new_test_proposal
+                .as_ref()
+                .map(|proposal| proposal.file.as_str())
+                != Some("src/a%b.rs")
+        {
+            return Err(format!("packet path was not decoded: {policy:?}"));
+        }
+        // An escaped backslash is a literal file-name byte, not a separator:
+        // it refuses instead of naming `tests/a/b.rs`.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/a%5Cb.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+            Err(error)
+                if error.contains("backslash")
+                    && error.contains(
+                        "rename the file to remove the backslash, then regenerate the packet",
+                    ) => {}
+            other => return Err(format!("escaped backslash was not refused: {other:?}")),
+        }
+        // A name that is not UTF-8 (only Unix can spell one) refuses with the
+        // same recovery: rename, then regenerate the packet.
+        #[cfg(unix)]
+        {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["tests/a%FFb.rs"],
+                "forbidden_files": []
+            });
+            let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+            match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+                Err(error)
+                    if error.contains("does not name a UTF-8 path")
+                        && error.contains(
+                            "rename the file to a UTF-8 name, then regenerate the packet",
+                        ) => {}
+                other => return Err(format!("non-UTF-8 packet path was not refused: {other:?}")),
+            }
+        }
+        // A gap-ledger packet (TypeScript, Python) carries native spellings:
+        // a literal `%25` in its test file name stays as written.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "source": "gap_decision_ledger",
+            "allowed_edit_surface": ["tests/a%25.test.ts"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/a%25.test.ts" {
+            return Err(format!("gap-ledger packet path was decoded: {policy:?}"));
+        }
+        // The envelope's marker alone keeps the inner packet's spelling.
+        let inner = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/a%25.test.ts"],
+            "forbidden_files": []
+        });
+        let envelope = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "packets": [inner],
+        });
+        let rendered = serde_json::to_string(&envelope).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/a%25.test.ts" {
+            return Err(format!("gap-ledger envelope path was decoded: {policy:?}"));
+        }
+        // A Rust gap-ledger record carries stable path text, so it decodes.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "source": "gap_decision_ledger",
+            "language": "rust",
+            "allowed_edit_surface": ["tests/100%25.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/100%.rs" {
+            return Err(format!(
+                "Rust gap-ledger packet path was not decoded: {policy:?}"
+            ));
+        }
+        // A test-surface path in the recommended-test form decodes too.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "recommended_test": { "file": "tests/100%25.rs" }
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/100%.rs" || policy.inline_test_module_target {
+            return Err(format!("recommended test path was not decoded: {policy:?}"));
         }
         Ok(())
     }
@@ -7513,10 +7856,51 @@ mod tests {
             if dirty_path_cannot_be_repair_target(&root, "src/inline.rs") {
                 return Err("preflight must not name src/inline.rs".to_string());
             }
+            // Multiline `#[cfg(test)]` must defer the same way (#11808).
+            std::fs::write(
+                root.join("src/multiline_inline.rs"),
+                "#[cfg(\n    test\n)]\nmod t {}\n",
+            )
+            .map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/multiline_inline.rs") {
+                return Err("preflight must not name src/multiline_inline.rs".to_string());
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
         result
+    }
+
+    #[test]
+    fn file_content_plain_test_gate_recognises_multiline_cfg_test() {
+        assert!(file_content_contains_plain_test_gate(
+            "#[cfg(test)]\nmod t {}\n"
+        ));
+        assert!(file_content_contains_plain_test_gate(
+            "#[cfg(\n    test\n)]\nmod t {}\n"
+        ));
+        assert!(!file_content_contains_plain_test_gate(
+            "#[cfg(\n    feature = \"slow\"\n)]\nmod t {}\n"
+        ));
+    }
+
+    #[test]
+    fn multiline_gate_ignores_brackets_in_comments_and_literals() {
+        for source in [
+            "#[cfg(/* ] */\n test)]\nmod tests {}",
+            "#[cfg(/* [ /* ] */ ] */\n test)]\nmod tests {}",
+            "#[doc = r#\"[ ]\"#]\n#[cfg(\n test)]\nmod tests {}",
+            "é\n#[cfg(// ]\n test)]\nmod tests {}",
+        ] {
+            assert!(file_content_contains_plain_test_gate(source), "{source}");
+        }
+        assert!(!file_content_contains_plain_test_gate(
+            "#[cfg(\nfeature = \"slow]\"\n)]"
+        ));
+        assert!(file_content_contains_plain_test_gate("#[cfg(\n test"));
+        assert!(file_content_contains_plain_test_gate(
+            "const X: &str = \"#[\";\n#[cfg(\n test)]\nmod tests {}\nconst Y: &str = \"]\";"
+        ));
     }
 
     /// #11458: TypeScript adapter test conventions (`*.spec.*`, `test-*`,

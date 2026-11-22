@@ -377,7 +377,21 @@ fn retain_unambiguous_item_bindings(bindings: &mut Vec<SeamCardBinding>) {
 /// the CLI's words (`agent card seam_id <id> <reason>`) minus the root-bound
 /// remedy command, which this root-relative adapter words as a repository
 /// command instead (#10718).
-fn policy_omitted_failure(seam_id: &str, reason: &str) -> AttemptFailure {
+fn policy_omitted_failure(seam_id: &str, reason: &str, closed_gap: bool) -> AttemptFailure {
+    // The default policy omits `strongly_gripped` seams because the existing
+    // tests already pin the change: a closed gap, not a configuration problem.
+    // The typed code stays `policy_omitted` (pinned); only the words change.
+    // Closed only when the ITEM's own finding is `exposed`: a weaker finding
+    // bound to a strongly gripped seam is still open (typed check on the item).
+    if closed_gap {
+        return AttemptFailure::new(
+            AgentCardRefusalKind::PolicyOmitted.as_str(),
+            format!(
+                "agent card seam_id {seam_id} is already gripped by existing tests: the change is already pinned and there is no repair card to read; nothing to do. The agent policy {reason}."
+            ),
+            "none: the gap is closed; ripr_refresh only after further edits. Change the agent policy (`ripr agent brief --seam-id <seam> --json` shows it) only to list gripped seams anyway",
+        );
+    }
     agent_card_failure(AgentCardError::refusal(
         AgentCardRefusalKind::PolicyOmitted,
         format!(
@@ -419,7 +433,9 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
                 .and_then(|entry| {
                     policy.omission_reason_for_class(entry.class, Some(entry.seam.file()))
                 })
-                .map_or_else(unbound, |reason| policy_omitted_failure(&seam_id, &reason))
+                .map_or_else(unbound, |reason| {
+                    policy_omitted_failure(&seam_id, &reason, item.is_closed_gap())
+                })
         }
         RepairSubjectOutcome::Unknown => agent_card_failure(AgentCardError::refusal(
             AgentCardRefusalKind::SeamNotFound,
@@ -556,7 +572,11 @@ impl WorkspaceSession {
         if let Some(reason) = AgentBriefPolicy::from_config(&producers.config)
             .omission_reason_for_class(entry.class, Some(entry.seam.file()))
         {
-            return Err(policy_omitted_failure(entry.seam.id().as_str(), &reason));
+            return Err(policy_omitted_failure(
+                entry.seam.id().as_str(),
+                &reason,
+                item.is_closed_gap(),
+            ));
         }
         // The bind-time join is re-verified against the committed findings on
         // every read by re-running the shared bind rule itself: the retained
@@ -604,6 +624,24 @@ impl WorkspaceSession {
                 "run ripr_refresh again to analyze the current source, then retry",
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+        }
+        // The shared per-item admission (`ripr_list_gaps` / `ripr_prepare_repair`)
+        // holds a start whose inline test target has uncommitted changes
+        // (#11397). The card reads that same verdict from the committed item,
+        // after the drift check, so it never claims `repair_ready` where the
+        // item is refused and list, prepare and card never disagree.
+        if let Some(file) = item.repair_readiness.held_file.as_deref() {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} was refused: {}. Commit or stash `{file}`, then run ripr_refresh again",
+                    item.canonical_id,
+                    item.repair_readiness
+                        .seam_detail
+                        .as_deref()
+                        .unwrap_or("the shared repair gate refuses this seam")
+                ),
+            )));
         }
         let readiness = repair_packet_eligibility(entry).readiness;
         let seam_id = entry.seam.id().as_str().to_string();
@@ -712,7 +750,7 @@ impl WorkspaceSession {
                 "the card binds the analyzed repository head and commit-time currentness of its snapshot; a HEAD move or edit after ripr_refresh changes what the CLI would bind live, so refresh again before comparing card identities across transports",
                 "the next-action display binds the portable root `.` and is presentation only; the host-local root path is intentionally not projected and the display is never execution authority",
                 "attempt state is re-read from the durable store at card-read time; in-memory session transactions never ride a card and stay reachable through ripr_prepare_repair / ripr_get_repair_attempt",
-                "the card's seam inventory and evidence facts ran with the same resolved workspace configuration as the snapshot's findings (#6825 review); compare cards across transports only at equal config identity",
+                "the card's seam inventory and evidence facts ran with the same resolved workspace configuration as the snapshot's findings; compare cards across transports only at equal config identity",
             ],
             "links": {
                 "snapshot": format!("ripr://snapshot/{snapshot_id}"),
@@ -778,6 +816,60 @@ fn mcp_detail_routes(card: &Value, canonical_id: &str) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
+    /// Closed gap: the card says "nothing to do" only when the caller's typed
+    /// `GapItem::is_closed_gap` holds; the pinned `policy_omitted` code never
+    /// changes and every other case keeps the policy wording.
+    #[test]
+    fn policy_omitted_says_nothing_to_do_only_for_a_closed_gap() {
+        let reason =
+            "is configured off for strongly_gripped seams and is not included in agent results";
+        let closed = policy_omitted_failure("seam-a", reason, true);
+        assert_eq!(closed.code, "policy_omitted");
+        assert!(
+            closed.detail.contains("already gripped"),
+            "{}",
+            closed.detail
+        );
+        assert!(closed.detail.contains("nothing to do"), "{}", closed.detail);
+        assert!(closed.recovery.starts_with("none: the gap is closed"));
+        // Negative control: the same strongly_gripped reason for an item that
+        // is not a closed gap (weaker class, or exposed but refused for
+        // another cause) keeps the policy wording.
+        let open = policy_omitted_failure("seam-a", reason, false);
+        assert_eq!(open.code, "policy_omitted");
+        assert!(!open.detail.contains("nothing to do"), "{}", open.detail);
+        assert!(
+            open.recovery.contains("inspect it with"),
+            "{}",
+            open.recovery
+        );
+    }
+
+    /// The card's gate is the list's gate: `exposed` AND already gripped.
+    #[test]
+    fn closed_gap_needs_exposed_and_seam_already_gripped() -> Result<(), String> {
+        let gap = |class: &str, code: Option<&'static str>| -> Result<bool, String> {
+            let mut item =
+                GapItem::from_finding(&crate::mcp::gaps::test_finding()?, Path::new("."))?;
+            item.class = class.to_string();
+            item.repair_readiness.ineligibility = code;
+            Ok(item.is_closed_gap())
+        };
+        let gripped = Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED);
+        assert!(gap("exposed", gripped)?);
+        assert!(!gap("weakly_exposed", gripped)?);
+        assert!(!gap(
+            "exposed",
+            Some(crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED)
+        )?);
+        assert!(!gap(
+            "exposed",
+            Some(crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE)
+        )?);
+        assert!(!gap("exposed", None)?);
+        Ok(())
+    }
+
     use super::*;
     use crate::analysis::seams::{
         ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
@@ -821,6 +913,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -1538,6 +1631,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,

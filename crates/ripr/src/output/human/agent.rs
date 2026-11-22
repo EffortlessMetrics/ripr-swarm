@@ -32,7 +32,8 @@ use super::triage::{self, HumanTriage};
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
-    ExposureClass, Finding, NextActionCheckCase, OracleStrength, RelatedTest, RelationConfidence,
+    ExposureClass, Finding, NextActionCheckCase, OracleStrength, ProbeFamily, RelatedTest,
+    RelationConfidence,
 };
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
@@ -155,7 +156,9 @@ fn render_report(
     out.push_str(&incomplete_lines);
     out.push_str(&requested_scope_note_line(output));
     let unanalyzed = render_unanalyzed_changes(&mut out, output);
-    let next = next_line(&triage, output, &gaps, drill_in, provenance);
+    // The first printed row, which is the first gap unless that gap is a
+    // predicate folded into its field row (#14713).
+    let next = next_line(&triage, output, &rows, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
         // #13658: a `no_scope` outcome (empty or unparseable --diff) read
         // nothing, so it must not claim `done`.
@@ -448,10 +451,7 @@ pub(super) fn render_finding(
     context_command: &str,
     suppressed: bool,
 ) -> String {
-    let mut out = format!(
-        "#ripr explain agent static-advisory class={}\n",
-        finding.class.as_str()
-    );
+    let mut out = explain_header(finding);
     let weak_row = triage::weak_assertion_row(finding);
     let currentness = finding.source_currentness_disclosure();
     let (terminal, test) = if suppressed {
@@ -527,10 +527,135 @@ pub(super) fn render_finding(
     {
         out.push_str(&format!("limit={}\n", field(&name)));
     }
+    // The owner and the pre-change text are what `ripr context` would add
+    // beyond the record above; printing them here lets the agent skip that
+    // 1 KB JSON packet when nothing else in it is new (see `context_adds_detail`).
+    if let Some(line) = owner_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    if let Some(line) = before_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    let keep_context = context_adds_detail(finding, terminal);
+    if !keep_context && let Some(line) = seen_line(finding) {
+        out.push_str(&line);
+        out.push('\n');
+    }
     out.push_str(terminal);
     out.push('\n');
-    out.push_str(&format!("next={context_command}\n"));
+    if keep_context {
+        out.push_str(&format!("next={context_command}\n"));
+    }
     out
+}
+
+fn explain_header(finding: &Finding) -> String {
+    format!(
+        "#ripr explain agent static-advisory class={}\n",
+        finding.class.as_str()
+    )
+}
+
+impl crate::app::ExplainFormat {
+    /// A producer-withheld finding has no repair route in either format.
+    pub(crate) fn render_withheld(
+        self,
+        opt_out: &crate::analysis::owner_opt_out::OwnerOptOut,
+        finding: &Finding,
+        root: &Path,
+        context_command: &str,
+    ) -> String {
+        match self {
+            Self::Human => format!(
+                "{}\n",
+                crate::terminal_text::single_line(&super::owner_opt_out_explain_text(opt_out))
+            ),
+            Self::Agent => {
+                let mut stop = format!(
+                    "stop={}|owner={}|scope={}",
+                    opt_out.reason.as_str(),
+                    field(&opt_out.owner),
+                    opt_out.scope.as_str()
+                );
+                if !opt_out.scope_label.is_empty() {
+                    stop.push_str(&format!("|scope_label={}", field(&opt_out.scope_label)));
+                }
+                super::terminal_safe(finish_stop(
+                    explain_header(finding),
+                    finding,
+                    root,
+                    context_command,
+                    &stop,
+                ))
+            }
+        }
+    }
+}
+
+/// Most observed test inputs a `seen=` line lists before `(+N more)`.
+const MAX_SEEN_VALUES: usize = 6;
+
+/// `seen=V1 (CONTEXT); V2 (CONTEXT) (+N more)`: the values the related tests
+/// already use, each with its producer context (`function_argument` inputs
+/// apart from `assertion_argument` expectations),
+/// printed only when `next=` is omitted, because the context packet's
+/// `observed_values` is then the one fact this projection would otherwise
+/// drop. Absent when the producer observed no values.
+fn seen_line(finding: &Finding) -> Option<String> {
+    let values = &finding.activation.observed_values;
+    if values.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = values
+        .iter()
+        .take(MAX_SEEN_VALUES)
+        .map(|fact| format!("{} ({})", clip(fact.value.trim()), fact.context.as_str()))
+        .collect();
+    let mut line = format!("seen={}", field(&shown.join("; ")));
+    if values.len() > MAX_SEEN_VALUES {
+        line.push_str(&format!(" (+{} more)", values.len() - MAX_SEEN_VALUES));
+    }
+    Some(line)
+}
+
+/// `owner=NAME`: the function the changed line belongs to, from the producer's
+/// probe owner (`path::name`, `path::Type::name`). Absent without an owner.
+fn owner_line(finding: &Finding) -> Option<String> {
+    let owner = finding.probe.owner.as_ref()?;
+    let name = owner
+        .0
+        .split_once("::")
+        .map_or(owner.0.as_str(), |(_, n)| n);
+    (!name.is_empty()).then(|| format!("owner={}", field(name)))
+}
+
+/// `before=TEXT`: the changed expression as it read on the base side, when the
+/// producer recorded one that differs from the head expression in the record.
+fn before_line(finding: &Finding) -> Option<String> {
+    let before = finding.probe.before.as_deref()?.trim();
+    (!before.is_empty() && before != finding.probe.expression.trim())
+        .then(|| format!("before={}", field(&clip(before))))
+}
+
+/// Whether `ripr context` still holds something this projection did not print.
+/// For a test-side gap with no concrete missing discriminator and at most one
+/// related test, the packet's remaining body is the same record, `before`,
+/// owner, observed inputs (printed as `seen=`), stage prose that restates
+/// `stages=` and producer-internal limitations, so `next=` is omitted and the
+/// agent writes the test instead of fetching it. The terminal is matched by its
+/// prefix; a reworded terminal keeps `next=` (fails closed). Any other finding keeps the
+/// pointer: the discriminator's reason, observed inputs, flow sink and extra
+/// related tests live only in the packet.
+fn context_adds_detail(finding: &Finding, terminal: &str) -> bool {
+    !(terminal.starts_with("open=a test-side")
+        && finding.activation.missing_discriminators.is_empty()
+        && finding
+            .related_tests_matched_total
+            .unwrap_or_default()
+            .max(finding.related_tests.len())
+            <= 1)
 }
 
 /// Terminal `stop=` rendering for a finding that is not a current edit target:
@@ -1126,17 +1251,114 @@ fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usi
 /// second test. The first finding in triage order keeps the row, so the top
 /// gap and `next=` are unchanged; any difference keeps the rows separate
 /// (fail closed).
+///
+/// #14713: a `predicate` probe on a single struct-literal field initializer
+/// (`verbose: a || b,`) also folds into the `field_construction` row for the
+/// same initializer when that row is already kept, the class, location,
+/// strongest test and `stages=` row agree, the predicate names no missing
+/// discriminator value of its own, and every `missing` line the predicate
+/// carries is also on the field row. A predicate-only line (for example "No
+/// detected boundary input for the changed predicate", or a pairing or mask
+/// summary) keeps the predicate row, since it is advice the field row does
+/// not give. The field row need not rank first. Folding claims only that the
+/// predicate row would repeat the field row; it does not claim that a test of
+/// the field settles the predicate. The field row is kept wherever it ranks,
+/// so `next=` names the first printed row.
 fn fold_identical_gap_rows<'a>(root: &Path, gaps: &[&'a Finding]) -> Vec<&'a Finding> {
+    let field_rows: Vec<(String, &[String])> = gaps
+        .iter()
+        .filter_map(|finding| {
+            field_construction_row_key(root, finding).map(|key| (key, finding.missing.as_slice()))
+        })
+        .collect();
     let mut seen: Vec<String> = Vec::new();
     let mut rows = Vec::with_capacity(gaps.len());
     for finding in gaps {
         let key = gap_row_key(root, finding);
-        if !seen.contains(&key) {
-            seen.push(key);
-            rows.push(*finding);
+        if seen.contains(&key) {
+            continue;
         }
+        if predicate_field_twin_key(root, finding).is_some_and(|twin| {
+            field_rows.iter().any(|(key, field_missing)| {
+                *key == twin
+                    && finding
+                        .missing
+                        .iter()
+                        .all(|line| field_missing.contains(line))
+            })
+        }) {
+            continue;
+        }
+        seen.push(key);
+        rows.push(*finding);
     }
     rows
+}
+
+/// The fold identity of a `field_construction` gap whose expression is one
+/// field initializer, `<field>: <value>` with an optional trailing comma:
+/// the value plus everything the two rows must share (see
+/// `fold_identical_gap_rows`). `None` for any other finding.
+fn field_construction_row_key(root: &Path, finding: &Finding) -> Option<String> {
+    if finding.probe.family != ProbeFamily::FieldConstruction {
+        return None;
+    }
+    let expression = finding.probe.expression.trim();
+    let expression = expression.strip_suffix(',').unwrap_or(expression);
+    let (field, value) = expression.split_once(':')?;
+    let field = field.trim();
+    let value = value.trim();
+    let is_field_name = !field.is_empty()
+        && field
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && !field.starts_with(|ch: char| ch.is_ascii_digit());
+    // `a::b` paths and `x: T` in other positions are not initializers.
+    if !is_field_name || value.is_empty() || value.starts_with(':') {
+        return None;
+    }
+    Some(twin_fold_key(root, finding, value))
+}
+
+/// The fold identity a `predicate` gap would share with its field
+/// initializer twin. `None` when the predicate names a missing value of its
+/// own, which keeps its row.
+fn predicate_field_twin_key(root: &Path, finding: &Finding) -> Option<String> {
+    if finding.probe.family != ProbeFamily::Predicate
+        || !finding.activation.missing_discriminators.is_empty()
+    {
+        return None;
+    }
+    let value = finding.probe.expression.trim();
+    let value = value.strip_suffix(',').unwrap_or(value).trim();
+    (!value.is_empty()).then(|| twin_fold_key(root, finding, value))
+}
+
+fn twin_fold_key(root: &Path, finding: &Finding, value: &str) -> String {
+    // The test's identity and oracle, without its `miss=`: the two probes
+    // word why the same assertion misses differently (the field row says
+    // `missing_exact_assertion`, the predicate `observation_unconfirmed`);
+    // the test's identity is what both rows must share.
+    let test = strongest_test(finding).map(|test| {
+        format!(
+            "{}:{} {} {} {:?}",
+            repository_display_path(root, &test.file),
+            test.line,
+            test.name,
+            test.oracle_kind.as_str(),
+            test.oracle,
+        )
+    });
+    let (_, stages) = test_and_stages_key(root, finding);
+    format!(
+        "{}\n{}:{}\n{:?}\n{:?}\n{}",
+        finding.class.as_str(),
+        repository_display_path(root, &finding.probe.location.file),
+        finding.probe.location.line,
+        value,
+        test,
+        stages
+    )
 }
 
 /// What a gap's records say, without its id (see `fold_identical_gap_rows`).
@@ -1169,6 +1391,22 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
             })
             .collect()
     };
+    let (test, stages) = test_and_stages_key(root, finding);
+    format!(
+        "{}\n{}:{}\n{:?}\n{:?}\n{:?}\n{}",
+        finding.class.as_str(),
+        repository_display_path(root, &finding.probe.location.file),
+        finding.probe.location.line,
+        finding.probe.expression,
+        missing,
+        test,
+        stages
+    )
+}
+
+/// The strongest related test's full `tN=` identity and the `stages=` row,
+/// compared unclipped by both row folds.
+fn test_and_stages_key(root: &Path, finding: &Finding) -> (Option<String>, String) {
     let test = strongest_test(finding).map(|test| {
         format!(
             "{}:{} {} {} {:?} {:?}",
@@ -1183,16 +1421,7 @@ fn gap_row_key(root: &Path, finding: &Finding) -> String {
     let stages = crate::output::stage_rows::stage_rows_agent_line(
         &crate::output::stage_rows::evidence_stage_rows(finding),
     );
-    format!(
-        "{}\n{}:{}\n{:?}\n{:?}\n{:?}\n{}",
-        finding.class.as_str(),
-        repository_display_path(root, &finding.probe.location.file),
-        finding.probe.location.line,
-        finding.probe.expression,
-        missing,
-        test,
-        stages
-    )
+    (test, stages)
 }
 
 fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missing: bool) -> String {

@@ -7,6 +7,49 @@ use super::classify_change_with_source;
 use crate::domain::{ExposureClass, Finding, OracleStrength, ProbeFamily, StageState};
 use std::path::Path;
 
+// #12948: both ranges are empty for zero, so the exact output pin cannot
+// distinguish the edit. Three enters the loop and distinguishes 6 from 3.
+#[test]
+fn changed_range_requires_a_differing_iteration_sequence() -> Result<(), String> {
+    let before = "    for i in range(1, n + 1):";
+    let after = "    for i in range(1, n):";
+    let source =
+        format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+    for (argument, expected, exposed) in [(0, 0, false), (-1, 0, false), (3, 6, true)] {
+        let tests = format!(
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to({argument}) == {expected}\n"
+        );
+        let file = Path::new("src/subject.py");
+        let owners = extract_owners(file, &source);
+        let tests = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        assert_eq!(tests.len(), 1);
+        let finding = super::classify_change_with_context(
+            file,
+            3,
+            after,
+            Some(before),
+            &owners,
+            &tests,
+            super::PythonNoBehaviorContext {
+                sole_line_replacement: true,
+                ..Default::default()
+            },
+            Some(&source),
+        )
+        .ok_or("range edit must produce a finding")?;
+        assert_eq!(finding.related_tests.len(), 1);
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "input {argument}: {finding:?}"
+        );
+        if !exposed {
+            assert_ne!(finding.ripr.infect.state, StageState::Yes);
+        }
+    }
+    Ok(())
+}
+
 // #7312: independently authored from CPython ebf955df7a89ed0c7968f79faec1de49f61ed7cb
 // Lib/unittest/case.py::assertListEqual and test_unittest/test_case.py::testEquality.
 #[test]
@@ -1454,11 +1497,13 @@ fn predicate_boundary_scope_computed_and_non_relational_predicates() -> Result<(
 }
 
 /// Without any literal owner argument the gate cannot see the activating
-/// input in either direction (Rust's empty `call_values` rule). The verdict
-/// stays with the oracle rules and the finding names the limitation, so the
-/// unresolved activation stays visible rather than silently credited.
+/// input in either direction. #15287: a recognized owner call whose input the
+/// analysis cannot read (a reassigned test local, a `*` unpack) is not
+/// established to reach the changed boundary, so the strong oracle no longer
+/// credits `exposed`; the finding fails closed to `weakly_exposed` and says
+/// why, without naming a repair target the unread input may already meet.
 #[test]
-fn predicate_boundary_without_literal_inputs_names_the_limitation() -> Result<(), String> {
+fn predicate_boundary_without_literal_inputs_fails_closed() -> Result<(), String> {
     for tests in [
         "from src.subject import bulk_discount\n\ndef test_bulk_discount_local():\n    quantity = 150\n    quantity += 1\n    assert bulk_discount(quantity) == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk_discount_list():\n    assert bulk_discount(*[100]) == 0.15\n",
@@ -1471,15 +1516,222 @@ fn predicate_boundary_without_literal_inputs_names_the_limitation() -> Result<()
             "    if quantity >= 100:",
         )?;
         assert_owner(&finding, "bulk_discount");
-        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
         assert!(finding.activation.observed_values.is_empty());
         assert!(
-            finding.evidence.iter().any(|line| line
-                == "boundary_activation_unresolved: no strong related test call to `bulk_discount` binds a literal argument, so static evidence cannot place an input at the changed boundary of `quantity >= 100`"),
-            "{:?}",
+            finding.activation.missing_discriminators.is_empty(),
+            "an unreadable input names no repair target: {:?}",
+            finding.activation.missing_discriminators
+        );
+        assert!(
+            format!("{finding:?}").contains(
+                "no strong related test call to `bulk_discount` binds a literal argument, and some pass inputs in a form static evidence cannot read (a `*args` unpack, a test local, a parametrize row naming a value), so no call is established to reach the changed boundary of `quantity >= 100`"),
+            "{finding:?}"
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+            "a weak finding carries no unresolved-credit note: {:?}",
             finding.evidence
         );
     }
+    Ok(())
+}
+
+/// #15287 shape 1 (humanize `clamp`): parametrized rows called as
+/// `clamp(*args)` hide every input from the reader, so a `<` -> `<=` flip with
+/// no row on the boundary must not read `exposed`. Controls: the same owner
+/// called with inline literals keeps its on-boundary `exposed` and its
+/// off-boundary `weakly_exposed`.
+#[test]
+fn star_args_parametrized_rows_do_not_credit_a_boundary_flip() -> Result<(), String> {
+    let source = "def clamp(value, floor=None):\n    if floor is not None and value < floor:\n        return f\"<{floor}\"\n    return str(value)\n";
+    let (old, new) = (
+        "    if floor is not None and value < floor:",
+        "    if floor is not None and value <= floor:",
+    );
+    let star = classify_case(
+        source,
+        "import pytest\nfrom src.subject import clamp\n\n@pytest.mark.parametrize(\"args, expected\", [([1], \"1\"), ([0.0001, 0.01], \"<0.01\"), ([5, 1], \"5\")])\ndef test_clamp(args, expected):\n    assert clamp(*args) == expected\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(star.class, ExposureClass::WeaklyExposed, "{star:?}");
+    let off = classify_case(
+        source,
+        "from src.subject import clamp\n\ndef test_clamp_off():\n    assert clamp(0.0001, 0.01) == \"<0.01\"\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(off.class, ExposureClass::WeaklyExposed, "{off:?}");
+    let on = classify_case(
+        source,
+        "from src.subject import clamp\n\ndef test_clamp_on():\n    assert clamp(0.01, 0.01) == \"0.01\"\n",
+        2,
+        old,
+        new,
+    )?;
+    assert_eq!(on.class, ExposureClass::Exposed, "{on:?}");
+    Ok(())
+}
+
+/// #15287 shape 2 (packaging `_musllinux`): parametrize rows that name
+/// test-module constants are not read as cases, so they are unread inputs,
+/// not witnesses. Control: the same constants passed directly are read, and
+/// the one on the boundary keeps `exposed`.
+#[test]
+fn named_constant_rows_do_not_credit_a_boundary_flip() -> Result<(), String> {
+    let rows = classify_case(
+        DISCOUNT_SOURCE,
+        "import pytest\nfrom src.subject import bulk_discount\n\nBELOW = 50\nABOVE = 150\n\n@pytest.mark.parametrize(\"quantity, rate\", [(BELOW, 0.0), (ABOVE, 0.15)])\ndef test_bulk_discount_named(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_eq!(rows.class, ExposureClass::WeaklyExposed, "{rows:?}");
+    assert!(
+        rows.activation.missing_discriminators.is_empty(),
+        "{rows:?}"
+    );
+    let direct = classify_case(
+        DISCOUNT_SOURCE,
+        "from src.subject import bulk_discount\n\nBELOW = 50\nAT = 100\n\ndef test_bulk_discount_named():\n    assert bulk_discount(BELOW) == 0.0\n    assert bulk_discount(AT) == 0.15\n",
+        2,
+        "    if quantity > 100:",
+        "    if quantity >= 100:",
+    )?;
+    assert_eq!(direct.class, ExposureClass::Exposed, "{direct:?}");
+    Ok(())
+}
+
+/// #15287 shape 3 (marshmallow `from_timestamp`): a first-statement
+/// `value = float(value)` leaves a numeric literal argument equal, so the
+/// `-10` the test passes is read through the conversion. It sits off the `0`
+/// boundary, so the flip reads weak and names `value == 0`; an on-boundary
+/// `0` keeps `exposed`. An `int` conversion of a float literal truncates, so
+/// it stays a rebinding the rule cannot see through (the oracle verdict
+/// stands with the named limitation).
+#[test]
+fn coerced_parameter_reads_the_literal_through_the_conversion() -> Result<(), String> {
+    let source = "def from_timestamp(value):\n    value = float(value)\n    if value < 0:\n        raise ValueError(\"neg\")\n    return value\n";
+    let negative = "import pytest\nfrom src.subject import from_timestamp\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(-10)\n";
+    let (old, new) = ("    if value < 0:", "    if value <= 0:");
+    let off = classify_edit_case(source, negative, 3, old, new)?;
+    // marshmallow's suite also passes an integer above 2**53; `float` may
+    // round it, but never onto the `0` bound, so it does not block the read.
+    let with_overflow = negative.replace(
+        "        from_timestamp(-10)\n",
+        "        from_timestamp(-10)\n\ndef test_large():\n    assert from_timestamp(9223372036854775) == 9223372036854776.0\n",
+    );
+    let overflow = classify_edit_case(source, &with_overflow, 3, old, new)?;
+    assert_eq!(overflow.class, ExposureClass::WeaklyExposed, "{overflow:?}");
+    assert_eq!(
+        overflow
+            .activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["value == 0"],
+        "the large strong row is read, not refused: {overflow:?}"
+    );
+    // An `int` coercion of an integer literal is read through too.
+    let int_source = source.replace("float(value)", "int(value)");
+    let int_off = classify_edit_case(&int_source, negative, 3, old, new)?;
+    assert_eq!(int_off.class, ExposureClass::WeaklyExposed, "{int_off:?}");
+    // A rebound operand fed through a `*` unpack is unread test input: it
+    // fails closed instead of keeping the oracle verdict.
+    let star = classify_edit_case(
+        &source.replace("float(value)", "abs(value)"),
+        "import pytest\nfrom src.subject import from_timestamp\n\n@pytest.mark.parametrize(\"args\", [[-10]])\ndef test_negative(args):\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(*args)\n",
+        3,
+        old,
+        new,
+    )?;
+    assert_eq!(star.class, ExposureClass::WeaklyExposed, "{star:?}");
+    assert!(
+        star.activation.missing_discriminators.is_empty(),
+        "{star:?}"
+    );
+    // The real owner passes `value` on as a keyword-adjacent argument
+    // (`fromtimestamp(value, tz=...)`), which the line reader takes for a
+    // tuple target; the parsed body shows it is not a binding.
+    let marshmallow = "import datetime as dt\n\n\ndef from_timestamp(value):\n    value = float(value)\n    if value < 0:\n        raise ValueError(\"neg\")\n    try:\n        return dt.datetime.fromtimestamp(value, tz=dt.timezone.utc)\n    except OverflowError as exc:\n        raise ValueError(\"big\") from exc\n";
+    let real = classify_edit_case(marshmallow, negative, 6, old, new)?;
+    assert_eq!(real.class, ExposureClass::WeaklyExposed, "{real:?}");
+    // A float literal whose spelling is not the stored value
+    // (`1.0000000000000001` is `1.0`) is refused, so an on-boundary call is
+    // never reported as missing the boundary.
+    let rounded = classify_edit_case(
+        &source.replace("value < 0", "value < 1"),
+        "from src.subject import from_timestamp\n\ndef test_one():\n    assert from_timestamp(1.0000000000000001) == 1.0\n",
+        3,
+        "    if value < 1:",
+        "    if value <= 1:",
+    )?;
+    assert!(
+        rounded.activation.missing_discriminators.is_empty(),
+        "{rounded:?}"
+    );
+    assert_eq!(rounded.class, ExposureClass::Exposed, "{rounded:?}");
+    // Controls that keep the rebinding unreadable: a second binding, a
+    // module that shadows `float`, and a parameter that shadows it.
+    for refused in [
+        source.replace(
+            "    return value\n",
+            "    value = abs(value)\n    return value\n",
+        ),
+        format!("float = int\n{source}"),
+        source.replace("(value):", "(value, float=abs):"),
+    ] {
+        let line = refused
+            .lines()
+            .position(|text| text == old)
+            .map_or(0, |i| i + 1);
+        let finding = classify_edit_case(&refused, negative, line, old, new)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{refused}: {finding:?}"
+        );
+    }
+    assert_eq!(off.class, ExposureClass::WeaklyExposed, "{off:?}");
+    assert_eq!(
+        off.activation
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["value == 0"],
+        "{off:?}"
+    );
+    let on = classify_edit_case(
+        source,
+        "from src.subject import from_timestamp\n\ndef test_zero():\n    assert from_timestamp(0) == 0.0\n",
+        3,
+        old,
+        new,
+    )?;
+    assert_eq!(on.class, ExposureClass::Exposed, "{on:?}");
+    let truncating = classify_edit_case(
+        &source.replace("float(value)", "int(value)"),
+        "import pytest\nfrom src.subject import from_timestamp\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"neg\"):\n        from_timestamp(-10.5)\n",
+        3,
+        old,
+        new,
+    )?;
+    assert_eq!(truncating.class, ExposureClass::Exposed, "{truncating:?}");
+    assert!(
+        truncating
+            .evidence
+            .iter()
+            .any(|line| line.starts_with("boundary_activation_unresolved: ")),
+        "{truncating:?}"
+    );
     Ok(())
 }
 
@@ -1618,11 +1870,11 @@ fn parametrize_case_on_boundary_stays_exposed() -> Result<(), String> {
     Ok(())
 }
 
-/// Shapes whose cases are not statically certain keep the pre-#4559
-/// unresolved verdict: argvalues named by a variable and an argname the test
-/// body rebinds before the call.
+/// Shapes whose cases are not statically certain bind no case value:
+/// argvalues named by a variable and an argname the test body rebinds before
+/// the call. Since #15287 that unread input fails closed to weak.
 #[test]
-fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
+fn uncertain_parametrize_cases_fail_closed() -> Result<(), String> {
     for tests in [
         "import pytest\nfrom src.subject import bulk_discount\n\nCASES = [(50, 0.0)]\n\n@pytest.mark.parametrize(\"quantity, rate\", CASES)\ndef test_bulk_discount(quantity, rate):\n    assert bulk_discount(quantity) == rate\n",
         "import pytest\nfrom src.subject import bulk_discount\n\n@pytest.mark.parametrize(\"quantity\", [50])\ndef test_bulk_discount(quantity):\n    quantity = quantity * 2\n    assert bulk_discount(quantity) == 0.0\n",
@@ -1635,15 +1887,9 @@ fn uncertain_parametrize_cases_stay_unresolved() -> Result<(), String> {
             "    if quantity >= 100:",
         )?;
         assert_owner(&finding, "bulk_discount");
-        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
-        assert!(
-            finding
-                .evidence
-                .iter()
-                .any(|line| line.starts_with("boundary_activation_unresolved: ")),
-            "{tests}: {:?}",
-            finding.evidence
-        );
+        // #15287: argvalues the reader cannot certify are unreadable inputs,
+        // which fail closed instead of keeping the oracle's `exposed`.
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{tests}");
     }
     Ok(())
 }
@@ -4470,5 +4716,1941 @@ fn assertion_helper_field_exposed_row_carries_preview_adapter_basis_only() -> Re
         "{why}"
     );
     assert!(why.contains("not on the same scale as Rust"), "{why}");
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_unrelated_scalar_argument_does_not_make_infection_known() -> Result<(), String> {
+    let source = "def largest(xs, unused):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        "assert largest([1, 5, 3], 0) == 5",
+        "assert largest([5, 5], -1) == 5",
+        "result = largest([1, 5, 3], 0)\n    assert result == 5",
+    ] {
+        let test = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &test,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{body}: {finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(
+            finding.activation.missing_discriminators.is_empty(),
+            "{finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_extra_argument_does_not_hide_identity_or_other_bodies() -> Result<(), String> {
+    let source = "def largest(xs, unused):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3], 0) == 5\n    assert largest([first, second], 0) is first\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let different_body =
+        source.replace("            best = x\n", "            best = x + unused\n");
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], 2) == 7\n";
+    let finding = classify_edit_case(
+        &different_body,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let string_input = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], 'ignored') == 5\n";
+    let finding = classify_edit_case(
+        source,
+        string_input,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let positional_source =
+        source.replace("def largest(xs, unused):", "def largest(xs, unused, /):");
+    let keyword_input = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], unused=0) == 5\n";
+    let finding = classify_edit_case(
+        &positional_source,
+        keyword_input,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_unused_default_or_keyword_is_unknown_only_when_literal() -> Result<(), String> {
+    let template = "def largest(xs, unused):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for (signature, call) in [
+        ("xs, unused=0", "largest([1, 5, 3])"),
+        ("xs, *, unused=0", "largest([1, 5, 3])"),
+        ("xs, *, unused", "largest([1, 5, 3], unused=0)"),
+        ("xs, unused", "largest([1, 5, 3], unused=-1)"),
+    ] {
+        let source = template.replace("xs, unused", signature);
+        let test = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert {call} == 5\n"
+        );
+        let finding = classify_edit_case(
+            &source,
+            &test,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{call}: {finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    let source = template.replace("xs, unused", "xs, unused=side_effect()");
+    let test = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        &source,
+        test,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let explicit = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], unused=0) == 5\n";
+    let finding = classify_edit_case(
+        &source,
+        explicit,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let first_default = template.replace("xs, unused", "xs=side_effect(), unused=0");
+    let finding = classify_edit_case(
+        &first_default,
+        test,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let tests = "import src.subject as subject\n\ndef test_largest():\n    subject.largest = lambda xs, unused=0: 5\n    assert subject.largest([1, 5, 3], unused=0) == 5\n";
+    let finding = classify_edit_case(
+        template,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    let equality = "def select(xs, unused=0):\n    best = 0\n    for x in xs:\n        if x >= best:\n            return 1\n    return 0\n";
+    let test =
+        "from src.subject import select\n\ndef test_select():\n    assert select([0]) == 1\n";
+    let finding = classify_edit_case(
+        equality,
+        test,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    let default_source = template.replace("xs, unused", "xs, unused=0");
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3]) == 5\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        &default_source,
+        identity,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_integer_list_is_infection_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for input in ["[1, 5, 3]", "[5, 5]"] {
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest({input}) == 5\n"
+        );
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_string_float_and_bool_pins_are_infection_unknown() -> Result<(), String> {
+    // Equal elements compare equal under `==` against any of these literals,
+    // so a value pin cannot tell which of two equal elements was selected.
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        "assert largest(['b', 'a', 'b']) == 'b'",
+        "assert largest([1.5, -2.5, 1.5]) == 1.5",
+        "assert largest([False, True]) == True",
+        "assert largest([1, True, 1.0]) == 1",
+        "result = largest(['pear', 'apple'])\n    assert result == 'pear'",
+    ] {
+        let tests = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{body}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_non_literal_elements_or_pins_keep_prior_class() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        // `None` is not an ordered literal.
+        "assert largest([None, None]) == None",
+        // A container element is outside the literal rule.
+        "assert largest([(1, 'a'), (1, 'b')]) == (1, 'b')",
+        // Identity on literal inputs can still tell `>` from `>=`: on
+        // `[1, True]`, only `>=` selects `True`.
+        "assert largest([1, True]) is True",
+        // Identity on equal strings can still tell `>` from `>=`.
+        "first, second = 'ab' * 1, ''.join(['a', 'b'])\n    assert largest([first, second]) is first",
+    ] {
+        let tests = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_issue_repro_with_annotations_is_infection_unknown() -> Result<(), String> {
+    // #12954's own repro: a generic annotated signature over the iterator
+    // selector. The annotations do not change the closed body.
+    let source = "from typing import TypeVar\nT = TypeVar('T')\n\ndef largest(xs: list[T]) -> T | None:\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest_of_three():\n    assert largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        11,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_full_list_loop_from_the_first_element_is_infection_unknown() -> Result<(), String>
+{
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    for (before, after, expected) in [
+        ("        if x > best:", "        if x >= best:", 5),
+        ("        if x < best:", "        if x <= best:", 1),
+    ] {
+        let source = source.replace("        if x >= best:", after);
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 4, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{before} -> {after}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_full_list_loop_keeps_identity_and_other_bodies() -> Result<(), String> {
+    // Identity can tell `>` from `>=` on equal keys, so it keeps its class.
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        source,
+        identity,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    // A loop over another sequence than the parameter is not the selector.
+    let other = "def largest(xs, ys):\n    best = xs[0]\n    for x in ys:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3], [2]) == 2\n";
+    let finding = classify_edit_case(
+        other,
+        tests,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_none_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = None` takes the first element through `best is None`, then
+    // compares the rest like the `xs[0]` forms, so equal integers select an
+    // equal value under either operator.
+    let source = "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n";
+    for (before, after, expected) in [
+        (
+            "        if best is None or x > best:",
+            "        if best is None or x >= best:",
+            5,
+        ),
+        (
+            "        if best is None or x < best:",
+            "        if best is None or x <= best:",
+            1,
+        ),
+    ] {
+        let source = source.replace("        if best is None or x >= best:", after);
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 4, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_infinity_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = float("-inf")` (`"inf"` for a minimum) takes the first finite
+    // element under either operator, then compares the rest like the `xs[0]`
+    // forms, so equal integers select an equal value under either operator.
+    for (seed, before, after, expected) in [
+        (
+            "    best = float(\"-inf\")",
+            "        if x > best:",
+            "        if x >= best:",
+            5,
+        ),
+        (
+            "    best = float('-inf')",
+            "        if x >= best:",
+            "        if x > best:",
+            5,
+        ),
+        (
+            "    best = float(\"inf\")",
+            "        if x < best:",
+            "        if x <= best:",
+            1,
+        ),
+    ] {
+        let source = format!(
+            "def largest(xs):\n{seed}\n    for x in xs:\n{after}\n            best = x\n    return best\n"
+        );
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 4, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{seed}: {before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_infinity_seed_needs_its_own_sign_and_shape() -> Result<(), String> {
+    let edit = ("        if x > best:", "        if x >= best:");
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    for (label, source) in [
+        // Shapes outside the matcher keep their prior reading: a maximum
+        // seeded with `+inf`,
+        (
+            "wrong sign",
+            "def largest(xs):\n    best = float(\"inf\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
+        // a finite float seed, which can equal an element,
+        (
+            "finite seed",
+            "def largest(xs):\n    best = float(\"0\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
+        // and an infinity seed with a sliced loop that skips `xs[0]`.
+        (
+            "sliced loop",
+            "def largest(xs):\n    best = float(\"-inf\")\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
+        // A space inside the literal is not an infinity (`float("- inf")`
+        // raises), so the seed line is matched exactly.
+        (
+            "spaced literal",
+            "def largest(xs):\n    best = float(\"- inf\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n",
+        ),
+    ] {
+        let finding = classify_edit_case(source, tests, 4, edit.0, edit.1)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // Identity still tells `>` from `>=` on equal keys.
+    let source = "def largest(xs):\n    best = float(\"-inf\")\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > getattr(other, 'key', other)\n    def __ge__(self, other):\n        return self.key >= getattr(other, 'key', other)\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(source, identity, 4, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "identity: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_math_infinity_seeded_selector_is_infection_unknown() -> Result<(), String> {
+    // `best = -math.inf` (`math.inf` for a minimum) is the same seed as
+    // `float("-inf")` when the module imports `math` once and never rebinds it.
+    for (seed, before, after, expected, extra) in [
+        (
+            "    best = -math.inf",
+            "        if x > best:",
+            "        if x >= best:",
+            5,
+            "",
+        ),
+        (
+            "    best = math.inf",
+            "        if x <= best:",
+            "        if x < best:",
+            1,
+            "",
+        ),
+        // Reading another attribute of `math` elsewhere is not a rebinding.
+        (
+            "    best = -math.inf",
+            "        if x >= best:",
+            "        if x > best:",
+            5,
+            "\n\ndef root(v):\n    return math.sqrt(v)\n",
+        ),
+    ] {
+        let source = format!(
+            "import math\n\ndef largest(xs):\n{seed}\n    for x in xs:\n{after}\n            best = x\n    return best\n{extra}"
+        );
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == {expected}\n"
+        );
+        let finding = classify_edit_case(&source, &tests, 6, before, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{seed}: {before} -> {after}: {finding:?}"
+        );
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_math_infinity_seed_needs_an_unrebound_stdlib_math() -> Result<(), String> {
+    let edit = ("        if x > best:", "        if x >= best:");
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    let selector = "def largest(xs):\n    best = -math.inf\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    for (label, prefix) in [
+        // Without the import, or with `math` bound to something else, the
+        // seed is not known to be an infinity.
+        ("no import", "\n\n"),
+        ("aliased import", "import numpy as math\n"),
+        ("from import", "from mymod import math\n"),
+        ("star import", "import math\nfrom mymod import *\n"),
+        ("rebound name", "import math\nmath = object()\n"),
+        ("patched attribute", "import math\nmath.inf = 3\n"),
+        ("setattr", "import math\nsetattr(math, 'inf', 3)\n"),
+        // A second name for the module, its namespace dict, or a by-name
+        // lookup can each patch `inf` without naming `math.inf`.
+        ("alias patch", "import math\nimport math as m\nm.inf = 3\n"),
+        ("dict patch", "import math\nmath.__dict__['inf'] = 3\n"),
+        (
+            "sys.modules patch",
+            "import math\nimport sys\nsys.modules['math'].inf = 3\n",
+        ),
+        (
+            "conditional import",
+            "try:\n    import math\nexcept ImportError:\n    pass\n",
+        ),
+    ] {
+        let source = format!("{prefix}{selector}");
+        let line = source
+            .lines()
+            .position(|text| text == edit.1)
+            .map(|index| index + 1)
+            .ok_or("condition line")?;
+        let finding = classify_edit_case(&source, tests, line, edit.0, edit.1)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // A maximum seeded with `+math.inf` keeps its prior reading too.
+    let source = "import math\n\ndef largest(xs):\n    best = math.inf\n    for x in xs:\n        if x >= best:\n            best = x\n    return best\n";
+    let finding = classify_edit_case(source, tests, 6, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "wrong sign: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_none_guard_needs_its_own_seed_and_shape() -> Result<(), String> {
+    let edit = (
+        "        if best is None or x > best:",
+        "        if best is None or x >= best:",
+    );
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    for (label, source) in [
+        // Seeded from the list, the guard never holds, but the shape is not
+        // the one the guard belongs to; it is left to the prior reading.
+        (
+            "xs[0] seed",
+            "def largest(xs):\n    best = xs[0]\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n",
+        ),
+        // A guard on another name than the accumulator is a different test.
+        (
+            "guard on another name",
+            "def largest(xs):\n    best = None\n    for x in xs:\n        if x is None or x >= best:\n            best = x\n    return best\n",
+        ),
+        // The guard spelled with `and` is not a selector at all.
+        (
+            "and instead of or",
+            "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None and x >= best:\n            best = x\n    return best\n",
+        ),
+        // The iterator form has its own seed; the guard does not belong there.
+        (
+            "iterator form",
+            "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if best is None or x >= best:\n            best = x\n    return best\n",
+        ),
+    ] {
+        let (before, after) = if label == "guard on another name" {
+            (
+                "        if x is None or x > best:",
+                "        if x is None or x >= best:",
+            )
+        } else if label == "and instead of or" {
+            (
+                "        if best is None and x > best:",
+                "        if best is None and x >= best:",
+            )
+        } else {
+            edit
+        };
+        let line = if label == "iterator form" { 8 } else { 4 };
+        let finding = classify_edit_case(source, tests, line, before, after)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{label}: {finding:?}"
+        );
+    }
+    // Identity still tells `>` from `>=` on equal keys.
+    let source = "def largest(xs):\n    best = None\n    for x in xs:\n        if best is None or x >= best:\n            best = x\n    return best\n";
+    let identity = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(source, identity, 4, edit.0, edit.1)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "identity: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_edit_that_also_changes_the_rest_of_the_condition_keeps_prior_class()
+-> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best or True:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_condition_with_a_further_conjunct_keeps_prior_class() -> Result<(), String> {
+    // #15082 review: `xs.pop()` runs on different iterations once `>` reads
+    // `>=`, so `largest([5, 5, 6, 0])` returns 5 before the edit and 6 after.
+    // An integer pin distinguishes the two sides; the selector is not closed.
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x >= best and xs.pop():\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([5, 5, 6, 0]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x > best and xs.pop():",
+        "        if x >= best and xs.pop():",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_unspaced_comparison_is_still_the_closed_selector() -> Result<(), String> {
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x>=best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    assert largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x>best:",
+        "        if x>=best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_identity_oracle_remains_unchanged() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_multiple_numeric_test_rows_remain_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_a():\n    assert largest([1, 5, 3]) == 5\n\ndef test_b():\n    assert largest([2, 7, 4]) == 7\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    assert_eq!(finding.related_tests.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_equality_can_distinguish_other_loop_bodies() -> Result<(), String> {
+    let source = "def select(xs):\n    best = 0\n    for x in xs:\n        if x >= best:\n            return 1\n    return 0\n";
+    let tests =
+        "from src.subject import select\n\ndef test_select():\n    assert select([0]) == 1\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_accepts_signed_inputs_reversed_equality_and_alias() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest as biggest\n\ndef test_largest():\n    assert -1 == biggest([-3, -1, -2])\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_numeric_tuple_and_discarded_call() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_a():\n    largest([9, 9])\n    assert largest((1, 5, 3)) == 5\n\ndef test_b():\n    assert largest([2, 7, 4]) == 7\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    assert_eq!(finding.related_tests.len(), 2);
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_keeps_identity_assertion_alongside_numeric_pin() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let fixture = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key):\n        self.key = key\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n\n";
+    for tests in [
+        format!(
+            "{fixture}def test_numeric():\n    assert largest([1, 5, 3]) == 5\n\ndef test_identity():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n"
+        ),
+        format!(
+            "{fixture}def test_both():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3]) == 5\n    assert largest([first, second]) is first\n"
+        ),
+        format!(
+            "{fixture}def test_both_reversed():\n    first, second = Item(5), Item(5)\n    assert largest([first, second]) is first\n    assert largest([1, 5, 3]) == 5\n"
+        ),
+    ] {
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_multiple_numeric_assertions_in_one_test_remain_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\ndef test_largest():\n    largest([8, 8])\n    assert largest([1, 5, 3]) == 5\n    assert 7 == largest((2, 7, 4))\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+    assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_qualified_direct_call_is_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "import src.subject as subject\n\ndef test_largest():\n    assert subject.largest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_same_line_numeric_assertions_are_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for assertion in [
+        "assert largest([1, 5, 3]) == 5; assert largest([2, 7, 4]) == 7",
+        "assert largest([1, 5, 3]) == 5 and largest([2, 7, 4]) == 7",
+    ] {
+        let tests =
+            format!("from src.subject import largest\n\ndef test_largest():\n    {assertion}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_same_line_identity_keeps_prior_classification() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let fixture = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\n";
+    for assertion in [
+        "assert largest([1, 5, 3]) == 5; assert largest([first, second]) is first",
+        "assert largest([1, 5, 3]) == 5 and largest([first, second]) is first",
+    ] {
+        let tests = format!(
+            "{fixture}def test_largest():\n    first, second = Item(5), Item(5)\n    {assertion}\n"
+        );
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_replaced_qualified_owner_does_not_use_value_pin() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for statements in [
+        "subject.largest = lambda xs: 5\n    assert subject.largest([1, 5, 3]) == 5",
+        "subject = fake\n    assert subject.largest([1, 5, 3]) == 5",
+    ] {
+        let tests =
+            format!("import src.subject as subject\n\ndef test_largest():\n    {statements}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn loop_boundary_rebound_import_alias_does_not_use_value_pin() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest as biggest\n\ndef test_largest():\n    biggest = fake\n    assert biggest([1, 5, 3]) == 5\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn indexed_loop_boundary_numeric_inputs_are_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n";
+    for (imports, call) in [
+        ("from src.subject import largest", "largest([1, 5, 3])"),
+        ("from src.subject import largest", "largest([5, 5])"),
+        (
+            "import src.subject as subject",
+            "subject.largest([1, 5, 3])",
+        ),
+    ] {
+        let tests = format!("{imports}\n\ndef test_largest():\n    assert {call} == 5\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            4,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn indexed_loop_mixed_identity_retains_prior_classification() -> Result<(), String> {
+    let source = "def largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    assert largest([1, 5, 3]) == 5\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn indexed_loop_refuses_changed_loop_body_and_equality_witness() -> Result<(), String> {
+    let source = "def select(xs):\n    best = 0\n    for x in xs:\n        if x >= best:\n            return 1\n    return 0\n";
+    let tests =
+        "from src.subject import select\n\ndef test_select():\n    assert select([0]) == 1\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        4,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_direct_result_alias_is_unknown() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for assertion in ["assert result == 5", "assert 5 == result"] {
+        let tests = format!(
+            "from src.subject import largest\n\ndef test_largest():\n    result = largest([1, 5, 3])\n    {assertion}\n"
+        );
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+        assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        assert!(finding.recommended_next_step.is_none(), "{finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_does_not_borrow_an_earlier_tests_call() -> Result<(), String> {
+    // #15082 review: both tests name their local `result`. The first test's
+    // integer call must not stand in for the second test's call on objects
+    // whose ordering and integer equality differ, which does tell `>` from
+    // `>=`.
+    let source = "class Item:\n    def __init__(self, key, tag):\n        self.key = key\n        self.tag = tag\n    def __gt__(self, other):\n        return self.key > other.key\n    def __ge__(self, other):\n        return self.key >= other.key\n    def __eq__(self, other):\n        return self.tag == other\n\n\ndef largest(xs):\n    best = xs[0]\n    for x in xs[1:]:\n        if x >= best:\n            best = x\n    return best\n";
+    let numeric = "def test_numbers():\n    result = largest([1, 5, 3])\n    assert result == 5\n";
+    let objects = "def test_items():\n    result = largest([Item(5, 1), Item(5, 2)])\n    assert result == 1\n";
+    for (first, second) in [(numeric, objects), (objects, numeric)] {
+        let tests = format!("from src.subject import Item, largest\n\n{first}\n{second}");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            16,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_rebinding_and_discarded_call_are_not_witnesses() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for body in [
+        "result = largest([1, 5, 3])\n    result = 5\n    assert result == 5",
+        "largest([1, 5, 3])\n    result = 5\n    assert result == 5",
+        "result = list(largest([1, 5, 3]))\n    assert result == 5",
+    ] {
+        let tests = format!("from src.subject import largest\n\ndef test_largest():\n    {body}\n");
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_mixed_identity_preserves_prior_class() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let tests = "from src.subject import largest\n\nclass Item:\n    def __init__(self, key): self.key = key\n    def __gt__(self, other): return self.key > other.key\n    def __ge__(self, other): return self.key >= other.key\n\ndef test_largest():\n    first, second = Item(5), Item(5)\n    result = largest([1, 5, 3])\n    assert result == 5\n    assert largest([first, second]) is first\n";
+    let finding = classify_edit_case(
+        source,
+        tests,
+        8,
+        "        if x > best:",
+        "        if x >= best:",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_refuses_implicit_test_setup() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    for (prefix, callee) in [
+        (
+            "import pytest\nimport src.subject as subject\n\n@pytest.fixture(autouse=True)\ndef replace(monkeypatch):\n    monkeypatch.setattr(subject, 'largest', lambda xs: 5)\n",
+            "subject.largest",
+        ),
+        (
+            "from src.subject import largest\n\ndef setup_function():\n    patch_owner()\n",
+            "largest",
+        ),
+    ] {
+        let tests = format!(
+            "{prefix}\ndef test_largest():\n    result = {callee}([1, 5, 3])\n    assert result == 5\n"
+        );
+        let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        let row = extracted
+            .iter()
+            .find(|test| test.name == "test_largest")
+            .ok_or("test extraction failed")?;
+        assert!(
+            row.constant_rebinding.implicit_reach,
+            "implicit setup must be recorded"
+        );
+        let finding = classify_edit_case(
+            source,
+            &tests,
+            8,
+            "        if x > best:",
+            "        if x >= best:",
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn indirect_loop_boundary_refuses_workspace_substitution_fact() -> Result<(), String> {
+    let source = "def largest(xs):\n    it = iter(xs)\n    try:\n        best = next(it)\n    except StopIteration:\n        return None\n    for x in it:\n        if x >= best:\n            best = x\n    return best\n";
+    let test = "from src.subject import largest\n\ndef test_largest():\n    result = largest([1, 5, 3])\n    assert result == 5\n";
+    let file = Path::new("src/subject.py");
+    for is_fixture_substitution in [true, false] {
+        let owners = extract_owners(file, source);
+        let mut tests = extract_tests(Path::new("tests/test_subject.py"), test);
+        let row = tests.first_mut().ok_or("test extraction failed")?;
+        if is_fixture_substitution {
+            row.constant_rebinding.fixture_substitution = true;
+        } else {
+            row.constant_rebinding.implicit_reach = true;
+        }
+        let finding = classify_change_with_source(
+            file,
+            8,
+            "        if x >= best:",
+            Some("        if x > best:"),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or("missing finding")?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_range_withholds_equal_sums_and_unreadable_shapes() -> Result<(), String> {
+    for (before_range, after_range, argument, update, exposed) in [
+        (
+            "range(0, n + 1, 2)",
+            "range(0, n, 2)",
+            "3",
+            "acc += i",
+            false,
+        ),
+        (
+            "range(0, n + 1, 2)",
+            "range(0, n, 2)",
+            "4",
+            "acc += i",
+            true,
+        ),
+        (
+            "range(n, -1, -1)",
+            "range(n, 0, -1)",
+            "0",
+            "acc += i",
+            false,
+        ),
+        ("range(1, n + 1)", "range(1, n)", "3", "acc += 0", false),
+        ("range(1, n + 1)", "range(1, n)", "value", "acc += i", false),
+        (
+            "range(1, n + 1, 0)",
+            "range(1, n, 0)",
+            "3",
+            "acc += i",
+            false,
+        ),
+        ("range(1, n + 1)", "range(1, n * 2)", "3", "acc += i", false),
+    ] {
+        let before = format!("    for i in {before_range}:");
+        let after = format!("    for i in {after_range}:");
+        let source =
+            format!("def sum_to(n):\n    acc = 0\n{after}\n        {update}\n    return acc\n");
+        let tests = format!(
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to({argument}) == 6\n"
+        );
+        let finding = classify_range_case(&source, &tests, 3, &before, &after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{before_range} -> {after_range} at {argument}, {update}: {finding:?}"
+        );
+        if !exposed {
+            assert_eq!(finding.class, ExposureClass::StaticUnknown);
+            assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+            assert_eq!(
+                finding.static_limit_kind,
+                Some(crate::domain::StaticLimitKind::UnsupportedSyntax)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_range_does_not_trust_rebound_inputs_or_a_shadowed_builtin() -> Result<(), String> {
+    let before = "    for i in range(1, n + 1):";
+    let after = "    for i in range(1, n):";
+    for (prefix, body_prefix) in [("range = custom\n\n", ""), ("", "    n = 0\n")] {
+        let source = format!(
+            "{prefix}def sum_to(n):\n{body_prefix}    acc = 0\n{after}\n        acc += i\n    return acc\n"
+        );
+        let tests =
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to(3) == 6\n";
+        let finding = classify_range_case(
+            &source,
+            tests,
+            if prefix.is_empty() { 4 } else { 5 },
+            before,
+            after,
+        )?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+fn classify_range_case(
+    source: &str,
+    tests: &str,
+    line: usize,
+    before: &str,
+    after: &str,
+) -> Result<Finding, String> {
+    assert_eq!(source.lines().nth(line - 1), Some(after));
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    assert_eq!(tests.len(), 1);
+    super::classify_change_with_context(
+        file,
+        line,
+        after,
+        Some(before),
+        &owners,
+        &tests,
+        super::PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..Default::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "range edit must produce a finding".to_string())
+}
+
+#[test]
+fn changed_range_credits_only_the_call_in_the_exact_pin() -> Result<(), String> {
+    let before = "    for i in range(1, n + 1):";
+    let after = "    for i in range(1, n):";
+    let source =
+        format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+    for (body, exposed) in [
+        ("    sum_to(3)\n    assert sum_to(0) == 0", false),
+        ("    sum_to(3); assert sum_to(0) == 0", false),
+        ("    assert sum_to(0) == 0, sum_to(3)", false),
+        ("    assert sum_to(sum_to(3)) == 0", false),
+        ("    assert sum_to(0) == sum_to(3)", false),
+        ("    sum_to(0)\n    assert sum_to(3) == 6", true),
+        ("    assert 6 == sum_to(3)", true),
+    ] {
+        let tests = format!("from src.subject import sum_to\n\ndef test_sum():\n{body}\n");
+        let finding = classify_range_case(&source, &tests, 3, before, after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{body}: {finding:?}"
+        );
+        if !exposed {
+            assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+        }
+    }
+    for (body, exposed) in [
+        (
+            "        sum_to(3)\n        self.assertEqual(sum_to(0), 0)",
+            false,
+        ),
+        ("        self.assertEqual(sum_to(3), 6)", true),
+    ] {
+        let tests = format!(
+            "import unittest\nfrom src.subject import sum_to\n\nclass Checks(unittest.TestCase):\n    def test_sum(self):\n{body}\n"
+        );
+        let finding = classify_range_case(&source, &tests, 3, before, after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_range_reconciles_executed_review_cases() -> Result<(), String> {
+    for (before, after, line) in [
+        (
+            "    for i in range(1, n + 1):",
+            "    for i in range(1, n):",
+            3,
+        ),
+        (
+            "    for i in (range(1, n + 1)):",
+            "    for i in (range(1, n)):",
+            3,
+        ),
+        (
+            "    for i in iter(range(1, n + 1)):",
+            "    for i in iter(range(1, n)):",
+            3,
+        ),
+        ("        1, n + 1", "        1, n", 4),
+    ] {
+        let source = if line == 4 {
+            format!(
+                "def sum_to(n):\n    acc = 0\n    for i in range(\n{after}\n    ):\n        acc += i\n    return acc\n"
+            )
+        } else {
+            format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n")
+        };
+        for (setup, argument, expected) in [
+            ("", "0", "0"),
+            ("", "3", "42"),
+            ("", "3", "-6"),
+            ("    module.range = lambda *args: []\n", "3", "0"),
+            ("    module.range = lambda *args: []\n", "3", "6"),
+        ] {
+            let tests = format!(
+                "import src.subject as module\nfrom src.subject import sum_to\n\ndef test_sum():\n{setup}    assert sum_to({argument}) == {expected}\n"
+            );
+            let finding = classify_range_case(&source, &tests, line, before, after)?;
+            assert_ne!(
+                finding.class,
+                ExposureClass::Exposed,
+                "{before} / {tests}: {finding:?}"
+            );
+            assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+            assert_ne!(finding.class, ExposureClass::WeaklyExposed);
+        }
+        for write in [
+            "module.range = lambda *args: []",
+            "setattr(module, 'range', lambda *args: [])",
+        ] {
+            let tests = format!(
+                "import src.subject as module\nfrom src.subject import sum_to\n{write}\n\ndef test_sum():\n    assert sum_to(3) == 6\n"
+            );
+            let finding = classify_range_case(&source, &tests, line, before, after)?;
+            assert_ne!(
+                finding.class,
+                ExposureClass::Exposed,
+                "module write {write}: {finding:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_range_requires_a_test_that_can_reach_and_pass_its_pin() -> Result<(), String> {
+    let before = "    for i in range(1, n + 1):";
+    let after = "    for i in range(1, n):";
+    let source =
+        format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+    for (body, exposed) in [
+        ("    assert False\n    assert sum_to(3) == 6", false),
+        ("    assert sum_to(3) == 6\n    assert False", false),
+        ("    raise RuntimeError()\n    assert sum_to(3) == 6", false),
+        ("    sum_to('bad')\n    assert sum_to(3) == 6", false),
+        ("    a, b = []\n    assert sum_to(3) == 6", false),
+        ("    value = 3\n    assert sum_to(value) == 6", true),
+        ("    assert sum_to(3) == 3", true),
+        ("    assert sum_to(3) == +6", true),
+        ("    assert sum_to(3, 4) == 6", false),
+        ("    assert sum_to(3, bogus=0) == 6", false),
+        ("    assert sum_to(3, n=3) == 6", false),
+        ("    sum_to(3, 4)\n    assert sum_to(3) == 6", false),
+        ("    sum_to(3, bogus=0)\n    assert sum_to(3) == 6", false),
+    ] {
+        let tests = format!("from src.subject import sum_to\n\ndef test_sum():\n{body}\n");
+        let finding = classify_range_case(&source, &tests, 3, before, after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_range_requires_an_unchanged_old_body_and_catches_old_wrappers() -> Result<(), String> {
+    let after = "    for i in range(1, n):";
+    let source =
+        format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, &source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to(3) == 6\n",
+    );
+    let finding = super::classify_change_with_context(
+        file,
+        3,
+        after,
+        Some("    for i in range(1, n + 1):"),
+        &owners,
+        &tests,
+        super::PythonNoBehaviorContext::default(),
+        Some(&source),
+    )
+    .ok_or("range replacement must produce a finding")?;
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    for (signature, call, exposed) in [
+        ("n, unused", "3", false),
+        ("n, unused", "3, 0", true),
+        ("n, unused", "3, missing_name", false),
+        ("n=3", "", true),
+        ("n, *, unused", "3", false),
+        ("n, *, unused", "3, unused=0", true),
+        ("n, /", "n=3", false),
+        ("n=1 / 0", "3", false),
+        ("n: missing_type", "3", false),
+        ("n, *unused: missing()", "3", false),
+        ("n, **unused: missing()", "3", false),
+        ("n, *unused", "3", true),
+        ("n, **unused", "3", true),
+    ] {
+        let source = format!(
+            "def sum_to({signature}):\n    acc = 0\n{after}\n        acc += i\n    return acc\n"
+        );
+        let tests = format!(
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to({call}) == 6\n"
+        );
+        let finding =
+            classify_range_case(&source, &tests, 3, "    for i in range(1, n + 1):", after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "signature {signature}, call {call}: {finding:?}"
+        );
+    }
+    let wrapped_before = "    for i in iter(range(1, n + 1)):";
+    let conditional_after = "    if n > 0:";
+    let source = format!(
+        "def sum_to(n):\n    acc = 0\n{conditional_after}\n        acc += n\n    return acc\n"
+    );
+    let tests = "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to(0) == 0\n";
+    let finding = classify_range_case(&source, tests, 3, wrapped_before, conditional_after)?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    let old_opening = "    for i in iter(range(";
+    let new_opening = "    if any(range(";
+    let source = format!(
+        "def sum_to(n):\n    acc = 0\n{new_opening}\n        n)):\n        acc += n\n    return acc\n"
+    );
+    let finding = classify_range_case(&source, tests, 3, old_opening, new_opening)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "old multiline header: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn changed_range_preserves_integer_types_before_offset_normalization() -> Result<(), String> {
+    for (prefix, signature, bound, call, setup, expected, exposed) in [
+        ("", "n", "n", "3.0", "", 6, false),
+        ("", "n", "n", "n=3.0", "", 6, false),
+        ("", "n", "n", "n=3", "", 6, true),
+        ("", "n", "n", "3.5", "", 6, false),
+        ("", "n", "n", "3", "", 6, true),
+        ("", "n", "n", "value", "    value = 3.0\n", 6, false),
+        ("", "n=3.0", "n", "", "", 6, false),
+        ("", "n=3", "n", "", "", 6, true),
+        ("VALUE = 3.0\n", "n", "n", "VALUE", "", 6, false),
+        ("VALUE = 3\n", "n", "n", "VALUE", "", 6, true),
+        ("LIMIT = 3.0\n", "n", "LIMIT", "3", "", 6, false),
+        ("LIMIT = 3\n", "n", "LIMIT", "3", "", 6, true),
+        ("", "n", "3.0", "3", "", 6, false),
+        ("", "n", "3", "3", "", 6, true),
+        ("", "n", "n", "3", "    sum_to(3.0)\n", 6, false),
+        ("", "n", "n", "3", "    sum_to(3)\n", 6, true),
+        ("", "n, unused=3.0", "n", "3", "", 6, true),
+        ("", "n, unused", "n", "3, 3.0", "", 6, true),
+    ] {
+        let before = format!("    for i in range({bound} + 1):");
+        let after = format!("    for i in range({bound} + 2):");
+        let source = format!(
+            "{prefix}def sum_to({signature}):\n    acc = 0\n{after}\n        acc += i\n    return acc\n"
+        );
+        let tests = format!(
+            "from src.subject import sum_to{}\n\ndef test_sum():\n{setup}    assert sum_to({call}) == {expected}\n",
+            if prefix.starts_with("VALUE") {
+                ", VALUE"
+            } else {
+                ""
+            }
+        );
+        let finding =
+            classify_range_case(&source, &tests, prefix.lines().count() + 3, &before, &after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{source}\n{tests}: {finding:?}"
+        );
+        if !exposed {
+            assert_eq!(finding.ripr.infect.state, StageState::Unknown);
+            assert_ne!(finding.class, ExposureClass::WeaklyExposed);
+        }
+    }
+    // Integer input types are required in every position and on both sides.
+    for (before, after, argument, expected, exposed) in [
+        ("range(n + 0, 5)", "range(n + 1, 5)", "3.0", 7, false),
+        ("range(n + 0, 5)", "range(n + 1, 5)", "3", 7, true),
+        ("range(0, 5, n + 0)", "range(0, 5, n + 1)", "3.0", 3, false),
+        ("range(0, 5, n + 0)", "range(0, 5, n + 1)", "3", 3, true),
+        ("range(3.0 + 1)", "range(n + 2)", "3", 6, false),
+        ("range(n + 1)", "range(3.0 + 2)", "3", 6, false),
+        ("range(n * 1 + 1)", "range(n * 1 + 2)", "3", 6, false),
+    ] {
+        let before = format!("    for i in {before}:");
+        let after = format!("    for i in {after}:");
+        let source =
+            format!("def sum_to(n):\n    acc = 0\n{after}\n        acc += i\n    return acc\n");
+        let tests = format!(
+            "from src.subject import sum_to\n\ndef test_sum():\n    assert sum_to({argument}) == {expected}\n"
+        );
+        let finding = classify_range_case(&source, &tests, 3, &before, &after)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{source}\n{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+// #15294: a changed class-attribute string constant is exposed only when a
+// related assertion carries a literal that the old text accepts and the new
+// text rejects.
+const LENGTH_SOURCE: &str = "class ValidationError(Exception):\n    pass\n\n\nclass Length:\n    message_max = \"Longer than the maximum length {max}.\"\n\n    def __init__(self, max=None):\n        self.max = max\n\n    def __call__(self, value):\n        if self.max is not None and len(value) > self.max:\n            raise ValidationError(self.message_max.format(max=self.max))\n        return value\n";
+const LENGTH_OLD_LINE: &str = "    message_max = \"Longer than maximum length {max}.\"";
+const LENGTH_NEW_LINE: &str = "    message_max = \"Longer than the maximum length {max}.\"";
+
+fn classify_length_change(tests: &str) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, LENGTH_SOURCE);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        6,
+        LENGTH_NEW_LINE,
+        Some(LENGTH_OLD_LINE),
+        &owners,
+        &tests,
+        Some(LENGTH_SOURCE),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())
+}
+
+#[test]
+fn class_attribute_text_change_unobserved_by_related_tests_is_weakly_exposed() -> Result<(), String>
+{
+    for tests in [
+        // The repro: construct and call, never see the message.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_ok():\n    assert Length(max=3)(\"abc\") == \"abc\"\n\ndef test_min():\n    with pytest.raises(ValidationError, match=\"Shorter than minimum length 2\"):\n        Length(max=3)(\"abcd\")\n",
+        // A pattern naming only the unchanged prefix fits both texts.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer than\"):\n        Length(max=1)(\"ab\")\n",
+        // Regex syntax is unreadable and credits nothing.
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer.*length\"):\n        Length(max=1)(\"ab\")\n",
+    ] {
+        let finding = classify_length_change(tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{tests}: {finding:?}"
+        );
+        assert!(
+            missing_boundary(
+                &finding,
+                "class attribute `message_max` text \"Longer than the maximum length {max}.\""
+            )
+            .is_some(),
+            "{finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn class_attribute_text_change_stays_exposed_when_an_assertion_pins_the_old_text()
+-> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError, match=\"Longer than maximum length 1\"):\n        Length(max=1)(\"ab\")\n",
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    with pytest.raises(ValidationError) as exc:\n        Length(max=1)(\"ab\")\n    assert str(exc.value) == \"Longer than maximum length 1.\"\n",
+    ] {
+        let finding = classify_length_change(tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn plain_method_return_change_keeps_exposed_beside_the_class_attribute_gate() -> Result<(), String>
+{
+    let source = "class Length:\n    message_max = \"Longer than maximum length {max}.\"\n\n    def clip(self, value):\n        return value[:2]\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "from src.subject import Length\n\ndef test_clip():\n    assert Length().clip(\"abcd\") == \"ab\"\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        5,
+        "        return value[:2]",
+        Some("        return value[:3]"),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "method change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #15294 review: a `.` in a `match=` pattern is a regex wildcard, and a
+// literal outside an equality operand (a call input, an assert message, a
+// `!=` operand, a fragment on `==`) cannot tell the old text from the new.
+#[test]
+fn class_attribute_text_change_ignores_wildcard_dots_and_non_operand_literals() -> Result<(), String>
+{
+    let source = "class Error(Exception):\n    pass\n\n\nclass Limit:\n    message = \"Value too long!\"\n\n    def check(self, value):\n        if len(value) > 3:\n            raise Error(self.message)\n        return value\n";
+    let old_line = "    message = \"Value too long.\"";
+    let new_line = "    message = \"Value too long!\"";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    for tests in [
+        "import pytest\nfrom src.subject import Limit, Error\n\ndef test_long():\n    with pytest.raises(Error, match=\"too long.\"):\n        Limit().check(\"abcd\")\n",
+        "from src.subject import Limit\n\ndef test_input():\n    assert Limit().check(\"too long.\") == \"abc\"\n",
+        "from src.subject import Limit\n\ndef test_message():\n    assert Limit().check(\"abc\") == \"abc\", \"Value too long.\"\n",
+        "from src.subject import Limit\n\ndef test_ne():\n    assert Limit().check(\"abc\") != \"too long.\"\n",
+        // An equality must name the whole text; a fragment of it does not.
+        "from src.subject import Limit\n\ndef test_eq_fragment():\n    assert Limit().check(\"abc\") == \"too long.\"\n",
+        // Membership in a literal container compares nothing the owner made.
+        "from src.subject import Limit\n\ndef test_in_tuple():\n    Limit().check(\"abc\")\n    assert \"too long.\" in (\"too long.\", \"x\")\n",
+        // Two constants compare nothing the owner made.
+        "from src.subject import Limit\n\ndef test_self():\n    Limit().check(\"abc\")\n    assert \"Value too long.\" == \"Value too long.\"\n",
+    ] {
+        let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+        let finding = classify_change_with_source(
+            file,
+            6,
+            new_line,
+            Some(old_line),
+            &owners,
+            &tests_facts,
+            Some(source),
+        )
+        .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    // Control: an equality on the old text pins the edit.
+    let tests = "import pytest\nfrom src.subject import Limit, Error\n\ndef test_long():\n    with pytest.raises(Error) as exc:\n        Limit().check(\"abcd\")\n    assert str(exc.value) == \"Value too long.\"\n";
+    let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+    let finding = classify_change_with_source(
+        file,
+        6,
+        new_line,
+        Some(old_line),
+        &owners,
+        &tests_facts,
+        Some(source),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #15294 review: whole-text equality with a short message is exact, while a
+// short fragment on `in` stays unread.
+#[test]
+fn class_attribute_short_text_pins_only_through_whole_equality() -> Result<(), String> {
+    let source = "class Error(Exception):\n    pass\n\n\nclass Gate:\n    message = \"NO\"\n\n    def check(self, value):\n        if not value:\n            raise Error(self.message)\n        return value\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    for (tests, expected) in [
+        (
+            "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert str(exc.value) == \"OK\"\n",
+            ExposureClass::Exposed,
+        ),
+        (
+            "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert \"OK\" in str(exc.value)\n",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let tests_facts = extract_tests(Path::new("tests/test_subject.py"), tests);
+        let finding = classify_change_with_source(
+            file,
+            6,
+            "    message = \"NO\"",
+            Some("    message = \"OK\""),
+            &owners,
+            &tests_facts,
+            Some(source),
+        )
+        .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+        assert_eq!(finding.class, expected, "{tests}: {finding:?}");
+    }
+    Ok(())
+}
+
+// #15294 review: a new text made only of placeholders can render as the old
+// text, so an equality on the old text does not tell them apart.
+#[test]
+fn class_attribute_placeholder_only_new_text_rejects_nothing() -> Result<(), String> {
+    let source = "class Error(Exception):\n    pass\n\n\nclass Gate:\n    message = \"{word}\"\n\n    def check(self, value):\n        if not value:\n            raise Error(self.message.format(word=\"OK\"))\n        return value\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(
+        Path::new("tests/test_subject.py"),
+        "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    assert str(exc.value) == \"OK\"\n",
+    );
+    let finding = classify_change_with_source(
+        file,
+        6,
+        "    message = \"{word}\"",
+        Some("    message = \"OK\""),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #15646: the gate reads whole assertion statements and every operand an
+// `and` requires, so a comparison spanning several lines or sitting beside
+// another conjunct pins the old text. An `or`, a negation, a call input and
+// an assert message still pin nothing.
+#[test]
+fn class_attribute_text_change_reads_required_message_comparisons() -> Result<(), String> {
+    let common =
+        "import pytest\nfrom src.subject import Length, ValidationError\n\ndef test_long():\n    ";
+    let raises = "with pytest.raises(ValidationError) as exc:\n        Length(max=1)(\"ab\")\n    ";
+    let mut mismatches = Vec::new();
+    for (case, setup, assertion, should_expose) in [
+        (
+            "single_line",
+            raises,
+            "assert str(exc.value) == \"Longer than maximum length 1.\"",
+            true,
+        ),
+        (
+            "multiline",
+            raises,
+            "assert str(\n        exc.value\n    ) == \"Longer than maximum length 1.\"",
+            true,
+        ),
+        (
+            "parenthesized_multiline",
+            raises,
+            "assert (\n        str(exc.value)\n        == \"Longer than maximum length 1.\"\n    )",
+            true,
+        ),
+        (
+            "conjunction",
+            raises,
+            "assert len(exc.value.args) == 1 and str(exc.value) == \"Longer than maximum length 1.\"",
+            true,
+        ),
+        (
+            "multiline_conjunction",
+            raises,
+            "assert (\n        len(exc.value.args) == 1\n        and str(exc.value) == \"Longer than maximum length 1.\"\n    )",
+            true,
+        ),
+        (
+            "conjunct_membership",
+            "",
+            "assert Length(max=3)(\"abc\") == \"abc\" and \"than maximum\" in Length.message_max",
+            true,
+        ),
+        (
+            "conjunct_other_text",
+            raises,
+            "assert len(exc.value.args) == 1 and str(exc.value) == \"Shorter than minimum length 1.\"",
+            false,
+        ),
+        (
+            "conjunct_after_mutation",
+            raises,
+            "assert setattr(exc.value, \"args\", (\"Longer than maximum length 1.\",)) is None and str(exc.value) == \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
+            "disjunction",
+            raises,
+            "assert len(exc.value.args) == 1 or str(exc.value) == \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
+            "negation",
+            raises,
+            "assert not (len(exc.value.args) == 0 and str(exc.value) == \"Longer than maximum length 1.\")",
+            false,
+        ),
+        (
+            "negated_conjunct",
+            raises,
+            "assert len(exc.value.args) == 1 and str(exc.value) != \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
+            "call_input",
+            raises,
+            "assert str(exc.value).count(\"Longer than maximum length 1.\") in (0, 1)",
+            false,
+        ),
+        (
+            "assert_message",
+            raises,
+            "assert len(exc.value.args) == 1, \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
+            "construction",
+            "",
+            "assert Length(max=3)(\"abc\") == \"abc\"",
+            false,
+        ),
+    ] {
+        let tests = format!("{common}{setup}{assertion}\n");
+        let finding = classify_length_change(&tests)?;
+        if (finding.class == ExposureClass::Exposed) != should_expose {
+            mismatches.push(format!("{case}: {finding:?}"));
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    Ok(())
+}
+
+// #15646: an empty new text has no placeholder, so it renders only as the
+// empty string and an equality on the old text tells the two apart.
+#[test]
+fn class_attribute_empty_new_text_rejects_the_old_literal() -> Result<(), String> {
+    let source = "class Error(Exception):\n    pass\n\n\nclass Gate:\n    message = \"\"\n\n    def check(self, value):\n        if not value:\n            raise Error(self.message)\n        return value\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    for (assertion, exposed) in [
+        ("assert str(exc.value) == \"OK\"", true),
+        // A literal the old text never produced pins nothing.
+        ("assert str(exc.value) != \"NO\"", false),
+    ] {
+        let tests = extract_tests(
+            Path::new("tests/test_subject.py"),
+            &format!(
+                "import pytest\nfrom src.subject import Gate, Error\n\ndef test_no():\n    with pytest.raises(Error) as exc:\n        Gate().check(0)\n    {assertion}\n"
+            ),
+        );
+        let finding = classify_change_with_source(
+            file,
+            6,
+            "    message = \"\"",
+            Some("    message = \"OK\""),
+            &owners,
+            &tests,
+            Some(source),
+        )
+        .ok_or_else(|| "class attribute change must produce a finding".to_string())?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{assertion}: {finding:?}"
+        );
+    }
     Ok(())
 }

@@ -185,6 +185,7 @@ bun test <file>
 <launch> vitest run <file>
 <launch> jest <file>
 <launch> ava <file>
+<launch> mocha <file>
 node --test <file>
 npm test -- <file>
 pnpm test -- <file>
@@ -199,6 +200,10 @@ resolved runner), `pnpm exec` (pnpm), `yarn` (Yarn), or `bun run` (Bun). A bare
 the package root. Each launcher runs only the installed binary: `npx` without
 `--no-install` and `bunx` fetch a missing package from the registry (npx skips
 its prompt in a non-interactive shell), which would run an unlocked version.
+
+`npm test -- <file>`, `pnpm test -- <file>` and `yarn test <file>` run the
+manifest's `scripts.test`, so they are never emitted when that script is the
+`npm init` placeholder (`echo "Error: no test specified" && exit 1`).
 
 An unresolved or ambiguous runner becomes the named limitation
 `typescript_test_runner_unresolved`. No command is ever synthesized from
@@ -217,6 +222,27 @@ t.equal / t.deepEqual              -> exact_value
 ```
 
 #### Execution-context (`t.*`) assertion shapes
+
+The bounded node-tap profile (#9187) admits only a named `test` export,
+including `require('tap').test`, destructured `{ test }`, and named ESM
+imports. Namespace/default imports and other tap exports remain assertion
+packages. Jest-style registration chains are not tap registrations.
+An inline callback may supply two-argument `equal` / `strictEqual` evidence
+only when its context is used solely for those calls and completion: a
+synchronous callback needs one final `t.end()`, while an async callback can
+return its lifetime without `end`. Rebinding, matcher replacement, context
+escape, opaque code, early completion, skipped assertion options and other
+methods (including `same`) withhold oracle credit. Existing registration
+skip/todo and detached-callback fences still apply. This profile does not
+establish general tap coverage, runtime adequacy, or a support-tier change.
+Tap callbacks without a modeled oracle keep unresolved assertion admission;
+the profile does not establish absence of runner plan/completion checks.
+Tap registration arguments with ambiguous option or callback roles withhold
+oracle credit. A uniquely bound, preceding top-level `const` string literal
+remains a supported computed name; literal options must be simple data and
+may not supply a prototype.
+Tap does not establish an ambient Jest `expect`; assertion-library imports
+retain their independently verified bindings.
 
 AVA, tape, and `node:test` do not use the global `expect(...)`; they assert
 on the execution context passed as the test callback's first parameter
@@ -425,6 +451,13 @@ PR 13 reports          TypeScript limitation leaderboard + route-quality slice
   A findings-bounded input must disclose incomplete counts and rankings in
   both report formats, retain the supplied findings as its denominator, and
   name `RIPR_CHECK_FINDINGS_BYTES=0` as the full-document recovery route.
+  Both Markdown reports (`ts-limitations` and `ts-false-actionable`) render
+  imported text (paths, finding and case ids, limitation kinds, sources, risk
+  classes) through the shared Markdown helpers: `<` does not open raw HTML,
+  `@name` (a Next.js `app/@modal/...` path, for example) does not notify an
+  account, a `|` or line ending does not split a row, and a backtick does not
+  close a code span. The leaderboard's sample location is one code span, so a
+  `__tests__` directory keeps its underscores. JSON output is unaffected.
 - `language_adapter_typescript_false_actionable_audit` — the checked
   TypeScript-family preview false-actionable audit corpus and the dogfood/report
   projections track whether rows that must remain non-actionable accidentally

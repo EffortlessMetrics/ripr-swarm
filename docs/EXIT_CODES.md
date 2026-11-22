@@ -29,23 +29,25 @@ its output, or run the gate.
 ripr uses exit code `2` for all could-not-complete conditions (not `1`) to
 distinguish it from shell-level errors (which typically use `1`). Code `3` is
 reserved for outcomes where the command itself ran to a deliberate, typed
-answer — a blocking gate decision, or a typed refusal such as `ripr agent
+answer — a blocking gate decision, or a refusal such as `ripr agent
 verify-execute` declining a packet (the refusal JSON document is on stdout)
 — so an orchestrator can branch on the exit status alone:
 
 - `0`: the command completed (for `verify-execute`, the verification ran;
   read the disposition in the stdout JSON).
-- `3`: the command completed by reaching a blocking decision or typed
+- `3`: the command completed by reaching a blocking decision or
   refusal; read the report or the stdout JSON document for the answer
   (standalone `ripr agent verify` is the exception: its refusal is named on
   stderr and stdout stays empty; see below. `ripr agent repair`,
   `ripr agent card` and `ripr agent stub` print their refusal document
-  (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
+  (`agent_card_refusal` / `rust_test_stub` `state: refused`), and the
+  `ripr repair` / `ripr continue` / `ripr status` refusals the
+  `cli_refusal` document (#14931), on stdout only
   with `--json`, with the prose on stderr; without it stdout stays empty and
-  stderr names the cause. An unknown `--seam-id` is one typed refusal with
+  stderr names the cause. An unknown `--seam-id` is one refusal with
   one exit, `3`, on `agent start`, `agent card`, `agent stub`,
   `agent packet`, and `agent repair --phase before`. A known seam that
-  agent policy withholds (#10712) is the same typed refusal (exit `3`) on
+  agent policy withholds (#10712) is the same refusal (exit `3`) on
   `agent start`, `agent card`, `agent packet`, and
   `agent repair --phase before`; `agent stub` still produces the stub
   (exit `0`) with the omission disclosed in `warnings` and no repair
@@ -146,8 +148,10 @@ reached the caller.
   json`, a value flag missing its value or given an empty one (#11979,
   #14859), a required flag left out (#14877), two flags that cannot be used
   together (#14925), a malformed number caught by the CLI's shared numeric readers
-  (#11979), and a `context` selector
-  miss or ambiguity. The document carries
+  (#11979), a `context` selector
+  miss or ambiguity, an argv-named input that cannot be used (`receipt check`
+  receipt or `--ledger`, `cache status --root`: code `input_unusable`), and a
+  malformed `agent status --attempt` ID (`invalid_value`, #15260). The document carries
   `schema_version`, `tool`, `status: "refused"` and
   `error {code, message, token?, next}`. Exit code and stderr are
   unchanged, and without a JSON request stdout stays empty. Other argv
@@ -188,12 +192,32 @@ reached the caller.
   `config_error` readiness report is still written first, so it replaces an
   earlier report at `--out` instead of leaving a stale one for a later step
   to read (#14311).
+  The same holds for any input file named explicitly on `reports
+  ts-limitations|ts-false-actionable`, `coverage-grip frontier`, `policy
+  operations|promote|preview-promote|waiver-aging|suppression-health`,
+  `annotations --comments`, `pr-summary --baseline`, `baseline diff`,
+  `zero status --baseline|--delta`, `first-action --pr-guidance` and
+  `assistant-loop proof --pr-guidance|--agent-packet|--before` that is
+  missing, unreadable or (for the baseline and zero-status JSON inputs and an
+  explicit `--manifest` with suppression-health `config_error` findings) not
+  usable: stderr names the flag, the path and what to pass, and the command
+  exits `2`. Where a usable report can still be produced it is written
+  first; a missing or unreadable `reports ts-*` input refuses before any
+  write. Other optional inputs of `zero status` and `first-action` stay
+  tolerant. An absent default path stays a quiet skip, and `gate
+  evaluate|check` echoes unavailable optional inputs on stderr without
+  changing its exit code (#15254).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
   output was cut short; it never turns a would-be `3` into a pass. Output
   small enough to be written in full before the reader closes never meets
   the closed pipe, so that run keeps its own exit code.
+- **Failed stdout write**: stdout failed for another reason (a full disk
+  behind a redirect, `ripr --version > /dev/full`). ripr prints
+  `ripr: write to stdout failed: <cause>` with a next step, no backtrace and
+  no internal-error wording, and exits `2` because the output is incomplete
+  (#15369).
 
 ## When you see exit code 3
 
@@ -205,9 +229,9 @@ reached the caller.
   one check failed; the full report was already written (human screen or
   `--json` document) and stderr names `doctor found issues` (#5102). A
   usage error or a failure before a report exists stays exit `2`.
-- **Typed refusal**: `ripr agent verify-execute` refused the packet (for
+- **Refusal**: `ripr agent verify-execute` declined the packet (for
   example `verification_rejected_policy` or `verification_wrong_root`) and
-  rendered the typed refusal JSON on stdout; `ripr agent repair --phase
+  rendered the refusal JSON on stdout; `ripr agent repair --phase
   after` refused with a named cause after selecting its attempt — a diverged
   HEAD, drifted analysis inputs, a no-movement verify refusal, a replaced
   trust-binding manifest, or a receipt refused on trusted-surface grounds
@@ -279,8 +303,10 @@ reached the caller.
   visible); several eligible seams, or a start the selector will not
   bind, so no item is selected (the canonical next-action block and a
   retry command); and a card render that fails after the before phase
-  already published an attempt (#7032). In every case stdout stays
-  empty and stderr names the cause. The post-publication card path is a
+  already published an attempt (#7032). In every case stderr names the
+  cause. Stdout stays empty, except that under `--json` each typed
+  refusal above (not the card failure) also writes its `cli_refusal`
+  document (#14931). The post-publication card path is a
   deliberate asymmetry with `ripr agent card`: even an operational card
   failure is remapped to exit `3` because the attempt exists, and
   recovery inspects or continues that same attempt
@@ -293,8 +319,10 @@ reached the caller.
   finished state a compliant receipt does not confirm (unissued,
   unavailable, or compatibility-only); no current attempt under the
   selected root; and several current attempts, so none is selected (a
-  bounded list and a retry command). Stdout stays empty; stderr carries
-  the cause and, for an ended attempt, the status facts. A continue that
+  bounded list and a retry command). Stderr carries the cause and, for an
+  ended attempt, the status facts. Under `--json` stdout carries the
+  `cli_refusal` document with the reason `code` and `disposition` (#14931);
+  without it stdout stays empty. A continue that
   has selected a current attempt then follows the same
   `ripr agent repair --phase after` refusals above.
 
@@ -304,13 +332,17 @@ reached the caller.
   assign a code, and the two status spellings for the unanchored discovery
   gate #12417) write one stderr line, after the plain-words prose (#12193),
   `ripr: refusal code=<code> disposition=<disposition>`, so a script
-  switches on the state instead of parsing prose. `disposition` is
+  switches on the state instead of parsing prose. Under `--json`, the
+  `ripr repair`, `ripr continue` and `ripr status` refusals that write this
+  line at exit `3` before any check runs also write the `cli_refusal`
+  document on stdout, with the same `code` and a `disposition` field
+  (#14931); see `docs/OUTPUT_SCHEMA.md`. `disposition` is
   `retryable` (the same attempt proceeds after the stated action),
   `terminal` (the attempt is over; start a fresh `ripr repair`),
   `needs_selection` (name one of several), or `not_started` (nothing
   started). The codes are closed. Operational errors (a store or argument error on a shared
   `agent repair` path) exit `2` with prose only and no code line. Some
-  existing typed refusals still exit `3` without a code line (for example
+  existing refusals still exit `3` without a code line (for example
   `agent repair --phase before` on an unknown or policy-withheld seam). The
   table is the covered set, not a claim over every error path. The two
   not-started start holds (`start_refused_uncommitted_target`,
@@ -333,6 +365,7 @@ reached the caller.
   | `no_current_attempt` | 3 | `not_started` | `continue`: no attempt to continue |
   | `attempt_baseline_blocked` | 3 | `not_started` | `continue`: the retained before baseline is ambiguous or unavailable; no after phase ran; inspect the shared status and its admitted recovery |
   | `unanchored_root` | 3 | `not_started` | no workspace, package or Git repository anchors the current directory, so the repair spellings answer nothing there; an explicit `--root` skips the discovery gate (#12417) |
+  | `subdirectory_root` | 3 | `not_started` | the root is below the Git top-level, where a repair attempt cannot start; rerun from the Git top-level (#15488) |
   | `ambiguous_attempts` | 3 | `needs_selection` | `continue`: pass `--attempt` |
   | `attempt_ended_without_receipt` | 3 | `terminal` | the attempt failed, went stale, or is incomparable |
   | `attempt_completion_unconfirmed` | 3 | `terminal` | finished, but no compliant receipt confirms it |
@@ -340,8 +373,10 @@ reached the caller.
   | `attempt_stale` | 2 | `terminal` | the cage rejected the edit and HEAD had moved after the repair started |
   | `attempt_incomparable` | 2 | `terminal` | the cage could not compare the files |
 
-  A repeated `ripr continue` after a confirmed-complete attempt reports
-  that attempt's already-complete status and exits `0`: with `--attempt`,
+  A repeated `ripr continue` after a confirmed-complete attempt prints a
+  short already-complete summary (the receipt, the next `ripr repair`, and
+  the `ripr status --attempt` command for the full page; `--json` prints
+  the attempt's status document) and exits `0`: with `--attempt`,
   or without it when the newest attempt (the only one with the latest
   creation time) is the confirmed-complete one and no prepared or
   trust-bound attempt remains. A cage violation is exit `2` and terminal;

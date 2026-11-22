@@ -677,3 +677,25 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (32)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (33)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -818,4 +818,41 @@ mod tests {
         wires.dedup();
         assert_eq!(wires.len(), 7);
     }
+
+    #[test]
+    fn a_cell_is_never_borrowed_from_another_language_or_framework() {
+        // Python has only framework-specific repair cells, and Perl's cells
+        // establish nothing, while Rust establishes both families.
+        assert_eq!(
+            cell_state(LanguageId::Rust, Diff, RepairRouting),
+            SupportState::SupportedWithRequiredFallback
+        );
+        assert_eq!(
+            cell_state(LanguageId::Python, Diff, RepairRouting),
+            NotProven
+        );
+        assert_eq!(
+            cell_state(LanguageId::Perl, Diff, CapabilityFamily::StaticFacts),
+            NotProven
+        );
+        assert!(family_established_for_any_framework(
+            LanguageId::Rust,
+            Diff,
+            CapabilityFamily::StaticFacts
+        ));
+        assert!(!family_established_for_any_framework(
+            LanguageId::Perl,
+            Diff,
+            CapabilityFamily::StaticFacts
+        ));
+    }
+
+    #[test]
+    fn repo_scope_is_read_from_any_one_evidence_line() {
+        assert!(finding_is_repo_scoped(&[
+            "owner: f".to_string(),
+            REPO_SCOPE_EVIDENCE_LINE.to_string(),
+        ]));
+        assert!(!finding_is_repo_scoped(&[]));
+    }
 }

@@ -16,7 +16,7 @@ use crate::domain::{
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
-use crate::output::path::{display_path_text, path_display_lossy, repository_relative_path};
+use crate::output::path::{CheckoutAnchor, display_path_text, path_display_lossy};
 use crate::output::perl_preview_card::perl_preview_card_json;
 use crate::output::preview_actionability::{
     preview_actionability_for, preview_actionability_json_value,
@@ -102,10 +102,31 @@ fn nested_result_bytes(rendered: &str) -> usize {
     rendered.len() + 8 * (rendered.matches('\n').count() + 1)
 }
 
-/// Keep the leading results that fit `budget` final-form bytes (plus
-/// separators), always keeping the first result so a nonempty analysis
-/// never yields an empty bounded subset. Returns the kept results and the
-/// disclosed bound when results were omitted; `None` budget renders all.
+/// Admission rank of a SARIF result by `level`: errors first, then
+/// warnings, then notes, then `none` or anything else (including a missing
+/// level).
+fn sarif_level_rank(result: &Value) -> u8 {
+    match result.get("level").and_then(Value::as_str) {
+        Some("error") => 0,
+        Some("warning") => 1,
+        Some("note") => 2,
+        _ => 3,
+    }
+}
+
+/// Keep the highest-priority results that fit `budget` final-form bytes
+/// (plus separators), always keeping the first admitted result so a
+/// nonempty analysis never yields an empty bounded subset. Results are
+/// admitted by level rank (error, warning, note, anything else) with the
+/// original index as the tiebreak, so a cut drops notes before warnings
+/// instead of dropping whatever happens to sit late in file order (a
+/// dropped warning would be closed as "fixed" by code scanning). Admission
+/// stops at the first result that does not fit (a strict priority prefix;
+/// skipping ahead to smaller lower-priority rows would make the subset
+/// depend on row sizes). The kept results are emitted in their original
+/// relative order, so output is unchanged when nothing is cut. Returns the
+/// kept results and the disclosed bound when results were omitted; `None`
+/// budget renders all.
 fn bound_sarif_results(
     results: Vec<Value>,
     budget: Option<usize>,
@@ -114,29 +135,39 @@ fn bound_sarif_results(
         return (results, None);
     };
     let total = results.len();
-    let mut kept: Vec<Value> = Vec::new();
+    let mut order: Vec<usize> = (0..total).collect();
+    order.sort_by_key(|&index| (sarif_level_rank(&results[index]), index));
+    let mut admitted: Vec<usize> = Vec::new();
     // Nonempty arrays add `[` + newline and newline + six spaces + `]`
     // around the indented results. Count that framing before admitting rows.
     let mut array_bytes = 10usize;
-    for result in results {
-        let payload_bytes = serde_json::to_string_pretty(&result)
+    for index in order {
+        let payload_bytes = serde_json::to_string_pretty(&results[index])
             .map(|rendered| nested_result_bytes(&rendered))
             .unwrap_or(usize::MAX);
         let next_bytes = array_bytes
             .saturating_add(payload_bytes)
-            .saturating_add(if kept.is_empty() { 0 } else { 2 });
+            .saturating_add(if admitted.is_empty() { 0 } else { 2 });
         // Hard cap: only the first result may cross the budget (a nonempty
         // analysis never yields an empty subset); later results that would
         // cross it are omitted and disclosed, not kept.
-        if next_bytes > budget && !kept.is_empty() {
+        if next_bytes > budget && !admitted.is_empty() {
             break;
         }
         array_bytes = next_bytes;
-        kept.push(result);
+        admitted.push(index);
         if array_bytes > budget {
             break;
         }
     }
+    admitted.sort_unstable();
+    let kept: Vec<Value> = {
+        let mut slots: Vec<Option<Value>> = results.into_iter().map(Some).collect();
+        admitted
+            .iter()
+            .filter_map(|&index| slots.get_mut(index).and_then(Option::take))
+            .collect()
+    };
     if kept.len() < total {
         let bound = SarifResultsBound {
             rendered: kept.len(),
@@ -184,13 +215,16 @@ struct SarifRunDisclosures<'a> {
 }
 
 /// Render diff-scoped Findings as SARIF, keeping only the leading results
-/// that fit `results_budget` pretty-printed bytes (`None` renders all).
-/// Omitted results are disclosed in the run properties, never silently.
-pub(crate) fn render_findings_sarif_with_budget(
+/// that fit `results_budget` pretty-printed bytes (`None` renders all), with
+/// every `artifactLocation.uri` (and the fingerprint path) resolved from the checkout top level through
+/// `anchor`, the base code scanning resolves uris against. An unknown anchor
+/// keeps the root-relative spelling.
+pub(crate) fn render_findings_sarif_anchored(
     output: &CheckOutput,
     config: &RiprConfig,
     suppressions: &[SuppressionEntry],
     results_budget: Option<usize>,
+    anchor: &CheckoutAnchor,
 ) -> String {
     let today = current_iso_date();
     let rules = finding_rules();
@@ -226,7 +260,9 @@ pub(crate) fn render_findings_sarif_with_budget(
         // evidence and unresolved subjects stay visible on the check JSON
         // and human surfaces instead of becoming annotation obligations.
         .filter(|finding| finding.is_candidate_actionable())
-        .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
+        .filter_map(|finding| {
+            finding_result(&output.root, anchor, finding, config, suppressions, &today)
+        })
         .collect::<Vec<_>>();
     let (results, folded_same_line) = fold_same_line_results(results);
     let (results, results_bound) = bound_sarif_results(results, results_budget);
@@ -332,6 +368,7 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
     evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
     results_budget: Option<usize>,
+    anchor: &CheckoutAnchor,
 ) -> String {
     let rules = seam_rules();
     // Ordinals are assigned over every classified seam, before the severity
@@ -340,7 +377,7 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
     let results = classified
         .iter()
         .zip(ordinals)
-        .filter_map(|(entry, ordinal)| seam_result(entry, ordinal, config))
+        .filter_map(|(entry, ordinal)| seam_result(entry, ordinal, config, anchor))
         .collect::<Vec<_>>();
     let (results, results_bound) = bound_sarif_results(results, results_budget);
     sarif_document_repo_seam(
@@ -355,31 +392,21 @@ pub(crate) fn render_repo_seams_sarif_with_budget(
 /// Render diff-scoped Findings as minified SARIF (#13195): the
 /// \RIPR_SARIF_RESULTS_BYTES\-bounded document (#13102) with insignificant
 /// whitespace removed, so parsed values match \--format sarif\ exactly,
-/// including its disclosed \limited_results_bound\ truncation.
-pub(crate) fn render_findings_sarif_compact(
-    output: &CheckOutput,
-    config: &RiprConfig,
-    suppressions: &[SuppressionEntry],
-) -> Result<String, String> {
-    Ok(render_findings_sarif_compact_with_budget(
-        output,
-        config,
-        suppressions,
-        sarif_results_byte_budget()?,
-    ))
-}
-
-fn render_findings_sarif_compact_with_budget(
+/// including its disclosed \limited_results_bound\ truncation, with uris
+/// anchored like [`render_findings_sarif_anchored`].
+pub(crate) fn render_findings_sarif_compact_anchored(
     output: &CheckOutput,
     config: &RiprConfig,
     suppressions: &[SuppressionEntry],
     results_budget: Option<usize>,
+    anchor: &CheckoutAnchor,
 ) -> String {
-    minify_sarif_document(&render_findings_sarif_with_budget(
+    minify_sarif_document(&render_findings_sarif_anchored(
         output,
         config,
         suppressions,
         results_budget,
+        anchor,
     ))
 }
 
@@ -401,6 +428,7 @@ pub(crate) fn render_repo_seams_sarif_compact(
     limit_info: Option<&SeamLimitInfo>,
     evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
+    anchor: &CheckoutAnchor,
 ) -> Result<String, String> {
     Ok(render_repo_seams_sarif_compact_with_budget(
         classified,
@@ -408,6 +436,7 @@ pub(crate) fn render_repo_seams_sarif_compact(
         evidence_limitations,
         config,
         sarif_results_byte_budget()?,
+        anchor,
     ))
 }
 
@@ -417,6 +446,7 @@ fn render_repo_seams_sarif_compact_with_budget(
     evidence_limitations: &[AnalysisLimitation],
     config: &RiprConfig,
     results_budget: Option<usize>,
+    anchor: &CheckoutAnchor,
 ) -> String {
     minify_sarif_document(&render_repo_seams_sarif_with_budget(
         classified,
@@ -424,6 +454,7 @@ fn render_repo_seams_sarif_compact_with_budget(
         evidence_limitations,
         config,
         results_budget,
+        anchor,
     ))
 }
 
@@ -815,6 +846,7 @@ fn render_refusal_sarif_scoped(
 
 fn finding_result(
     root: &Path,
+    anchor: &CheckoutAnchor,
     finding: &Finding,
     config: &RiprConfig,
     suppressions: &[SuppressionEntry],
@@ -829,8 +861,10 @@ fn finding_result(
     // an absolute root would otherwise leak the checkout path into the uri
     // and change every fingerprint between a local and a CI run. The text
     // stays `normalize_path` so existing fingerprints (a literal `%` in a
-    // file name, for instance) do not change for a relative root.
-    let file = normalize_path(repository_relative_path(root, &finding.probe.location.file));
+    // file name, for instance) do not change for a relative root. The
+    // anchor resolves it from the checkout top level, so a workspace-member
+    // root still names the file code scanning finds there.
+    let file = normalize_path(&anchor.relative_path(root, &finding.probe.location.file));
     let line = finding.probe.location.line;
     let mut result = Map::new();
     result.insert("ruleId".to_string(), json!(rule_id));
@@ -871,13 +905,20 @@ fn finding_result(
     Some(Value::Object(result))
 }
 
-fn seam_result(entry: &ClassifiedSeam, ordinal: usize, config: &RiprConfig) -> Option<Value> {
+fn seam_result(
+    entry: &ClassifiedSeam,
+    ordinal: usize,
+    config: &RiprConfig,
+    anchor: &CheckoutAnchor,
+) -> Option<Value> {
     let severity = config
         .severity_for_file(entry.seam.file())
         .for_seam(entry.class);
     let level = sarif_level(severity)?;
     let rule_id = seam_rule_id(entry.class);
-    let file = normalize_path(entry.seam.file());
+    // A seam's file is root-relative; the anchor resolves it from the
+    // checkout top level, the base code scanning resolves uris against.
+    let file = normalize_path(&anchor.root_relative_path(entry.seam.file()));
     let line = entry.seam.display_line();
     let mut result = Map::new();
     result.insert("ruleId".to_string(), json!(rule_id));
@@ -1882,6 +1923,45 @@ fn escape_message(value: &str) -> String {
         .replace('\r', "\\r")
 }
 
+/// Render diff-scoped Findings as SARIF, keeping only the leading results
+/// that fit `results_budget` pretty-printed bytes (`None` renders all).
+/// Omitted results are disclosed in the run properties, never silently.
+/// Test-only unanchored form; production renders through
+/// [`render_findings_sarif_anchored`].
+#[cfg(test)]
+pub(crate) fn render_findings_sarif_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    render_findings_sarif_anchored(
+        output,
+        config,
+        suppressions,
+        results_budget,
+        &CheckoutAnchor::unknown(),
+    )
+}
+
+/// Test-only unanchored `sarif-compact` rendering with an explicit budget;
+/// production renders through [`render_findings_sarif_compact_anchored`].
+#[cfg(test)]
+fn render_findings_sarif_compact_with_budget(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    suppressions: &[SuppressionEntry],
+    results_budget: Option<usize>,
+) -> String {
+    render_findings_sarif_compact_anchored(
+        output,
+        config,
+        suppressions,
+        results_budget,
+        &CheckoutAnchor::unknown(),
+    )
+}
+
 /// Render diff-scoped Findings as SARIF with the default results budget.
 /// Test-only: production renders through
 /// [`render_findings_sarif_with_budget`] with the CLI-resolved budget.
@@ -1916,6 +1996,7 @@ pub(crate) fn render_repo_seams_sarif(
         &[],
         config,
         Some(DEFAULT_SARIF_RESULTS_BYTES),
+        &CheckoutAnchor::unknown(),
     )
 }
 
@@ -2043,6 +2124,61 @@ mod tests {
         assert_eq!(props["limited_results_bound"], true);
         assert_eq!(props["document_complete"], false);
         Ok(())
+    }
+
+    fn bound_probe(level: &str, id: usize) -> Value {
+        json!({"id": id, "level": level, "pad": "x".repeat(64)})
+    }
+
+    fn bound_ids(results: &[Value]) -> Vec<u64> {
+        results
+            .iter()
+            .filter_map(|result| result.get("id").and_then(Value::as_u64))
+            .collect()
+    }
+
+    // RIPR-SPEC-0008: the results byte bound admits by level (error,
+    // warning, note, other), original index as the tiebreak (#15373).
+    #[test]
+    fn sarif_results_bound_keeps_warning_before_earlier_note() {
+        let results = vec![bound_probe("note", 0), bound_probe("warning", 1)];
+        let one_row =
+            nested_result_bytes(&serde_json::to_string_pretty(&results[1]).unwrap_or_default())
+                + 10;
+        let (kept, bound) = bound_sarif_results(results, Some(one_row));
+        assert_eq!(bound_ids(&kept), vec![1], "warning must outrank the note");
+        assert_eq!(bound.map(|b| (b.rendered, b.total)), Some((1, 2)));
+    }
+
+    #[test]
+    fn sarif_results_bound_orders_error_warning_note_then_index() {
+        let results = vec![
+            bound_probe("note", 0),
+            bound_probe("warning", 1),
+            bound_probe("error", 2),
+            bound_probe("warning", 3),
+        ];
+        let row =
+            nested_result_bytes(&serde_json::to_string_pretty(&results[1]).unwrap_or_default());
+        // Room for three rows (framing 10 + two separators), not four; sized
+        // from a warning, the longest level.
+        let (kept, bound) = bound_sarif_results(results, Some(10 + 3 * row + 4));
+        // Error, then warnings by index; the note is cut. Original order kept.
+        assert_eq!(bound_ids(&kept), vec![1, 2, 3]);
+        assert_eq!(bound.map(|b| (b.rendered, b.total)), Some((3, 4)));
+    }
+
+    #[test]
+    fn sarif_results_bound_leaves_order_unchanged_when_everything_fits() {
+        let results = vec![
+            bound_probe("note", 0),
+            bound_probe("error", 1),
+            bound_probe("warning", 2),
+            json!({"id": 3}),
+        ];
+        let (kept, bound) = bound_sarif_results(results, Some(usize::MAX));
+        assert_eq!(bound_ids(&kept), vec![0, 1, 2, 3]);
+        assert!(bound.is_none());
     }
 
     #[test]
@@ -3390,6 +3526,7 @@ weakly_gripped = "note"
             &failure,
             &config,
             Some(DEFAULT_SARIF_RESULTS_BYTES),
+            &CheckoutAnchor::unknown(),
         );
         let compact = render_repo_seams_sarif_compact_with_budget(
             &classified,
@@ -3397,6 +3534,7 @@ weakly_gripped = "note"
             &failure,
             &config,
             Some(DEFAULT_SARIF_RESULTS_BYTES),
+            &CheckoutAnchor::unknown(),
         );
         for (name, rendered) in [("repo-sarif", full), ("repo-sarif-compact", compact)] {
             let sarif = parse_json(&rendered)?;
@@ -4089,6 +4227,7 @@ weakly_gripped = "note"
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -4510,6 +4649,83 @@ weakly_gripped = "note"
                 "refusal SARIF root must use display_path spelling, got {root:?}"
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn anchored_sarif_uris_name_member_root_files_from_the_checkout_top_level() -> Result<(), String>
+    {
+        // Code scanning resolves `artifactLocation.uri` against the
+        // repository root, so an absolute workspace-member root (or `--root .`
+        // inside the member) must not upload `src/...` uris.
+        let member_root = std::env::temp_dir()
+            .join("ripr_sarif_anchor_test")
+            .join("crates/app");
+        let mut output = sample_output();
+        output.root = member_root.clone();
+        output.findings[0].probe.location.file = member_root.join("src/pricing.rs");
+        let config = RiprConfig::default();
+        let anchor = CheckoutAnchor::below_top_level(PathBuf::from("crates/app"));
+        let uri = |document: &str| -> Result<(String, String), String> {
+            let sarif = parse_json(document)?;
+            let result = &sarif["runs"][0]["results"][0];
+            Ok((
+                result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                result["partialFingerprints"]["riprFingerprintV1"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            ))
+        };
+        let (anchored, anchored_fingerprint) = uri(&render_findings_sarif_anchored(
+            &output,
+            &config,
+            &[],
+            None,
+            &anchor,
+        ))?;
+        assert_eq!(anchored, "crates/app/src/pricing.rs");
+        assert!(anchored_fingerprint.ends_with("|crates/app/src/pricing.rs"));
+        let compact = parse_json(&render_findings_sarif_compact_anchored(
+            &output,
+            &config,
+            &[],
+            None,
+            &anchor,
+        ))?;
+        assert_eq!(
+            compact["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
+            "crates/app/src/pricing.rs"
+        );
+        // Control: the unanchored render keeps the root-relative uri.
+        let (unanchored, _) = uri(&render_findings_sarif(&output, &config, &[]))?;
+        assert_eq!(unanchored, "src/pricing.rs");
+
+        // Repo seams carry root-relative files; the anchor prefixes them.
+        let classified = [weakly_gripped_classified()];
+        let seams = parse_json(&render_repo_seams_sarif_with_budget(
+            &classified,
+            None,
+            &[],
+            &config,
+            None,
+            &anchor,
+        ))?;
+        assert_eq!(
+            seams["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
+            "crates/app/src/pricing.rs"
+        );
+        let unanchored_seams = parse_json(&render_repo_seams_sarif(&classified, None, &config))?;
+        assert_eq!(
+            unanchored_seams["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"],
+            "src/pricing.rs"
+        );
         Ok(())
     }
 }

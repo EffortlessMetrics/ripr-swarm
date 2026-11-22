@@ -21,6 +21,10 @@ case = "assoc-unevaluable-condition"
 reason = "Discriminated at runtime, abstained on purpose: the default method's `if` condition calls `is_big`, which the evaluator cannot run (RIPR-SPEC-0048 associated-constant must-not-claim). Delete this entry if helper calls become evaluable."
 
 [[entry]]
+case = "authored-8637-std-debug-assert-one"
+reason = "Discriminated at runtime under the default debug test profile, abstained on purpose: `std::debug_assert_eq!` reads as its bare twin, a named debug-profile limit (static_unknown) because a release-profile test run skips it (RIPR-SPEC-0240, #8637). The row guards against the pre-#15180 false gap (reachable_unrevealed). Delete this entry if debug-profile assertions start crediting."
+
+[[entry]]
 case = "bytesize-format-unit-first-run"
 reason = "Tests discriminate the change but ripr abstains because the related test passes a call result or computed argument ripr does not evaluate (#12775; parent #12766). Delete this entry when the row credits."
 
@@ -266,7 +270,7 @@ reason = "Tests discriminate the change but ripr abstains because the test reach
 
 [[entry]]
 case = "semver-less-pre"
-reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains at two stages (#12771, #12769; parent #12766): reach is only a name-token link to `matches_less`, and infection is unknown, because `cmp.pre` and `ver.pre` are fields of values built by the crate's full `Version`/`VersionReq` parser from strings. The bounded parse evaluator (RIPR-SPEC-0158) folds only a scalar `helper(\"DIGITS\")` argument, so it does not read this row. Delete this entry when the row credits."
 
 [[entry]]
 case = "semver-op-ge-reads-greater"
@@ -282,7 +286,7 @@ reason = "Tests discriminate the change but ripr abstains because the test reach
 
 [[entry]]
 case = "semver-tilde-pre-ge"
-reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains at two stages (#12771, #12769; parent #12766): reach is only a name-token link to `matches_tilde`, and infection is unknown, because `cmp.pre` and `ver.pre` are fields of values built by the crate's full `Version`/`VersionReq` parser from strings. The bounded parse evaluator (RIPR-SPEC-0158) folds only a scalar `helper(\"DIGITS\")` argument, so it does not read this row. Delete this entry when the row credits."
 
 [[entry]]
 case = "serde-derive-rename-field-upper"
@@ -405,8 +409,12 @@ case = "spec-b-0153-registered-harness-subject"
 reason = "The registered Trial callback is indexed for reach but its assertion is not credited, so this configured adapter control records static_unknown/limited rather than ideal credit. Removing only the valid registration loses the adapted relation and changes the exact row to no_static_path; this entry does not accept that drift (#10495)."
 
 [[entry]]
+case = "spec-b-0153-undeclared-harness-helper"
+reason = "Runtime truth is discriminated, but `src/lib.rs` declares `#[cfg_attr(é, path = \"alternate.rs\")] mod unicode_child;`, whose target `src/alternate.rs` shares this owner's directory; the shared base-owner gate decision does not follow that target's own `mod` declarations, so it reads every non-root file there as possibly that target's child, the changed whole-body constant tail claims no direct-return edge and propagation reads unknown (#15104, fail closed). Delete this entry when `#[path]` targets' child declarations are read."
+
+[[entry]]
 case = "spec-b-0154-cfg-test-helper-panic-guard"
-reason = "RIPR-SPEC-0154 example 3 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
+reason = "RIPR-SPEC-0154 example 7 defines this abstention: the changed line is a guard inside a cfg(test) helper, test-only code seeds no probe, so ripr stays silent although the tests would catch the change. Accepted by design, not a regression."
 
 [[entry]]
 case = "spec-b-0157-closure-capture"
@@ -530,7 +538,7 @@ reason = "Truth is discriminated but the edit is a test-only helper, so ripr rea
 
 [[entry]]
 case = "spec0114-helper-chain-public-api"
-reason = "Tests discriminate the change but ripr abstains because the test reaches the owner only through a path ripr cannot bind statically (no test path found, or tests share only a name token or file with the owner) (#12769; parent #12766). Delete this entry when the row credits."
+reason = "Tests discriminate the change but ripr abstains at two stages (#12771, #12769; parent #12766): reach is only a name-token link, because the test enters through a helper that calls the public API, and infection is unknown, because the compared operands are a struct field built by the runtime string parse `Req::parse(\">2\")` and a helper parameter. The bounded parse evaluator (RIPR-SPEC-0158) folds only a whole `helper(\"DIGITS\")` argument to a scalar, so it does not read this row; neither fix alone credits it. Delete this entry when the row credits."
 
 [[entry]]
 case = "spec0114-test-calls-owner-macro"

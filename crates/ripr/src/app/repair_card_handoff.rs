@@ -484,9 +484,17 @@ pub(crate) fn assemble_repair_card(
     // blocked by missing/static evidence has no edit to admit; retain that
     // more relevant diagnosis instead of replacing it with a cage error.
     let edit_cage_refusal = if readiness.is_repair_ready() {
-        super::repair_attempt::edit_cage_policy_from_packet(
+        // The card has no workspace root. A manifest-declared test target
+        // is admitted on the producer's recorded answer (#15910); the
+        // attempt's own gate reads the manifest before it builds a cage.
+        // The projection spells the file as stable path text and the cage
+        // asks about the decoded native name, so decode before comparing.
+        let declared = crate::output::agent_seam_packets::declared_test_target_file(entry)
+            .map(|file| crate::analysis::decode_stable_path_text(&file));
+        super::repair_attempt::edit_cage_policy_from_packet_with(
             facts.packet_json,
             entry.seam.id().as_str(),
+            &|path| declared.as_deref() == Some(Path::new(path)),
         )
         .err()
     } else {
@@ -540,12 +548,11 @@ pub(crate) fn assemble_repair_card(
         stop_conditions.push(inline_test_module_edit_statement(&recommended.file, module));
     }
 
-    let changed_behavior = facts
+    let expression = facts
         .witness
         .map(|witness| witness.changed_expression.trim())
         .filter(|expression| !expression.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| entry.seam.expression().to_string());
+        .unwrap_or_else(|| entry.seam.expression());
     let exact_blocker = facts
         .witness
         .and_then(|witness| witness.missing_discriminators.first())
@@ -584,6 +591,10 @@ pub(crate) fn assemble_repair_card(
     let seam_id = entry.seam.id().as_str().to_string();
     let packet_route = format!("ripr agent packet --seam-id {} --json", shell_arg(&seam_id));
     let detail_sources = detail_sources_for(facts, &packet_route, &done_when)
+        .map_err(AgentCardError::operational)?;
+
+    let budget = RepairCardBudget::default();
+    let changed_behavior = card_expression_summary(expression, &seam_id, &detail_sources, &budget)
         .map_err(AgentCardError::operational)?;
 
     // #5007: a builder, route-gate, or budget refusal is a deliberate named
@@ -628,7 +639,7 @@ pub(crate) fn assemble_repair_card(
         attempt: facts.attempt,
         limitations,
         detail_sources,
-        budget: RepairCardBudget::default(),
+        budget,
     })
     .map_err(AgentCardError::budget_overflow)
 }
@@ -656,18 +667,41 @@ fn attach_fix_instruction_identities(
     instruction.attach_identities(&context);
 }
 
-/// Whether the rendered packet envelope actually surfaces this seam. The
-/// envelope's `packets` array honors the shared queue policy; an entry whose
-/// `seam_id` names this seam is the only current-surface proof.
-fn packet_surfaces_seam(packet_content: &serde_json::Value, seam_id: &str) -> bool {
-    packet_content
-        .get("packets")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|packets| {
-            packets.iter().any(|packet| {
-                packet.get("seam_id").and_then(serde_json::Value::as_str) == Some(seam_id)
-            })
+/// The packet queue may omit the selected seam even when the inventory names it.
+fn packet_for_seam<'a>(
+    content: &'a serde_json::Value,
+    seam_id: &str,
+) -> Option<&'a serde_json::Value> {
+    content
+        .get("packets")?
+        .as_array()?
+        .iter()
+        .find(|packet| packet.get("seam_id").and_then(serde_json::Value::as_str) == Some(seam_id))
+}
+
+/// Refer oversized prose to a detail route only when the packet actually carries
+/// the exact expression for this seam. Otherwise the card budget refuses it.
+fn card_expression_summary(
+    expression: &str,
+    seam_id: &str,
+    sources: &[RepairCardDetailSource],
+    budget: &RepairCardBudget,
+) -> Result<String, String> {
+    let wire_bytes = serde_json::to_string(expression)
+        .map_err(|error| error.to_string())?
+        .len();
+    if wire_bytes > budget.max_inline_detail_bytes
+        && sources.iter().any(|source| {
+            source.family == RepairCardDetailFamily::CanonicalPacket
+                && source.state == RepairCardDetailState::Current
+                && packet_for_seam(&source.content, seam_id)
+                    .and_then(|packet| packet["changed_expression"].as_str())
+                    == Some(expression)
         })
+    {
+        return Ok("See changed_expression in the canonical packet for this seam.".to_string());
+    }
+    Ok(expression.to_string())
 }
 
 /// Every load-bearing evidence family rides behind a typed reference. The
@@ -690,7 +724,7 @@ fn detail_sources_for(
     // would overstate the evidence, so the family records an exact unavailable
     // reason instead (fail-closed, like every other omitted family).
     let mut sources = Vec::new();
-    if packet_surfaces_seam(&packet_content, facts.entry.seam.id().as_str()) {
+    if packet_for_seam(&packet_content, facts.entry.seam.id().as_str()).is_some() {
         sources.push(RepairCardDetailSource::current(
             RepairCardDetailFamily::CanonicalPacket,
             packet_route,
@@ -913,6 +947,37 @@ pub(crate) fn finding_names_seam_by_location(
         .is_some_and(|gap| producer_candidate_qualifies(entry, finding, gap, candidate_seams))
 }
 
+/// The seams in `candidate_seams` that each name `finding`'s changed line as
+/// its most specific claimant, so the finding binds none of them (#15157): a
+/// changed `a < b && c == d` line holds one predicate seam per comparison, and
+/// the join above refuses to pick between same-line, same-kind twins. The
+/// check screen uses the list only to say that the changed line holds several
+/// spots instead of claiming that no spot could be tied to it; it binds
+/// nothing for repair. Fewer than two means no such tie.
+pub(crate) fn seams_tied_on_finding_line<'a>(
+    finding: &crate::domain::Finding,
+    candidate_seams: &'a [ClassifiedSeam],
+) -> Vec<&'a ClassifiedSeam> {
+    let Some(gap) = finding.canonical_gap.as_ref() else {
+        return Vec::new();
+    };
+    let line = finding.probe.location.line;
+    let naming: Vec<&ClassifiedSeam> = candidate_seams
+        .iter()
+        .filter(|entry| producer_gap_names_seam(gap, &entry.seam, line))
+        .collect();
+    let tied: Vec<&ClassifiedSeam> = naming
+        .iter()
+        .copied()
+        .filter(|entry| {
+            !naming.iter().any(|other| {
+                other.seam.id() != entry.seam.id() && entry.seam.strictly_encloses(&other.seam)
+            })
+        })
+        .collect();
+    if tied.len() < 2 { Vec::new() } else { tied }
+}
+
 /// The canonical gap id of the finding the shared [`finding_for_seam`] join
 /// binds to this seam, as `ripr check` / `ripr_list_gaps` print it. Binding is
 /// not projection: this is present for a bound finding that projects no
@@ -1131,7 +1196,7 @@ pub(crate) fn latest_attempt_for_seam(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::repair_attempt::{
         REPAIR_ATTEMPT_SCHEMA_VERSION, RepairAttemptId, RepairAttemptState,
     };
@@ -1437,6 +1502,87 @@ mod tests {
         assert!(!finding_names_seam_by_location(&finding, &twin, &pair));
     }
 
+    /// #15157: same-line same-kind twins that no other seam nests inside are
+    /// the tie the check screen names; a lone claimant, an enclosing outer
+    /// seam, and a seam on another line are not part of it.
+    #[test]
+    fn same_line_twins_are_the_tied_seams_on_the_finding_line() {
+        let span = |line: usize, start_column: usize, end_column: usize| {
+            crate::analysis::seams::SeamSpan {
+                start_line: line,
+                end_line: line,
+                start_column,
+                end_column,
+            }
+        };
+        let mut finding = producer_gap_finding(
+            "finding:tie",
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 88;
+        let left = spanned_twin_boundary_entry(10, 88, span(88, 5, 15));
+        let right = spanned_twin_boundary_entry(30, 88, span(88, 20, 30));
+        let elsewhere = spanned_twin_boundary_entry(60, 120, span(120, 5, 15));
+
+        let pair = [left.clone(), right.clone(), elsewhere.clone()];
+        let tied: Vec<_> = seams_tied_on_finding_line(&finding, &pair)
+            .into_iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        assert_eq!(tied, vec![left.seam.id().clone(), right.seam.id().clone()]);
+        // The tie is exactly the binding refusal: neither twin binds.
+        assert!(!finding_names_seam_by_location(&finding, &left, &pair));
+
+        // A lone claimant binds, so it is no tie.
+        let sole = [left.clone(), elsewhere.clone()];
+        assert!(seams_tied_on_finding_line(&finding, &sole).is_empty());
+        assert!(finding_names_seam_by_location(&finding, &left, &sole));
+
+        // An outer seam enclosing one claimant is not a separate tied spot.
+        let outer = spanned_twin_boundary_entry(5, 88, span(88, 1, 40));
+        let nested = [outer.clone(), left.clone()];
+        assert!(seams_tied_on_finding_line(&finding, &nested).is_empty());
+
+        // An outer seam enclosing one claimant beside a disjoint claimant
+        // (`f(|d| d == x) == 0 ... g() == 1` on one line): the outer drops out
+        // and the two minimal seams tie.
+        let outer_left = spanned_twin_boundary_entry(5, 88, span(88, 1, 16));
+        let three = [outer_left.clone(), left.clone(), right.clone()];
+        let tied: Vec<_> = seams_tied_on_finding_line(&finding, &three)
+            .into_iter()
+            .map(|entry| entry.seam.id().clone())
+            .collect();
+        assert_eq!(tied, vec![left.seam.id().clone(), right.seam.id().clone()]);
+        assert!(!finding_names_seam_by_location(&finding, &left, &three));
+
+        // A seam without a span encloses nothing, so it ties with a spanned
+        // claimant, matching the join's refusal to bind either.
+        let mut spanless = spanned_twin_boundary_entry(50, 88, span(88, 40, 50));
+        spanless.seam = RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            50,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let mixed = [left.clone(), spanless.clone()];
+        assert_eq!(seams_tied_on_finding_line(&finding, &mixed).len(), 2);
+        assert!(!finding_names_seam_by_location(&finding, &left, &mixed));
+        assert!(!finding_names_seam_by_location(&finding, &spanless, &mixed));
+
+        // A finding on another line ties nothing.
+        finding.probe.location.line = 89;
+        assert!(seams_tied_on_finding_line(&finding, &pair).is_empty());
+    }
+
     /// The rendered packet envelope for this seam: `packets` names the seam,
     /// so the canonical packet family projects as current.
     fn packet_for(entry: &ClassifiedSeam) -> String {
@@ -1496,6 +1642,7 @@ mod tests {
             drafted_boundary: None,
         }];
         entry.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: std::path::PathBuf::from("src/pricing.rs"),
             line: 120,
@@ -2028,7 +2175,7 @@ mod tests {
     /// witness is observable and a wrong bind would fail its test. The gap id
     /// is caller-chosen: producer-shaped ids exercise the structured branch,
     /// the seam's own content-hash id the legacy branch.
-    fn producer_gap_finding(
+    pub(crate) fn producer_gap_finding(
         id: &str,
         gap_id: &str,
         file: &str,
@@ -2480,6 +2627,35 @@ mod tests {
         if route != expected {
             return Err(format!("expected `{expected}`, got `{route}`"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_card_expression_needs_the_exact_current_packet() -> Result<(), String> {
+        let budget = RepairCardBudget::default();
+        // Escapes exceed the JSON wire budget even though the source fits.
+        let expression = "\\".repeat(budget.max_inline_detail_bytes / 2);
+        let mut source = RepairCardDetailSource::current(
+            RepairCardDetailFamily::CanonicalPacket,
+            "ripr agent packet --seam-id selected --json",
+            serde_json::json!({"packets": [
+                {"seam_id": "sibling", "changed_expression": expression},
+                {"seam_id": "selected", "changed_expression": "other"}
+            ]}),
+        );
+        let summary = |source: &RepairCardDetailSource| {
+            card_expression_summary(
+                &expression,
+                "selected",
+                std::slice::from_ref(source),
+                &budget,
+            )
+        };
+        assert_eq!(summary(&source)?, expression);
+        source.content["packets"][1]["changed_expression"] = serde_json::json!(expression);
+        assert!(summary(&source)?.contains("canonical packet"));
+        source.state = RepairCardDetailState::Stale;
+        assert_eq!(summary(&source)?, expression);
         Ok(())
     }
 

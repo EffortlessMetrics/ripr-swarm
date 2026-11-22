@@ -78,6 +78,8 @@ mod changed_return;
 mod class_entries;
 mod classifier;
 mod committed_snapshot;
+mod commonjs_default_class;
+mod commonjs_reexports;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;
@@ -96,6 +98,7 @@ mod fast_check;
 #[cfg(test)]
 mod fast_check_tests;
 mod push_argument_guard;
+mod tap;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -107,6 +110,7 @@ mod fact_prefetch_tests;
 mod fact_store_tests;
 mod field_update_guard;
 mod fixture_receivers;
+mod function_replacement;
 mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
@@ -120,8 +124,10 @@ mod infection_shape;
 mod infection_shape_tests;
 mod instance_class_guard;
 mod instance_factories;
+mod jsx_render;
 #[cfg(test)]
 mod line_index_tests;
+mod literal_arm_return_guard;
 mod literal_eval;
 mod literal_mask;
 mod literal_matcher_guard;
@@ -182,6 +188,7 @@ mod self_comparing_assertion_tests;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
+mod switch_return_witness;
 mod table_loop_rows;
 mod table_rows;
 mod ternary_arm_guard;
@@ -190,6 +197,7 @@ mod tests;
 mod typeof_kind;
 #[cfg(test)]
 mod typeof_kind_tests;
+mod unused_default_guard;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;
@@ -252,6 +260,7 @@ pub(crate) use error_payload_guard::*;
 pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use instance_factories::*;
+pub(crate) use literal_arm_return_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
 pub(crate) use loop_bound_guard::*;
@@ -1336,8 +1345,17 @@ impl TypeScriptAdapter {
                     ambient_declaration_lines(&changed.path, source, &options.root, alias_map_ref)
                 })
                 .unwrap_or_default();
+            // Comment text is no probe, and the body rows of a block comment
+            // are comment text whatever they start with (#15913).
+            let added_without_code = deleted_lines::added_lines_without_code(
+                changed,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
+            );
             let is_probe_candidate = |line: usize, text: &str| {
                 !should_ignore_typescript_changed_line(text)
+                    && !added_without_code.contains(&line)
                     && !ambient
                         .iter()
                         .any(|(start, end)| (*start..=*end).contains(&line))
@@ -1388,7 +1406,17 @@ impl TypeScriptAdapter {
             // (#7524). The three guards below read the old line from one
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
-            let counterparts = changed.aligned_counterparts();
+            // An added run made only of comments, blank lines and lone
+            // brackets replaced nothing: the code it stands on was deleted.
+            // Its lines pair with nothing, so the removed line keeps its own
+            // base-side record instead of leaving no record at all (#15913).
+            let mut counterparts = changed.aligned_counterparts();
+            if !counterparts.is_empty() {
+                let codeless = changed
+                    .added_lines_in_quiet_runs(|added| added_without_code.contains(&added.line));
+                counterparts.retain(|added_line, _| !codeless.contains(added_line));
+            }
+            let counterparts = counterparts;
             let mut multiline_lines: Option<Option<MultilineRanges>> = None;
             // #11250: one facts lookup and one line-table build per
             // changed file, not per added line. `file_facts_cached`
@@ -1635,6 +1663,36 @@ impl TypeScriptAdapter {
                             "typescript_package_limitation: typescript_test_runner_unresolved"
                                 .to_string(),
                         );
+                    }
+                    // The diff supplies both values. Take the binding only from the
+                    // parsed head whose line matches the diff, never a renderer reread.
+                    if let Some((lines, facts)) = &ast_probe_facts
+                        && let Some(binding) = facts.phase_two.default_bindings.get(&added.line)
+                        && lines
+                            .get(added.line.saturating_sub(1))
+                            .map(|line| line.trim())
+                            == Some(added.text.trim())
+                        && let Some(new) = standalone_decimal(&added.text)
+                    {
+                        // Only a lone replacement leaves the enclosing declaration
+                        // unchanged on both sides. Other edits can introduce the default.
+                        let previous = match (
+                            changed.added_lines.as_slice(),
+                            changed.removed_lines.as_slice(),
+                        ) {
+                            ([_], [removed]) if removed.new_side_line == added.line => {
+                                standalone_decimal(&removed.text).filter(|old| *old != new)
+                            }
+                            _ => None,
+                        };
+                        let detail = previous.map_or_else(
+                            || "default".to_string(),
+                            |old| format!("default was {old}"),
+                        );
+                        finding.evidence.push(format!(
+                            "{}{binding} = {new} ({detail})",
+                            crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX
+                        ));
                     }
                     findings.push(finding);
                 } else if let Some(identity) = enum_member_lines.get(&added.line) {
@@ -2370,4 +2428,12 @@ fn consulted_credit_gaps<'a>(
     gaps.iter()
         .filter(|gap| consulted_test_files.contains(&normalized_path(&gap.file)))
         .collect()
+}
+
+/// A whole decimal on a continuation line, optionally terminated as a
+/// declaration or parameter. A larger changed expression keeps its own text.
+fn standalone_decimal(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let value = text.strip_suffix([';', ',']).unwrap_or(text).trim_end();
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())).then_some(value)
 }

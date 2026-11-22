@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,6 +9,6 @@
+ 
+ impl From<&str> for Cents {
+     fn from(value: &str) -> Self {
+-        Cents(value.len() as u64)
++        Cents(value.len() as u64 + 1)
+     }
+ }

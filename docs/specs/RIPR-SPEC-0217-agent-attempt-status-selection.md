@@ -165,6 +165,11 @@ receipt strength, and currentness as separate facts:
   blocked-outside and eligible-outside hints, which would argue with
   `ripr check`'s "nothing to repair". A gripped spot beside an open finding on
   the change is counted as a different check, never cited as its verdict.
+  "Already gripped" comes from tests anywhere in the repository, but
+  `ripr check` judges the changed line, so a changed gripped spot that the
+  same default check reads as anything but exposed is reopened with check's
+  reading and a by-hand next step (#15278); when check cannot run, those
+  spots are opened with a reason that makes no claim about check.
   The closing next step follows the same scope (#11111 burn-down): when every
   changed spot is already checked it says there is nothing to do for the
   change; when the changed Rust lines touch no seam the refusal leads with
@@ -189,9 +194,15 @@ receipt strength, and currentness as separate facts:
   the default branch itself), the selection stays unscoped and the refusal
   says first that ripr could not tell which lines changed. `--base REF`, as on
   `ripr check`, names the base explicitly and wins over inference; it is
-  refused together with an item, which is never scoped. The note appears only
-  in a refusal (including the zero-seam one); a selection or start that is
-  shown does not repeat it. The MCP repair route builds its own diff-scoped
+  refused together with an item, which is never scoped. The note leads a
+  refusal (including the zero-seam one). An unscoped menu or single start
+  carries it too, saying the list is not narrowed to the change and naming the
+  `--base REF` rerun (#13701): in human output on stderr, in a `--json` menu
+  refusal's message, and in a `--json` start's `repair_start_scope` block
+  (`narrowed_to_change: false`, `note`, `base_command`), which a resumed
+  `--json` start repeats. A readable change that touches no Rust production
+  line gets its own note, since it cannot narrow the list either. A start
+  scoped by the diff carries no note. The MCP repair route builds its own diff-scoped
   inventory and does not call this selector, so it needs no `--base`.
 
 - A restart or fresh-start route is named only when the shared repair
@@ -330,6 +341,12 @@ store.
 - `crates/ripr/tests/repair_infer_base.rs::zero_seam_refusal_leads_with_the_unscoped_note`
 - `crates/ripr/tests/repair_infer_base.rs::an_explicit_base_reaches_the_non_rust_guidance`
 - `crates/ripr/src/app/task_first.rs::unscoped_note_tests::an_explicit_base_is_named_when_its_diff_cannot_be_read`
+- `crates/ripr/tests/repair_infer_base.rs::an_unscoped_menu_says_it_is_not_narrowed_and_names_the_base_rerun`
+- `crates/ripr/tests/repair_infer_base.rs::an_unscoped_single_start_says_it_is_not_narrowed_and_names_the_base_rerun`
+- `crates/ripr/tests/repair_infer_base.rs::a_start_scoped_by_the_diff_carries_no_unscoped_note`
+- `crates/ripr/tests/repair_infer_base.rs::a_menu_for_a_change_with_no_production_code_says_it_is_not_narrowed`
+- `crates/ripr/tests/repair_infer_base.rs::a_start_for_a_change_with_no_production_code_says_it_is_not_narrowed`
+- `crates/ripr/src/app/task_first.rs::unscoped_note_tests::a_diff_with_no_rust_production_line_says_it_touches_none`
 
 ## Implementation Mapping
 

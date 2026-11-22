@@ -74,8 +74,8 @@ pub(crate) struct ReExportIndex {
     /// export. Kept separate from discovery, which still owns path precedence.
     indexed_modules: HashSet<String>,
     /// Extension stripping can collapse distinct real files. General owner
-    /// discovery keeps its existing behavior; strict enum identity refuses.
-    ambiguous_enum_modules: HashSet<String>,
+    /// discovery keeps its existing behavior; default-import and enum identity refuse.
+    ambiguous_modules: HashSet<String>,
     /// Actual runtime enum declarations and their statically named members.
     /// Export-list mentions and unresolved re-exports cannot create these facts.
     enum_bindings: HashMap<(String, String), Vec<String>>,
@@ -110,6 +110,14 @@ pub(crate) struct ReExportIndex {
     /// Original declaration name -> export names that rename it, so a call
     /// through `import { alias }` is still a candidate for the declaration.
     rename_aliases: HashMap<String, Vec<String>>,
+    /// `module.exports = require('./source')` forwards (#15284):
+    /// `module -> source`. The barrel's `module.exports` IS the source's, so
+    /// every export name (and the whole value, `default`) resolves in the
+    /// source. A name the barrel itself records in `entries` wins.
+    commonjs_forwards: HashMap<String, String>,
+    /// Names each module assigns exactly once onto its CommonJS exports: a
+    /// whole-module forward into that module resolves only these (#15284).
+    commonjs_own_names: HashMap<String, HashSet<String>>,
 }
 
 /// Outcome of resolving one exported name through the re-export graph.
@@ -122,6 +130,22 @@ enum ExportResolution {
     Found(String, String),
     /// The chain is too deep, ambiguous, or otherwise not decidable.
     Unknown,
+}
+
+#[derive(Clone, Copy)]
+enum ExportLookup<'a> {
+    Owner,
+    DeclaredDefault,
+    Enum(&'a EnumBindingContext<'a>),
+}
+
+impl<'a> ExportLookup<'a> {
+    fn enum_context(self) -> Option<&'a EnumBindingContext<'a>> {
+        match self {
+            Self::Enum(context) => Some(context),
+            Self::Owner | Self::DeclaredDefault => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -234,8 +258,11 @@ impl ReExportIndex {
             .collect();
         let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
-        let mut ambiguous_enum_modules = HashSet::new();
+        let mut ambiguous_modules = HashSet::new();
         let mut outbound_calls: Vec<(PathBuf, OutboundImportCall)> = Vec::new();
+        let mut commonjs_forwards: HashMap<String, String> = HashMap::new();
+        let mut commonjs_own_names: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut commonjs_entries: Vec<((String, String), (String, String))> = Vec::new();
         for file in workspace_files {
             let module = normalized_module_path(file);
             let path = normalized_path(file);
@@ -243,7 +270,7 @@ impl ReExportIndex {
                 .insert(module.clone(), path.clone())
                 .is_some_and(|previous| previous != path)
             {
-                ambiguous_enum_modules.insert(module);
+                ambiguous_modules.insert(module);
             }
         }
         for relative in workspace_files {
@@ -276,6 +303,16 @@ impl ReExportIndex {
                 entries.entry(key).or_insert_with(|| value);
             }
             star_edges.extend(file_facts.star_edges);
+            commonjs_entries.extend(file_facts.commonjs_entries);
+            for (from, to) in file_facts.commonjs_forwards {
+                commonjs_forwards.entry(from).or_insert(to);
+            }
+            if !file_facts.commonjs_own_names.is_empty() {
+                commonjs_own_names
+                    .entry(module.clone())
+                    .or_default()
+                    .extend(file_facts.commonjs_own_names);
+            }
             outbound_calls.extend(
                 file_facts
                     .outbound_calls
@@ -309,7 +346,7 @@ impl ReExportIndex {
             local_exports,
             modules,
             indexed_modules,
-            ambiguous_enum_modules,
+            ambiguous_modules,
             enum_bindings,
             enum_imports,
             unstable_enum_roots,
@@ -319,9 +356,40 @@ impl ReExportIndex {
             outbound_calls,
             outbound_by_imported: HashMap::new(),
             rename_aliases: HashMap::new(),
+            commonjs_forwards,
+            commonjs_own_names,
         };
+        index.admit_commonjs_entries(commonjs_entries);
         index.index_outbound_calls();
         index
+    }
+
+    /// Admit CommonJS named edges whose source is established to export the
+    /// forwarded member: its own export, an edge of its own (a chained
+    /// barrel, admitted to a fixed point), or a whole-module forward the
+    /// resolver checks hop by hop. A member read off a module that never
+    /// exports it is `undefined`, so it links nothing (#15284).
+    fn admit_commonjs_entries(&mut self, mut pending: Vec<((String, String), (String, String))>) {
+        loop {
+            let before = pending.len();
+            pending.retain(|(key, (member, source))| {
+                let canonical = self.canonical_module(source);
+                let established = self.source_exports_name(source, member)
+                    || self
+                        .entries
+                        .contains_key(&(canonical.clone(), member.clone()))
+                    || (member != "default" && self.commonjs_forwards.contains_key(&canonical));
+                if established {
+                    self.entries
+                        .entry(key.clone())
+                        .or_insert_with(|| (member.clone(), source.clone()));
+                }
+                !established
+            });
+            if pending.is_empty() || pending.len() == before {
+                break;
+            }
+        }
     }
 
     /// `true` when no module's exported code calls an imported binding.
@@ -628,7 +696,7 @@ impl ReExportIndex {
             return None;
         };
         let module = normalized_module_path(file);
-        if self.ambiguous_enum_modules.contains(&module) {
+        if self.ambiguous_modules.contains(&module) {
             return None;
         }
         // Owner.imports also carries synthetic re-export records for call
@@ -697,7 +765,7 @@ impl ReExportIndex {
                 0,
                 &mut stack,
                 &mocked,
-                Some(&context),
+                ExportLookup::Enum(&context),
             )
         } else {
             self.enum_local_binding(&binding_module, &name, 0, &mut stack, &context)
@@ -742,7 +810,7 @@ impl ReExportIndex {
     ) -> ExportResolution {
         let module = self.canonical_module(module);
         if (context.mocked)(&module)
-            || self.ambiguous_enum_modules.contains(&module)
+            || self.ambiguous_modules.contains(&module)
             || (context.check_stability
                 && self
                     .unstable_enum_roots
@@ -786,7 +854,7 @@ impl ReExportIndex {
             hops + 1,
             stack,
             context.mocked,
-            Some(context),
+            ExportLookup::Enum(context),
         )
     }
 
@@ -832,7 +900,7 @@ impl ReExportIndex {
                         0,
                         &mut Vec::new(),
                         context.mocked,
-                        Some(&raw_context),
+                        ExportLookup::Enum(&raw_context),
                     ) {
                         ExportResolution::Found(module, name) => {
                             module == desired.0 && name == desired.1
@@ -911,6 +979,23 @@ impl ReExportIndex {
         exposed
     }
 
+    /// Whether `source` exports `name` itself: its whole value (`default`), an
+    /// ES declaration export, or a CommonJS `exports.NAME` write (#15284).
+    /// `require()` of an ES module returns its namespace object, not the
+    /// default export, so the whole value of a module with ES exports and no
+    /// CommonJS writes is never the default declaration.
+    fn source_exports_name(&self, source: &str, name: &str) -> bool {
+        let canonical = self.canonical_module(source);
+        let es_names = self.local_exports.get(&canonical);
+        let commonjs_names = self.commonjs_own_names.get(&canonical);
+        if name == "default" {
+            return es_names.is_none_or(HashSet::is_empty) || commonjs_names.is_some();
+        }
+        [es_names, commonjs_names]
+            .into_iter()
+            .any(|names| names.is_some_and(|names| names.contains(name)))
+    }
+
     /// Resolve a normalized module specifier path to the workspace module it
     /// names. A file module (`src.ts` → `src`) wins; otherwise a directory
     /// with an index file (`src/index.ts` → `src/index`) is used. When
@@ -942,7 +1027,7 @@ impl ReExportIndex {
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
     ) -> ExportResolution {
-        self.resolve_export_with_context(module, name, hops, stack, mocked, None)
+        self.resolve_export_with_context(module, name, hops, stack, mocked, ExportLookup::Owner)
     }
 
     fn resolve_export_with_context(
@@ -952,8 +1037,9 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
-        enum_context: Option<&EnumBindingContext<'_>>,
+        lookup: ExportLookup<'_>,
     ) -> ExportResolution {
+        let enum_context = lookup.enum_context();
         let module = self.canonical_module(module);
         if !self.indexed_modules.contains(&module) {
             // Unknown is contagious across star siblings; NotFound would
@@ -961,7 +1047,7 @@ impl ReExportIndex {
             return ExportResolution::Unknown;
         }
         if mocked(&module)
-            || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
+            || (!matches!(lookup, ExportLookup::Owner) && self.ambiguous_modules.contains(&module))
             || (enum_context.is_some_and(|context| context.check_stability)
                 && self
                     .unstable_enum_roots
@@ -978,8 +1064,7 @@ impl ReExportIndex {
             return ExportResolution::NotFound;
         }
         stack.push(frame);
-        let mut resolution =
-            self.resolve_export_frame(&module, name, hops, stack, mocked, enum_context);
+        let mut resolution = self.resolve_export_frame(&module, name, hops, stack, mocked, lookup);
         if let (Some(context), ExportResolution::Found(target_module, target_name)) =
             (enum_context, &resolution)
             && context.check_stability
@@ -1013,8 +1098,9 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
-        enum_context: Option<&EnumBindingContext<'_>>,
+        lookup: ExportLookup<'_>,
     ) -> ExportResolution {
+        let enum_context = lookup.enum_context();
         if let Some((original, source)) = self.entries.get(&(module.to_string(), name.to_string()))
         {
             if source == module {
@@ -1033,13 +1119,16 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 // An explicit `export { N } from './A'` asserts that A
                 // exports N; when A records no deeper fact for it, A's own
                 // binding is the named target.
-                ExportResolution::NotFound if enum_context.is_none() => {
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::Owner) => {
                     ExportResolution::Found(self.canonical_module(source), original.clone())
+                }
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::DeclaredDefault) => {
+                    ExportResolution::Unknown
                 }
                 resolved => resolved,
             };
@@ -1053,6 +1142,38 @@ impl ReExportIndex {
                 return self.enum_local_binding(module, name, hops, stack, context);
             }
             return ExportResolution::Found(module.to_string(), name.to_string());
+        }
+        // `module.exports = require('./source')`: the barrel's exports ARE the
+        // source's, the whole value (`default`) included (#15284).
+        if let Some(source) = self.commonjs_forwards.get(module) {
+            if hops >= MAX_REEXPORT_HOPS {
+                return ExportResolution::Unknown;
+            }
+            // The whole value of an ES source is its namespace object, never
+            // its default declaration.
+            if name == "default" && !self.source_exports_name(source, name) {
+                return ExportResolution::NotFound;
+            }
+            return match self.resolve_export_with_context(
+                source,
+                name,
+                hops + 1,
+                stack,
+                mocked,
+                lookup,
+            ) {
+                // The forward asserts the source's `module.exports` is this
+                // module's: an unrecorded name is the source's own binding
+                // only when the source exports it (the whole value, an ES
+                // declaration export, or a CommonJS `exports.NAME` write).
+                // A declaration the source never exports is `undefined`.
+                ExportResolution::NotFound
+                    if enum_context.is_none() && self.source_exports_name(source, name) =>
+                {
+                    ExportResolution::Found(self.canonical_module(source), name.to_string())
+                }
+                resolved => resolved,
+            };
         }
         // `export *` never forwards the default export.
         if name == "default" {
@@ -1073,7 +1194,7 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 ExportResolution::NotFound => {}
                 ExportResolution::Unknown => return ExportResolution::Unknown,
@@ -1117,6 +1238,11 @@ impl ReExportIndex {
             return false;
         };
         let owner_module = normalized_module_path(&owner.file);
+        // Default imports only gain a barrel relation across distinct modules.
+        // A direct import (including a directory index) keeps its own rules.
+        if imported_name == "default" && self.canonical_module(&import_module) == owner_module {
+            return false;
+        }
         // The import names the owner module directly. A plain same-name
         // import is owned by the direct/imported-call relations (with their
         // own identity guards); only an owner-file RENAME export
@@ -1134,18 +1260,91 @@ impl ReExportIndex {
         };
         let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
         let mut stack = Vec::new();
-        let ExportResolution::Found(target_module, target_name) =
-            self.resolve_export(&import_module, imported_name, 0, &mut stack, &mocked)
-        else {
+        // Default imports need an observed export at the end of the chain.
+        // An explicit forwarding clause can request a name its source never exports.
+        let lookup = if imported_name == "default" {
+            ExportLookup::DeclaredDefault
+        } else {
+            ExportLookup::Owner
+        };
+        let ExportResolution::Found(target_module, target_name) = self.resolve_export_with_context(
+            &import_module,
+            imported_name,
+            0,
+            &mut stack,
+            &mocked,
+            lookup,
+        ) else {
             return false;
         };
         // The chain must land on the owner's file and the owner's name.
         // `export { default as X } from './owner'` lands on `default`; it
         // resolves to THIS owner exactly when the owner is the owner module's
         // default export (#4103 under-credit).
-        target_module == owner_module
-            && (target_name == owner.name
-                || (target_name == "default" && owner.exported_as_default))
+        lands_on_owner(&target_module, &target_name, &owner_module, owner)
+    }
+
+    /// Whether a CommonJS `require(<barrel>)` namespace import (`const qs =
+    /// require('../lib')`) reaches `owner` through the barrel's CommonJS
+    /// re-exports (#15284): a call of the whole value (`qs(...)`, the
+    /// barrel's `module.exports = require('./owner')`) or of a member the
+    /// barrel forwards (`qs.parse(...)`). The shadow, mock and mutation
+    /// guards match the named-import arm.
+    fn require_namespace_reaches_owner(
+        &self,
+        test: &TypeScriptTest,
+        import: &TypeScriptImport,
+        owner: &TypeScriptOwner,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> bool {
+        if !import.namespace || import.imported.as_deref() != Some("default") {
+            return false;
+        }
+        let local = &import.local;
+        if local_identifier_declared_in_test_body(&test.body_text, local)
+            || enclosing_scope_shadows(test, local)
+            || test.written_locals_in_file.contains(local)
+            || namespace_member_replaced(&test.body_text, local)
+        {
+            return false;
+        }
+        let Some(import_module) = normalized_relative_import_module(
+            &test.file,
+            &import.source,
+            alias_map,
+            workspace_root,
+        ) else {
+            return false;
+        };
+        let owner_module = normalized_module_path(&owner.file);
+        if self.canonical_module(&import_module) == owner_module {
+            return false;
+        }
+        let Some(mocked_modules) = self.mocked_module_names(test, alias_map, workspace_root) else {
+            return false;
+        };
+        let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
+        let lands = |name: &str| {
+            matches!(
+                self.resolve_export(&import_module, name, 0, &mut Vec::new(), &mocked),
+                ExportResolution::Found(target_module, target_name)
+                    if lands_on_owner(&target_module, &target_name, &owner_module, owner)
+            )
+        };
+        if contains_call_name(&test.body_text, local) && lands("default") {
+            return true;
+        }
+        let canonical = self.canonical_module(&import_module);
+        self.entry_names(&canonical)
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(owner.name.as_str()))
+            .any(|member| {
+                member != "default"
+                    && contains_member_call_name(&test.body_text, local, member)
+                    && lands(member)
+            })
     }
 
     /// Canonical modules the test mocks; `None` when a mock specifier could
@@ -1420,6 +1619,7 @@ impl ReExportIndex {
                 && !import.namespace
                 && (import.imported.as_deref() == owner.class_name.as_deref()
                     || (owner.class_default_export
+                        && !owner.commonjs_default_export
                         && import.imported.as_deref() == Some("default")))
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
         })
@@ -1502,6 +1702,58 @@ impl ReExportIndex {
             .collect();
         changed.then_some(imports)
     }
+}
+
+/// Whether the test body replaces or spies on a member of the `require()`
+/// namespace `local` (`qs.parse = fake`, `jest.spyOn(qs, 'parse')`), so a
+/// later `qs.parse(...)` may not run the barrel's export. Text-level and
+/// fail-closed: any such spelling withholds the CommonJS barrel credit.
+fn namespace_member_replaced(body: &str, local: &str) -> bool {
+    let spy = format!("spyOn({local}");
+    if body.contains(&spy) {
+        return true;
+    }
+    let needle = format!("{local}.");
+    let is_ident = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let mut search = 0;
+    while let Some(found) = body[search..].find(&needle) {
+        let start = search + found;
+        search = start + needle.len();
+        if body[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| is_ident(c) || c == '.')
+        {
+            continue;
+        }
+        let rest = &body[search..];
+        let member_len = rest.find(|c: char| !is_ident(c)).unwrap_or(rest.len());
+        let after = rest[member_len..].trim_start();
+        let assigns =
+            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>");
+        let compound = ["+=", "-=", "||=", "&&=", "??="]
+            .iter()
+            .any(|operator| after.starts_with(operator));
+        if member_len > 0 && (assigns || compound) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether an export resolved to `(target_module, target_name)` is `owner`:
+/// the owner's own named export, or the default export when the owner is it.
+/// A CommonJS whole-function module exports the function as its value, not as
+/// a named member, so a named hop onto it does not name the owner.
+fn lands_on_owner(
+    target_module: &str,
+    target_name: &str,
+    owner_module: &str,
+    owner: &TypeScriptOwner,
+) -> bool {
+    target_module == owner_module
+        && ((target_name == owner.name && !owner.commonjs_whole_function)
+            || (target_name == "default" && owner.exported_as_default))
 }
 
 /// Whether `body_text` declares a class named `name` (`class Name`,
@@ -1618,6 +1870,19 @@ pub(crate) struct ModuleExportFacts {
     /// from the same module graph as the owners' same-module entries.
     #[serde(default)]
     pub(crate) outbound_calls: Vec<OutboundImportCall>,
+    /// `module.exports = require('./source')` forwards (#15284).
+    #[serde(default)]
+    pub(crate) commonjs_forwards: Vec<(String, String)>,
+    /// Names the module assigns exactly once onto its CommonJS exports
+    /// (#15284).
+    #[serde(default)]
+    pub(crate) commonjs_own_names: Vec<String>,
+    /// CommonJS named edges (`exports.n = require('./a').m`), the same shape
+    /// as `entries`. A CommonJS member read can be `undefined`, so the index
+    /// admits one only when the source is established to export the member
+    /// (#15284).
+    #[serde(default)]
+    pub(crate) commonjs_entries: Vec<((String, String), (String, String))>,
 }
 
 impl ModuleExportFacts {
@@ -1634,7 +1899,15 @@ impl ModuleExportFacts {
             pairs.iter().map(|(a, b)| a.len() + b.len()).sum::<usize>()
         };
         string_pair_bytes(&self.entries)
+            .saturating_add(string_pair_bytes(&self.commonjs_entries))
             .saturating_add(tuple_bytes(&self.star_edges))
+            .saturating_add(tuple_bytes(&self.commonjs_forwards))
+            .saturating_add(
+                self.commonjs_own_names
+                    .iter()
+                    .map(String::len)
+                    .sum::<usize>(),
+            )
             .saturating_add(
                 self.namespace_exports
                     .iter()
@@ -1862,6 +2135,19 @@ pub(crate) fn module_export_facts(
             _ => {}
         }
     }
+    // CommonJS barrels (#15284): `module.exports = { n: require('./a') }`,
+    // `exports.n = require('./a').n`, `module.exports = require('./a')`.
+    let commonjs =
+        super::commonjs_reexports::commonjs_reexports(relative, body, alias_map, workspace_root);
+    // Every CommonJS edge resolved its `require()` target on disk (a
+    // directory's `index`, a `package.json` `main`), so the facts are not
+    // persisted across runs, like an ES `export ... from`.
+    if !commonjs.entries.is_empty() || !commonjs.forwards.is_empty() {
+        facts.re_exports_from_source = true;
+    }
+    facts.commonjs_entries = commonjs.entries;
+    facts.commonjs_forwards = commonjs.forwards;
+    facts.commonjs_own_names = commonjs.own_names;
     facts
 }
 
@@ -2054,9 +2340,10 @@ pub(crate) fn related_test_candidates<'a>(
             .as_ref()
             .is_none_or(|scope| scope.contains(&test.file))
     };
-    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = relation_index
-        .candidates(owner, all_tests)
-        .into_iter()
+    let indexed = relation_index.candidates(owner, all_tests);
+    let mut candidates: Vec<TypeScriptRelatedCandidate<'a>> = indexed
+        .iter()
+        .copied()
         .filter_map(|test| {
             owner_call_relation(test, owner, reexport_index, alias_map, workspace_root)
                 .map(|relation| related_candidate(test, relation, owner, alias_map, workspace_root))
@@ -2122,11 +2409,74 @@ pub(crate) fn related_test_candidates<'a>(
             })
             .collect();
     }
+    if candidates.is_empty()
+        && let (Some(map), Some(scope)) = (alias_map, &package_scope)
+        && let Some(package) = &scope.owner_package
+        && let Some(source) = map.build_source_in(package)
+        && normalized_path_eq(&owner.file, source)
+    {
+        candidates = indexed
+            .into_iter()
+            .filter_map(|test| {
+                build_entry_call(test, owner, reexport_index, map, scope.workspace_root).map(
+                    |relation| related_candidate(test, relation, owner, alias_map, workspace_root),
+                )
+            })
+            .collect();
+    }
     if candidates.is_empty() && !heuristic_tried {
         candidates = heuristic_candidates();
     }
     sort_related_candidates(&mut candidates);
     candidates
+}
+
+/// Only the source relationship is known. Reuse the direct-call binding guards
+/// on a view of the import; never expose the redirect to the oracle, barrel or
+/// module-entry graph as an ordinary runtime module identity.
+fn build_entry_call(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    reexports: &ReExportIndex,
+    map: &TsAliasMap,
+    root: &Path,
+) -> Option<TypeScriptRelationKind> {
+    if !test.mocks_in_file.is_empty() {
+        return None;
+    }
+    for (index, import) in test.imports_in_file.iter().enumerate() {
+        if import.namespace || !is_relative_specifier(&import.source) {
+            continue;
+        }
+        let Some(base) = relative_import_base(&test.file, &import.source) else {
+            continue;
+        };
+        let module = normalized_path(&base);
+        let Some(source) = map
+            .own_build_entry(&test.file, &module)
+            .and_then(|entry| entry.source.as_deref())
+        else {
+            continue;
+        };
+        if !normalized_path_eq(&owner.file, source) || file_module_exists(root, &module) {
+            continue;
+        }
+        let mut imports = test.imports_in_file.to_vec();
+        imports[index].source = relative_module_specifier(&test.file, source);
+        let mut view = test.clone();
+        view.imports_in_file = imports.into();
+        if matches!(
+            owner_call_relation(&view, owner, reexports, Some(map), Some(root)),
+            Some(
+                TypeScriptRelationKind::DirectOwnerCall
+                    | TypeScriptRelationKind::ImportedOwnerCall
+                    | TypeScriptRelationKind::ImportAliasOwnerCall
+            )
+        ) {
+            return Some(TypeScriptRelationKind::PackageBuildSource);
+        }
+    }
+    None
 }
 
 pub(crate) fn sort_related_candidates(candidates: &mut [TypeScriptRelatedCandidate<'_>]) {
@@ -2211,7 +2561,23 @@ pub(crate) fn owner_call_relation(
     if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default) {
         return None;
     }
-    if contains_call_name(&test.body_text, &owner.name)
+    // #15939: the test file swaps the owner function on its
+    // module object (`sinon.stub(ns, 'owner')`, `ns.owner = fake`, a spy
+    // fabricated in a hook), so the calls below run the substitute.
+    if super::function_replacement::owner_function_replaced_in_file(test, owner) {
+        return None;
+    }
+    let observes_generic_call = || {
+        test.assertions.iter().any(|assertion| {
+            assertion
+                .observed_expression
+                .as_deref()
+                .is_some_and(|observed| {
+                    super::classifier::generic_owner_argument_list(observed, &owner.name).is_some()
+                })
+        })
+    };
+    if (contains_call_name(&test.body_text, &owner.name) || observes_generic_call())
         && !owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root)
         // Shadow guard (#4102): a test body that declares its own
         // `function <owner>(...)` / `const <owner> = ...` (or a destructured
@@ -2302,8 +2668,10 @@ pub(crate) fn owner_call_relation(
         let Some(imported_name) = import.imported.as_deref() else {
             return false;
         };
-        if imported_name == "default" {
-            return false; // default imports are out of scope for re-export tracing
+        if imported_name == "default"
+            && (!owner.exported_as_default || owner.commonjs_default_export)
+        {
+            return false;
         }
         // The local alias in the test is what gets called; check the call site.
         let local = &import.local;
@@ -2312,7 +2680,11 @@ pub(crate) fn owner_call_relation(
         }
         // Shadow guard (#4102): a test-body declaration of the local name
         // reaches the shadow, not the re-exported owner.
-        if local_identifier_declared_in_test_body(&test.body_text, local) {
+        if local_identifier_declared_in_test_body(&test.body_text, local)
+            || (imported_name == "default"
+                && (local_destructured_in_test_body(&test.body_text, local)
+                    || body_declares_class_named(&test.body_text, local)))
+        {
             return false;
         }
         // An enclosing `describe`/`beforeEach` binding of the local name
@@ -2324,6 +2696,18 @@ pub(crate) fn owner_call_relation(
             test,
             &import.source,
             imported_name,
+            owner,
+            alias_map,
+            workspace_root,
+        )
+    }) {
+        return Some(TypeScriptRelationKind::ReExportChainFollowed);
+    }
+    // CommonJS barrel reached through a `require()` namespace (#15284).
+    if test.imports_in_file.iter().any(|import| {
+        reexport_index.require_namespace_reaches_owner(
+            test,
+            import,
             owner,
             alias_map,
             workspace_root,
@@ -2738,10 +3122,20 @@ fn class_name_bound_to_other_import(
         if import.local != class_name {
             return false;
         }
-        let is_owner_import = !import.namespace
-            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
-            && ((!owner.class_default_export && import.imported.as_deref() == Some(class_name))
-                || (owner.class_default_export && import.imported.as_deref() == Some("default")));
+        // A CommonJS whole-export class is bound by the `require()` record
+        // alone (a default-named namespace binding); an ES class by a named
+        // or default import.
+        let is_owner_import =
+            import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+                && if owner.class_default_export && owner.commonjs_default_export {
+                    import.namespace && import.imported.as_deref() == Some("default")
+                } else {
+                    !import.namespace
+                        && ((!owner.class_default_export
+                            && import.imported.as_deref() == Some(class_name))
+                            || (owner.class_default_export
+                                && import.imported.as_deref() == Some("default")))
+                };
         !is_owner_import
     })
 }
@@ -2833,8 +3227,10 @@ pub(crate) fn receiver_owner_call_relation(
         // resolved through the test's own default import of the owner module
         // and only when the owner's class IS that module's default export
         // (`class_default_export`); a locally re-declared alias constructs
-        // the shadow, not the owner.
-        if owner.class_default_export {
+        // the shadow, not the owner. A CommonJS whole-export class is not an
+        // ES default: its `require()` binding is named by
+        // `constructor_names_for_method_owner` above.
+        if owner.class_default_export && !owner.commonjs_default_export {
             for import in &test.imports_in_file {
                 if !import.namespace
                     && import.imported.as_deref() == Some("default")
@@ -3698,14 +4094,35 @@ pub(crate) fn constructor_names_for_method_owner(
             continue;
         }
         if import.namespace {
+            if owner.class_default_export
+                && owner.commonjs_default_export
+                && import.imported.as_deref() == Some("default")
+            {
+                // `const Cart = require('./cart')` of a module whose whole
+                // export is the owner's class (`module.exports = Cart;`):
+                // the binding is the class, under any local name. A binding
+                // the file rewrites may hold something else.
+                if !test.written_locals_in_file.contains(&import.local) {
+                    push_unique_string(&mut names, import.local.clone());
+                    push_unique_string(&mut imported_class_locals, import.local.clone());
+                }
+                continue;
+            }
             // `import * as shop from './cart'` + `new shop.Cart()`. A
             // default-exported class is `shop.default`, never `shop.Cart`.
             if !owner.class_default_export {
                 push_unique_string(&mut names, format!("{}.{class_name}", import.local));
             }
         } else if (!owner.class_default_export && import.imported.as_deref() == Some(class_name))
-            || (owner.class_default_export && import.imported.as_deref() == Some("default"))
+            || (owner.class_default_export
+                && !owner.commonjs_default_export
+                && import.imported.as_deref() == Some("default"))
         {
+            // A CommonJS whole-export class (`module.exports = Cart;`) is
+            // not credited through a default-named binding: `const {
+            // default: Cart } = require(...)` reads a property the class
+            // does not have, and the record cannot be told apart from an ES
+            // `import Cart from` (the function rule 19 refuses both too).
             // A default-exported class is reachable only through the default
             // import: a named import spelled like the class names a
             // different export (`export { Other as Url }`), never this
@@ -3734,6 +4151,9 @@ pub(crate) fn constructor_names_for_method_owner(
             .iter()
             .any(|binding| binding.name == local && !(imported_class && binding.file_level))
             && !local_identifier_declared_in_test_body(&test.body_text, local)
+            // The lexical scan reads `const|let|var|function` declarators; a
+            // `class Cart {}` in the test body binds the name as well.
+            && !body_declares_class_named(&test.body_text, local)
     });
     names
 }
@@ -3941,11 +4361,24 @@ pub(crate) fn root_relative_mock_names_module(source: &str, module: &str) -> boo
 
 /// Fabrication method shapes that replace a spy's observed value (#4103
 /// shape 4).
-const SPY_FABRICATION_SHAPES: [&str; 4] = [
+const SPY_FABRICATION_SHAPES: [&str; 15] = [
     ".mockReturnValue(",
     ".mockImplementation(",
     ".mockResolvedValue(",
     ".mockRejectedValue(",
+    // A `*Once` fabrication still replaces the call a one-call test asserts.
+    ".mockReturnValueOnce(",
+    ".mockImplementationOnce(",
+    ".mockResolvedValueOnce(",
+    ".mockRejectedValueOnce(",
+    ".mockReturnThis(",
+    // Jasmine spy strategies.
+    ".and.returnValue(",
+    ".and.returnValues(",
+    ".and.callFake(",
+    ".and.throwError(",
+    ".and.resolveTo(",
+    ".and.rejectWith(",
 ];
 
 /// #4103 shape 4: `true` when the test body spies on the owner name
@@ -3989,7 +4422,7 @@ pub(crate) fn test_spies_owner_with_fabrication_for_owner(
 /// `call_start` (with `after_open` the body right after the call's open
 /// paren) fabricates its value: a fabrication shape chained directly after
 /// the call closes, or invoked on the variable the spy result is bound to.
-fn owner_spy_call_fabricated(body: &str, call_start: usize, after_open: &str) -> bool {
+pub(crate) fn owner_spy_call_fabricated(body: &str, call_start: usize, after_open: &str) -> bool {
     let Some(close_rel) = spy_call_close_offset(after_open) else {
         return false;
     };
@@ -4045,6 +4478,23 @@ fn spy_call_close_offset(after_open: &str) -> Option<usize> {
 /// optional `await` and the needle's `vi.` / `jest.` qualifier). A member
 /// tail (`obj.spy = ...`), a compound operator (`==`, `=>`), or any other
 /// prefix returns `None` (conservative: only clear bindings count).
+/// The name a `const` / `let` / `var` declaration with a type annotation
+/// binds, when `assigned` (the text before the `=`) ends with one on its
+/// last line: `spy` for `const spy: ReturnType<typeof vi.spyOn>`.
+fn annotated_declaration_name(assigned: &str) -> Option<String> {
+    let line = assigned.rsplit(['\n', ';']).next()?.trim_start();
+    let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+    let declarator = ["const ", "let ", "var "]
+        .into_iter()
+        .find_map(|keyword| line.strip_prefix(keyword))?;
+    let (name, annotation) = declarator.split_once(':')?;
+    let name = name.trim();
+    (!name.is_empty()
+        && !annotation.contains('=')
+        && name.chars().all(is_javascript_identifier_char))
+    .then(|| name.to_string())
+}
+
 fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
     let mut prefix = body[..call_start].trim_end();
     // The qualified needle forms leave the callee qualifier (`vi.` / `jest.`)
@@ -4056,12 +4506,17 @@ fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
             .take_while(|ch| is_javascript_identifier_char(*ch))
             .map(char::len_utf8)
             .sum::<usize>();
-        prefix = &stripped[..stripped.len() - qualifier_bytes];
+        prefix = stripped[..stripped.len() - qualifier_bytes].trim_end();
     }
     if let Some(stripped) = strip_trailing_await_keyword(prefix) {
         prefix = stripped;
     }
     let assigned = prefix.strip_suffix('=')?.trim_end();
+    // `const spy: ReturnType<typeof vi.spyOn> = ...`: the annotation ends in
+    // `>` and hides the name from the scan below.
+    if let Some(name) = annotated_declaration_name(assigned) {
+        return Some(name);
+    }
     // A compound operator ending in `=` (`==`, `===`, `!=`, `<=`, `>=`,
     // `=>`, `+=`, ...) never binds the call result.
     if assigned
@@ -4563,7 +5018,7 @@ pub(crate) fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
 /// before the import call. Requires the import call to be the declarator's
 /// whole initializer on its line (optionally wrapped in `await`); a trailing
 /// member access like `.default` fails the scan (fail-closed).
-fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
+pub(crate) fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
     let line_start = body[..at].rfind('\n').map_or(0, |offset| offset + 1);
     let trimmed = body[line_start..at].trim();
     // The import must actually be awaited: `const m = import(...)` binds a
@@ -4909,6 +5364,9 @@ pub(crate) fn owner_path_disposition(
     if let Some(view) = test.reach_view() {
         return owner_path_disposition(&view, relation, owner, alias_map, workspace_root);
     }
+    if relation == TypeScriptRelationKind::PackageBuildSource {
+        return TypeScriptOwnerPathDisposition::UnresolvedAliasOrReexport;
+    }
     if relation == TypeScriptRelationKind::ModuleEntryCall {
         return TypeScriptOwnerPathDisposition::ModuleEntryPath;
     }
@@ -4960,7 +5418,9 @@ fn ts_relation_to_domain(
         // rename is syntactically explicit and the call is to the local alias —
         // same certainty as DirectOwnerCall.
         TypeScriptRelationKind::ImportAliasOwnerCall => RelationReason::DirectOwnerCall,
-        TypeScriptRelationKind::ImportedOwnerCall => RelationReason::ImportPathAffinity,
+        TypeScriptRelationKind::ImportedOwnerCall | TypeScriptRelationKind::PackageBuildSource => {
+            RelationReason::ImportPathAffinity
+        }
         TypeScriptRelationKind::ModuleValueReference => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ReceiverOwnerCall => RelationReason::DirectOwnerCall,
         TypeScriptRelationKind::ClassMethodCall => RelationReason::DirectOwnerCall,
@@ -4989,7 +5449,8 @@ fn ts_relation_to_domain(
         TypeScriptRelationKind::ModuleValueUse
         | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
-        | TypeScriptRelationKind::TestName => RelationConfidence::Low,
+        | TypeScriptRelationKind::TestName
+        | TypeScriptRelationKind::PackageBuildSource => RelationConfidence::Low,
     };
     (Some(reason), Some(confidence))
 }
@@ -5020,6 +5481,12 @@ pub(crate) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
             && !line_prefix_looks_like_comment_or_string(body_text, idx)
             && !inside_block_comment(body_text, idx)
     })
+}
+
+/// Call or JSX render of a bare identifier from the test's own file.
+fn contains_call_or_jsx_name(test: &TypeScriptTest, name: &str) -> bool {
+    contains_call_name(&test.body_text, name)
+        || super::jsx_render::contains_jsx_element_name(&test.file, &test.body_text, name)
 }
 
 fn has_call_boundary(body_text: &str, idx: usize) -> bool {
@@ -5204,6 +5671,7 @@ pub(crate) fn commonjs_default_binding(import: &TypeScriptImport, owner: &TypeSc
     import.namespace
         && import.imported.as_deref() == Some("default")
         && owner.commonjs_default_export
+        && owner.class_name.is_none()
 }
 
 fn import_references_owner_call(
@@ -5252,7 +5720,7 @@ fn import_references_owner_call(
             || (imported == "default"
                 && owner.exported_as_default
                 && !owner.commonjs_whole_function)
-    }) && contains_call_name(body_text, &import.local)
+    }) && contains_call_or_jsx_name(test, &import.local)
         // Shadow guard (#4102): the same test-body declaration guard the
         // alias arm applies — a locally re-declared `local` reaches the
         // shadow, not the owner.
@@ -5501,9 +5969,18 @@ fn normalized_relative_import_module_uncached(
             && !escaped_root
             && !absolute
             && module == joined
-            && let Some(resolved) = resolve_directory_module(root, &module)
         {
-            return Some(resolved);
+            if alias_map
+                .and_then(|map| map.own_build_entry(test_file, &module))
+                .is_some()
+                && !file_module_exists(root, &module)
+            {
+                // A declared source is not the loaded build artifact.
+                return None;
+            }
+            if let Some(resolved) = resolve_directory_module(root, &module) {
+                return Some(resolved);
+            }
         }
         // A relative import of `tsc` build output whose target does not
         // exist maps back to its TypeScript source through the root
@@ -5906,7 +6383,7 @@ fn index_module(root: &Path, module: &str) -> Option<String> {
 
 /// Whether `<module>.<ext>` exists as a regular file for a supported
 /// extension.
-fn file_module_exists(root: &Path, module: &str) -> bool {
+pub(super) fn file_module_exists(root: &Path, module: &str) -> bool {
     !module.is_empty()
         && DIRECTORY_MODULE_EXTENSIONS
             .iter()
@@ -5921,7 +6398,7 @@ fn is_real_directory(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
 }
 
-fn normalized_module_path(path: &Path) -> String {
+pub(crate) fn normalized_module_path(path: &Path) -> String {
     strip_typescript_module_extension(&normalized_path(path))
 }
 

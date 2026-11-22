@@ -14,7 +14,7 @@ use super::capabilities::{
     workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
-use super::config::{LspAnalysisConfig, validated_pulled_options};
+use super::config::{LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
@@ -143,10 +143,10 @@ use tower_lsp_server::ls_types::{
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
     RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
-    ShowMessageParams, TextDocumentIdentifier, TraceValue, UnchangedDocumentDiagnosticReport,
-    Unregistration, Uri, WorkspaceDiagnosticParams, WorkspaceDiagnosticReport,
-    WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
-    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
+    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
+    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
+    WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -194,10 +194,12 @@ pub(super) struct Backend {
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
     pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
-    /// Recovery id of the pre-snapshot pull marker last served to the pull
-    /// client (#14447 review): an attempt transition that leaves the served
-    /// route unchanged sends no `workspace/diagnostic/refresh`.
-    pending_pull_marker_served_recovery: Mutex<Option<&'static str>>,
+    /// Payload identity of the pre-snapshot pull marker last served to the
+    /// pull client (#14447 review): an attempt transition that leaves the
+    /// served marker unchanged sends no `workspace/diagnostic/refresh`. It
+    /// folds the failure digest, so a different recorded failure re-pulls
+    /// (#15461 review).
+    pending_pull_marker_served_recovery: Mutex<Option<String>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
     analysis_health: Mutex<AnalysisHealth>,
@@ -210,6 +212,11 @@ pub(super) struct Backend {
     diagnostic_refresh_support: Mutex<bool>,
     /// Negotiated `workspace.codeLens.refreshSupport` (#2032, RIPR-SPEC-0138).
     code_lens_refresh_support: Mutex<bool>,
+    /// Set at the start of `initialized`. tower-lsp-server refuses
+    /// server->client requests while `initialize` is handled (-32002), so a
+    /// lens refresh attempted then only fails; the client requests lenses
+    /// itself once the session starts (RIPR-SPEC-0138).
+    code_lens_refresh_armed: AtomicBool,
     /// The lens-view identity covered by the last `workspace/codeLens/refresh`
     /// request. Compared per committed snapshot; a request is sent only when
     /// the visible lens view changed. `None` until the first commit.
@@ -246,6 +253,12 @@ pub(super) struct Backend {
     /// clears it so a later recurrence shows again. Mirrors
     /// `last_component_degradation`.
     last_analysis_failure_shown: Mutex<Option<String>>,
+    /// The unresolvable-base failure that withdraws the retained snapshot
+    /// (#15312). Set when an attempt ends with `base_unresolvable`; cleared
+    /// when an attempt publishes, ends with another failure kind, or the
+    /// input context resets. An attempt in flight leaves it latched, so pull
+    /// and push agree while a retry runs.
+    base_withdrawal: Mutex<Option<AnalysisFailure>>,
     /// Languages whose "adapter not enabled" notice a generic client has
     /// already been shown (#8585). A language is shown once while it stays
     /// unavailable; leaving the set (adapter enabled, or its files no longer
@@ -382,6 +395,7 @@ impl Backend {
             trace: Mutex::new(TraceValue::Off),
             diagnostic_refresh_support: Mutex::new(false),
             code_lens_refresh_support: Mutex::new(false),
+            code_lens_refresh_armed: AtomicBool::new(false),
             last_lens_view_identity: Mutex::new(None),
             dynamic_file_watch_registration: Mutex::new(false),
             watched_files_relative_pattern_support: AtomicBool::new(false),
@@ -390,6 +404,7 @@ impl Backend {
             last_scope_outcome: Mutex::new(None),
             pull_delivery_disclosure_logged_for: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
+            base_withdrawal: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: Arc::new(RefreshScheduler::default()),
@@ -1643,24 +1658,22 @@ impl Backend {
             return;
         }
         let _transition = self.workspace_root_transition.lock().await;
-        let failure = self.configuration_failure();
+        let withdrawal = self.retained_evidence_withdrawal();
         let has_snapshot = self.latest_pull_snapshot().is_some();
-        if failure.is_none() && has_snapshot {
+        if withdrawal.is_none() && has_snapshot {
             return;
         }
-        let recovery = match self.analysis_pending_recovery() {
-            AnalysisPendingRecovery::SaveOrRefresh if analysis_starting => {
-                AnalysisPendingRecovery::AnalysisRunning
-            }
-            recovery => recovery,
-        };
+        let recovery = Self::push_marker_recovery(
+            withdrawal.unwrap_or_else(|| self.analysis_pending_recovery()),
+            analysis_starting,
+        );
         let withdrawn = has_snapshot;
+        let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let items = if withdrawn {
             analysis_pending_withdrawal_diagnostics(recovery)
         } else {
             analysis_pending_diagnostics(recovery)
         };
-        let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let uris = self
             .quarantine
             .documents
@@ -1699,18 +1712,21 @@ impl Backend {
     /// snapshot owns both surfaces, so nothing is sent once one exists
     /// without a latched failure.
     async fn refresh_pending_marker_surfaces(&self) {
-        if self.latest_pull_snapshot().is_some() && self.configuration_failure().is_none() {
+        let withdrawal = self.retained_evidence_withdrawal();
+        if self.latest_pull_snapshot().is_some() && withdrawal.is_none() {
             return;
         }
         self.publish_analysis_pending_push_markers(false).await;
         if !(self.pull_diagnostics_enabled() && self.diagnostic_refresh_support_enabled()) {
             return;
         }
-        let recovery_id = self.analysis_pending_recovery().recovery_id();
+        let identity = withdrawal
+            .unwrap_or_else(|| self.analysis_pending_recovery())
+            .payload_identity();
         let route_unchanged = self
             .pending_pull_marker_served_recovery
             .lock()
-            .is_ok_and(|served| *served == Some(recovery_id));
+            .is_ok_and(|served| served.as_deref() == Some(identity.as_str()));
         if route_unchanged {
             return;
         }
@@ -1730,7 +1746,7 @@ impl Backend {
     /// Record the pre-snapshot pull marker route just served (#14447 review).
     fn note_pending_pull_marker_served(&self, recovery: &AnalysisPendingRecovery) {
         if let Ok(mut served) = self.pending_pull_marker_served_recovery.lock() {
-            *served = Some(recovery.recovery_id());
+            *served = Some(recovery.payload_identity());
         }
     }
 
@@ -1750,6 +1766,25 @@ impl Backend {
             .unwrap_or_default()
     }
 
+    /// The route a push marker serves when the caller knows an attempt is
+    /// starting: the cold-start route and a recorded failure's route both
+    /// give way to "running" (#14447; #15461 review), so a save that retries
+    /// a failed attempt never re-sends "fix that cause". Blocked routes win.
+    pub(super) fn push_marker_recovery(
+        recovery: AnalysisPendingRecovery,
+        analysis_starting: bool,
+    ) -> AnalysisPendingRecovery {
+        match recovery {
+            AnalysisPendingRecovery::SaveOrRefresh
+            | AnalysisPendingRecovery::AnalysisFailed { .. }
+                if analysis_starting =>
+            {
+                AnalysisPendingRecovery::AnalysisRunning
+            }
+            recovery => recovery,
+        }
+    }
+
     /// Signature of the marker payload a pending URI currently carries
     /// (#8732 review): session restore and repeated blocked-state refreshes
     /// can call the publisher back-to-back for the same URI, and republishing
@@ -1761,7 +1796,7 @@ impl Backend {
         recovery: &AnalysisPendingRecovery,
         withdrawn: bool,
     ) -> String {
-        format!("{}:{withdrawn}", recovery.recovery_id())
+        format!("{}:{withdrawn}", recovery.payload_identity())
     }
 
     #[cfg(test)]
@@ -1829,8 +1864,8 @@ impl Backend {
 
     /// Re-anchor the diagnostics-input watchers (#4896) at the current
     /// effective root: a registration left on a previous root would miss
-    /// the new root's ledger and branch changes. Callers must not hold the
-    /// root transition guard.
+    /// the new root's ledger, branch, and Python presence changes. Callers
+    /// must not hold the root transition guard.
     async fn sync_diagnostics_input_watch(&self) {
         let supports_dynamic_registration = self
             .dynamic_file_watch_registration
@@ -1879,7 +1914,7 @@ impl Backend {
                     .log_message(
                         MessageType::INFO,
                         format!(
-                            "ripr does not watch the gap ledger or .git/HEAD: {reason}; refresh manually after those change"
+                            "ripr does not watch root diagnostics or Python presence: {reason}; refresh manually after those change"
                         ),
                     )
                     .await;
@@ -1913,7 +1948,7 @@ impl Backend {
                 self.client
                     .log_message(
                         MessageType::WARNING,
-                        format!("ripr diagnostics input watching unavailable: {error}"),
+                        format!("ripr root input watching unavailable: {error}"),
                     )
                     .await;
             }
@@ -2081,8 +2116,13 @@ impl Backend {
     }
 
     /// Bare `workspace/codeLens/refresh` send with log-only failure, shared
-    /// by the view-changed and view-cleared paths.
+    /// by the view-changed and view-cleared paths. Nothing is sent before
+    /// `initialized`: the client would reject the request, and it requests
+    /// the current lenses itself once the session starts.
     async fn send_code_lens_refresh(&self) {
+        if !self.code_lens_refresh_armed.load(Ordering::SeqCst) {
+            return;
+        }
         if let Err(error) = self
             .bounded_client_request(self.client.code_lens_refresh())
             .await
@@ -2276,6 +2316,24 @@ impl Backend {
     }
 
     #[cfg(test)]
+    pub(super) fn set_analysis_attempt_failure_for_test(
+        &self,
+        kind: AnalysisFailureKind,
+        message: &str,
+    ) {
+        if let Ok(mut health) = self.analysis_health.lock() {
+            health.attempt_id = Some(2);
+            health.state = AnalysisAttemptState::Failed;
+            let failure = AnalysisFailure {
+                kind,
+                message: bounded_failure_message(message),
+            };
+            self.latch_base_withdrawal(&failure);
+            health.failure = Some(failure);
+        }
+    }
+
+    #[cfg(test)]
     pub(super) fn mark_attempt_running_for_test(&self, request: &RefreshRequest) {
         self.mark_attempt_running(request);
     }
@@ -2457,10 +2515,27 @@ impl Backend {
         health.state = AnalysisAttemptState::Failed;
         health.reason = Some(request.reason.as_str().to_string());
         health.requested_scope = Some(request.scope.as_str().to_string());
-        health.failure = Some(AnalysisFailure {
+        let failure = AnalysisFailure {
             kind,
             message: bounded_failure_message(message),
-        });
+        };
+        self.latch_base_withdrawal(&failure);
+        health.failure = Some(failure);
+    }
+
+    /// Latch or release the #15312 withdrawal for an attempt that ended in
+    /// `failure`: only an unresolvable base withdraws the retained snapshot.
+    fn latch_base_withdrawal(&self, failure: &AnalysisFailure) {
+        if let Ok(mut latched) = self.base_withdrawal.lock() {
+            *latched =
+                (failure.kind == AnalysisFailureKind::BaseUnresolvable).then(|| failure.clone());
+        }
+    }
+
+    fn release_base_withdrawal(&self) {
+        if let Ok(mut latched) = self.base_withdrawal.lock() {
+            *latched = None;
+        }
     }
 
     fn mark_attempt_cancelled(&self, request: &RefreshRequest) {
@@ -2496,6 +2571,7 @@ impl Backend {
                     .fetch_max(request.workspace_revision, Ordering::AcqRel);
                 health.state = AnalysisAttemptState::Succeeded;
                 health.failure = None;
+                self.release_base_withdrawal();
                 let snapshot_id = snapshot_id_for_generation(request.generation);
                 health.snapshot_id = Some(snapshot_id.clone());
                 health.last_success_snapshot_id = Some(snapshot_id);
@@ -3309,6 +3385,7 @@ impl Backend {
         if let Ok(mut last) = self.last_analysis_failure_shown.lock() {
             *last = None;
         }
+        self.release_base_withdrawal();
         if let Ok(mut health) = self.analysis_health.lock() {
             health.state = AnalysisAttemptState::Stopped;
             health.attempt_id = None;
@@ -3397,6 +3474,29 @@ impl Backend {
             .and_then(|guard| guard.as_ref().cloned())
     }
 
+    /// The route under which the retained snapshot is withdrawn from service,
+    /// or `None` while it may be served. A latched configuration failure
+    /// withdraws it (#8731). So does a latest attempt that failed because the
+    /// requested base does not resolve (#15312): the retained findings answer
+    /// a base the session no longer asks about, and serving them unmarked
+    /// reads as the current answer. Other failures keep the retained
+    /// snapshot, which still answers the same question for an older save.
+    /// The latch holds while a retry is queued or running, so the retained
+    /// findings do not reappear between two failures.
+    fn retained_evidence_withdrawal(&self) -> Option<AnalysisPendingRecovery> {
+        if self.configuration_failure().is_some() {
+            return Some(AnalysisPendingRecovery::FixConfiguration);
+        }
+        self.base_withdrawal
+            .lock()
+            .ok()
+            .and_then(|latched| latched.clone())
+            .map(|failure| AnalysisPendingRecovery::AnalysisFailed {
+                kind: failure.kind,
+                detail: failure.message,
+            })
+    }
+
     /// The recovery route the pre-analysis pull marker may promise (#7774):
     /// mirrors the `refresh_diagnostics` preconditions so a blocked state
     /// never advertises a route that returns before analysis.
@@ -3409,8 +3509,30 @@ impl Backend {
             AnalysisPendingRecovery::SaveOrRefresh if self.analysis_attempt_active() => {
                 AnalysisPendingRecovery::AnalysisRunning
             }
+            // A failed attempt with no snapshot: a bare retry fails the same
+            // way, so name the recorded failure rather than the start route.
+            AnalysisPendingRecovery::SaveOrRefresh => self.latest_attempt_failure().map_or(
+                AnalysisPendingRecovery::SaveOrRefresh,
+                |failure| AnalysisPendingRecovery::AnalysisFailed {
+                    kind: failure.kind,
+                    detail: failure.message,
+                },
+            ),
             recovery => recovery,
         }
+    }
+
+    /// The bounded failure the latest attempt recorded, only while that
+    /// attempt's state is `failed` (a later success, cancel or new attempt
+    /// clears the claim).
+    fn latest_attempt_failure(&self) -> Option<AnalysisFailure> {
+        self.analysis_health.lock().ok().and_then(|health| {
+            if health.state == AnalysisAttemptState::Failed {
+                health.failure.clone()
+            } else {
+                None
+            }
+        })
     }
 
     /// Whether an analysis attempt is queued or running right now.
@@ -3681,7 +3803,7 @@ impl Backend {
             return;
         }
         match result {
-            Ok(values) => match validated_pulled_options(&values) {
+            Ok(values) => match pulled_options_or_rejections(&values) {
                 Ok(pulled) => {
                     self.apply_pulled_configuration(pulled).await;
                     // The retained layer is scoped to the root it was pulled
@@ -3689,12 +3811,30 @@ impl Backend {
                     // whether a re-pull is needed.
                     self.config_pull.set_scope_root(root);
                 }
-                Err(message) => {
+                Err(rejections) => {
                     self.set_config_pull_state(ConfigPullState::Failed(AnalysisFailure {
                         kind: AnalysisFailureKind::ConfigPullInvalid,
-                        message: bounded_failure_message(&message),
+                        message: bounded_failure_message(&pulled_rejection_summary(&rejections)),
                     }));
                     self.publish_analysis_status().await;
+                    // #15312: the typed state lives only in
+                    // `ripr/analysisStatus`, which generic editors do not
+                    // render, so a rejected setting looked accepted. Say
+                    // which settings were rejected, what is accepted, and
+                    // that the last-known-good settings stay in effect. Each
+                    // rejection is bounded on its own (at most one per
+                    // governed key), so a long value cannot hide the keys
+                    // after it.
+                    let listed = rejections
+                        .iter()
+                        .map(|rejection| bounded_failure_message(&rejection.detail))
+                        .collect::<Vec<_>>()
+                        .join(" | ");
+                    let warning = format!(
+                        "ripr ignored the editor's ripr settings: {listed}. The previous settings stay in effect."
+                    );
+                    self.disclose_configuration_reload_failure(warning.clone(), warning)
+                        .await;
                 }
             },
             Err(error) => {
@@ -4040,6 +4180,9 @@ impl Backend {
                 DocumentStalenessReason::NoAnalyzedSavedContent => {
                     unanalyzed_file_hover_route(self.unanalyzed_file_cause(uri))
                 }
+                DocumentStalenessReason::SavedContentNotYetAnalyzed => {
+                    "Saving again cannot change this; the evidence returns when ripr analyzes the saved file. Run `ripr.refresh` if it does not."
+                }
             };
             return markdown_hover(format!(
                 "**ripr** evidence for this file is paused: {}. {route}",
@@ -4240,7 +4383,7 @@ impl Backend {
         // Serialize with refresh commits and root transitions, then read the
         // snapshot, so a concurrent clear cannot be followed by a stale marker.
         let _transition = self.workspace_root_transition.lock().await;
-        if self.configuration_failure().is_some() {
+        if self.retained_evidence_withdrawal().is_some() {
             return;
         }
         let marker_snapshot = self
@@ -4340,6 +4483,85 @@ impl Backend {
         }
     }
 
+    /// Register one save of `uri` (a client `didSave`, or the save implied
+    /// by an external rewrite the client reloaded). `prior_change` is the
+    /// quarantine edge of a buffer change registered in the same lifecycle
+    /// step and not yet published, with the version captured for its
+    /// decision; it is folded into the save's edge so that step publishes
+    /// once (#15316). If the save cannot be registered, the change edge is
+    /// still published on its own so a withdrawal is never lost.
+    async fn register_save(
+        &self,
+        uri: Uri,
+        save_text: Option<String>,
+        prior_change: Option<(QuarantineTransition, Option<i32>)>,
+    ) {
+        // Deduplicate by saved-content input identity (#1908): a save whose
+        // bytes did not change since the last recorded save cannot change
+        // analysis input, so it neither advances the workspace revision nor
+        // schedules a refresh. The save event is still disclosed.
+        // With includeText: false the save identity would come from the
+        // retained buffer — but only while that buffer is still a
+        // synchronization authority. After a rejected incremental change
+        // (#1746) the client's persisted document may diverge from the frozen
+        // buffer, so the save carries no observable identity: adopt none
+        // rather than invent one from text the server cannot trust.
+        let text = if self.document_buffer_authority_unknown(&uri) {
+            save_text.clone()
+        } else {
+            save_text.clone().or_else(|| self.document_text(&uri))
+        };
+        let digest = text.as_deref().map(|text| content_digest(text.as_bytes()));
+        // Update the per-document saved-content identity and quarantine
+        // state first (#1970): the dedup decision below gates the refresh,
+        // never the quarantine lift. A save whose buffer again matches the
+        // analyzed saved content re-serves the document even when no
+        // refresh is scheduled. A failed store lock means the save was never
+        // registered; skip every downstream mutation so the store, the
+        // dedup ledger, and the committed snapshot cannot diverge.
+        let Some((transition, decision_version)) = self.save_document(&uri, digest.clone(), text)
+        else {
+            if let Some((change, change_version)) = prior_change {
+                self.handle_document_quarantine_transition(&uri, change, change_version)
+                    .await;
+            }
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    "ripr didSave dropped: the document store is unavailable; the save was not registered and no refresh was scheduled",
+                )
+                .await;
+            return;
+        };
+        let transition = prior_change.map_or(transition, |(change, _)| change.then(transition));
+        if let Some(digest) = &digest
+            && self.saved_content_digest_matches(&uri, digest)
+        {
+            self.handle_document_quarantine_transition(&uri, transition, decision_version)
+                .await;
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    "ripr didSave deduplicated: saved content is unchanged since the last recorded save; no refresh scheduled",
+                )
+                .await;
+            return;
+        }
+        // Only the saved document's own resolution can change; a deduplicated
+        // save returned above and leaves every cached key warm.
+        self.invalidate_rust_index_key(&uri);
+        match digest {
+            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
+            None => self.advance_workspace_revision(),
+        }
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
+            .await;
+        // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
+        // Diff-scoped findings are complete; seams run on explicit refresh only.
+        self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
+            .await;
+    }
+
     /// Withdraw a dirty document's line-local diagnostics (#1970/#7771):
     /// publish one Information marker naming the quarantine reason and
     /// restore route (push delivery) and disclose the withdrawal once per
@@ -4390,20 +4612,15 @@ impl Backend {
         // untouched: the client's view is the marker, not these findings.
         if !self.pull_diagnostics_enabled() {
             let transition = self.workspace_root_transition.lock().await;
-            if self.configuration_failure().is_some() {
-                let items = analysis_pending_withdrawal_diagnostics(
-                    AnalysisPendingRecovery::FixConfiguration,
-                );
+            if let Some(recovery) = self.retained_evidence_withdrawal() {
+                let signature = Self::pending_push_marker_signature(&recovery, true);
+                let items = analysis_pending_withdrawal_diagnostics(recovery);
                 let version = self.negotiated_version(decision_version);
-                let signature = Self::pending_push_marker_signature(
-                    &AnalysisPendingRecovery::FixConfiguration,
-                    true,
-                );
+                // Always republish: the quarantine entry replaced the
+                // client's withdrawal marker with a dirty-buffer marker
+                // without touching the tracked signature, so an equal
+                // signature does not mean the client still shows it.
                 if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
-                    if pending.get(uri) == Some(&signature) {
-                        drop(transition);
-                        return;
-                    }
                     pending.insert(uri.clone(), signature);
                 }
                 self.client
@@ -4851,7 +5068,7 @@ fn path_is_detectable_source_dir_typescript(root: &Path, path: &Path) -> bool {
 }
 
 /// Whether `path` resolves below the workspace root to a detectable Python
-/// source file directly under a root source-directory marker (`src` or
+/// source file at the root or under a root source-directory marker (`src` or
 /// `tests`), classified with the canonical detector vocabulary —
 /// source-directory marker, excluded directories, generated file names,
 /// `.py` extension. Presence-only: the file is never read, so deleted files
@@ -4860,6 +5077,9 @@ fn path_is_detectable_source_dir_python(root: &Path, path: &Path) -> bool {
     let Some(relative) = root_relative_components(root, path) else {
         return false;
     };
+    if relative.len() == 1 {
+        return is_detectable_python_source_name(&relative[0]);
+    }
     let Some((marker, below)) = relative.split_first() else {
         return false;
     };
@@ -4945,9 +5165,9 @@ fn root_relative_components_on(
 /// Return whether a watched path can change the effective analysis input.
 /// Cargo inputs remain recursive for workspace members. The diagnostics
 /// inputs (root gap ledger, root `.git/HEAD`) and the Python inputs
-/// are root-scoped — root marker presence and detectable `.py` source below
-/// root `src`/`tests` are what this reload path tracks; Python outside those
-/// roots is not a detection input and stays unwatched.
+/// are root-scoped — root marker presence and detectable `.py` source at the
+/// root or below root `src`/`tests` drive configuration reloads. Python in
+/// arbitrary child trees is not a detection input and stays unwatched.
 pub(super) fn workspace_input_path_is_relevant(root: &Path, path: &Path) -> bool {
     workspace_input_kind(root, path).is_some()
 }
@@ -5007,8 +5227,9 @@ fn javascript_led_source_globs() -> Vec<LSPAny> {
 }
 
 /// Watchers for the diagnostics inputs of `root` (#4896): exactly the root
-/// ledger and root `.git/HEAD`, never nested copies. Clients such as VS Code
-/// match a string glob against the absolute path, so a bare relative string
+/// ledger, root `.git/HEAD`, and direct root Python source, never nested
+/// copies. Clients such as VS Code match string globs against absolute paths,
+/// so a bare relative string
 /// never fires; the patterns are a `RelativePattern` anchored at the root
 /// when the client supports it, otherwise absolute string globs. Returns
 /// `Err` when no reliable pattern exists; `workspace_input_kind` stays the
@@ -5017,13 +5238,16 @@ fn diagnostics_input_watchers(
     root: &Path,
     relative_pattern_support: bool,
 ) -> Result<Vec<LSPAny>, String> {
+    // Python presence shares the existing root-transition registration, not
+    // the unanchored source-directory patterns. Its events still classify as
+    // PythonSourcePresence and reload config through the canonical detector.
+    let patterns = DIAGNOSTICS_INPUT_PATHS.iter().copied().chain(["*.py"]);
     if relative_pattern_support {
         let base = file_uri_for_path(root)?;
-        return Ok(DIAGNOSTICS_INPUT_PATHS
-            .iter()
+        return Ok(patterns
             .map(|relative| {
                 serde_json::json!({
-                    "globPattern": {"baseUri": base.as_str(), "pattern": *relative}
+                    "globPattern": {"baseUri": base.as_str(), "pattern": relative}
                 })
             })
             .collect());
@@ -5039,11 +5263,13 @@ fn diagnostics_input_watchers(
         ));
     }
     let absolute = absolute.trim_end_matches('/');
-    Ok(DIAGNOSTICS_INPUT_PATHS
-        .iter()
+    Ok(patterns
         .map(|relative| serde_json::json!({"globPattern": format!("{absolute}/{relative}")}))
         .collect())
 }
+
+#[cfg(test)]
+mod flat_python_watch_tests;
 
 #[cfg(test)]
 mod workspace_input_tests {
@@ -5330,9 +5556,15 @@ mod workspace_input_tests {
             );
         }
 
-        // Python that detection never reads: root level and non-source
-        // directories are irrelevant to no-config detection.
-        assert_eq!(workspace_input_kind(&root, &root.join("app.py")), None);
+        // Flat source is a configuration input; arbitrary child trees are not.
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("app.py")),
+            Some(WorkspaceInputKind::PythonSourcePresence)
+        );
+        assert_eq!(
+            workspace_input_kind(&root, &root.join("generated_app.py")),
+            None
+        );
         assert_eq!(
             workspace_input_kind(&root, &root.join("scripts").join("app.py")),
             None
@@ -5406,14 +5638,18 @@ mod workspace_input_tests {
             )
             .collect::<BTreeSet<_>>();
 
-        // The diagnostics inputs follow root transitions, so they are never
-        // part of this once-per-session registration.
+        // Diagnostics and flat Python presence follow root transitions, so they
+        // register separately from this once-per-session set.
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn dynamic_watchers_anchor_diagnostics_inputs_at_the_root() -> Result<(), String> {
-        let expected = ["target/ripr/reports/gap-decision-ledger.json", ".git/HEAD"];
+        let expected = [
+            "target/ripr/reports/gap-decision-ledger.json",
+            ".git/HEAD",
+            "*.py",
+        ];
         let root = std::env::temp_dir().join("ripr-workspace-input-root");
         let globs = |relative_pattern_support| {
             diagnostics_input_watchers(&root, relative_pattern_support).map(|watchers| {
@@ -5443,7 +5679,7 @@ mod workspace_input_tests {
         let plain = globs(false)?;
         assert_eq!(plain, expected_absolute);
         for glob in plain.iter().filter_map(|glob| glob.as_str()) {
-            assert!(!glob.contains('*'), "{glob} must not be workspace-wide");
+            assert!(!glob.contains("**"), "{glob} must not be workspace-wide");
         }
         Ok(())
     }
@@ -5460,7 +5696,7 @@ mod workspace_input_tests {
                 ));
             }
             // A RelativePattern base is a URI, not a glob, so it still works.
-            if diagnostics_input_watchers(&root, true)?.len() != DIAGNOSTICS_INPUT_PATHS.len() {
+            if diagnostics_input_watchers(&root, true)?.len() != DIAGNOSTICS_INPUT_PATHS.len() + 1 {
                 return Err(format!(
                     "{} must still anchor a RelativePattern",
                     root.display()
@@ -5941,7 +6177,11 @@ pub(super) fn refresh_failed_log_message(message: &str, duration: Duration) -> S
 /// The fact content and the recovery route are shared across surfaces; the
 /// LSP names its own configuration surface rather than MCP's `ripr_refresh`
 /// arguments.
-pub(super) const EMPTY_SCOPE_LSP_RETRY_ROUTE: &str = "Set the analysis base to the revision your change branches from (the `baseRef` session option or `[lsp] base_ref` in `ripr.toml`) and run ripr.refresh to re-analyze.";
+///
+/// The base is a session setting only: `ripr.toml` has no base key (its
+/// `[lsp]` table rejects `base_ref`, and a rejected `ripr.toml` pauses all
+/// analysis), so the route must not name one.
+pub(super) const EMPTY_SCOPE_LSP_RETRY_ROUTE: &str = "Set the analysis base to the revision your change branches from (the `baseRef` initialization option; in VS Code, the `ripr.baseRef` setting) and run ripr.refresh to re-analyze.";
 
 /// #12416: the not-all-clear scope sentence for an empty-scope snapshot,
 /// `Some` exactly under the MCP `empty_scope_hint` gate: an empty-scope
@@ -6695,6 +6935,7 @@ impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
         self.trace_inbound("notification", "initialized", None)
             .await;
+        self.code_lens_refresh_armed.store(true, Ordering::SeqCst);
         let supports_dynamic_registration = self
             .dynamic_file_watch_registration
             .lock()
@@ -7271,21 +7512,22 @@ impl LanguageServer for Backend {
                 .await;
             return;
         };
-        self.handle_document_quarantine_transition(&uri, transition, decision_version)
-            .await;
         // An external rewrite (formatter, `git checkout`, a coding agent) that
         // the client reloads into an open buffer arrives as a change with no
         // `didSave`, so the evidence would stay paused behind advice to save
         // a file that is not dirty. When the new buffer is exactly the file
         // on disk it is saved content: record it as a save so the normal
-        // digest dedup and refresh path analyze it.
+        // digest dedup and refresh path analyze it. The change edge is
+        // handed to the save so the client receives one marker for this
+        // version, naming the saved-content state (#15316), instead of a
+        // "buffer diverges" marker followed by a same-version re-clear.
         if self.buffer_equals_unanalyzed_disk_content(&uri) {
-            self.did_save(DidSaveTextDocumentParams {
-                text_document: TextDocumentIdentifier { uri },
-                text: None,
-            })
-            .await;
+            self.register_save(uri, None, Some((transition, decision_version)))
+                .await;
+            return;
         }
+        self.handle_document_quarantine_transition(&uri, transition, decision_version)
+            .await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -7351,65 +7593,7 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        // Deduplicate by saved-content input identity (#1908): a save whose
-        // bytes did not change since the last recorded save cannot change
-        // analysis input, so it neither advances the workspace revision nor
-        // schedules a refresh. The save event is still disclosed.
-        let uri = params.text_document.uri;
-        // With includeText: false the save identity would come from the
-        // retained buffer — but only while that buffer is still a
-        // synchronization authority. After a rejected incremental change
-        // (#1746) the client's persisted document may diverge from the frozen
-        // buffer, so the save carries no observable identity: adopt none
-        // rather than invent one from text the server cannot trust.
-        let text = if self.document_buffer_authority_unknown(&uri) {
-            params.text.clone()
-        } else {
-            params.text.clone().or_else(|| self.document_text(&uri))
-        };
-        let digest = text.as_deref().map(|text| content_digest(text.as_bytes()));
-        // Update the per-document saved-content identity and quarantine
-        // state first (#1970): the dedup decision below gates the refresh,
-        // never the quarantine lift. A save whose buffer again matches the
-        // analyzed saved content re-serves the document even when no
-        // refresh is scheduled. A failed store lock means the save was never
-        // registered; skip every downstream mutation so the store, the
-        // dedup ledger, and the committed snapshot cannot diverge.
-        let Some((transition, decision_version)) = self.save_document(&uri, digest.clone(), text)
-        else {
-            self.client
-                .log_message(
-                    MessageType::ERROR,
-                    "ripr didSave dropped: the document store is unavailable; the save was not registered and no refresh was scheduled",
-                )
-                .await;
-            return;
-        };
-        if let Some(digest) = &digest
-            && self.saved_content_digest_matches(&uri, digest)
-        {
-            self.handle_document_quarantine_transition(&uri, transition, decision_version)
-                .await;
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    "ripr didSave deduplicated: saved content is unchanged since the last recorded save; no refresh scheduled",
-                )
-                .await;
-            return;
-        }
-        // Only the saved document's own resolution can change; a deduplicated
-        // save returned above and leaves every cached key warm.
-        self.invalidate_rust_index_key(&uri);
-        match digest {
-            Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
-            None => self.advance_workspace_revision(),
-        }
-        self.handle_document_quarantine_transition(&uri, transition, decision_version)
-            .await;
-        // Interactive path: defer the seam inventory (RIPR-SPEC-0105).
-        // Diff-scoped findings are complete; seams run on explicit refresh only.
-        self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::DidSave)
+        self.register_save(params.text_document.uri, params.text, None)
             .await;
     }
 
@@ -7724,8 +7908,7 @@ impl Backend {
         // recovery route instead — the same stable pending identity the
         // pre-analysis state uses, so the client re-renders instead of
         // holding the stale payload.
-        if self.configuration_failure().is_some() {
-            let recovery = AnalysisPendingRecovery::FixConfiguration;
+        if let Some(recovery) = self.retained_evidence_withdrawal() {
             self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_document_report_withdrawn(
                 params.previous_result_id,
@@ -7838,8 +8021,7 @@ impl Backend {
         // withdraws the retained evidence from service (#8731), same as the
         // document pull path: serve the typed withdrawal marker per tracked
         // URI under the FixConfiguration recovery route.
-        if self.configuration_failure().is_some() {
-            let recovery = AnalysisPendingRecovery::FixConfiguration;
+        if let Some(recovery) = self.retained_evidence_withdrawal() {
             self.note_pending_pull_marker_served(&recovery);
             return Ok(analysis_pending_workspace_report_withdrawn(&params, recovery).into());
         }
@@ -9087,7 +9269,7 @@ fn quarantined_document_result_id(base: &str, reason: DocumentStalenessReason) -
 /// produces a fresh identity — the client re-renders the marker instead of
 /// holding a stale route behind `unchanged`.
 fn analysis_pending_result_id(recovery: &AnalysisPendingRecovery) -> String {
-    format!("ripr:analysis-pending:{}", recovery.recovery_id())
+    format!("ripr:analysis-pending:{}", recovery.payload_identity())
 }
 
 /// The withdrawal variant identity (#8731 review): the pre-analysis marker
@@ -9253,6 +9435,9 @@ fn quarantine_withdrawal_log_message(path: &Path, reason: DocumentStalenessReaso
         }
         DocumentStalenessReason::NoAnalyzedSavedContent => {
             "save the file if it is new, then refresh (`ripr.refresh`)"
+        }
+        DocumentStalenessReason::SavedContentNotYetAnalyzed => {
+            "they return when ripr analyzes the saved file; run `ripr.refresh` if they do not"
         }
     };
     format!(
@@ -13353,6 +13538,39 @@ mod work_done_progress_guard_tests {
 }
 
 #[cfg(test)]
+mod empty_scope_retry_route_tests {
+    use super::*;
+
+    /// The route must name only base settings the server accepts: the
+    /// `baseRef` session option (VS Code `ripr.baseRef`). Following a route
+    /// to a `ripr.toml` key the config owner rejects would pause analysis.
+    #[test]
+    fn empty_scope_retry_route_names_only_accepted_base_settings() -> Result<(), String> {
+        let rejected = crate::config::parse_config_diagnostic("[lsp]\nbase_ref = \"main\"\n");
+        if rejected.is_ok() {
+            return Err("ripr.toml now accepts [lsp] base_ref; revisit the route".to_string());
+        }
+        let route = EMPTY_SCOPE_LSP_RETRY_ROUTE;
+        if route.contains("base_ref") || route.contains("ripr.toml") {
+            return Err(format!("route names a rejected ripr.toml key: {route}"));
+        }
+        if !route.contains("`baseRef`") || !route.contains("`ripr.baseRef`") {
+            return Err(format!(
+                "route must name the accepted base settings: {route}"
+            ));
+        }
+        let mut options = serde_json::Map::new();
+        options.insert("baseRef".to_string(), serde_json::json!("origin/release"));
+        let mut config = LspAnalysisConfig::default();
+        super::super::config::apply_session_options(&mut config, &options)?;
+        if config.base_ref.as_deref() != Some("origin/release") {
+            return Err(format!("baseRef must set the base: {:?}", config.base_ref));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 mod quarantine_message_tests {
     use super::*;
 
@@ -15280,6 +15498,35 @@ mod disk_bytes_equal_text_tests {
         let expected = if cfg!(unix) { 1 } else { 3 };
         if reads != expected {
             return Err(format!("expected {expected} disk reads, got {reads}"));
+        }
+        Ok(())
+    }
+
+    /// #13839: libtest runs this module's tests as threads of one process and
+    /// the digest cache is process-wide. A reset that cleared the cache evicted
+    /// a peer test's entry between its lookups, and that peer then counted a
+    /// second disk read. The reset here stands in for the peer: a cached
+    /// digest must survive it and be served without another read.
+    #[test]
+    fn peer_reset_keeps_a_cached_disk_digest() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("peer-reset");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
+        past_racy_window();
+        let meta = std::fs::metadata(&path).map_err(|err| format!("stat failed: {err}"))?;
+        let key = disk_content_stat_key(&meta);
+        let first = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let first_reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        reset_disk_equality_read_cache_for_tests();
+        let second = cached_disk_content_digest_with(&path, &key, false, |_| false);
+        let reads_after_reset = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if first.is_none() || first != second || first_reads != 1 || reads_after_reset != 0 {
+            return Err(format!(
+                "first_reads={first_reads} reads_after_reset={reads_after_reset} digests_equal={}",
+                first == second
+            ));
         }
         Ok(())
     }

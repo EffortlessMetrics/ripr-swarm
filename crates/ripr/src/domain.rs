@@ -43,6 +43,7 @@ pub use ripr_contract::domain::ComparisonCoverage;
 pub(crate) use ripr_contract::domain::CompletedAnalysisSnapshotId;
 pub use ripr_contract::domain::Confidence;
 pub(crate) use ripr_contract::domain::ConfidenceBasisEntry;
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use ripr_contract::domain::ConfidenceBasisInputs;
 pub use ripr_contract::domain::ConfidenceCap;
 pub(crate) use ripr_contract::domain::ContinuationId;
@@ -105,6 +106,8 @@ pub(crate) use ripr_contract::domain::PERL_FACT_EXPORTER;
 pub use ripr_contract::domain::Probe;
 pub use ripr_contract::domain::ProbeFamily;
 pub use ripr_contract::domain::ProbeId;
+#[cfg(any(test, feature = "lang-python"))]
+pub(crate) use ripr_contract::domain::RELATED_TEST_CHANGED_IN_DIFF_PREFIX;
 pub use ripr_contract::domain::REQUIRED_TAXONOMY_KINDS;
 pub(crate) use ripr_contract::domain::RIPR_INTERVENTION_STUDY_SCHEMA_VERSION;
 pub(crate) use ripr_contract::domain::ReferenceState;
@@ -155,6 +158,7 @@ pub(crate) use ripr_contract::domain::classify_reference;
 pub(crate) use ripr_contract::domain::command_tokens;
 pub use ripr_contract::domain::compare_fixture_delta;
 pub(crate) use ripr_contract::domain::declared_const_name;
+pub(crate) use ripr_contract::domain::enablement_tip_keeps_rust;
 pub(crate) use ripr_contract::domain::enablement_tip_languages;
 pub(crate) use ripr_contract::domain::exact_assertion_fact;
 #[cfg(test)]
@@ -176,17 +180,20 @@ pub(crate) use ripr_contract::domain::normalize_transport_path;
 #[cfg(feature = "lang-perl")]
 pub(crate) use ripr_contract::domain::perl_fact_packet_guidance;
 pub(crate) use ripr_contract::domain::pytest_verify_interpreter;
+#[cfg(feature = "lang-python")]
 pub(crate) use ripr_contract::domain::python_pytest_verify_display;
 pub(crate) use ripr_contract::domain::python_pytest_verify_display_for;
 pub(crate) use ripr_contract::domain::python_unittest_verify_display;
+#[cfg(feature = "lang-python")]
 pub(crate) use ripr_contract::domain::row_exact_discriminator_fact;
 pub(crate) use ripr_contract::domain::rust_markers_at;
+#[cfg(feature = "lang-typescript")]
+pub(crate) use ripr_contract::domain::ts_oracle_kind_matches_seam;
 pub use ripr_contract::domain::verify_command_is_unbounded_repo_exposure_snapshot_compare;
 pub(crate) use ripr_contract::domain::why_capped_line;
 pub(crate) use ripr_contract::domain::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
-    RELATED_TEST_CHANGED_IN_DIFF_PREFIX, SourceUnitFactV1, TestEnvironmentFactV1,
-    python_headline_related_test, ts_oracle_kind_matches_seam,
+    SourceUnitFactV1, TestEnvironmentFactV1, python_headline_related_test,
     typescript_script_preview_related_test,
 };
 
@@ -199,6 +206,7 @@ pub mod guarded_edit;
 #[doc(hidden)]
 pub mod language_availability;
 mod next_action;
+mod python_owner_result_field;
 mod repair_card;
 mod verification_result;
 
@@ -224,6 +232,9 @@ pub(crate) use next_action::{
     NextActionPilotDelegation, WHOLE_REPO_PILOT_COMMAND, current_command_platform,
     select_canonical_next_action, whole_repo_pilot_command,
 };
+#[cfg(feature = "lang-python")]
+pub(crate) use python_owner_result_field::python_owner_result_field_unread_line;
+pub(crate) use python_owner_result_field::python_unread_owner_result_field;
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
     DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,
@@ -242,3 +253,7 @@ pub use verification_result::{
     VerificationExecutionResultV1, VerificationExecutionResultValidationError,
     VerificationProcessDispositionV1, command_spec_sha256,
 };
+
+/// Advice shared by the TypeScript classifier and its preview card.
+pub(crate) const TERNARY_COMPARISON_NEXT_STEP: &str = "Check whether the two comparisons take different branches for a reachable input. Follow both paths for that input. If the result or side effects differ, assert that difference. If both paths have the same observable behavior, the edit may be behavior-preserving.";
+pub(crate) const TYPESCRIPT_DEFAULT_CONTEXT_PREFIX: &str = "typescript_default_context: ";

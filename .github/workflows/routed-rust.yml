@@ -211,7 +211,10 @@ jobs:
             reason=non_docs
             while IFS= read -r -d '' path; do
               case "$path" in
-                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md|docs/ci/PRODUCT_GATE_PLAN.md) reason=release_surface; return 0 ;;
+                # Rust tests assert the exact prose of the agent-contract markdown
+                # (#14986); classifying it docs-only skips the lanes that read it.
+                .agents/skills/*|.claude/skills/*|docs/agent-context/*) reason=agent_contract_markdown; return 0 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 0 ;;
               esac
@@ -308,8 +311,14 @@ jobs:
           trusted="$GITHUB_WORKSPACE/.admission-trusted"
           [[ "$TRUSTED_ADMISSION_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse
           [ "$(git -C "$trusted" rev-parse HEAD)" = "$TRUSTED_ADMISSION_SHA" ] || refuse
-          for name in action.yml candidate_admission.py release_cut_admission.py review_disposition.py; do
+          for name in action.yml candidate_admission.py mechanical_relocation.py release_cut_admission.py review_disposition.py; do
             path=".github/actions/pr-candidate-admission/$name"
+            # #15217: a trusted source from before the relocation verifier has no
+            # such file, and its candidate_admission.py never imports it.
+            if [ "$name" = mechanical_relocation.py ]; then
+              listed="$(git -C "$trusted" ls-tree --name-only "$TRUSTED_ADMISSION_SHA" -- "$path")" || refuse
+              [ -n "$listed" ] || continue
+            fi
             [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ] || refuse
             expected="$(git -C "$trusted" rev-parse "$TRUSTED_ADMISSION_SHA:$path")" || refuse
             actual="$(git hash-object --no-filters "$trusted/$path")" || refuse
@@ -344,7 +353,9 @@ jobs:
             while IFS= read -r path; do
               [ -n "$path" ] || continue
               case "$path" in
-                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) return 1 ;;
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md|docs/ci/PRODUCT_GATE_PLAN.md) return 1 ;;
+                # Same non-docs set as the detect-docs-only job (#14986).
+                .agents/skills/*|.claude/skills/*|docs/agent-context/*) return 1 ;;
                 docs/specs/*|docs/handoffs/*|docs/spec-index.d/*|policy/doc-artifacts.d/*|.ripr/traceability.d/*|changelog.d/*|fixtures/*-verdict-corpus/spec-scopes/*|*.md) ;;
                 *) return 1 ;;
               esac
@@ -425,6 +436,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           TIP_PR: ${{ steps.entry.outputs.pr }}
+          TIP_REASON: ${{ steps.candidate.outputs.reason }}
           CONSTITUENTS: ${{ steps.entry.outputs.constituents }}
           # #14932: the group chain is built on this commit, so every constituent
           # is judged against the packet and declaration it was built on.
@@ -433,6 +445,9 @@ jobs:
           set -euo pipefail
           count="$(jq -r 'length' <<<"$CONSTITUENTS")"
           [ "$count" -le 1 ] && exit 0
+          # #15217: a verified relocation skips diff-scoped PR evidence, which
+          # is sound only when the group composes nothing else.
+          [ "$TIP_REASON" != mechanical_relocation_admitted ] || { echo "::error::a verified mechanical relocation qualifies alone; merge group has $count constituents"; exit 1; }
           [[ "$GROUP_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::merge group base sha is missing or invalid"; exit 1; }
           action_root="$GITHUB_WORKSPACE/.admission-trusted/.github/actions/pr-candidate-admission"
           packet_path="policy/release-hard-cut-admission.json"
@@ -537,6 +552,7 @@ jobs:
             fi
             [ "$rc_candidate" -eq 0 ] || { echo "::error::constituent PR #${c_pr} candidate admission refused: $(jq -r '.reason + ": " + .detail' "$result")"; exit 1; }
             [ "$(jq -r '.status' "$result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} candidate admission refused: $(jq -r '.reason + ": " + .detail' "$result")"; exit 1; }
+            [ "$(jq -r '.reason' "$result")" != mechanical_relocation_admitted ] || { echo "::error::constituent PR #${c_pr} is a verified mechanical relocation, which qualifies alone; merge group has $count constituents"; exit 1; }
             [ "$rc_cut" -eq 0 ] || { echo "::error::constituent PR #${c_pr} hard-cut admission refused: $(jq -r '.reason + ": " + .detail' "$cut_result")"; exit 1; }
             [ "$(jq -r '.status' "$cut_result")" = "admitted" ] || { echo "::error::constituent PR #${c_pr} hard-cut admission refused: $(jq -r '.reason + ": " + .detail' "$cut_result")"; exit 1; }
           done < <(jq -r '.[] | "\(.pr)\t\(.head)\t\(.docs_only)"' <<<"$CONSTITUENTS")
@@ -783,7 +799,7 @@ jobs:
   # #12252: the extension e2e is a job of this run, so the Result reads it as a
   # `needs` result bound to this run id and request, with no cross-workflow
   # correlation. PR selection uses the admitted head; queue selection uses the
-  # complete event base-to-group diff, including earlier constituents. Admission
+  # destination's common ancestor with G, including unlanded prefixes. Admission
   # supplies the union of constituent labels. Anything unclassifiable selects.
   vscode-select:
     name: vscode surface
@@ -809,6 +825,7 @@ jobs:
           LABELS: ${{ needs.admission.outputs.labels }}
           EVENT_NAME: ${{ github.event_name }}
           GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_BASE_REF: ${{ github.event.merge_group.base_ref }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           if [ "$EVENT_NAME" = merge_group ]; then
@@ -827,6 +844,19 @@ jobs:
             reason=unavailable_history
             if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
               git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
+            fi
+            if [ "$EVENT_NAME" = merge_group ]; then
+              # The event base may be an unlanded prefix G. Freeze the actual
+              # destination tip; its unique merge base with G includes that
+              # prefix until it settles into the destination with the same SHA.
+              reason=invalid_destination_ref
+              [[ "$GROUP_BASE_REF" == refs/heads/* ]] && git check-ref-format "$GROUP_BASE_REF" >/dev/null 2>&1 || return 0
+              reason=unavailable_destination
+              git fetch --no-tags origin "$GROUP_BASE_REF" 2>/dev/null || return 0
+              destination_sha="$(git rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null)" || return 0
+              [[ "$destination_sha" =~ ^[0-9a-f]{40}$ ]] || return 0
+              [ "$(git rev-parse --is-shallow-repository)" = false ] || return 0
+              BASE_SHA="$destination_sha"
             fi
             # A three-dot diff picks one merge base. With several (criss-cross
             # history) it can miss an extension change, so select instead.
@@ -884,17 +914,80 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: ripr-docs-gate
-      - name: Prepare locked owner-return fixture dependencies
+          # A queue ref's cache cannot warm the next merge group.
+          save-if: ${{ github.event_name != 'merge_group' }}
+      - name: Prepare locked workspace and fixture dependencies
         run: |
+          cargo fetch --locked --manifest-path Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+      - name: Docs policy preflight
+        env:
+          RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
+        run: cargo policy preflight
+      # #14986: a docs-only PR edits markdown that Rust tests pin to exact
+      # prose, and this is the only lane such a PR runs. #14992 routes the
+      # agent-contract skills and docs/agent-context through the Rust lanes, so
+      # what remains here is the markdown the classifier still calls docs-only:
+      # AGENTS.md, CLAUDE.md, .factory/skills/**, docs/AGENT_WORKFLOWS.md,
+      # docs/PR_AUTOMATION.md, the public guides and READMEs, the spec template
+      # and the repo-policy executable-file fixtures. Run after policy preflight
+      # and before the full precommit table so a separate precommit failure does
+      # not hide the direct markdown-contract execution receipt. Both remain
+      # required; precommit can reuse the test binaries built here.
+      - name: Markdown contract tests (prose pinned by Rust tests)
+        run: |
+          cargo test -p xtask \
+            --test gh_pr_status_no_settings \
+            --test ripr_public_guide_contract \
+            --test spec_template_contract \
+            --test pr_readiness_workflow_contract \
+            --test executable_frontdoor
       - name: Doc/spec gates (full precommit table)
         env:
           RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
         run: |
-          cargo policy preflight
           cargo xtask precommit
+      # #14998: the markdown above this step is pinned by xtask tests; these
+      # files are pinned by tests in `crates/ripr` and `tools/repo-policy`:
+      # docs/CLI_REFERENCE.md (cli_reference_doc, exact equality with the
+      # binary's help), docs/TROUBLESHOOTING.md (troubleshooting_guide),
+      # docs/how-to/first-rust-test.md (user_journeys), README.md plus
+      # docs/*.md, docs/interop/*.md and docs/status/*.md
+      # (documented_commands), docs/CI.md's `Run RIPR` step
+      # (generated_review_workflow) and docs/ci/coverage.md (future_clippy). They
+      # need a `ripr` build, so they run only when one of those paths changed;
+      # other docs-only PRs build nothing extra. Same runner, token and trust
+      # boundary as the precommit step above.
+      - name: Markdown contract tests (ripr and repo-policy asserted docs)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          changed="$(mktemp)"
+          trap 'rm -f "$changed"' EXIT
+          # NUL records preserve paths Git C-quotes even with quotePath=false.
+          git -c core.quotePath=false diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed"
+          selected=false
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              docs/interop/*.md|docs/status/*.md|docs/how-to/first-rust-test.md|docs/ci/coverage.md) selected=true; break ;;
+              docs/*/*) ;;
+              README.md|docs/*.md) selected=true; break ;;
+            esac
+          done < "$changed"
+          if [ "$selected" = true ]; then
+            cargo test -p ripr \
+              --test cli_reference_doc \
+              --test troubleshooting_guide \
+              --test user_journeys \
+              --test documented_commands \
+              --test generated_review_workflow
+            cargo test -p repo-policy --test future_clippy
+          else
+            echo "No README.md, docs/*.md, docs/interop, docs/status, first-rust-test.md or coverage.md change; ripr and repo-policy markdown contract tests not needed."
+          fi
       # #5531: a Markdown-only PR can hand-edit the generated registry block in
       # docs/status/SUPPORT_TIERS.md or docs/LANGUAGE_ADAPTER_PREVIEW.md, or rename a spec a registry cell cites. Both
       # checks need a `ripr` build, so they run only when such a file changed;
@@ -1162,8 +1255,10 @@ jobs:
           trusted="$GITHUB_WORKSPACE/.admission-trusted"
           [[ "$EXPECTED_TRUSTED" =~ ^[0-9a-f]{40}$ ]] && [ "$EXPECTED_TRUSTED" = "$EXPECTED_BASE" ]
           [ "$(git -C "$trusted" rev-parse HEAD)" = "$EXPECTED_TRUSTED" ]
-          for name in history_sync_live.py candidate_admission.py release_cut_admission.py; do
+          for name in history_sync_live.py candidate_admission.py mechanical_relocation.py release_cut_admission.py; do
             path=".github/actions/pr-candidate-admission/$name"
+            # #15217: absent at a trusted base from before the relocation verifier.
+            if [ "$name" = mechanical_relocation.py ]; then listed="$(git -C "$trusted" ls-tree --name-only HEAD -- "$path")"; [ -n "$listed" ] || continue; fi
             [ -f "$trusted/$path" ] && [ ! -L "$trusted/$path" ]
             [ "$(git -C "$trusted" rev-parse "HEAD:$path")" = "$(git hash-object --no-filters "$trusted/$path")" ]
           done
@@ -1305,11 +1400,23 @@ jobs:
               sync_record="not_applicable:history_sync:$ADMISSION_HEAD"
             fi
           fi
+          # #15217: a verified mechanical relocation of this exact head moves test
+          # bodies without changing a token, so diff-scoped PR evidence is recorded
+          # not_applicable for it, on its pull_request run or its singleton group.
+          if [ "$ADMISSION_REASON" = mechanical_relocation_admitted ]; then
+            if [ "$ADMISSION_STATUS" != admitted ] || [ -n "$sync_record" ] || ! [[ "$ADMISSION_HEAD" =~ ^[0-9a-f]{40}$ ]] || [ "$DOCS_ONLY" != false ]; then
+              status=fail; message="mechanical relocation requires consistent exact-head admission and full product scope"
+            elif [ "$CX43_RESULT" != success ] && [ "$CPX42_RESULT" != success ] && [ "$CX53_RESULT" != success ] && [ "$GITHUB_RESULT" != success ]; then
+              status=fail; message="mechanical relocation requires a succeeded implementation lane; docs-only or missing execution is not qualification"
+            else
+              sync_record="not_applicable:mechanical_relocation:$ADMISSION_HEAD"
+            fi
+          fi
           for lane in "cx43:$CX43_RESULT:$CX43_PR_EVIDENCE" "cpx42:$CPX42_RESULT:$CPX42_PR_EVIDENCE" "cx53:$CX53_RESULT:$CX53_PR_EVIDENCE" "github:$GITHUB_RESULT:$GITHUB_PR_EVIDENCE"; do
             IFS=: read -r name result evidence <<<"$lane"
             [ "$status" = pass ] && [ "$result" = success ] || continue
-            if [ -n "$sync_record" ] && [ "$evidence" != "$sync_record" ]; then status=fail; message="history-sync admission of $ADMISSION_HEAD requires $name to record PR evidence $sync_record, got ${evidence:-nothing}"
-            elif [ -z "$sync_record" ] && [[ "$evidence" == not_applicable:* ]]; then status=fail; message="$name recorded PR evidence $evidence without a history-sync admission of this pull_request head"
+            if [ -n "$sync_record" ] && [ "$evidence" != "$sync_record" ]; then status=fail; message="$ADMISSION_REASON of $ADMISSION_HEAD requires $name to record PR evidence $sync_record, got ${evidence:-nothing}"
+            elif [ -z "$sync_record" ] && [[ "$evidence" == not_applicable:* ]]; then status=fail; message="$name recorded PR evidence $evidence without a history-sync admission or a verified relocation of this head"
             fi
           done
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"

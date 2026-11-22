@@ -292,7 +292,7 @@ all renderers.
 - `crates/ripr/src/cli/rerun.rs::run_refusing`
 - `crates/ripr/src/cli/commands/context.rs` (refusal wiring)
 - `crates/ripr/src/cli/commands/agent.rs::{refuse_agent_brief, refuse_agent_packet}`
-- `crates/ripr/src/app/check_artifact.rs::load_findings_for_reuse_core`
+- `crates/ripr/src/app/check_artifact.rs::load_for_reuse`
 - `crates/ripr/src/cli/rerun.rs::rerun_gap` (typed ledger errors)
 
 ## Amendment (#10720): preserve fresh context analysis failures
@@ -502,3 +502,63 @@ refused run. Each now renders its own refusal document from the same
 - `crates/ripr/src/output/sarif.rs::render_repo_refusal_sarif`
 - `crates/ripr/src/output/repo_seams.rs::render_refusal_json`
 - `crates/ripr/src/output/repo_exposure.rs::render_summary_refusal_json`
+
+## Amendment (#14931): typed repair/continue refusals
+
+Under an explicit JSON request, a `ripr repair`, `ripr continue` or
+`ripr status` refusal that stops before any check runs and prints the stderr
+`ripr: refusal code=<code> disposition=<disposition>` line (exit `3`) also
+writes the minimal `cli_refusal` document on stdout. Its `error.code` is that
+`RepairRefusalCode`, the added `error.disposition` is that code's
+disposition (`retryable`, `terminal`, `needs_selection`, `not_started`), and
+`error.message` is the prose without the code line. `error.next` is `null`
+except `no_current_attempt`, whose owner composes `ripr status --root <root>`
+from the bound root (#15260): these steps can quote a user-supplied item or
+selector, so the document never lifts one into a runnable field. The context that
+`repair_needs_item` (its next-action block) and `attempt_baseline_blocked`
+(the attempt status) print above their prose stays on stderr only; the
+selection codes carry theirs as `choices` (amendment #14980). The façade's before-phase
+start refusal (for example `build_output_not_ignored`) writes the same
+document, recovered from its exact code line. Refusals inside the
+after-phase check keep their own documents. Exit code and stderr are
+unchanged, and the plain spelling keeps stdout empty.
+
+## Test Mapping (Amendment #14931)
+
+- `crates/ripr/tests/task_first_facade.rs::typed_facade_refusals_under_json_write_code_and_disposition`
+- `crates/ripr/tests/task_first_facade.rs::repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal`
+- `crates/ripr/tests/cli_smoke.rs::agent_repair_before_requires_effective_cargo_build_directory_ignore`
+- `crates/ripr/src/app/task_first.rs::tests::cli_refusal_schema_names_every_refusal_code_and_disposition`
+- `crates/ripr/src/app/task_first.rs::tests::split_stderr_line_inverts_message_with_stderr_line_for_every_code`
+
+## Implementation Mapping (Amendment #14931)
+
+- `crates/ripr/src/cli/usage_refusal.rs::note_typed_refusal`
+- `crates/ripr/src/cli/commands/task_first.rs::typed_decision`
+- `crates/ripr/src/cli/mod.rs::drive_before_phase_deferring_stdout`
+- `crates/ripr/src/app/task_first.rs::RepairRefusalCode::split_stderr_line`
+
+## Amendment (#14980): selection refusals carry their choices
+
+A `several_eligible_seams` or `ambiguous_attempts` document adds
+`error.choices = { total, items: [{ label, command, powershell_command? }] }`.
+Each `command` is composed by the selection owner from a typed seam id or
+attempt id and the bound root: a seam choice is exactly the command stderr
+prints, and an attempt choice is the stderr retry line with that listed id
+filled in. None is lifted from prose, and `next` stays null. `powershell_command` appears
+only when PowerShell needs a different line and an honest translation
+exists. `total` is the full count; a bounded listing has fewer `items`.
+Every other refusal omits `choices`.
+
+## Test Mapping (Amendment #14980)
+
+- `crates/ripr/tests/task_first_facade.rs::typed_facade_refusals_under_json_write_code_and_disposition`
+- `crates/ripr/tests/task_first_facade.rs::continue_two_attempts_requires_explicit_selection`
+- `crates/ripr/src/output/refusal.rs::tests::choices_render_total_items_and_only_a_differing_powershell_line`
+
+## Implementation Mapping (Amendment #14980)
+
+- `crates/ripr/src/output/refusal.rs::RefusalChoices`
+- `crates/ripr/src/app/task_first.rs::repair_choice_items`
+- `crates/ripr/src/cli/usage_refusal.rs::note_typed_refusal_with_choices`
+- `crates/ripr/src/cli/commands/task_first.rs::typed_choice_decision`

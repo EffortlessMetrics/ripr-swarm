@@ -141,6 +141,7 @@ pub(in crate::analysis) fn missing_evidence(
     // generic line; the typed shape, not a `==` string match, decides.
     if matches!(probe.family, ProbeFamily::Predicate)
         && infect.state != StageState::Yes
+        && !super::infection::is_opaque_boundary_input(infect)
         && !activation.missing_discriminators.iter().any(|fact| {
             matches!(
                 fact.shape,
@@ -305,6 +306,17 @@ fn name_segments(token: &str) -> Vec<&str> {
     segments
 }
 
+/// #14181: whether file line `line` sits inside a (possibly rustfmt-split)
+/// inline const assertion block in `owner`'s body, whose first body line is
+/// the owner's `start_line`.
+fn in_owner_const_assertion(owner: &FunctionSummary, line: usize) -> bool {
+    line.checked_sub(owner.start_line).is_some_and(|offset| {
+        owner.body.contains("const")
+            && crate::analysis::probes::inline_const_assertion_lines(&owner.body)
+                .contains(&(offset + 1))
+    })
+}
+
 pub(in crate::analysis) fn stop_reasons(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -318,10 +330,16 @@ pub(in crate::analysis) fn stop_reasons(
             reasons.push(StopReason::NoChangedRustLine);
         }
     } else if probe.family == ProbeFamily::StaticUnknown
-        && crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+        && (crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+            || (probe.after.is_some()
+                && owner_fn
+                    .is_some_and(|owner| in_owner_const_assertion(owner, probe.location.line))))
     {
         // #14181: `const { assert!(N <= 249) };` inside a function is checked
-        // when the function is built; a violating edit fails to compile.
+        // when the function is built; a violating edit fails to compile. A
+        // rustfmt-split block is found by its line in the owner's body. Only
+        // an added-side probe sits on its own new-file line; a removed one's
+        // location is where the deletion sits.
         reasons.push(StopReason::CompileTimeInvariant);
     }
     if is_unsafe_obligation(probe) {
@@ -360,6 +378,11 @@ fn contains_macro_invocation(expression: &str) -> bool {
     }
     false
 }
+
+/// #3700: the typed next step for a wrapper error seam. It names what static
+/// analysis cannot establish instead of prescribing an assertion the suite may
+/// already contain.
+pub(in crate::analysis) const WRAPPER_ERROR_BINDING_NEXT_STEP: &str = "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling.";
 
 pub(in crate::analysis) fn recommended_next_step(
     probe: &Probe,
@@ -414,7 +437,7 @@ pub(in crate::analysis) fn recommended_next_step_with_boundary(
                 // what static analysis cannot establish; discriminating this
                 // seam needs real mutation testing or deeper conversion
                 // modeling (Into/From through Box).
-                "Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling."
+                WRAPPER_ERROR_BINDING_NEXT_STEP
             } else if matches!(probe.family, ProbeFamily::ReturnValue)
                 && super::exact_error_variant(&probe.expression).is_some()
             {
@@ -684,6 +707,35 @@ mod kani_proofs;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+        #[test]
+        fn rust_gating_projection_and_modeled_oracle_upgrade(
+            states in proptest::collection::vec(0usize..6, 5),
+            static_unknown in proptest::bool::ANY,
+        ) {
+            use crate::analysis::classification_properties::{exposure_matches, oracle_upgrade};
+            let result: Result<(), String> = (|| {
+                let vocabulary = [StageState::Yes, StageState::No, StageState::Weak,
+                    StageState::Unknown, StageState::Opaque, StageState::NotApplicable,
+                ];
+                let stages: Vec<_> = states.iter().map(|i| stage(vocabulary[*i].clone())).collect();
+                let p = probe(if static_unknown { ProbeFamily::StaticUnknown } else { ProbeFamily::ReturnValue }, "value + 1");
+                let class = classify(&stages[0], &stages[1], &stages[2], &stages[3], &stages[4], &p);
+                exposure_matches(&class, !static_unknown
+                    && [0, 1, 2, 4].iter().all(|i| stages[*i].state == StageState::Yes)
+                    && stages[3].state != StageState::No)?;
+                let yes = stage(StageState::Yes);
+                let p = probe(ProbeFamily::ReturnValue, "value + 1");
+                let before = classify(&yes, &yes, &yes, &stages[3], &stages[4], &p);
+                let after = classify(&yes, &yes, &yes, &yes, &yes, &p);
+                exposure_matches(&after, true)?;
+                oracle_upgrade(&before, &after)
+            })();
+            proptest::prop_assert!(result.is_ok(), "{:?}", result);
+        }
+    }
 
     #[test]
     fn classify_maps_reachable_but_unobserved_probe_to_reachable_unrevealed() {

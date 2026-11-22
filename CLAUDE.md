@@ -83,15 +83,18 @@ objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
 Use the actual installed request interface described in
-[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
-qualification of the actual merge composition. Workflow support does not establish
-live queue activation: until verified migration, the installed `merge-ready` label
-requests late PR qualification, followed by current product/integration judgment
-and protected expected-head squash. Ready alone requests nothing. Do not arm
-generic auto-merge as a substitute for that legacy final judgment. After verified
-activation, follow the native-queue procedure and its conditional landing
-authorization. Preserve actual required checks and approvals; this guidance does
-not change triggers, settings or result producers.
+[merge flow](docs/MERGE_FLOW.md). The live order is **label PR qualification ->
+final published-head review -> native enqueue -> required queue run -> queue-driven
+protected squash**. Apply `merge-ready` to request qualification on the PR; it does
+not enqueue or authorize merge. After inspecting the results and making the current
+product/integration judgment, enqueue the exact reviewed head for qualification of
+the actual merge composition. GitHub performs the protected squash when the queue's
+conditions pass. Direct expected-head squash is a refused historical route
+(#14247). A REST-only session may enqueue with the auto-merge call under the
+[enqueue interface](docs/MERGE_FLOW.md#enqueue-interface) conditions: every
+required result green on the exact reviewed head and the final review marker
+posted. It is never an armed wait. Preserve actual required checks
+and approvals; this guidance does not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -475,7 +478,11 @@ integration, merge, and reconciliation. A committed candidate with
 selected candidate's owning lead inspects current results, then merges only after
 the exact published head has the final `REVIEW_READY` disposition and all enforced
 conditions hold. A later material change refreshes affected review/proof dimensions.
-Do not arm auto-merge or substitute a queue for the final judgment.
+Do not arm auto-merge as a wait or substitute a queue for the final judgment. The
+admission job parses review bodies: the marker review's first line is exactly
+`SOURCE_REVIEW_READY` or `REVIEW_READY`, no later line states a disposition, and a
+later refusing review from the shared login supersedes an earlier admitting one
+([review marker](docs/MERGE_FLOW.md#review-marker-read-by-admission)).
 
 Useful remote-owned outcomes:
 
@@ -535,4 +542,8 @@ file presence or a structural gate pass.
 - no mandatory approval pause for ordinary engineering decisions;
 - no parallel mutable lifecycle database or label/prose token as proof authority;
 - no release, publication, tag, signing, marketplace, or secret operation
-  without the existing explicit repository authority.
+  without the existing explicit repository authority. Crate rehearsal is
+  `cargo xtask publish-dry-run` from the source root, which builds and packages
+  the publish stage; publication runs from that stage under `docs/RELEASE.md`.
+  A plain `cargo package` or `cargo publish` of the checkout is not the release
+  path.

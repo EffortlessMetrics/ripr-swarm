@@ -200,15 +200,18 @@ objectives may proceed concurrently; selection is not a repository-wide max-one
 queue. Complete each focused objective's code, tests and documentation together.
 
 Use the actual installed request interface described in
-[merge flow](docs/MERGE_FLOW.md). The accepted destination is native merge-queue
-qualification of the actual merge composition. Workflow support does not establish
-live queue activation: until verified migration, the installed `merge-ready` label
-requests late PR qualification, followed by current product/integration judgment
-and protected expected-head squash. Ready alone requests nothing. Do not arm
-generic auto-merge as a substitute for that legacy final judgment. After verified
-activation, follow the native-queue procedure and its conditional landing
-authorization. Preserve actual required checks and approvals; this guidance does
-not change triggers, settings or result producers.
+[merge flow](docs/MERGE_FLOW.md). The live order is **label PR qualification ->
+final published-head review -> native enqueue -> required queue run -> queue-driven
+protected squash**. Apply `merge-ready` to request qualification on the PR; it does
+not enqueue or authorize merge. After inspecting the results and making the current
+product/integration judgment, enqueue the exact reviewed head for qualification of
+the actual merge composition. GitHub performs the protected squash when the queue's
+conditions pass. Direct expected-head squash is a refused historical route
+(#14247). A REST-only session may enqueue with the auto-merge call under the
+[enqueue interface](docs/MERGE_FLOW.md#enqueue-interface) conditions: every
+required result green on the exact reviewed head and the final review marker
+posted. It is never an armed wait. Preserve actual required checks
+and approvals; this guidance does not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
 still missing. Publish their actual scope and exact source; do not require future
@@ -430,7 +433,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
 cargo package -p ripr --list
 cargo xtask check-packaged-readme
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run # packages from the publish stage; not plain cargo package/publish
 cargo xtask check-static-language
 cargo xtask check-policy-all
 cargo xtask check-no-panic-family
@@ -506,15 +509,16 @@ not merely the intended resolution order.
 
 ## Review and protected merge
 
-Installed legacy label-route delivery (see [merge flow](docs/MERGE_FLOW.md) for
-the accepted queue destination and procedure after verified activation):
+Live label-qualification and native-queue delivery (see
+[merge flow](docs/MERGE_FLOW.md)):
 
 ```text
 build/improve -> focused proof and source review -> select candidate to land
--> publish current source-review/proof -> actual pre-merge CI request
+-> publish current source-review/proof -> apply merge-ready for PR qualification
 -> owning lead waits and inspects complete results/current findings
--> separate final published-head/integration judgment
--> normal protected expected-head squash -> landing/acceptance reconciliation
+-> final published-head/integration judgment -> native enqueue
+-> required queue run -> GitHub queue-driven protected squash
+-> landing/acceptance reconciliation
 ```
 
 Source review and focused proof may be complete while final-merge review remains
@@ -522,8 +526,7 @@ Source review and focused proof may be complete while final-merge review remains
 block the selected candidate's CI request. A ready merge requires the final current
 published-head `REVIEW_READY`, actual required checks, addressed material findings,
 scope agreement and applicable repository policy. The same authorized lead makes
-that judgment and uses the applicable route in `docs/MERGE_FLOW.md`; queue
-activation must be verified before using its native-queue procedure.
+that judgment and uses the live native-queue route in `docs/MERGE_FLOW.md`.
 
 Read `.factory/skills/review-guidelines/SKILL.md` and
 `docs/agent-context/review-invariants.md` for review context. Use the guideline's
@@ -568,8 +571,9 @@ settings, or inspect credential values. `BLOCKED` or `UNSTABLE` alone does not
 identify a cause. Unknown or inaccessible checks are not passed. A settings-read
 403 is not a blanket PR block or a reason to request broader access; distinguish
 it from a 401 on an ordinary PR/check read, which leaves that evidence unavailable.
-After exact-head review, required proof and addressed findings, use the normal
-expected-head squash merge endpoint; GitHub enforces applicable requirements.
+After exact-head review, required proof and addressed findings, enqueue the reviewed
+head through the native merge queue. GitHub enforces applicable requirements and
+performs the protected squash; direct expected-head squash is refused (#14247).
 Report a concrete rejection without guessing the rule. Never use admin bypass,
 change settings or weaken checks to make a PR merge; settings changes require
 explicit authorization naming the change.

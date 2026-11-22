@@ -312,3 +312,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_shadowed_assert (25)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless match_arm_shadowed_assert --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_shadowed_assert (26)
+
+Reason:
+RIPR-SPEC-0229: the repo-seam view no longer credits the rebound assertion macro (#15183), so ripr repair agrees with check and the repair-vs-check conflict advisory is replaced by the missing-evidence refusal; check classification and JSON unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_shadowed_assert --reason "..."`
+
+Updated:
+- `expected/human.txt`

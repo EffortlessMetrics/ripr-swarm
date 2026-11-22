@@ -23,6 +23,9 @@ use rustpython_parser::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod route_body;
+use route_body::{bare_dict_annotation, body_returning_annotation, route_returns_body};
+
 #[cfg(test)]
 pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
     extract_source_facts(file, source).owners
@@ -169,24 +172,36 @@ pub(super) fn collect_owners_from_statements(
 
 fn push_function_owner(stmt: &Stmt, context: PythonOwnerContext<'_>, out: &mut Vec<PythonOwner>) {
     match stmt {
-        Stmt::FunctionDef(function) => out.push(owner_from_function(
-            context,
-            function.name.as_str(),
-            function.range,
-            &function.decorator_list,
-            &function.args,
-            &function.body,
-            false,
-        )),
-        Stmt::AsyncFunctionDef(function) => out.push(owner_from_function(
-            context,
-            function.name.as_str(),
-            function.range,
-            &function.decorator_list,
-            &function.args,
-            &function.body,
-            true,
-        )),
+        Stmt::FunctionDef(function) => {
+            let mut owner = owner_from_function(
+                context,
+                function.name.as_str(),
+                function.range,
+                &function.decorator_list,
+                &function.args,
+                &function.body,
+                false,
+            );
+            owner.route_dict_annotation =
+                owner.route_returns_body && bare_dict_annotation(function.returns.as_deref());
+            owner.route_returns_body &= body_returning_annotation(function.returns.as_deref());
+            out.push(owner);
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            let mut owner = owner_from_function(
+                context,
+                function.name.as_str(),
+                function.range,
+                &function.decorator_list,
+                &function.args,
+                &function.body,
+                true,
+            );
+            owner.route_dict_annotation =
+                owner.route_returns_body && bare_dict_annotation(function.returns.as_deref());
+            owner.route_returns_body &= body_returning_annotation(function.returns.as_deref());
+            out.push(owner);
+        }
         _ => {}
     }
 }
@@ -541,8 +556,7 @@ fn owner_from_function(
                 .all(|decorator| super::cli_runner::is_click_decorator_name(decorator, &alias))
         });
     // A decorator whose name cannot be read still wraps the call.
-    let binding_only = !is_async
-        && decorator_names.len() == decorators.len()
+    let binding_only = decorator_names.len() == decorators.len()
         && decorator_names
             .iter()
             .all(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"));
@@ -561,6 +575,12 @@ fn owner_from_function(
         .map(|class| format!("{}.{name}", innermost_class(class)))
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
+    let route_returns_body = !route_paths.is_empty()
+        && route_returns_body(decorators, body)
+        && !super::module_constants::mentions_identifier(
+            &text_for_range(context.source, range),
+            "yield",
+        );
     let route_methods = collect_static_route_methods(context.source, decorators);
     let route_receivers = collect_static_route_receivers(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
@@ -648,6 +668,8 @@ fn owner_from_function(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body,
+        route_dict_annotation: false,
     }
 }
 
@@ -780,6 +802,8 @@ fn owner_from_class(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dict_annotation: false,
     }
 }
 
@@ -823,6 +847,8 @@ pub(super) fn module_owner(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dict_annotation: false,
     }
 }
 
@@ -986,7 +1012,7 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = test_assertions(
+                let mut assertions = test_assertions(
                     &function.body,
                     source,
                     function.range,
@@ -999,17 +1025,28 @@ pub(super) fn collect_tests_from_statements(
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run only when settings still include
                 // `Phase.explicit`.
-                let parametrize = (framework == PythonFramework::Pytest)
+                let pytest_cases = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
-                    .flatten()
-                    .or_else(|| {
-                        super::hypothesis::example_cases(
-                            source,
-                            &function.args,
-                            &function.decorator_list,
-                            &definition_imports,
-                        )
-                    });
+                    .flatten();
+                super::bool_oracle::settle_parametrized_names(
+                    &mut assertions,
+                    &function.body,
+                    &text_for_range(source, function.range),
+                    pytest_cases.as_ref(),
+                    |name| {
+                        direct_parametrized.iter().any(|direct| direct == name)
+                            && !unsettled_indirect.iter().any(|unsettled| unsettled == name)
+                            && !generated_inputs.iter().any(|generated| generated == name)
+                    },
+                );
+                let parametrize = pytest_cases.or_else(|| {
+                    super::hypothesis::example_cases(
+                        source,
+                        &function.args,
+                        &function.decorator_list,
+                        &definition_imports,
+                    )
+                });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -1071,6 +1108,7 @@ pub(super) fn collect_tests_from_statements(
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
+                    value_helpers: Vec::new(),
                     direct_parametrized,
                     unsettled_indirect,
                     parametrize_argnames,
@@ -1132,21 +1170,32 @@ pub(super) fn collect_tests_from_statements(
                     .into_iter()
                     .filter(|name| !generated_inputs.contains(name))
                     .collect();
-                let assertions = test_assertions(&function.body, source, function.range, false);
+                let mut assertions = test_assertions(&function.body, source, function.range, false);
                 // pytest does not parametrize unittest methods; Hypothesis
                 // `@example` rows run only when settings still include
                 // `Phase.explicit`.
-                let parametrize = (framework == PythonFramework::Pytest)
+                let pytest_cases = (framework == PythonFramework::Pytest)
                     .then(|| parametrize_cases(source, &function.decorator_list, parametrize_scope))
-                    .flatten()
-                    .or_else(|| {
-                        super::hypothesis::example_cases(
-                            source,
-                            &function.args,
-                            &function.decorator_list,
-                            &definition_imports,
-                        )
-                    });
+                    .flatten();
+                super::bool_oracle::settle_parametrized_names(
+                    &mut assertions,
+                    &function.body,
+                    &text_for_range(source, function.range),
+                    pytest_cases.as_ref(),
+                    |name| {
+                        direct_parametrized.iter().any(|direct| direct == name)
+                            && !unsettled_indirect.iter().any(|unsettled| unsettled == name)
+                            && !generated_inputs.iter().any(|generated| generated == name)
+                    },
+                );
+                let parametrize = pytest_cases.or_else(|| {
+                    super::hypothesis::example_cases(
+                        source,
+                        &function.args,
+                        &function.decorator_list,
+                        &definition_imports,
+                    )
+                });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -1208,6 +1257,7 @@ pub(super) fn collect_tests_from_statements(
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
+                    value_helpers: Vec::new(),
                     direct_parametrized,
                     unsettled_indirect,
                     parametrize_argnames,
@@ -2195,7 +2245,6 @@ fn called_decorator_names(decorators: &[Expr]) -> Vec<String> {
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {
     decorators.iter().filter_map(expr_full_name).collect()
 }
-
 fn collect_static_route_paths(source: &str, decorators: &[Expr]) -> Vec<String> {
     decorators
         .iter()

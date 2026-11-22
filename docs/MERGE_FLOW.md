@@ -1,13 +1,19 @@
 # Merge flow for swarm PRs
 
-## Current route and October 21 target
+## Live route and October 21 target
+
+**Live order: label PR qualification -> final published-head review -> native
+enqueue -> required queue run -> GitHub's protected squash.** The native queue is
+active and landing PRs: [#14710 entered the queue on November 14, 2026 and landed
+through it on November 15](https://github.com/EffortlessMetrics/ripr-swarm/pull/14710).
+Direct expected-head squash is refused
+([#14247](https://github.com/EffortlessMetrics/ripr-swarm/issues/14247)); the old
+no-queue and conditional-activation prose below is retained only as history.
 
 Steven selected native queue-time qualification on October 21, 2026 under
 [#4984](https://github.com/EffortlessMetrics/ripr-swarm/issues/4984#issuecomment-6308919863).
-The target replaces the earlier no-queue mechanism; it does not weaken review,
-proof, ordinary protected squash, or separate release authority.
-
-**Target selected; live queue activation is not established by this document.**
+That target is now live; it does not weaken review, proof, protected squash, or
+separate release authority.
 Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
 `merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
 earned once per queue entry on the exact queued merge commit (see
@@ -20,15 +26,15 @@ still requests full PR qualification on the explicit `merge-ready` label and
 retains manual dispatch. Ordinary main/master product replay is retired;
 [the landed observer](CI.md#main-health-sentinel) reads exact native G=M proof. The branch summary names
 `Ripr Rust Small Result` (application 15368); a complete current enforcement
-readback is still required before changing settings, and whether the repository's
-merge queue is enabled for `main` is a live setting this document does not
-establish. A file or issue edit does not install new protection.
+readback is still required before changing settings. A file or issue edit does
+not install new protection.
 
-Until the replacement is qualified and activated, use the installed label route
-below. Do not treat a proposed enqueue command, Ready state, or this target as
-permission to skip its checks. Current user rulings and controller decisions
-supersede older no-queue target prose; source, rehearsed, active and accepted
-remain separate states.
+The installed `merge-ready` label requests PR qualification; Ready alone requests
+nothing, and neither one enqueues the PR. After reviewing those results and the
+current findings, use the native queue procedure below. Do not treat either state
+as permission to skip checks or merge directly. Current user rulings and controller
+decisions supersede older no-queue target prose; source, rehearsed, active and
+accepted remain separate states.
 
 ## Who owns the change
 
@@ -84,29 +90,42 @@ required result.
 
 - Open Drafts early and use the shared
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff).
+- For changes to the evidence-promotion corpus or analyzer cache schema, run
+  `cargo xtask check-evidence-promotion-honesty --pre-label <PR> <target-branch>`
+  from a trusted development checkout with `origin` pointing to the base repository.
+  This uses the local `xtask` build. A fresh checkout incurs its usual first build. Compare
+  the printed head with the reviewed commit. The command checks every report
+  against the schema and historical pins in the published merge tree. It refuses
+  a missing merge ref or parents that differ from the observed target and PR head.
+  On refusal, refresh the composition or genuinely recapture the named reports on
+  the updated branch, then rerun before labeling. Repeat after a rebase. The
+  hosted PR and queue jobs still run the full honesty gate on their own trees.
 - Apply lane-selecting labels such as `full-ci` before `merge-ready`.
 - A push after a request needs affected review/proof refreshed. Inspect current
   request and run state before any new request, using the shared handoff. Preserve
   a current-subject in-flight run; reapplying the label cancels it.
 - Do not dispatch `routed-rust.yml` on a PR branch (#5394).
 - Inspect the real check results and current findings, make the final integration
-  judgment, then use an expected-head protected squash. Do not arm generic
-  auto-merge as a substitute for that legacy final judgment.
+  judgment, then enqueue the exact reviewed head. GitHub performs the protected
+  squash after successful queue qualification. Use the
+  [enqueue interface](#enqueue-interface) below. Never arm auto-merge as a wait,
+  and never use the refused direct expected-head squash route (#14247).
 
 The existing docs-only route requires positive surface classification and the
 actual docs gate. Skipped Rust work is not described as executed Rust proof.
 Main being red does not justify repeating known-failing broad work; identify the
 existing incident/repair owner and preserve unrelated candidate evidence.
 
-## Selected native-queue procedure after verified activation
+## Native queue landing procedure
 
 ```text
 cheap development / Draft publication
 -> focused proof + substantive review + joined repairs
+-> apply merge-ready and inspect the current PR qualification results
 -> exact-head product/scope judgment and conditional merge authorization
 -> native enqueue
 -> one expensive required qualification on current merge-group G
--> native protected squash if required conditions remain satisfied
+-> GitHub queue-driven protected squash if required conditions remain satisfied
 -> cheap landed M reconciliation
 ```
 
@@ -114,6 +133,125 @@ Enqueue authorizes automatic landing if proof succeeds; it is not a neutral
 request for tests. All expected source changes and material review dispositions
 belong before it. The owner still handles ejection, new findings and final
 readback. No resident polling worker is needed while native CI owns the wait.
+
+### Enqueue interface
+
+A session with the native route enqueues there (the GitHub UI or the GraphQL
+enqueue mutation). A session limited to REST, such as a cloud thread session,
+has no native enqueue call. Steven ruled on November 21, 2026:
+
+> Cloud threads may enqueue swarm PRs with the auto-merge call once they're
+> green and reviewed on the exact head.
+
+The call is:
+
+```bash
+gh api -X PUT repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/auto_merge -f merge_method=squash
+```
+
+The call is an enqueue, never an armed wait. Read all of these back on the
+exact reviewed head immediately before issuing it:
+
+1. `Ripr Rust Small Result` and every other required result have completed
+   successfully on that head. Queued, running, missing or earlier-head results
+   do not count.
+2. The final `REVIEW_READY` marker review for that head is posted and admits
+   (see [review marker](#review-marker-read-by-admission)). A source-only
+   `SOURCE_REVIEW_READY` attestation admits qualification but is not the final
+   review, so it does not satisfy this condition.
+3. The head is unchanged since that review, the PR has no conflict, and no
+   review thread or material finding is open.
+
+With every requirement already met, GitHub places the PR in the queue at once.
+Do not issue the call while a required result is pending so that the PR lands
+later on its own: that is the armed wait this route excludes, and a finding
+that arrives during the wait would not stop it. Read back that the PR entered
+the queue. The queue entry itself is a GraphQL field; over REST, read the PR
+timeline for an `added_to_merge_queue` event later than the call
+(`gh api "repos/EffortlessMetrics/ripr-swarm/issues/<n>/timeline?per_page=100&page=<k>"`).
+The timeline is oldest first and paged, so read through the last page; the
+first page of a busy PR does not hold recent events. If the PR shows auto-merge
+armed without that event, a requirement
+was not met: disarm it with `-X DELETE` on the same path, verify the readback,
+and reconcile before trying again.
+
+To withdraw a PR that is already in the queue, for example when a material
+finding arrives after enqueue, a REST-only session has no dequeue mutation. Use
+two calls in this order:
+
+```bash
+gh api -X DELETE repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/auto_merge
+gh api -X POST repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/convert_to_draft
+```
+
+The first call disarms auto-merge so nothing re-enqueues the PR; the second
+removes the queue entry, because queue membership does not survive a
+conversion to Draft. Read back `"draft": true` on the PR and, on the last page
+of the PR timeline, a `removed_from_merge_queue` event later than the most
+recent `added_to_merge_queue`; an earlier withdrawal's event does not count.
+The removal event can trail the conversion by several minutes: on #16039 the
+conversion was recorded at 05:56Z on November 22, 2026 and the removal at
+06:02Z. Until it appears, the withdrawal is not confirmed. A queue run that has
+already merged the PR cannot be withdrawn this way; check for a `merged` event
+first.
+
+With the auto-merge request deleted, nothing is left to put the PR back in the
+queue when it returns to Ready. That step was not part of the #16039 receipt,
+so read the timeline once more after marking Ready. After the repair, the
+review, qualification and enqueue conditions above apply again on the new head.
+
+The ruling covers `ripr-swarm` only and changes no setting, required check or
+release authority.
+
+### Review marker read by admission
+
+`Admit PR Candidate` runs for the label request and for every queue constituent,
+and it parses review bodies
+([CI source-review semantics](CI.md#merge-queue-request-cutover)). For a
+`COMMENT` review to admit:
+
+- Write the first line as the bare marker, `SOURCE_REVIEW_READY` or
+  `REVIEW_READY`. The script accepts only a narrow set of tails after it, and a
+  first line such as `SOURCE_REVIEW_READY for head <sha> (...)` has been
+  refused, so do not rely on a tail.
+- No later line states a disposition. A line states one when it carries a
+  `disposition` field label (the last field of the `review-pr` record does), or
+  opens with or consists of a state token such as `REVIEW_INCOMPLETE` or
+  `REPAIR_REQUIRED`; fenced text is scanned for any state token. A state word
+  quoted inside ordinary prose is narration and is not read, but the boundary
+  is the grammar in `CI.md`, not intuition. The reliable form is an inspection
+  record in prose without those tokens, with any structured record in a
+  Conversation comment.
+- Every agent session posts as the same login, and admission reads the latest
+  review per login. A later refusing review supersedes an earlier admitting one
+  on the same head, so a well-meant follow-up record can break an admissible PR.
+  Post follow-up evidence as a Conversation comment, or post a plain marker
+  review after it.
+
+`.github/actions/pr-candidate-admission/review_disposition.py` is the authority
+for this, with its cases in
+`tools/repo-policy/tests/review_disposition_admission.rs`. Check a PR before
+labelling or enqueueing; exit status 0 admits. Hosted admission runs the script
+from the trusted base, so run the base copy here too. The command receives a
+GitHub token and must not execute a candidate branch's version of the script:
+
+```bash
+git fetch origin main
+base_copy="$(mktemp -d)/review_disposition.py"
+git show origin/main:.github/actions/pr-candidate-admission/review_disposition.py > "$base_copy"
+GH_TOKEN=$(gh auth token) python3 -I "$base_copy" \
+  --repository EffortlessMetrics/ripr-swarm --pr <n> --head <full head sha>
+```
+
+Exit status 0 means a readiness carrier admits. It does not distinguish the
+source-only marker from the final one; read the review itself for that.
+
+A refused label-request admission is repaired by fixing the review, then
+removing and reapplying `merge-ready` for a fresh PR qualification on the exact
+head. A refused queue constituent is different: the entry is ejected, relabelling
+does not start a merge-group run, and the PR is enqueued again after the review
+is repaired and the current PR qualification is confirmed (see
+[qualification recovery](agent-context/convergence-runbook.md)).
 
 Keep H (reviewed head), P (historical PR synthetic merge), G (native queue
 composition) and M (actual landed commit/tree) distinct. A green P does not prove
@@ -156,7 +294,7 @@ Sequence the rollout:
    PR fields; an added event alone cannot adapt them. Group scope is the union
    of applicable constituent and integration risks, not one guessed PR number.
 3. Prove every required G result, negative controls and frozen-source review.
-   Keep full legacy PR qualification during the bounded queue bootstrap.
+   Full legacy PR qualification was kept during the bounded queue bootstrap.
 4. Apply/read back queue enforcement through #4838. Demonstrate an actual native
    queue transaction before changing protected PR success to cheap admission.
 5. Retire the remaining duplicate label and child routes coherently. The bounded
@@ -174,18 +312,103 @@ an old fixture pin can hide it even on current G. Preserve the existing repair
 owner and prove declared fixture preparation from a cold dependency state; do not
 repin audited fixture authority merely to follow the workspace's cache contents.
 
-## History-sync route (source and swarm merges)
+## Mechanical test-relocation route
 
-This is the interim history-sync profile under the currently installed
-`merge-ready` label route (#12437). It is valid only until queue-only
-enforcement (`Require merge queue`, #4838, accepted under #4840) is active, and
-it is not a new pull_request-triggered CI lane: it rides the existing
-merge-ready-requested run and adds no workflow trigger. The selected steady
-state (#4984) runs product CI only on `merge_group`; history-preserving syncs
-and release transactions are a separate exceptional profile there. The
-successor is a history-sync profile in the #4984 design, which must keep the
-S/B/H/G identity binding, the privileged authorization and the typed
-diff-scoped `not_applicable: history_sync` semantics described here.
+Moving an inline `#[cfg(test)] mod NAME { BODY }` to its out-of-line file
+(#15193) de-indents every line, so a relocation PR is all deletions plus
+additions and exceeds the ordinary 160-file / 3,700-line cap without changing a
+token of Rust. Admission honors a verified relocation instead (#15217):
+
+```text
+Mechanical relocation: inline-cfg-test-v1
+```
+
+With exactly that body line, `candidate_admission.py` reads every changed file
+at the PR's merge base and exact head and hands them to
+`.github/actions/pr-candidate-admission/mechanical_relocation.py`, read from the
+trusted bundle. The verifier re-derives the relocation from the base and admits
+only a head that matches it:
+
+- each changed owner under `crates/ripr/src` or `crates/ripr-contract/src` is
+  byte-identical to the base with relocated module bodies replaced by `;` (and,
+  for a module whose name is neither `tests` nor `*_tests`, a
+  `#[path = "<stem>/<name>_tests.rs"]` line relative to the owner's directory);
+- no owner is a file that another file loads through `#[path]` or `include!`
+  (listed in `policy/relocation-indirect-owners.txt`, read from the base and
+  kept current by `indirect-owners --check`, which also fails on any load form
+  it cannot resolve to one plain literal and on any unreviewed published-source
+  `macro_rules!` that shadows a comma-neutral macro), since its children
+  resolve from the loader;
+- each added file is the Rust-resolved file of one relocated module and carries
+  its body token for token (multi-character operators are single tokens, doc
+  comments stay in place as tokens, non-ASCII identifiers are single tokens and
+  other non-ASCII outside strings and comments refuses) and its comments
+  unchanged, between the same identifiers and literals and before the same code
+  token. rustfmt may re-wrap lines, add or drop a trailing comma before a closer (not a 1-tuple's,
+  and not inside macros other than the standard comma-neutral ones), and drop
+  the braces of a one-expression closure body (whose opening `|` follows `=`,
+  `(`, `,`, `move` or a similar non-operand token, so never a binary `|`) or
+  match-arm block that ends its closure or arm and does not start with a
+  block-like expression, a `m! { .. }` call or an attribute; relative
+  `include_str!`/`include_bytes!`/`include!` paths are re-based to the new
+  directory;
+- `policy/inline-test-modules.txt` lowers one ceiling per relocated module, and
+  every other path-keyed metadata file (traceability, allowlists) equals the
+  base re-keyed by the transform's own rule: references to a moved test, or to
+  a function defined only in the moved body, name the test file, a
+  `.ripr/test_intent.toml` block's `path` follows its `test` only when that
+  function moved, and an allowlist row moves only when its pattern left the
+  owner;
+- a module relocated under its own name (loaded through the transform's
+  `#[path]`) adds exactly its target to `policy/relocation-indirect-owners.txt`,
+  and no other relocation changes that list;
+- every listed file's blob id is the hash of the head content read, so the
+  listing and the contents describe one head.
+
+Any other file, construct, rename or unreadable fact rejects, and the PR is
+judged on the ordinary route with the reason in the admission detail. Refused
+constructs: `file!`, `line!`, `column!` and `stringify!` (also as raw
+identifiers), `Location`, `#[track_caller]`, any `path` attribute in the body
+or on the module, a `use` that imports a location, include or comma-neutral
+macro name, a `macro_rules!` of a comma-neutral name, a non-test cfg, and in
+the owner a location construct after the first relocated module (every later
+line moves up). Residual the verifier cannot see: a macro defined in another
+file (or a glob-imported dependency macro) that expands to `line!()` or shadows
+a comma-neutral name, and a `#[path]` inside a doubly nested inline module of
+another file (the scan resolves one inline level); the required run still
+builds and runs every test. A
+validated relocation that would exceed the ordinary caps trades them for the
+relocation ceiling of 400 files / 40,000 changed lines, and nothing else (a
+smaller one is admitted on the ordinary route): claim identity, head freshness, competing candidates and the
+hard cut still apply, and the required run still builds and runs every test.
+Diff-scoped PR evidence is recorded `not_applicable:mechanical_relocation:<head>`
+because no behavior changed; the Result accepts that record only for a
+`mechanical_relocation_admitted` head. In the merge queue a relocation must be
+its group's only constituent.
+
+To produce one, run the same transform locally and check it before pushing:
+
+```bash
+python3 .github/actions/pr-candidate-admission/mechanical_relocation.py apply <owner.rs>...
+python3 .github/actions/pr-candidate-admission/mechanical_relocation.py verify --base origin/main
+```
+
+## Historical history-sync route (source and swarm merges)
+
+This section records the former interim history-sync profile under the
+`merge-ready` label route (#12437). Queue-only enforcement is now active, so the
+ordinary landing procedure above does not offer this true-merge route. History-sync
+PRs require an explicitly authorized protection exception or a separately decided
+route; a normal direct merge is not permitted.
+
+The former profile was not a new pull_request-triggered CI lane: it rode the
+merge-ready-requested run and added no workflow trigger. Queue landing now runs
+product CI on `merge_group`; the explicit `merge-ready` request and manual
+dispatch remain installed until the label route retires, and history-preserving
+syncs and release transactions remain a
+separate exceptional profile. Any successor must keep the S/B/H/G identity
+binding, privileged authorization and typed diff-scoped
+`not_applicable: history_sync` semantics described here.
 
 Use it only for a history-preserving sync merge between
 `EffortlessMetrics/ripr` and `EffortlessMetrics/ripr-swarm`: the source-to-swarm
@@ -238,13 +461,14 @@ same head. Any other run that carries it fails.
 
 The merge queue is never relaxed: a `merge_group` run keeps the squash-only
 queued-commit rule, admission does not honor `history-sync` there, and a
-two-parent queued commit is refused. A history-sync PR therefore qualifies
-through the pull_request-mode `merge-ready` request and lands as a true merge
+two-parent queued commit is refused. A history-sync PR formerly qualified
+through the pull_request-mode `merge-ready` request and landed as a true merge
 commit, never a squash or rebase, bound to the qualified head `H`:
-`gh pr merge <n> --merge --match-head-commit <H>`. That works only while
-queue-only enforcement (#4838) is not active. After activation, a history sync
-needs an explicitly authorized protection exception or a separately decided
-route (#4838, #4840); neither is provided here.
+`gh pr merge <n> --merge --match-head-commit <H>`. That command belonged to the
+pre-queue-enforcement profile and is not an alternative landing route now. With
+queue-only enforcement active, a history sync needs an explicitly authorized
+protection exception or a separately decided route (#4838, #4840); neither is
+provided here.
 
 ## Conflicts, incidents and landing
 

@@ -120,13 +120,15 @@ gate (`cfg(any())`) keep the gap.
 A plain `#[cfg(..)]` that is provably true under the test file's own package's
 default features is no refusal at all (#8780): a plain `cargo test` compiles
 the test, so its assertions are read like an ungated test's, whether the gate
-sits on the test, an enclosing inline module or the file. The feature set and
+sits on the test, an enclosing inline module, the file, or the `mod name;`
+declaration that mounts the test's file (#14116; the declaration's gate is
+read with the default features of the declaring file's own package). The feature set and
 the evaluator are the ones [RIPR-SPEC-0279](RIPR-SPEC-0279-rust-doc-examples-as-tests.md)
 uses for doc examples (`MemberCrates::default_test_features`,
 `test_gate_is_default_enabled`), with `test` as the build's own flag: a
 feature outside the default closure, a negation, a target or custom atom, a
-`cfg_attr`, an unreadable manifest and a gate on a `mod name;` declaration in
-another file resolve nothing and keep the readings above.
+`cfg_attr` and an unreadable manifest resolve nothing and keep the readings
+above.
 `cfg(false)` is read through the same shared evaluator, which does not yet
 evaluate the literal, so a test gated only by it is withheld rather than kept.
 Likewise `#[cfg_attr(test, ignore)]` and `#[cfg_attr(test, should_panic)]`
@@ -318,11 +320,11 @@ checks after an earlier `return`, `#[should_panic]` tests, `Some(..)` tails,
 `async` owners), withholding gaps the `assert_eq!` twin keeps. The
 `debug_assertion_limit` tests pin the twin contract: for each body, the
 `debug_assert_eq!` spelling reads as a profile limit exactly where the
-`assert_eq!` twin is credited, and keeps a gap otherwise, with one declared
-exception: a `std::`/`core::`-qualified `debug_assert_eq!` is not recognized,
-because the `std`-root proof (#7857) is spelled for `assert_eq` only, so it
-keeps its gap (#8637). `debug_assert_ne!` and `debug_assert!` in any form are
-not read.
+`assert_eq!` twin is credited, and keeps a gap otherwise. A `std::`/`core::`
+(or `::std::`/`::core::`) qualified `debug_assert_eq!` is read like its
+qualified `assert_eq!` twin, under the same `std`-root proof (#7857): a root
+the file rebinds, or any other path, is not the standard macro and keeps its
+gap (#8637). `debug_assert_ne!` and `debug_assert!` in any form are not read.
 
 ### Call-fact budget of a related test line (#8600)
 
@@ -1077,6 +1079,36 @@ gated.
 Corpus effect: `shape-op-add-impl` moves from `limited` to `credited`, its
 ideal verdict.
 
+### `FromStr::from_str` through `str::parse` (#5334)
+
+`"1.2".parse::<Version>()` runs `from_str` of `impl FromStr for Version`
+without naming it. `related_tests::parse_dispatch` relates such a test to the
+owner by `direct_owner_call`, so the turbofish spelling reads exactly as the
+same test written `Version::from_str("1.2")`; the finding is then judged by the
+ordinary oracle pipeline. The reading follows the operator one and fails
+closed. All of these hold, or the test is not related:
+
+- the owner is `from_str` of a non-generic `impl FromStr for T` with a plain
+  self type (`FromStr` spelled bare or under `str::`, `std::str::` or
+  `core::str::`), the trait name is the standard one (no workspace file
+  declares a trait `FromStr` and the owner's file imports none by a
+  non-standard path or glob), and it is the only indexed `FromStr` impl for `T`;
+- the test is in the owner's file, outside property-test macros and
+  `stringify!`, no scope between the test and the file declares or renames
+  another `T`, the owner's file defines no `macro_rules!`, and no workspace
+  `macro_rules!` expands to an `impl` the index never sees;
+- the call is `.parse::<T>()` with the bare type name as its only generic
+  argument and no arguments, and its receiver is a whole plain or raw string
+  literal. A literal is a `&str`, whose inherent `parse` wins over any trait
+  method of that name, so the call is `str::parse`. A byte or C string
+  (`b".."`, `br".."`, `c".."`) is no `&str`, and a user trait may give it a
+  `parse` method, so it is refused.
+
+A receiver ripr cannot type (`text.parse::<T>()`), an annotated binding
+(`let v: Result<T, E> = "1".parse();`), another target type, a call through a
+test helper or from another file, and a commented or stringified call relate
+nothing and keep their previous reading. `parse_call_credit` pins both sides.
+
 ### A refused owner assertion beside an admitted weaker oracle (#5431)
 
 A `weakly_exposed` finding asks for a stronger assertion. When a related test
@@ -1206,6 +1238,59 @@ closure whose body drops the call as a statement
 and is named. Nothing is credited, no runtime is chosen,
 and repair still does not start.
 
+### Owner gated like an unread doc example (#14935)
+
+The doctest admission (RIPR-SPEC-0279) refuses a fenced doc example whose
+item carries a `#[cfg(..)]` it cannot prove true, or any `#[cfg_attr(..)]`,
+between the comment and the item. anyhow's nightly-only examples wrap
+themselves in
+`#[cfg_attr(not(error_generic_member_access), doc = "# _ = stringify! {")]`
+and run for real only with that cfg on, which is also the only build that
+compiles the `#[cfg(error_generic_member_access)]` `provide` methods they
+exercise. A changed `provide` read `reachable_unrevealed` from name-token and
+same-file relations alone, and the anyhow diff-mode receipt scored four caught
+mutants as false gaps.
+
+Doctest registration now records, per doctested library root, the custom cfg
+names that gate a refused runnable fenced example (plain, `rust` or an edition
+fence):
+
+- a `#[cfg_attr(P, doc = "..")]` line inside an open runnable fence gives
+  the names `not(P)` requires on (`not(x)` stubs the example when `x` is off,
+  so it runs only when `x` is on; `cfg_attr(x, ..)` runs it only with `x` off
+  and gives nothing);
+- an unprovable `#[cfg(P)]` after a runnable fence and before its item gives
+  the names `P` requires on.
+
+Only a document on a public production function counts, as for the admission
+itself: rustdoc compiles no example inside a `#[cfg(test)]` module.
+
+A name is required on when every combinator above it is a conjunction once
+negations are pushed inward (`all(..)`, or `any(..)` under an odd number of
+`not(..)`) and an even number of `not(..)` encloses it; `not(all(not(x), y))`
+is `x || not(y)` and requires nothing. Only custom names count, the ones a build script or `RUSTFLAGS`
+sets. `key = "value"` pairs (`feature`, `target_os`) and built-in names
+(`unix`, `windows`, `debug_assertions`, `miri`, `target_*`, `test`, `doctest`,
+`docsrs`, ..) gate ordinary code everywhere, and the match is library-wide,
+not per item: anyhow's examples sit on `into_boxed_dyn_error` in `error.rs`
+and exercise `provide` in `context.rs` through std's provider dispatch, which
+no call edge shows.
+
+When a `reachable_unrevealed` finding has reach `weak` (no indexed test is
+seen calling the owner) and the owner's own or enclosing `#[cfg(..)]` gates,
+as `unestablished_cfg_gates_of_fn` reads them, require one of those names on,
+the finding is rewritten through `withhold_gap` to `static_unknown` under
+`rust_gated_doctest_unread`. Reach, related tests and stages are unchanged.
+
+A test seen calling the owner, a gate on another name, an owner behind
+`not(x)`, `any(x, y)` or `not(all(not(x), y))`, a shared built-in or `feature` gate, an example that
+is not refused, a `cfg_attr` that adds no doc text, an example item behind
+`cfg(not(x))`, an example stubbed out under `cfg_attr(x, ..)`, a refused
+example inside a `#[cfg(test)]` module, a `weakly_exposed` finding, an owner whose gates do not read
+and an owner outside a doctested library keep today's reading. A gate on an
+enclosing `mod` or `impl` of the example is not collected. Nothing is
+credited.
+
 ## Scope boundary
 
 - Rust check findings, the TypeScript truncated-discovery and byte-read-limit
@@ -1243,7 +1328,12 @@ and repair still does not start.
   file, function or `all(test, ..)` gate on a feature in the default closure
   reads `exposed` like the ungated control, while a non-default feature, a
   negation, a gate with a second unresolved atom and a sibling package's
-  default do not. `default_feature_gate_tests` and
+  default do not. The same file pins the rule on a `mod name;` declaration
+  (#14116): a default-enabled declaration gate reads `exposed`, and a
+  non-default feature, a negation, a second unresolved atom and a
+  `cfg_attr` on the declaration do not. A root-qualified `std::assert_eq!`
+  under the same gate takes the targeted source-provenance route and reads
+  the same way. `default_feature_gate_tests` and
   `a_test_gate_resolves_with_test_as_the_build_flag` pin the scan and the
   evaluator.
 - `pinned_shape_limit.rs` pins each shape's withholding and the controls that

@@ -1,0 +1,1 @@
+xtask/src/reports/merge_queue/conflicts.rs|fetch(|4|repo-ops/merge-queue|#14705: the operator-only read fetches exact observed main and PR commits into a disposable bare store. Three call sites and one helper definition cover the healthy batch, pinned-main retry and deadline-bounded partial-batch recovery. Retains read-only transport and disables hooks and submodule recursion.

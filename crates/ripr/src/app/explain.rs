@@ -144,11 +144,24 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         selector,
     ) {
         FindingSelection::Unique(finding) => {
+            let opt_out = output
+                .owner_opt_outs
+                .iter()
+                .find(|entry| entry.finding_id == finding.id);
+            let context_command = navigation.context_command(selector);
+            if let (ExplainFormat::Agent, Some(opt_out)) = (format, opt_out) {
+                return Ok(format.render_withheld(
+                    opt_out,
+                    finding,
+                    &output.root,
+                    &context_command,
+                ));
+            }
             let rendered = render_selected(
                 format,
                 finding,
                 config,
-                &navigation.context_command(selector),
+                &context_command,
                 &output.root,
                 output.source_value_files(finding),
                 output.suppression.as_ref().is_some_and(|outcome| {
@@ -158,18 +171,11 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
                         .any(|entry| entry.finding_id == finding.id)
                 }),
             );
-            // #13910: the check run's own withholding decision, read from the
-            // `owner_opt_outs` it kept (policy-suppressed findings are already
-            // excluded there), so explain never re-derives the opt-out.
-            let withheld = output
-                .owner_opt_outs
-                .iter()
-                .find(|opt_out| opt_out.finding_id == finding.id);
-            Ok(match (format, withheld) {
-                (ExplainFormat::Human, Some(opt_out)) => {
+            Ok(match opt_out {
+                Some(opt_out) => {
                     output::human::render_owner_opt_out_explain_line(opt_out) + &rendered
                 }
-                _ => rendered,
+                None => rendered,
             })
         }
         FindingSelection::Ambiguous(candidates) => Err(refuse_selector_miss(
@@ -292,13 +298,31 @@ pub(crate) fn ambiguous_finding_match(
     list_command: &str,
 ) -> String {
     const MAX_LISTED: usize = 8;
-    let mut ids: Vec<&str> = candidates
+    // #15271: a changed line often carries both the new code's finding and
+    // the deleted code's base-side one under the same location. Mark the
+    // base-side ids so the reader can tell which one is an edit target.
+    let mut ids: Vec<(&str, bool)> = candidates
         .iter()
-        .map(|finding| finding.id.as_str())
+        .map(|finding| {
+            (
+                finding.id.as_str(),
+                finding.source_currentness.is_base_side(),
+            )
+        })
         .collect();
     ids.sort_unstable();
-    ids.dedup();
-    let listed: Vec<&str> = ids.iter().take(MAX_LISTED).copied().collect();
+    ids.dedup_by(|a, b| a.0 == b.0);
+    let listed: Vec<String> = ids
+        .iter()
+        .take(MAX_LISTED)
+        .map(|(id, base_side)| {
+            if *base_side {
+                format!("{id} (base-side: deleted or moved code, not an edit target)")
+            } else {
+                (*id).to_string()
+            }
+        })
+        .collect();
     let mut message = format!(
         "selector {selector:?} matched {} findings; select one explicitly: {}",
         candidates.len(),
@@ -457,9 +481,10 @@ const MAX_NEARBY_FINDING_LOCATIONS: usize = 5;
 /// causes, so a typo, an unchanged line and a finding one line up were
 /// indistinguishable.
 ///
-/// The run output carries counts, not the per-file changed-line set, so this
-/// never says whether the named line itself changed. Finding ids, seam ids
-/// and malformed locations return `None`: they keep their own wording.
+/// For a file without findings a complete run also says whether the named
+/// line changed (#15039), from the outcome's run-local changed-line index.
+/// Finding ids, seam ids and malformed locations return `None`: they keep
+/// their own wording.
 fn location_miss_cause(selector: &str, output: &CheckOutput) -> Option<LocationMissCause> {
     location_miss_cause_text(selector, output)
 }
@@ -650,11 +675,82 @@ fn location_miss_cause_text(selector: &str, output: &CheckOutput) -> Option<Loca
         });
     }
     let counts = &outcome.counts;
+    // #15039: a complete run knows which lines its diff changed, so say
+    // which of the three reasons applies to the named line. The index holds
+    // the producer's own parsed diff; an outcome without one (an older
+    // carrier) keeps the general sentence.
+    let reason = match outcome.changed_lines.as_ref() {
+        Some(index) => changed_line_reason(index, &wanted_file, wanted_line),
+        None => "ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none".to_string(),
+    };
     cause.push_str(&format!(
-        ". ripr reports a finding only on a changed line whose behavior it checks, so an unchanged line, a comment or a line of test code has none. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
+        ". {reason}. This run read {} changed file(s) and {} changed line(s), {} of them candidate line(s) ripr considers",
         counts.changed_file_count, counts.changed_line_count, counts.candidate_line_count
     ));
     Some(LocationMissCause::plain(cause))
+}
+
+/// How many changed lines of the file a location miss names.
+const MAX_NEARBY_CHANGED_LINES: usize = 5;
+
+/// Which of the three reasons a file without findings has none at
+/// `wanted_line` (#15039): the diff changes no text line of the file, the
+/// line is not one the diff changed, or the line changed and has no finding.
+/// `index` is the complete run's own changed-line set. It holds added text
+/// lines only, so a binary or mode-only change is absent from it and the
+/// first sentence claims no more than that. Nor does a changed line without
+/// a finding establish why: a complete run can leave a file out by
+/// configuration, so that sentence lists the possible reasons.
+fn changed_line_reason(
+    index: &crate::analysis_outcome::ChangedLineIndex,
+    wanted_file: &str,
+    wanted_line: usize,
+) -> String {
+    // The index is keyed by the producer's stable path text, which escapes
+    // reserved bytes the selector spells literally. The diff parser builds
+    // its paths from normal components, so `a/./b` and `a//b` are respelled
+    // the same way here.
+    let respelled: std::path::PathBuf = Path::new(wanted_file)
+        .components()
+        .filter(|component| matches!(component, std::path::Component::Normal(_)))
+        .collect();
+    let key = crate::analysis::stable_path_text(&respelled);
+    let Some(lines) = index.lines_of(&key) else {
+        return "This run's diff changes no text line of that file, and ripr reports a finding only on a changed line".to_string();
+    };
+    if lines.contains(&wanted_line) {
+        return format!(
+            "Line {wanted_line} changed, but this run has no finding on it: a comment, blank line, test code, a file the configuration leaves out or a kind of change ripr does not model has none"
+        );
+    }
+    if lines.is_empty() {
+        return format!(
+            "The diff only removes lines from that file, so line {wanted_line} is not a changed line, and ripr reports a finding only on a changed line"
+        );
+    }
+    let mut nearest: Vec<usize> = lines.iter().copied().collect();
+    nearest.sort_by_key(|line| (line.abs_diff(wanted_line), *line));
+    nearest.truncate(MAX_NEARBY_CHANGED_LINES);
+    nearest.sort_unstable();
+    let listed = nearest
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let scope = if lines.len() > nearest.len() {
+        format!(
+            "the {} nearest of its {} changed lines are",
+            nearest.len(),
+            lines.len()
+        )
+    } else if lines.len() == 1 {
+        "its one changed line is".to_string()
+    } else {
+        "its changed lines are".to_string()
+    };
+    format!(
+        "Line {wanted_line} is not a line this run's diff changed ({scope} {listed}), and ripr reports a finding only on a changed line"
+    )
 }
 
 /// Preserve the check producer's scope limitations on a fresh lookup miss.
@@ -752,35 +848,41 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
     format: ExplainFormat,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
-    let findings = super::check_artifact::load_findings_for_reuse(
-        artifact_path,
-        &input,
-        config,
-        asserted_base,
-    )?;
+    let artifact =
+        super::check_artifact::load_for_reuse(artifact_path, &input, config, asserted_base)?;
     // The artifact path reuses the same seam-side reverse lookups as the
     // fresh path: seam IDs and hash-form canonical gap IDs bind through the
     // current root's classified seams, so one ID spells the same finding on
     // every explain surface (#8688).
     match super::selector::select_finding_with_seam_reverse(
-        &findings,
+        &artifact.findings,
         &input.root,
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => Ok(render_selected(
-            format,
-            finding,
-            config,
-            &navigation.context_command(selector),
-            // The artifact was identity-verified against this root; the
-            // location renders against it like every fresh route (#5996).
-            &input.root,
-            None,
-            // `--from` replay applies no suppression policy; the CLI refuses
-            // the agent format when one is supplied (fail closed).
-            false,
-        )),
+        FindingSelection::Unique(finding) => {
+            let context_command = navigation.context_command(selector);
+            if let Some(opt_out) = artifact
+                .owner_opt_outs
+                .iter()
+                .find(|entry| entry.finding_id == finding.id)
+            {
+                return Ok(format.render_withheld(opt_out, finding, &input.root, &context_command));
+            }
+            Ok(render_selected(
+                format,
+                finding,
+                config,
+                &context_command,
+                // The artifact was identity-verified against this root; the
+                // location renders against it like every fresh route (#5996).
+                &input.root,
+                None,
+                // `--from` replay applies no suppression policy; the CLI refuses
+                // the agent format when one is supplied (fail closed).
+                false,
+            ))
+        }
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,
@@ -801,7 +903,7 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
                 None,
             );
             if let Some(hint) = super::selector::location_miss_hint(
-                &findings,
+                &artifact.findings,
                 &input.root,
                 selector,
                 // #14440: the artifact records findings, not whether
@@ -1038,6 +1140,32 @@ mod tests {
             message.contains("probe:src_lib.rs:side_effect:3ceb2918"),
             "ambiguous refusal must name the second candidate: {message}"
         );
+        assert!(
+            !message.contains("base-side"),
+            "candidate-side ids carry no base-side mark: {message}"
+        );
+    }
+
+    /// #15271: when one of the findings at a location is base-side evidence,
+    /// the refusal marks that id so the reader can pick the edit target.
+    #[test]
+    fn ambiguous_refusal_marks_base_side_candidates() -> Result<(), String> {
+        let output = fixture_check_output("collection_argument_plain")?;
+        let mut findings: Vec<crate::domain::Finding> = output.findings.clone();
+        if findings.len() < 2 {
+            return Err(format!("fixture keeps two findings: {}", findings.len()));
+        }
+        findings[0].source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let refs: Vec<&crate::domain::Finding> = findings.iter().take(2).collect();
+        let message = ambiguous_finding_match("src/lib.rs:3", &refs, "ripr check --json");
+        let marked = format!(
+            "{} (base-side: deleted or moved code, not an edit target)",
+            findings[0].id
+        );
+        assert!(message.contains(&marked), "{message}");
+        assert_eq!(message.matches("base-side").count(), 1, "{message}");
+        assert!(message.contains(&findings[1].id), "{message}");
+        Ok(())
     }
 
     fn fixture_check_output(name: &str) -> Result<CheckOutput, String> {

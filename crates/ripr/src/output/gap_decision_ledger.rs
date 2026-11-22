@@ -80,6 +80,11 @@ pub(crate) struct GapDecisionLedgerReport {
     /// complete run, independent of which records survive (#9599). Present
     /// only for a complete repo-exposure source.
     analysis_coverage: Option<Value>,
+    /// #14898: the source's `owner_opt_outs` disclosure (seams withheld by a
+    /// `#[mutants::skip]` owner), copied verbatim from a repo-exposure source
+    /// or an earlier ledger. The gate carries it into `analysis_scope` so a
+    /// baseline entry whose owner opted out never reads as resolved.
+    owner_opt_outs: Option<Value>,
     pub(crate) records: Vec<GapRecord>,
     warnings: Vec<String>,
     limits: Vec<String>,
@@ -240,6 +245,10 @@ pub(crate) struct GapRecord {
     /// Nearest TypeScript `package.json` directory relative to the workspace root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) typescript_package_root: Option<String>,
+    /// Root-relative directory a nested Python project's verify command runs
+    /// from (#15302); absent when it runs from the selected root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) verify_cwd: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -720,6 +729,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     let mut warnings = Vec::new();
     let mut analysis_outcome = None;
     let mut run_limitations = None;
+    let mut owner_opt_outs = None;
     let mut input_source_subject = None;
     let mut input_root = None;
     // #5264: "input parsed, zero records derived" is a different state from
@@ -755,6 +765,16 @@ pub(crate) fn build_gap_decision_ledger_report(
             run_limitations = source_value
                 .as_ref()
                 .and_then(|value| value.get("run_limitations").cloned());
+            // #14898: a withheld seam is absent from `seams`, so the
+            // disclosure is the only record that it was opted out rather
+            // than resolved. Copied verbatim; the consumer validates it.
+            owner_opt_outs = match input.source_kind {
+                GapDecisionLedgerSourceKind::RepoExposure
+                | GapDecisionLedgerSourceKind::Records => source_value
+                    .as_ref()
+                    .and_then(|value| value.get("owner_opt_outs").cloned()),
+                GapDecisionLedgerSourceKind::CheckOutput => None,
+            };
             // #4544: the ledger's stamp is derived from the stamp the analysis
             // output (or an earlier ledger) carries, never from the workspace
             // as it is when this ledger is written.
@@ -977,6 +997,7 @@ pub(crate) fn build_gap_decision_ledger_report(
         source_subject: None,
         source_subject_unavailable: None,
         analysis_coverage,
+        owner_opt_outs,
         records,
         warnings,
         source_parse_error,
@@ -1022,6 +1043,8 @@ pub(crate) fn render_gap_decision_ledger_json(
         source_subject_unavailable: Option<&'a str>,
         #[serde(skip_serializing_if = "Option::is_none")]
         analysis_coverage: Option<&'a Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        owner_opt_outs: Option<&'a Value>,
         records: &'a [Value],
         warnings: &'a [String],
         limits: &'a [String],
@@ -1047,6 +1070,7 @@ pub(crate) fn render_gap_decision_ledger_json(
         source_subject: report.source_subject.as_ref(),
         source_subject_unavailable: report.source_subject_unavailable,
         analysis_coverage: report.analysis_coverage.as_ref(),
+        owner_opt_outs: report.owner_opt_outs.as_ref(),
         records: &records,
         warnings: &report.warnings,
         limits: &report.limits,
@@ -1203,131 +1227,6 @@ fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCo
         receipt: parse("receipt", CommandRole::Receipt)?,
         regeneration: parse("regeneration", CommandRole::Regeneration)?,
     })
-}
-
-pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerReport) -> String {
-    let mut out = String::new();
-    out.push_str("# RIPR Gap Decision Ledger\n\n");
-    out.push_str(&format!("Status: `{}`\n\n", md_inline(&report.status)));
-    out.push_str(&format!("Root: `{}`\n\n", md_inline(&report.root)));
-    if let Some(origin) = &report.check_output_provenance {
-        let source_root = origin
-            .get("root")
-            .and_then(Value::as_str)
-            .unwrap_or("unavailable");
-        let subject_limit = origin
-            .get("source_subject_unavailable")
-            .and_then(Value::as_str)
-            .unwrap_or("not recorded");
-        out.push_str(&format!(
-            "Check-output producer root: `{}`; producer subject limitation: `{}`. These are provenance disclosures, not complete corpus currentness.\n\n",
-            md_inline(source_root), md_inline(subject_limit)
-        ));
-    }
-    out.push_str("Authority: gate-decision artifacts own pass/fail authority. This report is advisory projection input.\n\n");
-    if let Some(outcome) = &report.analysis_outcome {
-        let complete = outcome
-            .get("analysis_complete")
-            .and_then(Value::as_bool)
-            .map_or_else(|| "not_available".to_string(), |value| value.to_string());
-        let kind = outcome
-            .pointer("/outcome/kind")
-            .and_then(Value::as_str)
-            .unwrap_or("not_available");
-        out.push_str(&format!(
-            "Analysis complete: `{}`; analysis outcome: `{}`\n\n",
-            md_inline(&complete),
-            md_inline(kind)
-        ));
-        // #9010: a budget-bounded check document says so beside the verdict.
-        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
-            out.push_str(
-                "Document complete: `false` (findings array bounded by the byte budget)\n\n",
-            );
-        }
-    }
-    // #5203: a ledger derived from a bounded run says so in the human
-    // surface too, naming each propagated run state.
-    if let Some(limitations) = report.run_limitations.as_ref().and_then(Value::as_array) {
-        let states = limitations
-            .iter()
-            .filter_map(|entry| {
-                entry
-                    .get("run_status")
-                    .and_then(Value::as_str)
-                    .or_else(|| entry.get("category").and_then(Value::as_str))
-            })
-            .collect::<Vec<_>>();
-        if !states.is_empty() {
-            out.push_str(&format!(
-                "Run limitations (propagated from the source run): `{}`\n\n",
-                md_inline(&states.join(", "))
-            ));
-        }
-    }
-
-    out.push_str("## Summary\n\n");
-    out.push_str(&format!("- Records: `{}`\n", report.summary.records_total));
-    out.push_str(&format!(
-        "- Repairable: `{}`; static limitations: `{}`; no action: `{}`; missing artifacts: `{}`\n",
-        report.summary.repairable_total,
-        report.summary.static_limitation_total,
-        report.summary.no_action_total,
-        report.summary.missing_artifact_total
-    ));
-    out.push_str(&format!(
-        "- Projections: PR comments=`{}`, gate candidates=`{}`, agent packets=`{}`\n",
-        report.summary.projection_pr_comment_eligible,
-        report.summary.projection_gate_candidate,
-        report.summary.projection_agent_packet_eligible
-    ));
-    out.push_str(&format!(
-        "- Badge targets: ripr 0=`{}`, ripr+=`{}`\n",
-        report.summary.ripr_zero_target_count, report.summary.ripr_plus_target_count
-    ));
-    out.push_str(&format!(
-        "- Receipts: improved=`{}`, unchanged_after_attempt=`{}`\n",
-        report.summary.receipt_improved_total, report.summary.receipt_unchanged_after_attempt_total
-    ));
-    out.push_str(&format!(
-        "- Output-contract gaps: `{}`; preview ineligible: `{}`\n\n",
-        report.summary.missing_output_contract_total, report.summary.preview_ineligible_total
-    ));
-
-    if !report.warnings.is_empty() {
-        out.push_str("## Warnings\n\n");
-        for warning in &report.warnings {
-            out.push_str(&format!("- {}\n", md_inline(warning)));
-        }
-        out.push('\n');
-    }
-
-    out.push_str("## Records\n\n");
-    if report.records.is_empty() {
-        // #5264: name the two different empty states. `blocked` means the
-        // input could not be read; `no_records` means the input parsed but
-        // nothing projected to gap records (the warnings section above names
-        // the route coverage when a valid check output carried findings).
-        if report.status == "blocked" {
-            out.push_str(
-                "No gap records could be read from the input; see the warnings above.\n\n",
-            );
-        } else {
-            out.push_str(
-                "No gap records were derived from the input; see the warnings above for the reason.\n\n",
-            );
-        }
-    } else {
-        for record in &report.records {
-            render_record_markdown(record, &mut out);
-        }
-    }
-
-    out.push_str("## Limits\n\n");
-    for limit in &report.limits {
-        out.push_str(&format!("- {}\n", md_inline(limit)));
-    }
-    out
 }
 
 /// Parse a persisted ledger for a CLI consumer. The CLI resolves `--root .`
@@ -1703,6 +1602,7 @@ fn gap_record_from_repo_exposure_seam(seam: &Value) -> Option<GapRecord> {
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -1823,6 +1723,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
     let verify_command = string_at(card, &["verify", "command"])
         .filter(|command| command_display_is_nonblank(command))
         .map(ToString::to_string);
+    let verify_cwd = string_at(card, &["verify", "cwd"]).map(ToString::to_string);
     let repair_action = string_at(card, &["repair_action"]).unwrap_or("add_or_strengthen_test");
     let repairability = if suggested_test_file.is_some() && verify_command.is_some() {
         "repairable"
@@ -1870,6 +1771,8 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         "actionable",
         string_at(finding, &["oracle_alignment"]),
         string_at(finding, &["alignment_reason"]),
+        python_card_unread_owner_result_field(finding, card),
+        python_card_len_only_append_effect(finding, card),
     );
     insert_projection(
         &mut projection_eligibility,
@@ -1930,9 +1833,153 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
             .unwrap_or("preview_advisory_only")
             .to_string(),
         typescript_package_root: None,
+        verify_cwd,
     })
 }
 
+/// Whether the finding carries the analyzer's unread-owner-result-field fact
+/// for the card's own selected test and `self.<field>` discriminator.
+fn python_card_unread_owner_result_field(finding: &Value, card: &Value) -> bool {
+    let (Some(test_name), Some(missing_discriminator)) = (
+        string_at(card, &["suggested_location", "test_name"]),
+        string_at(card, &["missing_discriminator"]),
+    ) else {
+        return false;
+    };
+    crate::domain::python_unread_owner_result_field(
+        string_array_at(finding, &["evidence"])
+            .iter()
+            .map(String::as_str),
+        test_name,
+        missing_discriminator,
+    )
+    .is_some()
+}
+
+/// Whether the card's selected test observes the mutated container only
+/// through `len(...)` while the changed effect appends to that container:
+/// the producer selected the exact test (a direct syntactic call), named
+/// the appended-contents discriminator, and the observed sink is a pure
+/// length aggregate. Every other orthogonal finding stays denied.
+fn python_card_len_only_append_effect(finding: &Value, card: &Value) -> bool {
+    let (Some(test_name), Some(missing_discriminator)) = (
+        string_at(card, &["suggested_location", "test_name"]),
+        string_at(card, &["missing_discriminator"]),
+    ) else {
+        return false;
+    };
+    let Some(container) = python_append_contents_container(missing_discriminator) else {
+        return false;
+    };
+    let append_receiver =
+        string_at(finding, &["probe", "expression"]).and_then(python_append_receiver);
+    let len_argument = string_at(finding, &["observed_sink"]).and_then(python_len_argument);
+    append_receiver == Some(container)
+        && len_argument == Some(container)
+        && string_at(finding, &["probe", "family"]) == Some("side_effect")
+        && string_array_at(finding, &["evidence"])
+            .iter()
+            .any(|line| line == &format!("related_test_relation: syntactic_call ({test_name})"))
+}
+
+/// The container named by a `<container> contents == [<expected value>]`
+/// discriminator, when the whole shape is that placeholder form.
+fn python_append_contents_container(missing_discriminator: &str) -> Option<&str> {
+    let (container, expected) = missing_discriminator.trim().split_once(" contents == [")?;
+    (expected == "<expected value>]"
+        && !container.is_empty()
+        && container
+            .chars()
+            .next()
+            .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && container
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric()))
+    .then_some(container)
+}
+
+/// The final receiver segment of a `<receiver>.append(` call in `expression`
+/// (`self.buf.append(` reads `buf`). A `.push(` call reads nothing: it is
+/// not a Python list append.
+fn python_append_receiver(expression: &str) -> Option<&str> {
+    let idx = expression.find(".append(")?;
+    let receiver = expression[..idx]
+        .rsplit(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+        .next()?;
+    (!receiver.is_empty()
+        && receiver
+            .chars()
+            .next()
+            .is_some_and(|first| first == '_' || first.is_ascii_alphabetic()))
+    .then_some(receiver)
+}
+
+/// The final segment of the argument of the first `len(...)` call in
+/// `observed_sink` (`len(self.buf)` reads `buf`), when the argument is a
+/// plain dotted name.
+fn python_len_argument(observed_sink: &str) -> Option<&str> {
+    let mut search_from = 0usize;
+    while let Some(relative_idx) = observed_sink[search_from..].find("len(") {
+        let idx = search_from + relative_idx;
+        let boundary_ok = idx == 0
+            || !observed_sink[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+        // A len() call inside a subscript, as in buf[len(buf) - 1], indexes
+        // into the contents; it is not a length only observation.
+        let bracket_depth = observed_sink[..idx]
+            .chars()
+            .fold(0i32, |depth, ch| match ch {
+                '[' => depth + 1,
+                ']' => depth - 1,
+                _ => depth,
+            });
+        if boundary_ok && bracket_depth > 0 {
+            return None;
+        }
+        if boundary_ok {
+            let args_start = idx + "len(".len();
+            let mut depth = 1usize;
+            let mut end = None;
+            for (offset, ch) in observed_sink[args_start..].char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = Some(args_start + offset);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let argument = observed_sink[args_start..end?].trim();
+            if argument.is_empty()
+                || !argument
+                    .chars()
+                    .all(|ch| ch == '_' || ch == '.' || ch.is_ascii_alphanumeric())
+            {
+                return None;
+            }
+            let segment = argument.rsplit('.').next()?;
+            return (!segment.is_empty()
+                && segment
+                    .chars()
+                    .next()
+                    .is_some_and(|first| first == '_' || first.is_ascii_alphabetic()))
+            .then_some(segment);
+        }
+        search_from = idx + "len(".len();
+    }
+    None
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each input is an independent fail-closed eligibility condition"
+)]
 fn python_agent_packet_eligibility(
     repairability: &str,
     has_repair_route: bool,
@@ -1941,6 +1988,8 @@ fn python_agent_packet_eligibility(
     gap_state: &str,
     oracle_alignment: Option<&str>,
     alignment_reason: Option<&str>,
+    unread_owner_result_field: bool,
+    len_only_append_effect: bool,
 ) -> (bool, &'static str) {
     let ordinary_requirements = repairability == "repairable"
         && has_repair_route
@@ -1969,6 +2018,30 @@ fn python_agent_packet_eligibility(
         }
         (Some("unknown"), Some("no_strong_oracle")) => {
             (true, "python_no_strong_oracle_with_bounded_repair_route")
+        }
+        // The strong oracle observes another attribute of the instance the
+        // owner returned, and the analyzer established that the one related
+        // test binds that instance once and never reads the changed field.
+        // Every other orthogonal finding stays denied.
+        (Some("orthogonal"), Some("strong_oracle_observes_different_sink"))
+            if unread_owner_result_field =>
+        {
+            (
+                true,
+                "python_unread_owner_result_field_with_bounded_repair_route",
+            )
+        }
+        // The selected test reaches the owner directly and observes the
+        // mutated container only through its length, while the card names
+        // the appended contents as the missing check: strengthening that
+        // one test to assert the contents is a bounded route.
+        (Some("orthogonal"), Some("strong_oracle_observes_different_sink"))
+            if len_only_append_effect =>
+        {
+            (
+                true,
+                "python_len_only_append_effect_with_bounded_repair_route",
+            )
         }
         _ => (false, "python_oracle_alignment_pair_not_delegatable"),
     }
@@ -2139,6 +2212,7 @@ fn gap_record_from_typescript_repair_finding(finding: &Value, index: usize) -> O
         typescript_package_root: crate::output::markdown::typescript_package_root_from_gap_record(
             finding,
         ),
+        verify_cwd: None,
     })
 }
 
@@ -2285,6 +2359,7 @@ fn gap_record_from_typescript_not_delegatable_finding(
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -2387,6 +2462,7 @@ fn gap_record_from_typescript_no_action_finding(
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -2549,6 +2625,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
             .unwrap_or("preview_advisory_only")
             .to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
     .filter(|record| {
         record.repair_route.is_some()
@@ -2639,6 +2716,7 @@ fn gap_record_from_python_static_limit_finding(finding: &Value, index: usize) ->
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -2726,6 +2804,7 @@ fn gap_record_from_python_no_action_finding(finding: &Value, index: usize) -> Op
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -2864,6 +2943,7 @@ fn gap_record_from_python_no_repair_card_finding(
         safe_gate_predicate: None,
         authority_boundary: "preview_advisory_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -3256,6 +3336,7 @@ fn gap_record_from_finding_alignment_item(item: &Value, index: usize) -> Option<
         safe_gate_predicate: None,
         authority_boundary: "gate_decision_artifact_only".to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -3768,101 +3849,6 @@ pub(crate) fn projection_eligible_from_value(record: &Value, projection: &str) -
         .is_some_and(|record| projection_eligible(&record, projection))
 }
 
-fn render_record_markdown(record: &GapRecord, out: &mut String) {
-    out.push_str(&format!(
-        "### `{}`\n\n",
-        md_inline(&fallback_gap_id(record))
-    ));
-    out.push_str(&format!(
-        "- Kind: `{}`; scope: `{}`; policy: `{}`; repairability: `{}`\n",
-        md_inline(&record.kind),
-        md_inline(&record.scope),
-        md_inline(&record.policy_state),
-        md_inline(&record.repairability)
-    ));
-    out.push_str(&format!(
-        "- Evidence: `{}` / `{}`; language: `{}` / `{}`\n",
-        md_inline(&record.evidence_class),
-        md_inline(&record.gap_state),
-        md_inline(&record.language),
-        md_inline(&record.language_status)
-    ));
-    if let Some(anchor) = &record.anchor {
-        out.push_str(&format!(
-            "- Anchor: `{}`{}{}\n",
-            md_inline(anchor.file.as_deref().unwrap_or("unknown")),
-            anchor
-                .line
-                .map(|line| format!(":{line}"))
-                .unwrap_or_default(),
-            anchor
-                .owner
-                .as_ref()
-                .map(|owner| format!(" owner `{}`", md_inline(owner)))
-                .unwrap_or_default()
-        ));
-    }
-    if let Some(seam_id) = record.seam_id.as_deref().and_then(non_empty) {
-        out.push_str(&format!("- Seam: `{}`\n", md_inline(seam_id)));
-    }
-    if let Some(route) = &record.repair_route {
-        out.push_str(&format!(
-            "- Repair: `{}`{}\n",
-            md_inline(&route.route_kind),
-            route
-                .target_file
-                .as_ref()
-                .map(|target| format!(" in `{}`", md_inline(target)))
-                .unwrap_or_default()
-        ));
-        if let Some(assertion) = &route.assertion_shape {
-            out.push_str(&format!(
-                "- Assertion or observer: `{}`\n",
-                md_inline(assertion)
-            ));
-        }
-        if let Some(command) = route.inspection_command.as_deref().and_then(non_empty) {
-            out.push_str(&format!("- Inspect: `{}`\n", md_inline(command)));
-        }
-    }
-    let eligible = eligible_projection_names(record);
-    if !eligible.is_empty() {
-        out.push_str(&format!(
-            "- Eligible projections: `{}`\n",
-            eligible.join("`, `")
-        ));
-    }
-    if command_displays_are_complete(&record.verification_commands) {
-        out.push_str("- Verify:\n");
-        for command in &record.verification_commands {
-            out.push_str(&format!("  - `{}`\n", md_inline(command)));
-        }
-    } else if !record.verification_commands.is_empty() {
-        out.push_str("- Verify: `unavailable_incomplete_command_list`\n");
-    }
-    if !record.regeneration_commands.is_empty() {
-        out.push_str("- Regenerate:\n");
-        for command in &record.regeneration_commands {
-            out.push_str(&format!("  - `{}`\n", md_inline(command)));
-        }
-    }
-    if let Some(command) = record
-        .receipt_command
-        .as_deref()
-        .filter(|command| command_display_is_nonblank(command))
-    {
-        out.push_str("- Receipt:\n");
-        out.push_str(&format!("  - `{}`\n", md_inline(command)));
-    }
-    if let Some(receipt) = &record.receipt {
-        out.push_str(&format!(
-            "- Receipt movement: `{}`\n",
-            md_inline(receipt.movement.as_deref().unwrap_or("unknown"))
-        ));
-    }
-    out.push('\n');
-}
-
 fn eligible_projection_names(record: &GapRecord) -> Vec<String> {
     record
         .projection_eligibility
@@ -3880,18 +3866,10 @@ fn fallback_gap_id(record: &GapRecord) -> String {
     }
 }
 
-fn md_inline(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        match character {
-            '\r' | '\n' => escaped.push(' '),
-            '|' => escaped.push_str("\\|"),
-            '`' => escaped.push('\''),
-            _ => escaped.push(character),
-        }
-    }
-    escaped
-}
+mod markdown;
+pub(crate) use markdown::render_gap_decision_ledger_markdown;
+#[cfg(test)]
+use markdown::render_record_markdown;
 
 #[cfg(all(test, feature = "lang-python"))]
 mod python_identity_tests;
@@ -4265,10 +4243,12 @@ mod tests {
         }));
 
         let markdown = render_gap_decision_ledger_markdown(&report);
-        assert!(markdown.contains("gap:'pipe\\|line"));
-        assert!(markdown.contains("docs\\|OUTPUT_SCHEMA.md`:7"));
-        assert!(markdown.contains("owner `output::'schema'`"));
-        assert!(markdown.contains("Assertion or observer: `report contains 'start\\|here'`"));
+        // The fence outgrows the backtick inside, and the pipe stays bare: the
+        // report has no table, so a `\\|` would show its backslash.
+        assert!(markdown.contains("### ``gap:`pipe|line``\n"));
+        assert!(markdown.contains("`docs|OUTPUT_SCHEMA.md`:7"));
+        assert!(markdown.contains("owner `` output::`schema` ``"));
+        assert!(markdown.contains("Assertion or observer: `` report contains `start|here` ``"));
         assert!(markdown.contains("cargo xtask reports index"));
         assert!(markdown.contains("Receipt movement: `missing_receipt`"));
     }
@@ -4818,19 +4798,6 @@ mod tests {
             "Unknown"
         );
         assert_eq!(gap_kind_from_evidence("unknown_state", "x"), "Unknown");
-    }
-
-    // ── md_inline ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn md_inline_escapes_special_characters() {
-        assert_eq!(md_inline("plain"), "plain");
-        assert_eq!(md_inline("a|b"), "a\\|b");
-        assert_eq!(md_inline("a`b"), "a'b");
-        assert_eq!(md_inline("a\nb"), "a b");
-        assert_eq!(md_inline("a\rb"), "a b");
-        assert_eq!(md_inline("a`b|c\nd"), "a'b\\|c d");
-        assert_eq!(md_inline(""), "");
     }
 
     // ── fallback_gap_id ──────────────────────────────────────────────────────
@@ -5496,17 +5463,64 @@ mod tests {
                 "actionable",
                 Some(alignment),
                 Some(reason),
+                false,
+                false,
             )
             .0
             {
                 return Err(format!("expected accepted pair {alignment}/{reason}"));
             }
         }
+        // The orthogonal pair is delegated only with the analyzer's
+        // unread-owner-result-field fact, under its own reason.
+        let orthogonal = (
+            Some("orthogonal"),
+            Some("strong_oracle_observes_different_sink"),
+        );
+        if python_agent_packet_eligibility(
+            "repairable",
+            true,
+            true,
+            true,
+            "actionable",
+            orthogonal.0,
+            orthogonal.1,
+            true,
+            false,
+        ) != (
+            true,
+            "python_unread_owner_result_field_with_bounded_repair_route",
+        ) {
+            return Err("orthogonal pair with the unread fact must be accepted".to_string());
+        }
+        if python_agent_packet_eligibility(
+            "repairable",
+            true,
+            true,
+            true,
+            "actionable",
+            orthogonal.0,
+            orthogonal.1,
+            false,
+            true,
+        ) != (
+            true,
+            "python_len_only_append_effect_with_bounded_repair_route",
+        ) {
+            return Err(
+                "orthogonal pair with the len-only append fact must be accepted".to_string(),
+            );
+        }
         let denied = [
+            orthogonal,
+            (Some("orthogonal"), Some("no_strong_oracle")),
+            (Some("orthogonal"), Some("no_family_relevant_assertion")),
             (
                 Some("orthogonal"),
-                Some("strong_oracle_observes_different_sink"),
+                Some("other_behavior_assertion_passed_over"),
             ),
+            (Some("orthogonal"), None),
+            (None, Some("strong_oracle_observes_different_sink")),
             (Some("unknown"), Some("strong_oracle_observes_owner_name")),
             (Some("direct"), Some("no_strong_oracle")),
             (Some("mystery"), Some("no_strong_oracle")),
@@ -5516,18 +5530,26 @@ mod tests {
             (None, None),
         ];
         for (alignment, reason) in denied {
-            if python_agent_packet_eligibility(
-                "repairable",
-                true,
-                true,
-                true,
-                "actionable",
-                alignment,
-                reason,
-            )
-            .0
-            {
-                return Err(format!("unexpected accepted pair {alignment:?}/{reason:?}"));
+            // The fact never opens a pair other than the orthogonal one.
+            let with_fact = (alignment, reason) != orthogonal;
+            for unread in [false, with_fact] {
+                if python_agent_packet_eligibility(
+                    "repairable",
+                    true,
+                    true,
+                    true,
+                    "actionable",
+                    alignment,
+                    reason,
+                    unread,
+                    false,
+                )
+                .0
+                {
+                    return Err(format!(
+                        "unexpected accepted pair {alignment:?}/{reason:?} (unread fact {unread})"
+                    ));
+                }
             }
         }
         for requirements in [
@@ -5537,23 +5559,79 @@ mod tests {
             ("repairable", true, true, false, "actionable"),
             ("repairable", true, true, true, "report_only"),
         ] {
-            if python_agent_packet_eligibility(
-                requirements.0,
-                requirements.1,
-                requirements.2,
-                requirements.3,
-                requirements.4,
-                Some("unknown"),
-                Some("no_strong_oracle"),
-            )
-            .0
-            {
-                return Err(format!(
-                    "ordinary requirements failed closed: {requirements:?}"
-                ));
+            for (alignment, reason, unread) in [
+                ("unknown", "no_strong_oracle", false),
+                ("orthogonal", "strong_oracle_observes_different_sink", true),
+            ] {
+                if python_agent_packet_eligibility(
+                    requirements.0,
+                    requirements.1,
+                    requirements.2,
+                    requirements.3,
+                    requirements.4,
+                    Some(alignment),
+                    Some(reason),
+                    unread,
+                    true,
+                )
+                .0
+                {
+                    return Err(format!(
+                        "ordinary requirements failed closed: {requirements:?} {alignment}/{reason}"
+                    ));
+                }
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn python_len_only_append_effect_binds_receiver_and_container() {
+        let card = serde_json::json!({
+            "suggested_location": {"test_name": "test_collects"},
+            "missing_discriminator": "buf contents == [<expected value>]"
+        });
+        let finding = |expression: &str, observed_sink: &str| {
+            serde_json::json!({
+                "observed_sink": observed_sink,
+                "probe": {"family": "side_effect", "expression": expression},
+                "evidence": ["related_test_relation: syntactic_call (test_collects)"]
+            })
+        };
+        // The append receiver, the len() argument and the suggested
+        // container are the same name: the gate opens.
+        assert!(python_card_len_only_append_effect(
+            &finding("buf.append(msg.upper())", "assert len(buf) == 1"),
+            &card
+        ));
+        assert!(python_card_len_only_append_effect(
+            &finding("self.buf.append(msg)", "assert len(self.buf) == 1"),
+            &card
+        ));
+        // A receiver-mismatched len() does not convert.
+        assert!(!python_card_len_only_append_effect(
+            &finding("buf.append(msg.upper())", "assert len(other) == 1"),
+            &card
+        ));
+        // An append on another receiver does not convert either.
+        assert!(!python_card_len_only_append_effect(
+            &finding("other.append(msg.upper())", "assert len(buf) == 1"),
+            &card
+        ));
+        // `.push(` is not a Python list append.
+        assert!(!python_card_len_only_append_effect(
+            &finding("buf.push(msg)", "assert len(buf) == 1"),
+            &card
+        ));
+        // A len() call used as a subscript index observes the contents at
+        // that position, not only the length.
+        assert!(!python_card_len_only_append_effect(
+            &finding(
+                "buf.append(msg.upper())",
+                "assert buf[len(buf) - 1] == 'HI'"
+            ),
+            &card
+        ));
     }
 
     #[test]
@@ -5633,7 +5711,8 @@ mod tests {
                             return Err(format!("no-strong fixture denied: {name}"));
                         }
                     }
-                    (_, Some("no_family_relevant_assertion")) => {
+                    (_, Some("no_family_relevant_assertion"))
+                    | (Some("unknown"), Some("other_behavior_assertion_passed_over")) => {
                         family_selection += 1;
                         if eligible {
                             return Err(format!("no-family-relevant fixture eligible: {name}"));
@@ -5793,7 +5872,30 @@ mod tests {
         // #14267: `python_raises_bare_owner_outside_body_no_credit` keeps its
         // assertion on the sibling's exception, not the changed owner's, so
         // its weak finding carries one orthogonal card.
-        if (direct, no_strong, orthogonal, family_selection) != (23, 37, 35, 1) {
+        // #13869: `python_route_response_{sibling, json_patch,
+        // equivalent_number, float_floor_division, list_subscript,
+        // adjacent_list_tokens, duplicate_old_key, shadowed_dict,
+        // parenthesized_alias, compact_loop, replaced_content, docs_route,
+        // tuple_dict, unpacked_options}` keep a route response read of a key
+        // the diff did not change (or could not establish) weakly exposed;
+        // each weak finding carries one orthogonal card, fourteen more in
+        // total.
+        // #15250: `assert check_balance(5) is False` is now a strong exact pin,
+        // which a logging-only edit passes over, so the
+        // `python_caplog_alias_in_literal` card moves from no-strong-oracle to
+        // the never-delegated family-selection bucket.
+        // #15287: `python_boundary_float_coercion` reads the off-boundary
+        // literal through a leading `float` coercion; its weak card names the
+        // `value == 0` discriminator, one more direct-aligned card. The
+        // star-args and named-row controls are weak without a card.
+        // #15632: `python_membership_removed_member` keeps a removed
+        // literal-collection member no row passes weakly exposed; its weak
+        // finding names `val == "y"`, one more direct-aligned card.
+        // #15646: `python_class_attr_text_unobserved` reaches `Length` through
+        // strong assertions that carry no literal telling the old message
+        // from the new; its weak card is one more direct-aligned card. The
+        // multi-line conjunct control is `exposed` and carries none.
+        if (direct, no_strong, orthogonal, family_selection) != (26, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

@@ -41,9 +41,9 @@ Options:
                  `suppressed_by_policy`, which `gate evaluate` treats as
                  non-blocking. Not combinable with `--gap-ledger`. The default
                  `.ripr/suppressions.toml` is never applied implicitly.
-  --out PATH     JSON output path. Defaults to target/ripr/review/comments.json.
+  --out PATH     JSON output path. Defaults to target/ripr/review/comments.json under --root.
   --timeout-ms MS
-                 Cooperative analysis budget (default 120000ms), checked at
+                 Cooperative analysis budget (default 600000ms), checked at
                  safe boundaries. Non-preemptible operations can overrun it.
                  Use an outer orchestration wrapper for a hard process bound.
 
@@ -55,7 +55,7 @@ Environment variables:
                                  owner indexing or loading the workspace corpus.
                                  Receipt status is failed with the named
                                  limitation; no guidance artifacts are published.
-                                 Default: 1200. Must be a positive integer.
+                                 Default: 5000. Must be a positive integer.
   RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES
                                  Byte budget for those inputs plus changed diff
                                  text. Same named refusal; default: 268435456
@@ -91,7 +91,7 @@ Check options:
   --head REV                          Head revision. Defaults to HEAD.
   --timeout-ms N                      Passed to review-comments.
   --suppression-policy PATH           Passed to review-comments; suppressed seams are non-blocking.
-  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
+  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json under --root.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
   --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
@@ -130,7 +130,7 @@ Evaluate options:
                                       legacy labels retain global compatibility disclosure.
   --mode MODE                         visible-only, acknowledgeable, baseline-check, or calibrated-gate. Defaults to visible-only.
   --acknowledgement-label LABEL       Repeatable acknowledgement label. Defaults to ripr-waive.
-  --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json.
+  --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json under --root.
   --out-md PATH                       Markdown output path. Defaults to --out with .md extension.
 
 The gate evaluator is read-only policy over existing RIPR evidence. It writes
@@ -149,6 +149,14 @@ not the JSON report. Capture the report files for machine consumers. When
 the visible-only default records evidence without blocking, after a completed
 evaluation. Missing-input usage errors and `config_error` reports stay quiet.
 An explicit `--mode visible-only` is quiet; blocking modes remain opt-in.
+
+Reading the status: visible-only never blocks on findings, so a completed
+visible-only run reads `advisory` (or `blocked` on an exception-policy
+violation), including a run that recorded nothing; the Markdown report says so
+when that is the case. `pass` is reachable only in an enforcing mode
+(acknowledgeable, baseline-check, calibrated-gate). In visible-only, read the
+`summary` counts and `warnings`, not `status`, to tell whether anything was
+found.
 "#;
 pub(super) const BASELINE_HELP: &str = r#"Create, diff, and shrink a reviewed baseline of acknowledged test gaps.
 
@@ -300,7 +308,7 @@ Promotion options:
 Preview promotion options:
   --root PATH                           Display root for the report. Defaults to current directory.
   --language LANGUAGE                   Preview language under review: typescript or python.
-  --class CLASS                         Preview evidence class under review, for example boundary_gap.
+  --class CLASS                         Preview evidence class under review (letters, digits, _ or -), for example boundary_gap.
   --evidence PATH                       Optional explicit preview promotion evidence receipts JSON.
   --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.

@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "common/printed_words.rs"]
+mod printed_words;
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn unique_temp_workspace(label: &str) -> PathBuf {
@@ -2118,6 +2121,108 @@ fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), Strin
     Ok(())
 }
 
+/// #15269: use the real diff and replay its scoped navigation. The return
+/// expression on line six must never become a repair for the loop on line three.
+#[test]
+fn static_unknown_range_id_routes_to_inspection() -> Result<(), String> {
+    let fixture = Fixture::empty("static-unknown-range")?;
+    let root = &fixture.root;
+    let lib = root.join("src/lib.rs");
+    let base = "pub fn sum_to(n: u32) -> u32 {\n    let mut total = 0;\n    for i in 0..n {\n        total += i;\n    }\n    total\n}\n";
+    std::fs::write(&lib, base).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "base with an exclusive range")?;
+    std::fs::write(&lib, base.replace("0..n", "0..=n")).map_err(|e| e.to_string())?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "include the upper bound")?;
+    let check = run_ripr(
+        root,
+        &["check", "--quiet", "--base", "HEAD~1", "--format", "agent"],
+    )?;
+    assert_exit(&check, 0, "check the committed range change");
+    let report = stdout_text(&check);
+    let header = report.lines().next().ok_or("missing check header")?;
+    assert!(
+        header.split_whitespace().any(|field| field == "gaps=1"),
+        "{header}"
+    );
+    let row = report
+        .lines()
+        .find(|line| line.starts_with("no_static_path|src/lib.rs:3|"))
+        .ok_or_else(|| format!("missing changed range row:\n{report}"))?;
+    let (_, id) = row.rsplit_once("|id=").ok_or("missing range id")?;
+    assert_eq!(id, "probe:src_lib.rs:static_unknown:af53f993");
+    assert!(
+        !report.contains("ripr repair ") && !report.contains("repairable=1"),
+        "{report}"
+    );
+    let next = report
+        .lines()
+        .find_map(|line| line.strip_prefix("next="))
+        .ok_or("missing inspection command")?;
+    let words = printed_words::printed_words(next)?;
+    let args: Vec<_> = words.iter().map(String::as_str).collect();
+    assert!(
+        args.starts_with(&["ripr", "explain"]) && args.last() == Some(&id),
+        "{next}"
+    );
+    let explain = run_ripr(root, &args[1..])?;
+    assert_exit(&explain, 0, "replay the exact command check printed");
+    assert!(
+        stdout_text(&explain)
+            .lines()
+            .any(|line| line.contains("|src/lib.rs:3|for i in 0..=n {") && line.ends_with(id)),
+        "{}",
+        stdout_text(&explain)
+    );
+
+    for args in [
+        vec!["repair", id],
+        vec!["agent", "repair", "--seam-id", id, "--phase", "before"],
+    ] {
+        let refused = run_ripr(root, &args)?;
+        assert_exit(&refused, 3, "static_unknown cannot start a repair");
+        let message = stderr_text(&refused);
+        assert!(
+            message.contains("static_unknown finding ID has no repair seam")
+                && message.contains("ripr explain")
+                && !message.contains("stale")
+                && !message.contains("ripr pilot"),
+            "{message}"
+        );
+    }
+    assert!(
+        attempt_ids(root).is_empty(),
+        "no attempt for the nearby return"
+    );
+    Ok(())
+}
+
+#[test]
+fn startable_predicate_routes_to_the_printed_repair() -> Result<(), String> {
+    let fixture = Fixture::boundary("startable-predicate")?;
+    let root = &fixture.root;
+    weaken_boundary_predicate(root)?;
+    run_git(root, &["add", "src/lib.rs"])?;
+    git_commit(root, "weaken the boundary predicate")?;
+    let check = run_ripr(root, &["check", "--quiet", "--base", "HEAD~1"])?;
+    assert_exit(&check, 0, "check the committed predicate");
+    let report = stdout_text(&check);
+    let start = report
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("ripr repair "))
+        .ok_or_else(|| format!("missing predicate repair command:\n{report}"))?;
+    let words = printed_words::printed_words(start)?;
+    let args: Vec<_> = words.iter().skip(1).map(String::as_str).collect();
+    let repair = run_ripr(root, &args)?;
+    assert_exit(&repair, 0, "run the repair command check printed");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1);
+    assert_eq!(read_manifest(root, &ids[0])?["seam_id"], FIXTURE_SEAM);
+    Ok(())
+}
+
 /// #7882: display narration must never feed stable text back into identity.
 /// #8166: the `Gap ID (for scripts):` line `ripr check` prints for a Rust finding is
 /// the producer gap ID, not the seam-derived `gap:<hash>`. It must start the
@@ -2360,7 +2465,9 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
             "before",
         ],
     )?;
-    assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    // docs/EXIT_CODES.md: an unknown `--seam-id` is one typed refusal with
+    // one exit, `3`, as `ripr repair` gives above (#15311).
+    assert_exit(&agent_stale, 3, "agent repair with a stale probe ID");
     let agent_stale_stderr = stderr_text(&agent_stale);
     assert!(
         agent_stale_stderr.contains("agent repair --seam-id")
@@ -3221,8 +3328,12 @@ fn repair_same_line_candidates_are_told_apart_in_plain_words() -> Result<(), Str
         choice_lines[0], choice_lines[1],
         "choices must read differently"
     );
+    // The unscoped note's `--base` rerun (#13701) is prose, not a start line.
     assert_eq!(
-        stderr.matches("ripr repair ").count(),
+        stderr
+            .lines()
+            .filter(|line| line.trim_start().starts_with("ripr repair "))
+            .count(),
         2,
         "exactly the two start commands:\n{stderr}"
     );
@@ -3932,6 +4043,55 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
         stderr.contains("ripr continue --attempt"),
         "must name the explicit-selection retry:\n{stderr}"
     );
+    // #14980: under `--json` the same selection is one `cli_refusal`
+    // document whose choices are the per-attempt continue commands.
+    let continued_json = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(
+        &continued_json,
+        3,
+        "continue --json with two current attempts",
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&continued_json.stdout).map_err(|error| {
+            format!(
+                "one JSON document: {error}\n{}",
+                stdout_text(&continued_json)
+            )
+        })?;
+    assert_eq!(
+        document["error"]["code"], "ambiguous_attempts",
+        "{document:#}"
+    );
+    let items = document["error"]["choices"]["items"]
+        .as_array()
+        .ok_or_else(|| format!("ambiguity lacks choices: {document:#}"))?;
+    assert_eq!(document["error"]["choices"]["total"], 2, "{document:#}");
+    assert_eq!(items.len(), 2, "{document:#}");
+    assert_eq!(
+        document["error"]["disposition"], "needs_selection",
+        "{document:#}"
+    );
+    assert_eq!(
+        document["error"].get("next"),
+        Some(&serde_json::Value::Null),
+        "{document:#}"
+    );
+    // The root each choice binds is the one the stderr retry line prints.
+    const RETRY: &str = "ripr continue --attempt <attempt-id> --root ";
+    let json_stderr = stderr_text(&continued_json);
+    let root_token = json_stderr
+        .lines()
+        .find_map(|line| line.split_once(RETRY).map(|(_, root)| root.trim_end()))
+        .ok_or_else(|| format!("stderr must print the retry line:\n{json_stderr}"))?;
+    for id in &ids {
+        let expected = format!("ripr continue --attempt {id} --root {root_token}");
+        assert!(
+            items
+                .iter()
+                .any(|item| item["command"] == expected.as_str()),
+            "a choice must be exactly `{expected}`: {document:#}"
+        );
+    }
     for id in &ids {
         assert_eq!(
             read_manifest(root, id)?["state"],
@@ -4508,8 +4668,61 @@ fn facade_commands_stay_under_selected_root_from_foreign_cwd() -> Result<(), Str
     Ok(())
 }
 
-/// Control 8: terminal attempt — continue is idempotent already-complete
-/// status with receipt/details, never another attempt or rewritten evidence.
+/// The already-complete `continue` summary (#15282 item 7): the attempt, its
+/// issued receipt and the next commands, without the status page's store,
+/// claim boundary, limitations or non-claims, which `ripr status` keeps.
+fn assert_already_complete_summary(
+    summary: &str,
+    attempt_id: &str,
+    root_arg: &str,
+) -> Result<(), String> {
+    let expected_lines = [
+        format!("Repair attempt `{attempt_id}` is complete (finished_"),
+        format!("Gap: `{FIXTURE_SEAM}`"),
+        "Receipt: issued (".to_string(),
+        "Test run: none recorded.".to_string(),
+        "Next: `ripr repair --root ".to_string(),
+        format!("Full status: `ripr status --attempt {attempt_id} --root "),
+    ];
+    let lines: Vec<&str> = summary.lines().collect();
+    if lines.len() != expected_lines.len() {
+        return Err(format!(
+            "the summary must be exactly {} lines, got {}:\n{summary}",
+            expected_lines.len(),
+            lines.len()
+        ));
+    }
+    for (line, expected) in lines.iter().zip(&expected_lines) {
+        if !line.starts_with(expected.as_str()) {
+            return Err(format!(
+                "summary line `{line}` must start with `{expected}`:\n{summary}"
+            ));
+        }
+    }
+    for (index, command) in [(4, "Next"), (5, "Full status")] {
+        if !lines[index].contains(&format!("--root {root_arg}`")) {
+            return Err(format!(
+                "the {command} command must name the selected root `{root_arg}`:\n{summary}"
+            ));
+        }
+    }
+    for page_only in [
+        "# RIPR Repair Attempt Status",
+        "## Claim Boundary",
+        "Status names no next action",
+    ] {
+        if summary.contains(page_only) {
+            return Err(format!(
+                "the summary must leave `{page_only}` to `ripr status`:\n{summary}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Control 8: terminal attempt — continue is an idempotent already-complete
+/// summary with the receipt and the next commands (#15282 item 7: not the
+/// whole status page), never another attempt or rewritten evidence.
 #[test]
 fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
     let fixture = Fixture::boundary("facade-terminal")?;
@@ -4557,18 +4770,40 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
         &["status", "--root", &root_arg, "--attempt", &attempt_id],
     )?;
     assert_exit(&status, 0, "facade status of the terminal attempt");
-    // Repeated invocation returns the same status, not another attempt.
+    let status_json = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    assert_exit(
+        &status_json,
+        0,
+        "facade status JSON of the terminal attempt",
+    );
+    // Repeated invocation returns the same short summary, not another
+    // attempt and not the whole status page.
+    let mut first_summary: Option<String> = None;
     for _ in 0..2 {
         let repeated = run_ripr(
             root,
             &["continue", "--attempt", &attempt_id, "--root", &root_arg],
         )?;
         assert_exit(&repeated, 0, "repeated continue on a terminal attempt");
-        assert_eq!(
-            stdout_text(&repeated),
-            stdout_text(&status),
-            "already-complete output must equal the attempt status"
-        );
+        let summary = stdout_text(&repeated);
+        assert_already_complete_summary(&summary, &attempt_id, &root_arg)?;
+        match &first_summary {
+            Some(first) => assert_eq!(
+                &summary, first,
+                "a repeated continue must print the same summary"
+            ),
+            None => first_summary = Some(summary.clone()),
+        }
         assert!(
             stderr_text(&repeated).contains("already complete"),
             "must say explicitly that the attempt is complete:\n{}",
@@ -4601,9 +4836,9 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
             "continue after a confirmed-complete attempt",
         );
         assert_eq!(
-            stdout_text(&unselected),
-            stdout_text(&status),
-            "implicit already-complete output must equal the attempt status"
+            Some(stdout_text(&unselected)),
+            first_summary,
+            "implicit already-complete output must equal the named summary"
         );
         assert!(
             stderr_text(&unselected).contains("already complete")
@@ -4617,6 +4852,24 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
             stderr_text(&unselected)
         );
     }
+    // `--json` keeps the attempt's status JSON, as `continue --help` says.
+    let repeated_json = run_ripr(
+        root,
+        &[
+            "continue",
+            "--attempt",
+            &attempt_id,
+            "--root",
+            &root_arg,
+            "--json",
+        ],
+    )?;
+    assert_exit(&repeated_json, 0, "continue --json on a terminal attempt");
+    assert_eq!(
+        stdout_text(&repeated_json),
+        stdout_text(&status_json),
+        "already-complete JSON must equal the attempt status JSON"
+    );
     assert_eq!(
         manifest_bytes(root, &attempt_id)?,
         sealed,
@@ -7144,6 +7397,8 @@ fn status_attempt_with_a_malformed_id_names_status_not_agent_status() -> Result<
     Ok(())
 }
 
+#[path = "task_first_facade/brief_line_ranges.rs"]
+mod brief_line_ranges;
 /// #11584: `ripr repair --json` prints the packet envelope with the additive
 /// `repair_attempt.attempt_id` on stdout and nothing but that document; a
 /// repeated start prints the existing attempt's status document; without
@@ -7179,9 +7434,23 @@ fn repair_json_prints_the_packet_with_the_attempt_id() -> Result<(), String> {
         ],
     )?;
     assert_exit(&status, 0, "status --json of the resumed attempt");
+    // #13701: the resumed start carries the same `repair_start_scope` block
+    // the first start did (this one-commit fixture has no readable change);
+    // apart from it, the document is the attempt's status document.
+    let mut repeated_doc: serde_json::Value = serde_json::from_slice(&repeated.stdout)
+        .map_err(|error| format!("repeated stdout must be one JSON document: {error}"))?;
     assert_eq!(
-        stdout_text(&repeated),
-        stdout_text(&status),
+        repeated_doc.get("repair_start_scope"),
+        document.get("repair_start_scope"),
+        "the resumed start must carry the first start's scope block:\n{repeated_doc:#}"
+    );
+    if let Some(object) = repeated_doc.as_object_mut() {
+        object.remove("repair_start_scope");
+    }
+    let status_doc: serde_json::Value = serde_json::from_slice(&status.stdout)
+        .map_err(|error| format!("status stdout must be one JSON document: {error}"))?;
+    assert_eq!(
+        repeated_doc, status_doc,
         "a resumed --json start must print the attempt's status document"
     );
     assert_eq!(attempt_ids(root), ids, "no second attempt may be created");
@@ -7265,7 +7534,8 @@ fn continue_json_prints_its_after_phase_document() -> Result<(), String> {
 }
 
 /// #11584: `--json` does not change refusal behavior: a facade refusal keeps
-/// its exit code, empty stdout and stderr prose. An unknown flag under the
+/// its exit code and stderr prose; since #14931 its stdout is the
+/// `cli_refusal` document with the reason code. An unknown flag under the
 /// explicit `--json` request writes the standalone `cli_refusal` document to
 /// stdout (#6834 decision); its exit code 2 and stderr prose are unchanged.
 #[test]
@@ -7337,10 +7607,160 @@ fn repair_and_continue_json_keep_refusals_prose_and_usage_errors_cli_refusal() -
         "not_started",
         "no_eligible_seam",
     );
-    assert!(stdout_text(&refused).is_empty());
+    // #14931: the typed refusal is also the `cli_refusal` document.
+    let refused_doc: serde_json::Value = serde_json::from_slice(&refused.stdout)
+        .map_err(|error| format!("repair --json refusal stdout: {error}"))?;
+    assert_eq!(refused_doc["error"]["code"], "no_eligible_seam");
     let none = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
     assert_exit(&none, 3, "continue --json with no attempt");
-    assert!(stdout_text(&none).is_empty());
+    let none_doc: serde_json::Value = serde_json::from_slice(&none.stdout)
+        .map_err(|error| format!("continue --json refusal stdout: {error}"))?;
+    assert_eq!(none_doc["error"]["code"], "no_current_attempt");
     assert!(stderr_text(&none).contains("no current attempt"));
+    Ok(())
+}
+
+/// #14931: under `--json`, a typed façade refusal that stops before any check
+/// writes the `cli_refusal` document with its reason code and disposition;
+/// stderr keeps the prose and the `refusal code=` line, and without `--json`
+/// stdout stays empty.
+/// Unix-only for the marker-free unanchored directory, like the other
+/// discovery-gate controls.
+#[cfg(unix)]
+#[test]
+fn typed_facade_refusals_under_json_write_code_and_disposition() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-typed-refusal-json")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let unanchored = Fixture {
+        root: marker_free_dir("facade-typed-refusal-unanchored")?,
+    };
+    let two = Fixture::two_seam("facade-typed-refusal-two-seam")?;
+    let two_arg = two.root.to_string_lossy().into_owned();
+    let cases: [(&Path, Vec<&str>, &str, &str); 5] = [
+        (
+            &two.root,
+            vec!["repair", "--root", &two_arg],
+            "several_eligible_seams",
+            "needs_selection",
+        ),
+        (
+            root,
+            vec!["continue", "--root", &root_arg],
+            "no_current_attempt",
+            "not_started",
+        ),
+        (
+            root,
+            vec!["repair", "no-such-item", "--root", &root_arg],
+            "item_names_no_seam",
+            "not_started",
+        ),
+        // A caller-supplied item shaped like a command never becomes a
+        // runnable `next` (the loop asserts `next` is null except for `no_current_attempt`).
+        (
+            root,
+            vec![
+                "repair",
+                "ripr repair --root . && echo injected | sh",
+                "--root",
+                &root_arg,
+            ],
+            "item_names_no_seam",
+            "not_started",
+        ),
+        (
+            &unanchored.root,
+            vec!["status"],
+            "unanchored_root",
+            "not_started",
+        ),
+    ];
+    for (cwd, args, code, disposition) in cases {
+        let mut json_args = args.clone();
+        json_args.push("--json");
+        let json = run_ripr(cwd, &json_args)?;
+        assert_exit(&json, 3, &format!("{json_args:?}"));
+        let document: serde_json::Value =
+            serde_json::from_slice(&json.stdout).map_err(|error| {
+                format!(
+                    "{json_args:?}: stdout must be one JSON document: {error}\n{}",
+                    stdout_text(&json)
+                )
+            })?;
+        assert_eq!(document["status"], "refused", "{document:#}");
+        assert_eq!(document["error"]["code"], code, "{document:#}");
+        assert_eq!(
+            document["error"]["disposition"], disposition,
+            "{document:#}"
+        );
+        // #15260: only `no_current_attempt` names its one step, composed from
+        // the bound root; every other typed refusal keeps `next` null.
+        if code == "no_current_attempt" {
+            assert_eq!(
+                document["error"]["next"]["command"],
+                format!("ripr status --root {root_arg}"),
+                "{document:#}"
+            );
+        } else {
+            assert_eq!(
+                document["error"].get("next"),
+                Some(&serde_json::Value::Null),
+                "next must be present and null: {document:#}"
+            );
+        }
+        let message = document["error"]["message"]
+            .as_str()
+            .filter(|message| !message.trim().is_empty())
+            .ok_or_else(|| format!("message must be a nonempty string: {document:#}"))?;
+        assert!(!message.contains("refusal code="), "{message}");
+        let stderr = stderr_text(&json);
+        assert!(
+            stderr.contains(message),
+            "the document message is the stderr prose:\n{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "ripr: refusal code={code} disposition={disposition}"
+            )),
+            "{stderr}"
+        );
+        // #14980: only a selection refusal carries its choices, and each
+        // listed command is the one stderr prints, composed from a seam id.
+        let choices = document["error"].get("choices");
+        if code == "several_eligible_seams" {
+            let choices =
+                choices.ok_or_else(|| format!("selection lacks choices: {document:#}"))?;
+            let items = choices["items"]
+                .as_array()
+                .ok_or_else(|| format!("choices.items must be an array: {document:#}"))?;
+            assert!(items.len() >= 2, "{document:#}");
+            assert_eq!(
+                choices["total"].as_u64(),
+                Some(items.len() as u64),
+                "{document:#}"
+            );
+            for item in items {
+                let command = item["command"].as_str().unwrap_or_default();
+                assert!(command.starts_with("ripr repair "), "{item:#}");
+                assert!(command.contains(" --root "), "{item:#}");
+                assert!(
+                    stderr.contains(command),
+                    "stderr must print {command}:\n{stderr}"
+                );
+                let label = item["label"].as_str().unwrap_or_default();
+                assert!(!label.trim().is_empty(), "{item:#}");
+            }
+        } else {
+            assert_eq!(choices, None, "{code} carries no choices: {document:#}");
+        }
+        let plain = run_ripr(cwd, &args)?;
+        assert_exit(&plain, 3, &format!("{args:?}"));
+        assert!(
+            stdout_text(&plain).is_empty(),
+            "{args:?}: without --json stdout stays empty:\n{}",
+            stdout_text(&plain)
+        );
+    }
     Ok(())
 }

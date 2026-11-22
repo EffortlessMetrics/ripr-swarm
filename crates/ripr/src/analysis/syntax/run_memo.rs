@@ -43,7 +43,14 @@ pub(crate) enum Product {
     EmbedFileScan,
     StrippedFileImports,
     ItemSyntax,
+    FnCfgGates,
     LocalMacroCalls,
+    CfgGatesOfFn,
+    OwnerFoldPlan,
+    OwnerBranchIndex,
+    ModuleDeclarationGate,
+    ClosedOwnerRead,
+    ExitRecordTypes,
 }
 
 impl Product {
@@ -66,7 +73,14 @@ impl Product {
             Self::EmbedFileScan => "embed_file_scan",
             Self::StrippedFileImports => "stripped_file_imports",
             Self::ItemSyntax => "item_syntax",
+            Self::FnCfgGates => "fn_cfg_gates",
             Self::LocalMacroCalls => "local_macro_calls",
+            Self::CfgGatesOfFn => "cfg_gates_of_fn",
+            Self::OwnerFoldPlan => "owner_fold_plan",
+            Self::OwnerBranchIndex => "owner_branch_index",
+            Self::ModuleDeclarationGate => "module_declaration_gate",
+            Self::ClosedOwnerRead => "closed_owner_read",
+            Self::ExitRecordTypes => "exit_record_types",
         }
     }
 }

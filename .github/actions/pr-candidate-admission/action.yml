@@ -179,6 +179,8 @@ runs:
             and (.status as $status | ($allowed | split(",") | index($status)) != null)
             and (.history_sync == null or (.history_sync | type == "object" and (.status | type == "string")))
             and ((.reason == "history_sync_admitted") == (.status == "admitted" and .history_sync.status == "validated"))
+            and (.relocation == null or (.relocation | type == "object" and (.status | type == "string")))
+            and (.reason != "mechanical_relocation_admitted" or (.status == "admitted" and .relocation.status == "validated" and .history_sync.status != "validated"))
           ' "$file" >/dev/null; then
             refuse_early "candidate_result_invalid" "candidate admission produced no valid result; refresh the exact PR/head evidence and retry"
           fi

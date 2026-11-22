@@ -12,6 +12,9 @@
 //!    fragment entry whose message now has a cue (or was deleted) also fails, so
 //!    fixing a message means deleting its line. This is a presence floor, not a
 //!    judgment that the cue is the right one; the live half and review own that.
+//!    The scan covers all production code in a file (each `#[cfg(test)]` item
+//!    is skipped, not everything after the first one) and reads a message from
+//!    inside its own call, so it cannot borrow a neighbour's cue (#14163).
 //! 2. **Live floor.** A table of real bad invocations of the built binary. Each
 //!    must exit with its documented code, print on stderr, and carry the cue.
 //!
@@ -217,46 +220,247 @@ fn has_reason_cue(text: &str) -> bool {
     REASON_CUES.iter().any(|cue| text.contains(cue))
 }
 
-/// String literals starting at `start`, stopping at the first `;` outside a
-/// string or after `window` bytes.
+/// Length in bytes of a `'x'` or `'\x'` char literal at `at`, or 0 when the
+/// quote there opens a lifetime instead.
+fn char_literal_len(bytes: &[u8], at: usize) -> usize {
+    if bytes.get(at) != Some(&b'\'') {
+        return 0;
+    }
+    if bytes.get(at + 1) == Some(&b'\\') {
+        // `'\n'`, `'\''`, `'\u{1f}'`: closes at the next quote after the escape.
+        let mut end = at + 3;
+        while end < bytes.len() && end < at + 12 {
+            if bytes[end] == b'\'' {
+                return end + 1 - at;
+            }
+            end += 1;
+        }
+        return 0;
+    }
+    // One char then the closing quote. Only a non-ASCII char is wider than a
+    // byte, so `<'a,'b>` is two lifetimes, not a char literal.
+    let widths = match bytes.get(at + 1) {
+        Some(first) if !first.is_ascii() => 2..=4,
+        _ => 1..=1,
+    };
+    for width in widths {
+        if bytes.get(at + 1 + width) == Some(&b'\'') {
+            return width + 2;
+        }
+    }
+    0
+}
+
+/// End (exclusive) of the string literal whose opening `"` is at `at`. `hashes`
+/// is `Some(n)` for a raw string `r#..#"` with `n` hashes.
+fn string_end(bytes: &[u8], at: usize, hashes: Option<usize>) -> usize {
+    let mut i = at + 1;
+    while i < bytes.len() {
+        match hashes {
+            None => {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    return i + 1;
+                }
+            }
+            Some(count) => {
+                if bytes[i] == b'"'
+                    && bytes.len() >= i + 1 + count
+                    && bytes[i + 1..i + 1 + count].iter().all(|b| *b == b'#')
+                {
+                    return i + 1 + count;
+                }
+            }
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+/// When a raw string opens at `at` (`r"`, `r#"`, `br##"`), its hash count and
+/// the offset of its opening quote.
+fn raw_string_open(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    if bytes.get(at) != Some(&b'r') {
+        return None;
+    }
+    if at > 0
+        && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_')
+        && bytes[at - 1] != b'b'
+    {
+        return None;
+    }
+    let mut i = at + 1;
+    while bytes.get(i) == Some(&b'#') {
+        i += 1;
+    }
+    (bytes.get(i) == Some(&b'"')).then_some((i - at - 1, i))
+}
+
+/// One step of a lexical walk over Rust source: what sits at `at`, and where
+/// the walk continues. Strings, chars and comments are skipped as units so a
+/// brace, paren or quote inside them is never counted as code.
+enum Lexeme {
+    /// A string literal; the range is its content without the quotes.
+    Str(usize, usize),
+    /// A comment or char literal.
+    Skip,
+    /// One byte of code.
+    Code(u8),
+}
+
+fn lex_at(bytes: &[u8], at: usize) -> (Lexeme, usize) {
+    let byte = bytes[at];
+    if byte == b'/' && bytes.get(at + 1) == Some(&b'/') {
+        let mut end = at;
+        while end < bytes.len() && bytes[end] != b'\n' {
+            end += 1;
+        }
+        return (Lexeme::Skip, end);
+    }
+    if byte == b'/' && bytes.get(at + 1) == Some(&b'*') {
+        // Rust block comments nest: `/* a /* b */ c */` is one comment.
+        let mut depth = 1usize;
+        let mut end = at + 2;
+        while end < bytes.len() && depth > 0 {
+            if bytes[end] == b'/' && bytes.get(end + 1) == Some(&b'*') {
+                depth += 1;
+                end += 2;
+            } else if bytes[end] == b'*' && bytes.get(end + 1) == Some(&b'/') {
+                depth -= 1;
+                end += 2;
+            } else {
+                end += 1;
+            }
+        }
+        return (Lexeme::Skip, end.min(bytes.len()));
+    }
+    if let Some((hashes, quote)) = raw_string_open(bytes, at) {
+        let end = string_end(bytes, quote, Some(hashes));
+        return (
+            Lexeme::Str(quote + 1, end.saturating_sub(1 + hashes).max(quote + 1)),
+            end,
+        );
+    }
+    if byte == b'"' {
+        let end = string_end(bytes, at, None);
+        return (Lexeme::Str(at + 1, end.saturating_sub(1).max(at + 1)), end);
+    }
+    let char_len = char_literal_len(bytes, at);
+    if char_len > 0 {
+        return (Lexeme::Skip, at + char_len);
+    }
+    (Lexeme::Code(byte), at + 1)
+}
+
+/// The string literals inside the call whose opening paren ends just before
+/// `start`, joined with spaces. The walk stops at the matching close paren, so
+/// a message in expression position (`Err("..".to_string())` as a match arm or
+/// tail expression) is judged on its own text and cannot borrow a cue from the
+/// next statement. `window` bounds a call that never closes.
 fn literals_from(source: &str, start: usize, window: usize) -> String {
     let bytes = source.as_bytes();
     let end = (start + window).min(bytes.len());
     let mut out = String::new();
+    let mut depth = 1usize;
     let mut at = start;
-    let mut in_string = false;
-    let mut current = String::new();
     while at < end {
-        let byte = bytes[at];
-        if in_string {
-            if byte == b'\\' && at + 1 < end {
-                current.push('\\');
-                current.push(bytes[at + 1] as char);
-                at += 2;
-                continue;
-            }
-            if byte == b'"' {
-                in_string = false;
+        let (lexeme, next) = lex_at(bytes, at);
+        match lexeme {
+            Lexeme::Str(from, to) => {
                 if !out.is_empty() {
                     out.push(' ');
                 }
-                out.push_str(&current);
-                current.clear();
-            } else {
-                // Keep UTF-8 intact: push the char starting here.
-                if let Some(ch) = source[at..].chars().next() {
-                    current.push(ch);
-                    at += ch.len_utf8();
-                    continue;
+                out.push_str(&String::from_utf8_lossy(&bytes[from..to.min(bytes.len())]));
+            }
+            Lexeme::Skip => {}
+            Lexeme::Code(b'(') => depth += 1,
+            Lexeme::Code(b')') => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
                 }
             }
-        } else if byte == b'"' {
-            in_string = true;
-        } else if byte == b';' {
+            Lexeme::Code(_) => {}
+        }
+        at = next;
+    }
+    out
+}
+
+/// For each byte of `source`, whether it is code (not inside a string, char
+/// literal or comment).
+fn code_positions(source: &str) -> Vec<bool> {
+    let bytes = source.as_bytes();
+    let mut in_code = vec![false; bytes.len()];
+    let mut at = 0;
+    while at < bytes.len() {
+        let (lexeme, next) = lex_at(bytes, at);
+        if matches!(lexeme, Lexeme::Code(_)) {
+            in_code[at] = true;
+        }
+        at = next;
+    }
+    in_code
+}
+
+/// `source` with every `#[cfg(test)]` item blanked out: a `mod tests { .. }`
+/// block, a test-only function, or a test-only `use ..;`. Production code
+/// after such an item stays visible. Cutting the file at the first
+/// `#[cfg(test)]` instead hid everything below a test-only import near the top
+/// of a file (#14163).
+fn without_test_items(source: &str) -> String {
+    const MARKER: &str = "#[cfg(test)]";
+    let bytes = source.as_bytes();
+    let mut out = String::with_capacity(source.len());
+    let mut copied = 0;
+    let mut at = 0;
+    while at < bytes.len() {
+        let (lexeme, next) = lex_at(bytes, at);
+        if !matches!(lexeme, Lexeme::Code(b'#')) || !source[at..].starts_with(MARKER) {
+            at = next;
+            continue;
+        }
+        // Walk to the end of the item: the first `;` outside every brace,
+        // paren and bracket (so `[u8; 4]` in a signature does not end it), or
+        // the close of the first top-level `{ .. }` block.
+        let mut depth = 0usize;
+        let mut nest = 0usize;
+        let mut end = at + MARKER.len();
+        let mut closed = false;
+        while end < bytes.len() {
+            let (lexeme, next) = lex_at(bytes, end);
+            end = next;
+            match lexeme {
+                Lexeme::Code(b'(' | b'[') => nest += 1,
+                Lexeme::Code(b')' | b']') => nest = nest.saturating_sub(1),
+                Lexeme::Code(b'{') => depth += 1,
+                Lexeme::Code(b'}') => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 && nest == 0 {
+                        closed = true;
+                        break;
+                    }
+                }
+                Lexeme::Code(b';') if depth == 0 && nest == 0 => {
+                    closed = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        out.push_str(&source[copied..at]);
+        if !closed {
+            // An item that never closes: drop the rest, as the old cut did.
+            copied = bytes.len();
             break;
         }
-        at += 1;
+        copied = end;
+        at = end;
     }
+    out.push_str(&source[copied..]);
     out
 }
 
@@ -295,20 +499,24 @@ fn message_follows(trigger: &str, after: &str) -> bool {
 
 /// The `(file, key)` pairs whose message reads like an error but has no cue.
 fn offenders_in(relative: &str, source: &str) -> BTreeSet<String> {
-    let body = match source.find("#[cfg(test)]") {
-        Some(at) => &source[..at],
-        None => source,
-    };
+    let production = without_test_items(source);
+    let body = production.as_str();
+    let in_code = code_positions(body);
     let mut keys = BTreeSet::new();
     for trigger in TRIGGERS {
         let mut from = 0;
         while let Some(found) = body[from..].find(trigger) {
             let at = from + found;
             from = at + trigger.len();
+            // `strip_prefix("Err(")` and a comment naming `map_err(` are text
+            // about a trigger, not a trigger.
+            if !in_code[at] {
+                continue;
+            }
             if !message_follows(trigger, &body[from..]) {
                 continue;
             }
-            let text = literals_from(body, from, 600);
+            let text = literals_from(body, from, 2000);
             if text.chars().count() < 12 {
                 continue;
             }
@@ -347,6 +555,130 @@ fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+/// The directory that holds the files of `path`'s child modules:
+/// `a/mod.rs`, `lib.rs` and `main.rs` own their own directory, `a/b.rs`
+/// owns `a/b/`.
+fn child_module_dir(path: &Path) -> PathBuf {
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if matches!(stem.as_str(), "mod" | "lib" | "main") {
+        parent
+    } else {
+        parent.join(stem)
+    }
+}
+
+/// Spans of inline `mod name { .. }` blocks: (open brace, close brace, name).
+fn inline_module_spans(source: &str) -> Vec<(usize, usize, String)> {
+    let bytes = source.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut spans = Vec::new();
+    let mut open: Vec<(usize, usize, String)> = Vec::new();
+    let mut pending: Option<String> = None;
+    let mut depth = 0usize;
+    let mut at = 0;
+    while at < bytes.len() {
+        let (lexeme, next) = lex_at(bytes, at);
+        match lexeme {
+            Lexeme::Code(b'm')
+                if bytes[at..].starts_with(b"mod")
+                    && (at == 0 || !is_ident(bytes[at - 1]))
+                    && bytes.get(at + 3).is_some_and(u8::is_ascii_whitespace) =>
+            {
+                let name: String = source[at + 3..]
+                    .trim_start()
+                    .chars()
+                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                    .collect();
+                pending = (!name.is_empty()).then_some(name);
+            }
+            Lexeme::Code(b';') => pending = None,
+            Lexeme::Code(b'{') => {
+                depth += 1;
+                if let Some(name) = pending.take() {
+                    open.push((at, depth, name));
+                }
+            }
+            Lexeme::Code(b'}') => {
+                if open.last().is_some_and(|(_, level, _)| *level == depth)
+                    && let Some((start, _, name)) = open.pop()
+                {
+                    spans.push((start, at, name));
+                }
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        at = next;
+    }
+    spans.sort();
+    spans
+}
+
+/// Paths, relative to the file's child-module directory, of out-of-line
+/// modules declared under `#[cfg(test)]`, such as `#[cfg(test)] mod rows;` or
+/// `#[cfg(test)] #[doc(hidden)] pub(crate) mod rows;`. A declaration inside
+/// inline modules keeps their names, so `mod nested { #[cfg(test)] mod rows; }`
+/// gives `nested/rows`. A module with a `#[path]` attribute is left to the
+/// per-item cut.
+fn test_only_child_modules(source: &str) -> Vec<String> {
+    const MARKER: &str = "#[cfg(test)]";
+    let in_code = code_positions(source);
+    let spans = inline_module_spans(source);
+    let mut names = Vec::new();
+    let mut search = 0;
+    while let Some(found) = source[search..].find(MARKER) {
+        let at = search + found;
+        search = at + MARKER.len();
+        if !in_code[at] {
+            continue;
+        }
+        let mut rest = source[search..].trim_start();
+        // Skip further attributes on the same item.
+        let mut has_path = false;
+        while let Some(attr) = rest.strip_prefix("#[") {
+            let Some(close) = attr.find(']') else {
+                break;
+            };
+            has_path |= attr[..close].trim_start().starts_with("path");
+            rest = attr[close + 1..].trim_start();
+        }
+        if has_path {
+            continue;
+        }
+        if let Some(after) = rest.strip_prefix("pub") {
+            rest = after.trim_start();
+            if let Some(scoped) = rest.strip_prefix('(') {
+                let Some(close) = scoped.find(')') else {
+                    continue;
+                };
+                rest = scoped[close + 1..].trim_start();
+            }
+        }
+        let Some(after) = rest.strip_prefix("mod ") else {
+            continue;
+        };
+        let after = after.trim_start();
+        let name: String = after
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .collect();
+        if !name.is_empty() && after[name.len()..].trim_start().starts_with(';') {
+            let mut path: Vec<&str> = spans
+                .iter()
+                .filter(|(open, close, _)| *open < at && at < *close)
+                .map(|(_, _, module)| module.as_str())
+                .collect();
+            path.push(&name);
+            names.push(path.join("/"));
+        }
+    }
+    names
+}
+
 fn fragment_name(relative: &str) -> String {
     format!("{}.txt", relative.replace(['/', '\\'], "__"))
 }
@@ -356,8 +688,23 @@ fn current_offenders() -> Result<BTreeMap<String, BTreeSet<String>>, String> {
     let mut files = Vec::new();
     source_files(&src, &mut files)?;
     files.sort();
+    let mut test_only = Vec::new();
+    for path in &files {
+        let source = std::fs::read_to_string(path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let dir = child_module_dir(path);
+        for name in test_only_child_modules(&source) {
+            test_only.push(dir.join(&name));
+            test_only.push(dir.join(format!("{name}.rs")));
+        }
+    }
     let mut by_file = BTreeMap::new();
     for path in files {
+        // A file whose `mod` declaration is `#[cfg(test)]` is test-only as a
+        // whole, and so is everything below its directory.
+        if test_only.iter().any(|module| path.starts_with(module)) {
+            continue;
+        }
         let relative = format!(
             "crates/ripr/src/{}",
             path.strip_prefix(&src)
@@ -596,6 +943,18 @@ const LIVE_CASES: &[Case] = &[
         exit: 2,
         reason: "must start with",
     },
+    // An unresolvable pr-evidence revision names the flag that carried it. It
+    // used to print `bad base/head revision` with a Debug-formatted git argv.
+    Case {
+        args: &["pr-evidence", "--base", "no-such-ref-xyz", "--head", "HEAD"],
+        exit: 2,
+        reason: "pr-evidence --base `no-such-ref-xyz` does not resolve to a commit",
+    },
+    Case {
+        args: &["pr-evidence", "--base", "HEAD", "--head", "no-such-ref-xyz"],
+        exit: 2,
+        reason: "pr-evidence --head `no-such-ref-xyz` does not resolve to a commit",
+    },
 ];
 
 fn scratch_repo(tag: &str) -> Result<PathBuf, String> {
@@ -679,6 +1038,187 @@ fn live_refusals_name_a_next_step() -> Result<(), String> {
     } else {
         Err(failures.join("\n"))
     }
+}
+
+/// Keys reported for a synthetic source file, without the `file|` prefix.
+fn offender_messages(source: &str) -> Vec<String> {
+    offenders_in("x.rs", source)
+        .into_iter()
+        .map(|key| key.trim_start_matches("x.rs|").to_string())
+        .collect()
+}
+
+#[test]
+fn scan_sees_production_code_below_a_test_only_item() {
+    // #14163: the scan used to stop at the first `#[cfg(test)]`, so a
+    // test-only import near the top of a file hid every message below it.
+    let source = r#"
+#[cfg(test)]
+use crate::testing::helper;
+
+fn parse() -> Result<(), String> {
+    return Err("widget requires --size <n>".to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    fn brace_in_text() -> Result<(), String> {
+        let _open = '{';
+        let _text = "}} not the end of the module {";
+        Err("test-only message is not found".to_string())
+    }
+}
+
+fn after_tests() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec![
+            "gadget is not a directory".to_string(),
+            "widget requires --size <n>".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn scan_hides_a_test_only_item_whose_signature_holds_a_semicolon() {
+    // A `;` inside `[u8; 4]` or a call's parens is not the end of the item,
+    // so the test-only body below it stays hidden from the production scan.
+    let source = r#"
+#[cfg(test)]
+fn helper(_bytes: [u8; 4]) -> Result<(), String> {
+    Err("test-only helper message is not found".to_string())
+}
+
+#[cfg(test)]
+const TABLE: [&str; 2] = [
+    "test-only table entry",
+    { let _x = 1; "test-only block entry" },
+];
+
+fn after() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["gadget is not a directory".to_string()]
+    );
+}
+
+#[test]
+fn scan_treats_a_nested_block_comment_as_one_comment() {
+    // Rust block comments nest, so the inner `*/` does not end the outer one.
+    let source = r#"
+/* outer /* inner */
+fn retired() -> Result<(), String> {
+    Err("commented-out message is not found".to_string())
+}
+*/
+fn live() -> Result<(), String> {
+    Err("gadget is not a directory".to_string())
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["gadget is not a directory".to_string()]
+    );
+}
+
+#[test]
+fn test_only_child_modules_names_out_of_line_test_modules() {
+    let source = r##"
+#[cfg(test)]
+mod rows;
+#[cfg(test)]
+#[doc(hidden)]
+pub(crate) mod helpers ;
+#[cfg(test)]
+mod inline_tests {}
+#[cfg(test)]
+#[path = "elsewhere.rs"]
+mod moved;
+mod production;
+mod nested {
+    mod inner {
+        #[cfg(test)]
+        mod rows;
+    }
+    #[cfg(test)]
+    mod helpers;
+}
+// #[cfg(test)] mod commented;
+const NOTE: &str = "#[cfg(test)] mod quoted;";
+"##;
+    assert_eq!(
+        test_only_child_modules(source),
+        vec![
+            "rows".to_string(),
+            "helpers".to_string(),
+            "nested/inner/rows".to_string(),
+            "nested/helpers".to_string(),
+        ]
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/a/b.rs")),
+        PathBuf::from("src/a/b")
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/a/mod.rs")),
+        PathBuf::from("src/a")
+    );
+    assert_eq!(
+        child_module_dir(Path::new("src/lib.rs")),
+        PathBuf::from("src")
+    );
+}
+
+#[test]
+fn scan_judges_an_expression_position_message_on_its_own_text() {
+    // #14163: reading on to the next `;` let a message with no next step
+    // borrow the cue of the statement after it.
+    let source = r#"
+fn pick(kind: u8) -> Result<u8, String> {
+    match kind {
+        0 => Err("first kind is not supported".to_string()),
+        1 => Err("second kind is not supported; pass `--kind 2`".to_string()),
+        other => Ok(other),
+    }
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["first kind is not supported".to_string()]
+    );
+}
+
+#[test]
+fn scan_ignores_a_trigger_named_inside_a_string_or_comment() {
+    let source = r#"
+fn strip(text: &str) -> Option<&str> {
+    // map_err("this comment is not found by the scan")
+    text.strip_prefix("Err(").map(|missing_value_text| "")
+}
+"#;
+    assert_eq!(offender_messages(source), Vec::<String>::new());
+}
+
+#[test]
+fn scan_keeps_a_cued_message_and_a_lifetime_does_not_open_a_char() {
+    let source = r#"
+fn load<'a,'b>(left: &'a str, right: &'b str) -> Result<&'a str, String> {
+    if left == right {
+        return Err(format!("{left} is not a directory; pass `--root <dir>`"));
+    }
+    Err(format!("{right} is not readable and no route is named"))
+}
+"#;
+    assert_eq!(
+        offender_messages(source),
+        vec!["{right} is not readable and no route is named".to_string()]
+    );
 }
 
 #[test]

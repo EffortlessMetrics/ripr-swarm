@@ -250,7 +250,17 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
 ) -> Result<(String, String), CommandError> {
     drive_before_phase_inner(options).map_err(|error| match error {
         // A deliberate typed refusal: the façade exits with the decision code.
-        BeforePhaseError::Refused(message) => CommandError::Decision(message),
+        BeforePhaseError::Refused(message) => {
+            // The start refusal already carries its code line; note the
+            // same typed document `typed_decision` would, so `--json` on the
+            // façade sees it too (#14931).
+            if let Some((code, prose)) =
+                crate::app::task_first::RepairRefusalCode::split_stderr_line(&message)
+            {
+                crate::cli::usage_refusal::note_typed_refusal(code, prose);
+            }
+            CommandError::Decision(message)
+        }
         BeforePhaseError::Other(error) => error,
     })
 }
@@ -321,6 +331,9 @@ fn drive_before_phase_inner(
     // and the Rust seam inventory cannot translate. The gap id is the attempt
     // identity (the manifest's seam slot); the seam translator is skipped,
     // and `--seam-id gap:...` keeps its translating behaviour untouched.
+    // #15249: a missing or non-directory `--root` is the shared root refusal,
+    // not a git failure from the seam translation or the workflow lock below.
+    commands_context::ensure_command_root(&options.root, "agent repair --phase before")?;
     if let Some(gap_id) = options.gap_id.clone() {
         options.seam_id = Some(gap_id);
     } else if let Some(seam_id) = options.seam_id.clone() {
@@ -328,6 +341,13 @@ fn drive_before_phase_inner(
             &options.root,
             &seam_id,
         )?);
+    }
+    // A repair attempt exists only at the exact Git top-level (#15363). Refuse
+    // a subdirectory root after the write-free seam translation (so a stale
+    // `--seam-id` still names itself) and before the locks or any workflow
+    // write create state under that root's `target/ripr`.
+    if let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&options.root) {
+        return Err(refusal.into());
     }
     let _workflow_lock = lock_repair_workflow(&options.root)?;
     let _before_lock = lock_before_repair_attempt(&options.root)?;
@@ -415,8 +435,12 @@ impl GapWorkflowArtifactBackup {
         for (path, prior) in self.entries {
             match prior {
                 Some(bytes) => {
+                    // Replace, never rewrite in place: an interrupted restore
+                    // then leaves the overwritten file or the prior one, not a
+                    // truncated copy of the prior evidence.
                     if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice())
-                        && let Err(error) = std::fs::write(&path, bytes)
+                        && let Err(error) =
+                            crate::atomic_file::write(&path, &bytes, "prior workflow artifact")
                     {
                         failures.push(format!("restore {} failed: {error}", path.display()));
                     }
@@ -621,7 +645,7 @@ fn persist_before_repair_attempt(
         )
     })?;
     let mut policy =
-        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+        crate::app::repair_attempt::edit_cage_policy_from_packet_in(root, &packet_text, seam_id)?;
     crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
         &mut policy,
         root,
@@ -806,6 +830,7 @@ fn persist_before_repair_attempt(
         baseline_ambiguous,
         typescript_test_cache_guidance,
         focused_test_command: focused_test_command(root, &packet_text),
+        declared_cargo_test_target: policy.declared_cargo_test_target,
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -835,6 +860,15 @@ fn persist_before_repair_attempt(
             eprintln!(
                 "{}",
                 crate::output::human::terminal_safe(format!("ripr: {line}"))
+            );
+        }
+        // #15902: when unignored untracked files alone exceed the capture
+        // budget, say so and name the fix instead of leaving the generic
+        // "resolve the workspace condition" text as the only guidance.
+        if let Some(cause) = crate::edit_cage::oversized_untracked_cause(root) {
+            eprintln!(
+                "{}",
+                crate::output::human::terminal_safe(format!("ripr: {cause}"))
             );
         }
     } else if options.gap_id.is_some() {
@@ -902,9 +936,11 @@ fn persist_before_repair_attempt(
 fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(packet).ok()?;
     let test = value.pointer("/packets/0/recommended_test")?;
-    let file = test.get("file")?.as_str()?;
+    // The packet spells the file as stable path text; the manifest lookup
+    // compares native names (`spec/discount%.rs`, not `spec/discount%25.rs`).
+    let file = crate::analysis::decode_stable_path_text(test.get("file")?.as_str()?);
     let name = test.get("name")?.as_str()?;
-    crate::app::test_stub::focused_test_run_command(root, file, name)
+    crate::app::test_stub::focused_test_run_command(root, file.to_str()?, name)
 }
 
 #[cfg(test)]
@@ -993,6 +1029,47 @@ mod tests {
             }
             if packet.exists() {
                 return Err("a file the failed start created was kept".to_string());
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
+    }
+
+    /// The restore replaces each overwritten file instead of rewriting it in
+    /// place: a reader still holding the overwritten file (modelled by a hard
+    /// link) keeps its bytes, while the path carries the complete prior bytes.
+    /// An in-place truncate-and-write changes the held bytes too, and is what
+    /// leaves a truncated baseline behind when a restore is interrupted.
+    #[test]
+    fn gap_artifact_backup_restore_replaces_files_instead_of_rewriting_them() -> Result<(), String>
+    {
+        let root = test_root("gap-backup-replace")?;
+        let result = (|| -> Result<(), String> {
+            let workflow = root.join("target/ripr/workflow");
+            std::fs::create_dir_all(&workflow).map_err(|e| e.to_string())?;
+            let baseline = workflow.join("attempt-baseline.json");
+            std::fs::write(&baseline, b"sentinel-baseline").map_err(|e| e.to_string())?;
+            let backup = GapWorkflowArtifactBackup::capture(&root);
+            std::fs::write(&baseline, b"overwritten-by-failed-start").map_err(|e| e.to_string())?;
+            let held = workflow.join("attempt-baseline.json.held");
+            std::fs::hard_link(&baseline, &held).map_err(|e| e.to_string())?;
+            backup.restore()?;
+            if std::fs::read(&baseline).map_err(|e| e.to_string())? != b"sentinel-baseline" {
+                return Err("prior baseline bytes were not restored".to_string());
+            }
+            if std::fs::read(&held).map_err(|e| e.to_string())? != b"overwritten-by-failed-start" {
+                return Err("the baseline was rewritten in place".to_string());
+            }
+            let mut names = std::fs::read_dir(&workflow)
+                .map_err(|e| e.to_string())?
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect::<Vec<_>>();
+            names.sort();
+            if names != ["attempt-baseline.json", "attempt-baseline.json.held"] {
+                return Err(format!("restore left extra files: {names:?}"));
             }
             Ok(())
         })();
@@ -1326,11 +1403,12 @@ mod tests {
             format_error
         );
         // A switch given a boolean literal stays one token and is refused
-        // as typed, never read as the switch plus a stray value.
+        // as typed, never read as the switch plus a stray value. The refusal
+        // names it as a switch (#15898).
         assert_eq!(
             run(args(&["ripr", "check", "--quiet=false"])),
             Err(CommandError::Failure(
-                "unknown check argument \"--quiet=false\". Run `ripr check --help --all`."
+                "unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: write `--quiet` alone; a switch is on when present and off when absent. Run `ripr check --help --all`."
                     .to_string()
             ))
         );

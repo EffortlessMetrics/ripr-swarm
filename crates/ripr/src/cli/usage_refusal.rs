@@ -22,7 +22,7 @@
 
 use crate::cli::CommandError;
 use crate::output::refusal::{
-    PURPOSE_LIST_ARGUMENTS, PURPOSE_LIST_COMMANDS, RefusalBlock, RefusalNext,
+    PURPOSE_LIST_ARGUMENTS, PURPOSE_LIST_COMMANDS, PURPOSE_STATED_STEP, RefusalBlock, RefusalNext,
 };
 use std::cell::RefCell;
 
@@ -45,6 +45,11 @@ pub(crate) const CODE_CONFLICTING_FLAGS: &str = "conflicting_flags";
 /// such as a word where a whole number belongs (#11979).
 pub(crate) const CODE_INVALID_VALUE: &str = "invalid_value";
 
+/// Machine code of an input the argv named (a file, directory or receipt)
+/// that could not be used, for a run that cannot complete without it
+/// (#15260). The message keeps the human cause; `next` is a help pointer.
+pub(crate) const CODE_INPUT_UNUSABLE: &str = "input_unusable";
+
 thread_local! {
     /// The most recent usage-class refusal a builder noted on this thread.
     static NOTED: RefCell<Option<RefusalBlock>> = const { RefCell::new(None) };
@@ -65,15 +70,19 @@ pub(super) fn reset() {
 }
 
 /// Note an unknown flag or positional. `pointer` is the command's help route.
+/// An empty positional has no token to report (the contract requires a
+/// non-empty `token`).
 pub(crate) fn note_unknown_argument(token: &str, message: &str, pointer: &str) {
     record(RefusalBlock {
         code: CODE_UNKNOWN_ARGUMENT.to_string(),
         message: message.to_string(),
-        token: Some(token.to_string()),
+        token: (!token.is_empty()).then(|| token.to_string()),
         next: Some(RefusalNext {
             purpose: PURPOSE_LIST_ARGUMENTS,
             command: pointer.to_string(),
         }),
+        disposition: None,
+        choices: None,
     });
 }
 
@@ -88,19 +97,24 @@ pub(crate) fn note_unknown_value(token: &str, message: &str, pointer: Option<&st
             purpose: PURPOSE_LIST_ARGUMENTS,
             command: command.to_string(),
         }),
+        disposition: None,
+        choices: None,
     });
 }
 
-/// Note an unknown top-level command.
+/// Note an unknown top-level command. An empty command name has no token
+/// to report: the published contract requires a non-empty `token` (#15985).
 pub(crate) fn note_unknown_command(token: &str, message: &str) {
     record(RefusalBlock {
         code: CODE_UNKNOWN_COMMAND.to_string(),
         message: message.to_string(),
-        token: Some(token.to_string()),
+        token: (!token.is_empty()).then(|| token.to_string()),
         next: Some(RefusalNext {
             purpose: PURPOSE_LIST_COMMANDS,
             command: "ripr --help".to_string(),
         }),
+        disposition: None,
+        choices: None,
     });
 }
 
@@ -112,6 +126,8 @@ pub(crate) fn note_missing_value(flag: &str, message: &str) {
         message: message.to_string(),
         token: Some(flag.to_string()),
         next: None,
+        disposition: None,
+        choices: None,
     });
 }
 
@@ -130,6 +146,8 @@ pub(crate) fn missing_required(flag: &str, message: &str) -> String {
         message: message.to_string(),
         token: Some(flag.to_string()),
         next: None,
+        disposition: None,
+        choices: None,
     });
     message.to_string()
 }
@@ -143,6 +161,8 @@ pub(crate) fn conflicting_flags(flag: &str, message: &str) -> String {
         message: message.to_string(),
         token: Some(flag.to_string()),
         next: None,
+        disposition: None,
+        choices: None,
     });
     message.to_string()
 }
@@ -155,19 +175,108 @@ pub(crate) fn note_invalid_value(value: &str, message: &str) {
         message: message.to_string(),
         token: (!value.is_empty()).then(|| value.to_string()),
         next: None,
+        disposition: None,
+        choices: None,
     });
 }
 
+/// [`note_invalid_value`] for a builder that owns the command listing the
+/// valid values (`ripr agent status` lists attempt IDs): `next` is that
+/// command, composed from typed state and never lifted from the typed value.
+/// Returns the message so a parser can `Err(..)` it in one expression.
+pub(crate) fn invalid_value_with_next(value: &str, message: &str, next: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_INVALID_VALUE.to_string(),
+        message: message.to_string(),
+        token: (!value.is_empty()).then(|| value.to_string()),
+        next: Some(RefusalNext {
+            purpose: PURPOSE_STATED_STEP,
+            command: next.to_string(),
+        }),
+        disposition: None,
+        choices: None,
+    });
+    message.to_string()
+}
+
+/// The refusal for an argv-named input (a receipt, a ledger, a cache root)
+/// that could not be used (#15260). The token is the input as typed, when
+/// the caller has it; the boundary fills the help route from argv. Command
+/// owners keep their own wording; only the code travels. No `next` is lifted
+/// from the message, which embeds caller-controlled paths.
+pub(crate) fn input_unusable(token: Option<&str>, message: &str) -> String {
+    record(RefusalBlock {
+        code: CODE_INPUT_UNUSABLE.to_string(),
+        message: message.to_string(),
+        token: token.filter(|token| !token.is_empty()).map(str::to_string),
+        next: None,
+        disposition: None,
+        choices: None,
+    });
+    message.to_string()
+}
+
 /// Note a selector that matched no finding. The miss prose embeds the
-/// caller's own selector text, so no `next` is ever lifted from it: the field
-/// stays `null` (fail closed, #11584).
-pub(crate) fn note_selector_miss(selector: &str, message: &str) {
+/// caller's own selector text, so no `next` is ever lifted from it (fail
+/// closed, #11584). The owner passes the listing command it composed from
+/// typed state (root, base, scope), never from the selector, as `list_next`
+/// (#15260); `None` leaves the field `null`.
+pub(crate) fn note_selector_miss(selector: &str, message: &str, list_next: Option<&str>) {
     record(RefusalBlock {
         code: CODE_SELECTOR_MISS.to_string(),
         message: message.to_string(),
         token: Some(selector.to_string()),
-        next: None,
+        next: list_next.map(|command| RefusalNext {
+            purpose: PURPOSE_STATED_STEP,
+            command: command.to_string(),
+        }),
+        disposition: None,
+        choices: None,
     });
+}
+
+/// Note a typed `repair`/`continue` refusal (exit 3) at its one owner
+/// (#14931). The code and disposition are the `RepairRefusalCode` the
+/// stderr `refusal code=` line already names, the disposition derived from
+/// the code; `next` is null (see [`note_typed_refusal_with_next`] for the one
+/// owner-composed step).
+pub(crate) fn note_typed_refusal(code: crate::app::task_first::RepairRefusalCode, message: &str) {
+    note_typed_refusal_with_choices(code, message, None);
+}
+
+/// [`note_typed_refusal`] for a refusal whose owner names one next step and
+/// composed it from typed state (the bound root), not from prose (#15260).
+/// `next` is that command, exactly as the prose's `Next:` line prints it.
+pub(crate) fn note_typed_refusal_with_next(
+    code: crate::app::task_first::RepairRefusalCode,
+    message: &str,
+    next: &str,
+) {
+    let mut block = RefusalBlock::from_prose(code.as_str(), message);
+    block.next = Some(RefusalNext {
+        purpose: PURPOSE_STATED_STEP,
+        command: next.to_string(),
+    });
+    block.disposition = Some(code.disposition().as_str());
+    record(block);
+}
+
+/// [`note_typed_refusal`] for a selection refusal that also offers the
+/// commands its owner composed from typed seam or attempt ids (#14980). The
+/// owner passes exactly the listing it printed on stderr; nothing here is
+/// lifted from prose.
+pub(crate) fn note_typed_refusal_with_choices(
+    code: crate::app::task_first::RepairRefusalCode,
+    message: &str,
+    choices: Option<crate::output::refusal::RefusalChoices>,
+) {
+    let mut block = RefusalBlock::from_prose(code.as_str(), message);
+    // These steps can quote a user-supplied item or selector, so a typed
+    // refusal never offers its step as a runnable `next` (#14931).
+    block.next = None;
+    block.disposition = Some(code.disposition().as_str());
+    block.choices = choices;
+    record(block);
 }
 
 /// Whether argv explicitly requests JSON: a `--json` token, or `--format`
@@ -231,6 +340,7 @@ fn fills_help_route(code: &str) -> bool {
             | CODE_INVALID_VALUE
             | CODE_MISSING_REQUIRED
             | CODE_CONFLICTING_FLAGS
+            | CODE_INPUT_UNUSABLE
     )
 }
 
@@ -241,14 +351,26 @@ fn fills_help_route(code: &str) -> bool {
 /// escaped. Consumes the note either way.
 pub(super) fn document_for(args: &[String], error: &CommandError) -> Option<String> {
     let mut block = take()?;
-    if !matches!(error, CommandError::Failure(_)) || !json_requested(args) {
+    // A usage error is a could-not-complete failure; a typed repair/continue
+    // refusal is a decision (exit 3) and the only decision that carries a
+    // disposition.
+    let class_matches = match error {
+        CommandError::Failure(_) => block.disposition.is_none(),
+        CommandError::Decision(_) => block.disposition.is_some(),
+        _ => false,
+    };
+    if !class_matches || !json_requested(args) {
         return None;
     }
     if !error.message().contains(&block.message) {
         return None;
     }
-    // The document's message is the stderr prose the process printed.
-    block.message = error.message().to_string();
+    // The document's message is the stderr prose the process printed. A
+    // typed refusal keeps its plain-words prose: the `refusal code=` line
+    // that follows it on stderr is the `code` and `disposition` fields.
+    if block.disposition.is_none() {
+        block.message = error.message().to_string();
+    }
     if block.next.is_none()
         && fills_help_route(&block.code)
         && let Some(command) = argv_command(args)
@@ -265,8 +387,33 @@ pub(super) fn document_for(args: &[String], error: &CommandError) -> Option<Stri
 /// failure leaves stdout empty: the prose error is still delivered.
 pub(super) fn emit_for(args: &[String], error: &CommandError) {
     if let Some(document) = document_for(args, error) {
+        let document = if context_compact_requested(args) {
+            crate::output::compact_json::finish(
+                document,
+                &crate::output::format::OutputFormat::JsonCompact,
+            )
+        } else {
+            document
+        };
         let _ = crate::cli::commands_context::write_stdout_refusal_json(document);
     }
+}
+
+/// `ripr context --format json-compact` compacts every JSON document on
+/// stdout, including the boundary's `selector_miss` refusal (#13356). Other
+/// commands keep their existing refusal presentation.
+fn context_compact_requested(args: &[String]) -> bool {
+    let mut words = args.iter().skip(1).map(String::as_str);
+    let is_context = words
+        .by_ref()
+        .find(|arg| !arg.starts_with('-'))
+        .is_some_and(|arg| arg == "context");
+    is_context
+        && args.iter().enumerate().any(|(i, arg)| {
+            arg == "--format=json-compact"
+                || (arg == "--format"
+                    && args.get(i + 1).is_some_and(|value| value == "json-compact"))
+        })
 }
 
 #[cfg(test)]
@@ -377,6 +524,23 @@ mod tests {
         let value: serde_json::Value =
             serde_json::from_str(&document).map_err(|err| err.to_string())?;
         assert_eq!(value["error"]["code"], CODE_INVALID_VALUE);
+        assert!(value["error"].get("token").is_none(), "{value}");
+        Ok(())
+    }
+
+    /// #15985: `ripr "" --json` used to publish `"token": ""`, which the
+    /// refusal schema rejects (`minLength: 1`). The empty name carries none.
+    #[test]
+    fn an_empty_command_name_publishes_no_token() -> Result<(), String> {
+        reset();
+        let message = "the command name is empty. Run `ripr --help`.";
+        note_unknown_command("", message);
+        let error = CommandError::Failure(message.to_string());
+        let document = document_for(&args(&["ripr", "", "--json"]), &error)
+            .ok_or("a JSON-requested unknown command must write a document")?;
+        let value: serde_json::Value =
+            serde_json::from_str(&document).map_err(|err| err.to_string())?;
+        assert_eq!(value["error"]["code"], CODE_UNKNOWN_COMMAND);
         assert!(value["error"].get("token").is_none(), "{value}");
         Ok(())
     }

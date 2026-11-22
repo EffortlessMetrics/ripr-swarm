@@ -215,6 +215,7 @@ impl CommittedSourceOverlay {
         root == self.root || self.canonical_root.as_deref() == Some(root)
     }
 
+    #[cfg(any(test, feature = "lang-typescript"))]
     fn snapshot_inputs_differ_in(&self, root: &Path, directory: &Path) -> bool {
         if !self.serves(root) {
             return false;
@@ -356,6 +357,7 @@ pub(crate) fn ignored_authority_file_is_absent(root: &Path, relative: &Path) -> 
 /// (RIPR-SPEC-0258) in `directory` that differs from `HEAD`, or `directory`
 /// sits in an ignored directory. Without an overlay the working tree matches
 /// `HEAD` for every such file, so this is `false`.
+#[cfg(any(test, feature = "lang-typescript"))]
 pub(crate) fn snapshot_inputs_differ_in(root: &Path, directory: &Path) -> bool {
     CURRENT_OVERLAY.with(|slot| {
         slot.borrow()
@@ -387,6 +389,14 @@ pub(crate) fn any_snapshot_input_differs(root: &Path) -> bool {
 /// `None` means "unknown", and the caller keeps the working-tree read it
 /// always did.
 pub(crate) fn tracked_snapshot_files(root: &Path) -> Option<HashSet<String>> {
+    tracked_files_matching(root, |path| path.ends_with(".snap"))
+}
+
+/// Select tracked paths under this workspace using the same repository identity checks.
+pub(crate) fn tracked_files_matching(
+    root: &Path,
+    keep: impl Fn(&str) -> bool,
+) -> Option<HashSet<String>> {
     // An inherited repository selector would make `ls-files` answer for
     // another repository, and a `.git` entry that git does not accept as this
     // directory's own (a stub, a damaged one) would make it answer for a
@@ -428,7 +438,7 @@ pub(crate) fn tracked_snapshot_files(root: &Path) -> Option<HashSet<String>> {
     Some(
         tracked
             .into_iter()
-            .filter(|path| path.ends_with(".snap"))
+            .filter(|path| keep(path))
             .map(str::to_string)
             .collect(),
     )

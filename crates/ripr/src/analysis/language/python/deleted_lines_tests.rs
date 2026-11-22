@@ -1299,6 +1299,191 @@ fn deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct() -> Resu
     Ok(())
 }
 
+// #11889 residual: a guard that also names a local (`seq_index is None and
+// start < 0` in more-itertools `iter_index`) is read through its
+// parameter-only conjuncts. One of them provably false keeps every observed
+// input out of the deleted block, whatever the local was.
+#[test]
+fn deleted_guard_block_reads_a_parameter_conjunct_beside_a_local() -> Result<(), String> {
+    let removed = vec![
+        line(3, 3, "    if result is not None and total > 1000:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "local-conjunct",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        removed.clone(),
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::WeaklyExposed, "{classes:?}");
+    // Positive control: an input that satisfies the parameter conjunct may
+    // enter the block, so the deletion keeps its credit.
+    let tests =
+        format!("{DISCOUNT_TESTS}\n\ndef test_big():\n    assert apply_discount(2000) == 1950\n");
+    let classes = deleted_guard_classes("local-conjunct-entered", DISCOUNT_NEW, &tests, removed)?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
+#[test]
+fn deleted_guard_block_refuses_a_walrus_that_can_rebind_a_kept_parameter() -> Result<(), String> {
+    let removed = vec![
+        line(
+            3,
+            3,
+            "    if (total := 2000) and result is not None and total > 1000:",
+        ),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "walrus-rebinds-kept-parameter",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        removed,
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
+#[test]
+fn deleted_guard_block_refuses_a_mutating_call_beside_a_parameter_truthiness_check()
+-> Result<(), String> {
+    let removed = vec![
+        line(3, 3, "    if fill(total) and total:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "call-mutates-kept-parameter",
+        DISCOUNT_NEW,
+        DISCOUNT_TESTS,
+        removed,
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
+// What the parameter-only reading must not exclude on: a guard over locals or
+// module constants alone, a parameter conjunct that holds, and `or` or a
+// conditional expression, where dropping an operand can turn a true guard
+// false.
+#[test]
+fn deleted_guard_block_beside_a_local_fails_open_without_a_false_parameter_conjunct()
+-> Result<(), String> {
+    for (label, guard) in [
+        ("local-only", "    if result > 1000:"),
+        (
+            "local-and-true-parameter",
+            "    if result is not None and total < 5000:",
+        ),
+        (
+            "local-or-parameter",
+            "    if result is None or total > 1000:",
+        ),
+        (
+            "or-inside-a-conjunct",
+            "    if (result or total > 1000) and total > 1000 or vip is None:",
+        ),
+        (
+            "conditional-expression",
+            "    if (result if total > 1000 else True) and total > 1000:",
+        ),
+        (
+            "constant-and-true-parameter",
+            "    if total > LIMIT and total < 5000:",
+        ),
+    ] {
+        let removed = vec![line(3, 3, guard), line(4, 3, "        result = total - 50")];
+        let classes = deleted_guard_classes(label, DISCOUNT_NEW, DISCOUNT_TESTS, removed)?;
+        assert_eq!(classes.len(), 1, "{label}: {classes:?}");
+        assert_eq!(classes[0].1, ExposureClass::Exposed, "{label}: {classes:?}");
+    }
+    Ok(())
+}
+
+// An early exit keeps a row off the deleted line by HOLDING, which a partial
+// conjunction cannot show: `total < 1000 and flag` leaves through the exit
+// only when the local is truthy too.
+#[test]
+fn deleted_line_after_an_early_exit_naming_a_local_fails_open() -> Result<(), String> {
+    let exits = |condition: &str| {
+        format!(
+            "def apply_discount(total, vip=False):\n    result = total\n    flag = total > 5\n    if {condition}:\n        return result\n    return result\n"
+        )
+    };
+    let removed = || vec![line(6, 6, "    result = total - 50")];
+    let classes = deleted_guard_classes(
+        "exit-local",
+        &exits("total < 1000 and flag"),
+        DISCOUNT_TESTS,
+        removed(),
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    // Control: the same exit over the parameter alone is read whole.
+    let classes = deleted_guard_classes(
+        "exit-parameter",
+        &exits("total < 1000"),
+        DISCOUNT_TESTS,
+        removed(),
+    )?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::WeaklyExposed, "{classes:?}");
+    Ok(())
+}
+
+#[test]
+fn parameter_only_guard_keeps_what_an_old_side_read_may_evaluate() {
+    use super::guard_activation::parameter_only_guard;
+    let params = vec!["total".to_string(), "start".to_string()];
+    for (condition, expected) in [
+        ("total > 1000", Some("total > 1000")),
+        (
+            "total > 1000 or start < 0",
+            Some("total > 1000 or start < 0"),
+        ),
+        ("seq_index is None and start < 0", Some("start < 0")),
+        (
+            "start < 0 and seq_index is None and total > 1",
+            Some("start < 0 and total > 1"),
+        ),
+        ("(seq_index is None) and (start < 0)", Some("(start < 0)")),
+        ("seq_index is None", None),
+        ("total > LIMIT", None),
+        ("seq_index is None or start < 0", None),
+        ("(seq_index or start < 0) and total > 1", None),
+        ("seq_index and start < 0 or total > 1", None),
+        ("(seq_index if start < 0 else total) and start < 0", None),
+        ("fill(total) and total > 1000", None),
+        ("fill(total) and total", None),
+        ("(total := 2000) and total > 1000", None),
+        ("any(x for x in total) and start < 0", None),
+        ("(lambda: seq_index)() and start < 0", None),
+        ("seq_index.ready() and start < 0", None),
+        ("handlers[0](seq_index) and start < 0", None),
+        ("fill (total) and total", None),
+        // A keyword before `(` opens a group or a display, not a call.
+        ("total in (1, 2)", Some("total in (1, 2)")),
+        (
+            "total not in (1, 2) and seq_index is None",
+            Some("total not in (1, 2)"),
+        ),
+        (
+            "seq_index is None and not (start < 0)",
+            Some("not (start < 0)"),
+        ),
+    ] {
+        assert_eq!(
+            parameter_only_guard(condition, &params).as_deref(),
+            expected,
+            "{condition}"
+        );
+    }
+}
+
 // A guard dropped while part of its body is kept (dedented) leaves that part
 // running for every input, so the removal is not a deletion of an unentered
 // block: the header gets no old-side view and the existing verdict stands.
@@ -1536,5 +1721,443 @@ fn stamping_changed_related_rows_is_exact_and_skips_a_changed_first_row() -> Res
     let mut empty = base;
     stamp_related_tests_changed_in_diff(&mut empty, &BTreeSet::new());
     assert!(stamps(&empty).is_empty(), "no changed files");
+    Ok(())
+}
+
+/// #13875: a deleted part of an implicitly concatenated message argument
+/// changes the raised message. Inside the open bracket it is an argument, not
+/// a docstring, so it is base-side evidence. Control: the same bare string as
+/// its own statement outside brackets still leaves no record.
+#[test]
+fn deleted_string_argument_inside_brackets_is_base_side_evidence() -> Result<(), String> {
+    let source = "CAP = 100\n\n\ndef capped_total(items):\n    raise ValueError(\n        \"items exceed the cap\"\n    )\n";
+    let findings = analyze(
+        "bracketed-string",
+        source,
+        &[],
+        vec![line(7, 7, "        \" for this cart\"")],
+    )?;
+    assert_eq!(
+        base_side_texts(&findings),
+        vec!["\" for this cart\"".to_string()],
+        "{findings:?}"
+    );
+
+    let statement =
+        "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n    return total\n";
+    let findings = analyze(
+        "standalone-string",
+        statement,
+        &[],
+        vec![line(5, 5, "    \" for this cart\"")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// #13875 through the whole adapter: a changed message string on a bracket
+/// continuation line gets a candidate finding, while the same edit to a real
+/// docstring stays quiet.
+#[test]
+fn changed_string_argument_inside_brackets_gets_a_finding() -> Result<(), String> {
+    let source = "CAP = 100\n\n\ndef capped_total(items):\n    raise ValueError(\n        \"XXitems exceed the capXX\"\n    )\n";
+    let findings = analyze(
+        "changed-bracketed-string",
+        source,
+        &[6],
+        vec![line(6, 6, "        \"items exceed the cap\"")],
+    )?;
+    assert!(
+        findings.iter().any(|finding| {
+            finding.source_currentness == SourceCurrentness::CandidateCurrent
+                && finding.probe.location.line == 6
+        }),
+        "{findings:?}"
+    );
+
+    let docstring = "CAP = 100\n\n\ndef capped_total(items):\n    \"XXSum the items.XX\"\n    return sum(items)\n";
+    let findings = analyze(
+        "changed-docstring",
+        docstring,
+        &[5],
+        vec![line(5, 5, "    \"Sum the items.\"")],
+    )?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.probe.location.line != 5),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// #13875 review: a message string continuing `raise E(` is an error-path
+/// change. A test that pins the function's return value with `==` and only
+/// checks the exception type with `pytest.raises` does not observe the
+/// message, so the finding must not claim `exposed` (isodate 17cb25eb,
+/// `parse_datetime`). Control: the same string continuing `return (` is a
+/// returned value that the exact assertion does observe.
+#[test]
+fn changed_raise_message_inside_brackets_is_not_exposed_by_a_return_assertion() -> Result<(), String>
+{
+    let test = "import pytest\nfrom src.cart import capped_total\n\n\ndef test_capped_total():\n    assert capped_total(1) == \"one\"\n    with pytest.raises(ValueError):\n        capped_total(0)\n";
+    let raising = "def capped_total(items):\n    if not items:\n        raise ValueError(\n            \"XXno itemsXX\"\n        )\n    return \"one\"\n";
+    let findings = analyze_with_test(
+        "raise-message",
+        raising,
+        test,
+        &[4],
+        vec![line(4, 4, "            \"no items\"")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 4)
+        .ok_or_else(|| format!("no finding on the message line: {findings:?}"))?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::ErrorPath,
+        "{finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        crate::domain::ExposureClass::Exposed,
+        "a type-only raises check does not observe the message: {finding:?}"
+    );
+
+    let returning = "def capped_total(items):\n    return (\n        \"XXoneXX\"\n    )\n";
+    let findings = analyze_with_test(
+        "return-string",
+        returning,
+        test,
+        &[3],
+        vec![line(3, 3, "        \"one\"")],
+    )?;
+    let finding = findings
+        .iter()
+        .find(|finding| finding.probe.location.line == 3)
+        .ok_or_else(|| format!("no finding on the returned string: {findings:?}"))?;
+    assert_eq!(
+        finding.probe.family,
+        crate::domain::ProbeFamily::ReturnValue,
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+const TO_BOOL_LINES: &str = "def to_bool(val):\n    if val in (\n        True,\n        \"yes\",\n        \"on\",\n    ):\n        return True\n    return False\n";
+
+fn to_bool_test(cases: &str) -> String {
+    format!(
+        "import pytest\n\nfrom src.cart import to_bool\n\n\n@pytest.mark.parametrize(\"val\", [{cases}])\ndef test_truthy(val):\n    assert to_bool(val) == True\n"
+    )
+}
+
+/// #15632: deleting the `"y",` line of a multi-line membership display is a
+/// removed-only line. It credits `exposed` only when a strong row passes
+/// `"y"`.
+#[test]
+fn a_deleted_membership_member_line_needs_a_row_on_the_member() -> Result<(), String> {
+    for (label, cases, expected) in [
+        (
+            "membership-missed",
+            "\"yes\", \"on\"",
+            crate::domain::ExposureClass::WeaklyExposed,
+        ),
+        (
+            "membership-hit",
+            "\"yes\", \"y\"",
+            crate::domain::ExposureClass::Exposed,
+        ),
+    ] {
+        let findings = analyze_with_test(
+            label,
+            TO_BOOL_LINES,
+            &to_bool_test(cases),
+            &[],
+            vec![line(5, 5, "        \"y\",")],
+        )?;
+        let finding = findings
+            .iter()
+            .find(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+            .ok_or_else(|| format!("no base-side record for the deleted member: {findings:?}"))?;
+        assert_eq!(finding.class, expected, "{label}: {finding:?}");
+    }
+    Ok(())
+}
+
+/// #15632: deleting two adjacent member lines (`"y",` and `"on",`) arrives
+/// as one removed line plus a fragment. Rows that pass both removed members
+/// keep `exposed`; a row on only one of them does not.
+#[test]
+fn deleting_two_adjacent_membership_member_lines_needs_a_row_on_each() -> Result<(), String> {
+    let source = "def to_bool(val):\n    if val in (\n        True,\n        \"yes\",\n    ):\n        return True\n    return False\n";
+    for (label, cases, expected) in [
+        (
+            "membership-run-missed",
+            "\"yes\", \"y\"",
+            crate::domain::ExposureClass::WeaklyExposed,
+        ),
+        (
+            "membership-run-hit",
+            "\"yes\", \"y\", \"on\"",
+            crate::domain::ExposureClass::Exposed,
+        ),
+    ] {
+        let findings = analyze_with_test(
+            label,
+            source,
+            &to_bool_test(cases),
+            &[],
+            vec![line(5, 5, "        \"y\","), line(6, 5, "        \"on\",")],
+        )?;
+        let finding = findings
+            .iter()
+            .find(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+            .ok_or_else(|| format!("no base-side record for the deleted members: {findings:?}"))?;
+        assert_eq!(finding.class, expected, "{label}: {finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_string_after_explicit_join_matches_parenthesized_value() -> Result<(), String> {
+    let shape = |first: &str, close: &str, original: &str| {
+        let source =
+            format!("def capped_total(items):\n    {first}\n        \" the payload!\"\n{close}");
+        let test = format!(
+            "from src.cart import capped_total\n\ndef test_message():\n    assert capped_total([1]) == {original:?}\n"
+        );
+        let findings = analyze_with_test(
+            "changed-continuation",
+            &source,
+            &test,
+            &[3],
+            vec![line(3, 3, "        \" the payload\"")],
+        )?;
+        let finding = findings
+            .into_iter()
+            .find(|f| {
+                f.source_currentness == SourceCurrentness::CandidateCurrent
+                    && f.probe.location.line == 3
+            })
+            .ok_or_else(|| format!("no candidate finding on line 3 of {source}"))?;
+        Ok::<_, String>((finding.probe.family, finding.class, finding.related_tests))
+    };
+    let returned = shape("return (", "    )\n", " the payload")?;
+    assert_eq!(returned.0, crate::domain::ProbeFamily::ReturnValue);
+    assert_eq!(shape("return\\", "", " the payload")?, returned);
+
+    assert!(
+        !returned.2.is_empty(),
+        "the control must select an assertion"
+    );
+    for first in ["if items: return \\", "marker = 1; return \\"] {
+        assert_eq!(shape(first, "", " the payload")?, returned);
+    }
+
+    // Both assignment spellings must report the suffix. Their right-hand
+    // sides go through the existing classifier for the enclosing statement.
+    for (first, close) in [
+        ("msg = \"Could not load\" \\", "    return msg\n"),
+        ("msg = (\"Could not load\"", "    )\n    return msg\n"),
+    ] {
+        shape(first, close, "Could not load the payload")?;
+    }
+    // A lambda colon still belongs to the expression producing the string.
+    shape("msg = lambda: \\", "    return msg()\n", " the payload")?;
+    Ok(())
+}
+
+#[test]
+fn deleted_string_after_explicit_join_is_base_side_evidence() -> Result<(), String> {
+    // The unchanged blank line ends the continued assignment after deletion.
+    let source = "def capped_total(items):\n    msg = \"Could not load\" \\\n\n    return msg\n";
+    let findings = analyze(
+        "explicit-deletion",
+        source,
+        &[],
+        vec![line(3, 3, "        \" the payload\"")],
+    )?;
+    assert_base_side_shape(&findings, "\" the payload\"")
+}
+
+#[test]
+fn explicit_join_lookalikes_and_standalone_strings_stay_quiet() -> Result<(), String> {
+    for preceding in [
+        "    # documentation \\",
+        "    value = 1  # documentation \\",
+        "    msg = \"literal \\\\\"",
+        "    \"first part\" \\",
+        "    value = 1; \"first part\" \\",
+        "    if items: \"first part\" \\",
+        "    if lambda: items: \"first part\" \\",
+    ] {
+        let source =
+            format!("def capped_total(items):\n{preceding}\n    \"new text\"\n    return items\n");
+        let findings = analyze(
+            "quiet-string",
+            &source,
+            &[3],
+            vec![line(3, 3, "    \"old text\"")],
+        )?;
+        assert!(findings.is_empty(), "{source}: {findings:?}");
+    }
+    Ok(())
+}
+
+const CAP_TEST_PY: &str = "from src.cart import capped_total\n\n\ndef test_capped_total_stops_at_the_cap():\n    assert capped_total(150, 100) == 100\n    assert capped_total(50, 100) == 50\n";
+
+/// Order-free comparison: the adapter's finding order is not the claim.
+fn sorted(mut texts: Vec<String>) -> Vec<String> {
+    texts.sort();
+    texts
+}
+
+/// The candidate-side findings as (line, trimmed expression).
+fn candidate_side(findings: &[Finding]) -> Vec<(usize, String)> {
+    findings
+        .iter()
+        .filter(|finding| finding.source_currentness == SourceCurrentness::CandidateCurrent)
+        .map(|finding| {
+            (
+                finding.probe.location.line,
+                finding.probe.expression.trim().to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Code replaced by a comment was deleted. The diff pairs the comment with
+/// the removed guard; reading the pair as an edit reported the comment text
+/// as a changed predicate and graded it `exposed` (click f67c2bb replay).
+/// The guard and its body are base-side records naming the removed code, as
+/// they are when nothing is added, and the comment is no finding at all.
+#[test]
+fn code_replaced_by_a_comment_is_base_side_evidence_naming_the_code() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # The cap moved to the caller.\n\n    return result\n";
+    let removed = || {
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+        ]
+    };
+    let findings = analyze_with_test("comment-for-code", source, CAP_TEST_PY, &[3], removed())?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        vec!["if total > cap:".to_string(), "result = cap".to_string()],
+        "{findings:?}"
+    );
+    assert_base_side_shape(&findings, "if total > cap:")?;
+    // The same deletion with no comment added reads the same.
+    let bare = "def capped_total(total, cap):\n    result = total\n\n    return result\n";
+    let pure = analyze_with_test("comment-for-code-pure", bare, CAP_TEST_PY, &[], removed())?;
+    let classes = |findings: &[Finding]| {
+        sorted(
+            findings
+                .iter()
+                .map(|finding| {
+                    format!("{} => {:?}", finding.probe.expression.trim(), finding.class)
+                })
+                .collect(),
+        )
+    };
+    assert_eq!(classes(&findings), classes(&pure));
+    Ok(())
+}
+
+/// A blank line and a comment beside an added import hold no code either.
+#[test]
+fn code_replaced_by_a_comment_and_an_import_is_base_side_evidence() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Imported late.\n    import textwrap\n\n    return result\n";
+    let findings = analyze_with_test(
+        "comment-and-import-for-code",
+        source,
+        CAP_TEST_PY,
+        &[3, 4],
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+        ],
+    )?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        vec!["if total > cap:".to_string(), "result = cap".to_string()],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A `#` line inside a multi-line string is content. It replaced the old
+/// content line, so the pair stays an edit on the candidate side.
+#[test]
+fn hash_line_inside_a_multi_line_string_keeps_its_pairing() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    note = \"\"\"\n    # capped\n    \"\"\"\n    return min(total, cap), note\n";
+    let findings = analyze_with_test(
+        "hash-in-string",
+        source,
+        CAP_TEST_PY,
+        &[3],
+        vec![line(3, 3, "    uncapped")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    assert_eq!(
+        candidate_side(&findings),
+        vec![(3, "# capped".to_string())],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// The continuation rows of a parenthesized import are part of the import,
+/// so a comment and a wrapped import that replace code hold no code.
+#[test]
+fn code_replaced_by_a_comment_and_a_wrapped_import_is_base_side_evidence() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Loaded late.\n    from textwrap import (\n        dedent,\n    )\n    return result\n";
+    let removed = || {
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+            line(5, 3, "    if result < 0:"),
+            line(6, 3, "        result = 0"),
+        ]
+    };
+    let findings = analyze_with_test(
+        "comment-and-wrapped-import-for-code",
+        source,
+        CAP_TEST_PY,
+        &[3, 4, 5, 6],
+        removed(),
+    )?;
+    assert_eq!(candidate_side(&findings), Vec::new(), "{findings:?}");
+    // The same deletion with nothing added records the same removed code.
+    let bare = "def capped_total(total, cap):\n    result = total\n    return result\n";
+    let pure = analyze_with_test("wrapped-import-pure", bare, CAP_TEST_PY, &[], removed())?;
+    assert_eq!(
+        sorted(base_side_texts(&findings)),
+        sorted(base_side_texts(&pure)),
+        "{findings:?}"
+    );
+    assert!(
+        base_side_texts(&findings).contains(&"if total > cap:".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A continuation row of a wrapped import that replaces one re-points a
+/// name: the pair stays an edit and the old row is no deletion.
+#[test]
+fn wrapped_import_row_replacing_a_row_keeps_its_pairing() -> Result<(), String> {
+    let source = "from textwrap import (\n    indent,\n)\n\n\ndef capped_total(total, cap):\n    return min(total, cap)\n";
+    let findings = analyze_with_test(
+        "wrapped-import-row-edit",
+        source,
+        CAP_TEST_PY,
+        &[2],
+        vec![line(2, 2, "    dedent,")],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
     Ok(())
 }

@@ -236,7 +236,7 @@ Examples:
 ```text
 Write a bounded brief for a coding agent over the current diff or change.
 
-Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N]
+Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N] [--line-ranges]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -252,6 +252,9 @@ Options:
   --seam-id ID     Select one visible seam by ID.
   --json           Required until a human brief surface exists.
   --max-seams N    Requested seam cap. Defaults to 3 and cannot exceed 10.
+  --line-ranges    JSON-only lossless grouped inclusive changed-line ranges.
+                   Minifies output; requires --json. May grow for many files.
+                   Does not truncate locations or change the seam cap.
 
 When --files or --base produces a working set that matches no seams, the brief
 falls back to all repo-actionable seams. This scope-widening is disclosed in
@@ -412,6 +415,10 @@ Options:
                        packet, the after-phase result, or the verification
                        receipt). Without it stdout is a short summary and the
                        documents stay in their files under target/ripr/.
+  --quiet              Drop the phase's progress narration and `wrote <path>`
+                       lines from stderr, like `ripr repair --quiet` and
+                       `RIPR_QUIET`. Results, refusal prose and the warning
+                       to write output outside the repo always print.
   --seam-id ID         Select one visible seam; required for `before` and the
                        compatibility selector for `after`. For `--phase before`,
                        a seam ID, a `ripr check` finding ID (`probe:` /
@@ -472,7 +479,11 @@ Options:
                        close (every started test ends, every announced suite
                        finishes), then records the normalized result with the
                        attempt as a caller-reported claim.
-                       Optional; it does not gate finish yet. Anything else is
+                       Required to finish an attempt that follows a new-test
+                       proposal (it must count a test and fail none; for an
+                       inline proposal, a passing test must be one the file
+                       did not define when the attempt began); optional
+                       otherwise. Anything else is
                        refused and the attempt keeps waiting. Rust test files
                        only; save the file outside the checkout. A finish that
                        stops after the receipt evaluation began shows as
@@ -589,7 +600,7 @@ Options:
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
-  --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
+  --out PATH       Workflow output directory (relative to --root; must stay inside it). Defaults to target/ripr/workflow.
   --json           Emit one machine-readable JSON document instead of the
                    `Wrote <path>` / `Next: <cmd>` prose lines:
                      {"schema_version": "0.1", "workflow": {"workflow_manifest": <path>,
@@ -823,7 +834,7 @@ owned child is terminated.
 
 Every parsed attempt, including refusals, emits typed JSON on stdout; usage
 errors stay on stderr. Exit status is 0 when a bounded observation was committed
--- including an observed command failure -- 3 for a typed refusal, and 2 when
+-- including an observed command failure -- 3 when ripr declined the request, and 2 when
 the result could not be written. It
 records process evidence only; it does not issue receipts, run mutation testing,
 prove adequacy, or grant gate or merge authority.
@@ -1557,7 +1568,12 @@ Options:
                            suppressed: true; per-class summary counts cover
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
-                           policy fails the run.
+                           policy fails the run. Every other format (sarif,
+                           sarif-compact, agent, json-terse, badge and repo
+                           formats) refuses the flag as a usage error. sarif,
+                           sarif-compact, badge-json, badge-shields and the
+                           badge-plus formats read [suppressions] path from
+                           ripr.toml (default .ripr/suppressions.toml) instead.
   --output-dir DIR         With a named --diff file, write native badge.json,
                            detail.json and human.txt from one analysis. DIR must
                            be new (parent exists). Verify manifest.json and member
@@ -1567,7 +1583,7 @@ Options:
                            inventory refuses drift, nonregular files and external
                            module reads. See docs/OUTPUT_SCHEMA.md.
   --write-artifact PATH    Write a full-fidelity check artifact (schema
-                           ripr-check-artifact-v1) for later
+                           ripr-check-artifact-v2) for later
                            `ripr explain --from PATH` /
                            `ripr context --from PATH` reuse. The artifact
                            records the complete finding set plus the input
@@ -1632,7 +1648,9 @@ Progress:
   github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
   missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
-  `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
+  `RIPR_PROGRESS=1` restores it. A terminal keeps it. A human format on a
+  non-terminal stderr holds it for the first 2s, so a run that finishes
+  sooner prints nothing; `RIPR_PROGRESS=1` makes those lines immediate. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
   or that the command will succeed. `--quiet` turns this stream
   off; so does setting `RIPR_QUIET` to anything but empty, `0` or
@@ -1708,10 +1726,12 @@ Environment variables:
                                           an unparseable value fails the run.
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
-                                          like --quiet (check, explain, context,
-                                          pilot, repair, continue). Any value except
-                                          empty, 0 or false silences it; stdout, exit
-                                          codes and errors are unchanged.
+                                          like --quiet on every command that takes
+                                          it (check, explain, context, pilot,
+                                          evidence-health, repair, continue, status,
+                                          agent repair, reports ci-packet). Any value
+                                          except empty, 0 or false silences it;
+                                          stdout, exit codes and errors are unchanged.
   RIPR_PROGRESS                           Keep the `ripr progress:` stream for a
                                           machine format on a non-terminal stderr,
                                           where it is off by default. Any value
@@ -1791,7 +1811,9 @@ Options:
 The command uses the same ancestor-aware loader as analysis and fails with the
 path-qualified parser or policy error. A missing ripr.toml follows the normal
 built-in-defaults path; use `ripr init` when you want to materialize those
-defaults into a file.
+defaults into a file. It also checks the suppressions manifest the config
+selects: a configured [suppressions] path that does not exist fails, and a
+present manifest (default .ripr/suppressions.toml) must parse.
 
 Examples:
   ripr config validate --root PATH
@@ -1807,10 +1829,11 @@ Print one finding's changed code and related tests for an agent or script.
 Use this when an agent or tool needs the facts behind one `ripr check`
 finding: the changed expression ripr examined, the tests that appear to
 reach it, the values they check, and any assertion that seems to be missing.
-Output is always JSON. To read the same finding as prose, run `ripr explain`
-with the same selector.
+Output is always JSON; `--json` is accepted and changes nothing.
+`--format json-compact` removes JSON whitespace. To read the same finding as
+prose, run `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json|--format json|json-compact] [--quiet]
 
 Options:
   --at <finding-id|file:line>
@@ -1818,6 +1841,8 @@ Options:
                `ripr check --json`, or a changed `file:line`.
   --finding ID
                Same as --at.
+  --format FORMAT
+               JSON presentation: json (default) or json-compact.
   --max-related-tests N
                List at most N related tests. Defaults to
                `reports.max_related_tests` in ripr.toml, otherwise 5.
@@ -1918,10 +1943,12 @@ Options:
                    verify document) beside the stderr prose and the same
                    exit code. Refusals that stop before the check (no
                    current attempt, several attempts, an ended attempt, a
-                   blocked baseline, an unanchored root) and operational
-                   errors before the verify step keep stdout empty. An
-                   unknown flag or stray argument prints the `cli_refusal`
-                   JSON document on stdout beside its exit 2 stderr prose.
+                   blocked baseline, an unanchored root) print the
+                   `cli_refusal` JSON document with their reason `code`
+                   and `disposition`; operational errors before the verify
+                   step keep stdout empty. An unknown flag or stray
+                   argument prints the `cli_refusal` JSON document on
+                   stdout beside its exit 2 stderr prose.
   --quiet          Drop progress lines and `wrote <path>` lines from stderr.
                    Refusals and the result stay. `RIPR_QUIET` does the same.
 
@@ -2029,7 +2056,9 @@ Diagnose the local ripr setup (workspace, config, toolchains, paths).
 Usage: ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 
 Options:
-  --root PATH   Diagnose the selected workspace (defaults to `.`).
+  --root PATH   Workspace to diagnose. Defaults to the root `ripr check` would
+                use: the current directory, then the enclosing workspace or
+                package, or the git top level; `--root .` pins this directory.
   --json        Emit the core checks as stable JSON and use the same exit status.
   --timings     With --json, include the volatile timing fields (elapsed_ms,
                 segments). Default --json output is byte-stable across runs
@@ -2177,8 +2206,9 @@ Options:
                directory).
   --format F   human (default; text is an alias) or agent. agent prints the selected finding as
                compact `check --format agent` lines (one record, its related
-               test, and an explicit done=/open=/stop= terminal line plus
-               next=<ripr context command>), static advisory only. For the
+               test, owner=/before= lines, and an explicit done=/open=/stop=
+               terminal line plus next=<ripr context command> when the JSON
+               packet holds more), static advisory only. For the
                JSON packet use `ripr context --at <finding-id>`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
@@ -2420,7 +2450,7 @@ start-here.md and start-here.json), naming a single next step. A gap is
 changed behavior that no current test appears to check. By default first-pr runs no analysis: for a missing report
 it prints the command that creates it. Pass --run-chain to run those commands.
 
-Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--out-dir <path>] [--check] [--run-chain]
+Usage: ripr first-pr|start-here [--root <path>] [--base <rev>] [--head <rev>] [--check-output <path>] [--gap-ledger <path>] [--first-action <path>] [--review-comments <path>] [--agent-packet <path>] [--gate-decision <path>] [--receipts-dir <path>] [--output-dir <path>] [--check] [--run-chain]
 
 Options:
   --root <path>              Workspace root. Defaults to .
@@ -2436,7 +2466,7 @@ Options:
   --agent-packet <path>      Agent handoff JSON. Defaults to target/ripr/workflow/agent-packet.json.
   --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
   --receipts-dir <path>      Directory of repair receipts (before/after records). Defaults to target/ripr/receipts.
-  --out-dir <path>           Output directory. Defaults to target/ripr/reports.
+  --output-dir <path>        Output directory. Defaults to target/ripr/reports.
   --check                    Verify the existing start-here page is up to date; write nothing.
   --run-chain                Run the commands for missing reports first, each only when its
                              report is missing and each exactly the command first-pr prints,
@@ -2493,7 +2523,7 @@ Check options:
   --head REV                          Head revision. Defaults to HEAD.
   --timeout-ms N                      Passed to review-comments.
   --suppression-policy PATH           Passed to review-comments; suppressed seams are non-blocking.
-  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json.
+  --guidance-out PATH                 Guidance JSON path. Defaults to target/ripr/review/comments.json under --root.
                                       Any existing file there (and its .md) is removed before the
                                       run, and again if review-comments fails.
   --mode MODE                         Same modes as gate evaluate, but defaults to acknowledgeable.
@@ -2532,7 +2562,7 @@ Evaluate options:
                                       legacy labels retain global compatibility disclosure.
   --mode MODE                         visible-only, acknowledgeable, baseline-check, or calibrated-gate. Defaults to visible-only.
   --acknowledgement-label LABEL       Repeatable acknowledgement label. Defaults to ripr-waive.
-  --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json.
+  --out PATH                          JSON output path. Defaults to target/ripr/reports/gate-decision.json under --root.
   --out-md PATH                       Markdown output path. Defaults to --out with .md extension.
 
 The gate evaluator is read-only policy over existing RIPR evidence. It writes
@@ -2551,6 +2581,14 @@ not the JSON report. Capture the report files for machine consumers. When
 the visible-only default records evidence without blocking, after a completed
 evaluation. Missing-input usage errors and `config_error` reports stay quiet.
 An explicit `--mode visible-only` is quiet; blocking modes remain opt-in.
+
+Reading the status: visible-only never blocks on findings, so a completed
+visible-only run reads `advisory` (or `blocked` on an exception-policy
+violation), including a run that recorded nothing; the Markdown report says so
+when that is the case. `pass` is reachable only in an enforcing mode
+(acknowledgeable, baseline-check, calibrated-gate). In visible-only, read the
+`summary` counts and `warnings`, not `status`, to tell whether anything was
+found.
 
 Examples:
   ripr gate
@@ -2882,7 +2920,7 @@ Progress:
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
   reports them, including `processed_<n>_of_<total>` once the inventory has
   an honest seam denominator. Non-TTY / CI output is newline-delimited with
-  no control sequences; stdout and the pilot packet stay byte-clean. When
+  no control sequences and starts after the first 2s of a run; stdout and the pilot packet stay byte-clean. When
   the default timeout passes, the same run continues under the same progress
   stream. `--quiet` turns this stream off.
 
@@ -3051,7 +3089,7 @@ Promotion options:
 Preview promotion options:
   --root PATH                           Display root for the report. Defaults to current directory.
   --language LANGUAGE                   Preview language under review: typescript or python.
-  --class CLASS                         Preview evidence class under review, for example boundary_gap.
+  --class CLASS                         Preview evidence class under review (letters, digits, _ or -), for example boundary_gap.
   --evidence PATH                       Optional explicit preview promotion evidence receipts JSON.
   --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.
@@ -3194,7 +3232,7 @@ Usage:
 Preview promotion options:
   --root PATH                           Display root for the report. Defaults to current directory.
   --language LANGUAGE                   Preview language under review: typescript or python.
-  --class CLASS                         Preview evidence class under review, for example boundary_gap.
+  --class CLASS                         Preview evidence class under review (letters, digits, _ or -), for example boundary_gap.
   --evidence PATH                       Optional explicit preview promotion evidence receipts JSON.
   --out PATH                            JSON output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.json.
   --out-md PATH                         Markdown output path. Defaults to target/ripr/reports/preview-promotion-<language>-<class>.md.
@@ -3382,31 +3420,34 @@ Existing options:
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's review comments. `-` reads standard input and keeps a copy there. Defaults to target/ripr/review/existing-comments.raw.json.
   --out PATH                  Existing-comment metadata for `--existing-comments`. Defaults to target/ripr/review/existing-comments.json.
 
-Usage: ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--out-dir PATH]
+Usage: ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--output-dir PATH]
 
 Summary options:
-  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
+  --root PATH                 Workspace root that --output-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the summary comment belongs to.
   --head-sha SHA              Head commit the digest names.
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's conversation comments. `-` reads standard input. Without it no earlier comment is found.
   --run-url URL               https link to the workflow run, shown as the full-report link.
-  --out-dir PATH              Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
+  --output-dir PATH           Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
 
 `summary` renders one short digest of the changed-behavior findings and writes
 summary.tsv (method, endpoint, payload file, message; empty when there is
 nothing to post) plus summary-request.json. It updates the marked comment that
 github-actions[bot] posted earlier, even when the findings are gone, and posts
-nothing for a clean pull request. It does not call GitHub or read a token.
+nothing for a clean pull request. It reads RIPR_GATE_MODE and the gate's
+target/ripr/reports/gate-decision.json: a blocked or misconfigured gate, or an
+unknown mode, is stated first, and a mode that can fail the job replaces the
+advisory footer. It does not call GitHub or read a token.
 
-Usage: ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--out-dir PATH]
+Usage: ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--output-dir PATH]
 
 Requests options:
-  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
+  --root PATH                 Workspace root that --output-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
-  --out-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
+  --output-dir PATH           Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
 `existing` keeps only marked comments that github-actions[bot] posted. It
 does not call GitHub or read a token.
@@ -3496,14 +3537,14 @@ Run `ripr help pr-comments` for every pr-comments subcommand.
 Write the GitHub API requests that publish a safe inline-comment plan.
 
 Usage:
-  ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--out-dir PATH]
+  ripr pr-comments requests --pull-request N --head-sha SHA [--root PATH] [--plan PATH] [--output-dir PATH]
 
 Requests options:
-  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
+  --root PATH                 Workspace root that --output-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the review is posted on.
   --head-sha SHA              Head commit the review comments are placed on.
   --plan PATH                 Publish plan. Defaults to target/ripr/review/comment-publish-plan.json.
-  --out-dir PATH              Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
+  --output-dir PATH           Request directory relative to --root, its earlier request files are replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/publish.
 
 `requests` writes one JSON payload per call and requests.tsv, one line per
 call in order: method, endpoint after repos/OWNER/REPO/, payload file, and the
@@ -3525,22 +3566,25 @@ Run `ripr help pr-comments` for every pr-comments subcommand.
 Write the request that posts or updates the one PR summary comment.
 
 Usage:
-  ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--out-dir PATH]
+  ripr pr-comments summary --pull-request N --head-sha SHA [--root PATH] [--pr-guidance PATH] [--raw PATH] [--run-url URL] [--output-dir PATH]
 
 Summary options:
-  --root PATH                 Workspace root that --out-dir is relative to. Defaults to current directory.
+  --root PATH                 Workspace root that --output-dir is relative to. Defaults to current directory.
   --pull-request N            Pull request the summary comment belongs to.
   --head-sha SHA              Head commit the digest names.
   --pr-guidance PATH          `ripr review-comments` JSON. Defaults to target/ripr/review/comments.json.
   --raw PATH                  `gh api --paginate --slurp` pages of the pull request's conversation comments. `-` reads standard input. Without it no earlier comment is found.
   --run-url URL               https link to the workflow run, shown as the full-report link.
-  --out-dir PATH              Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
+  --output-dir PATH           Request directory relative to --root; an earlier request is replaced; absolute paths, `..` and symlinked directories are refused. Defaults to target/ripr/review/summary.
 
 `summary` renders one short digest of the changed-behavior findings and writes
 summary.tsv (method, endpoint, payload file, message; empty when there is
 nothing to post) plus summary-request.json. It updates the marked comment that
 github-actions[bot] posted earlier, even when the findings are gone, and posts
-nothing for a clean pull request. It does not call GitHub or read a token.
+nothing for a clean pull request. It reads RIPR_GATE_MODE and the gate's
+target/ripr/reports/gate-decision.json: a blocked or misconfigured gate, or an
+unknown mode, is stated first, and a mode that can fail the job replaces the
+advisory footer. It does not call GitHub or read a token.
 
 Examples:
   ripr pr-comments summary --root . --pull-request 7 --head-sha 0123abcd --raw -
@@ -3840,14 +3884,16 @@ Options:
   --json           Print the repair packet JSON, including
                    `repair_attempt.attempt_id`, instead of the summary and
                    card. A repeated start prints the existing attempt's
-                   status JSON. Refusals keep stderr prose, empty stdout
-                   and their exit codes. An unknown flag prints the
-                   `cli_refusal` JSON document on stdout beside its exit 2
+                   status JSON. A refusal keeps its stderr prose and exit
+                   code and prints the `cli_refusal` JSON document on
+                   stdout with its reason `code` and `disposition`. An
+                   unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
-                   lines from stderr. Refusal prose, the attempt id and the
-                   next command stay. `RIPR_QUIET` (any value except empty,
-                   `0` or `false`) does the same.
+                   lines from stderr. Refusal prose, the attempt id, the
+                   next command and the warning to write output outside the
+                   repo stay. `RIPR_QUIET` (any value except empty, `0` or
+                   `false`) does the same.
 
 Without an item, repair starts only when exactly one repair-eligible gap
 is visible under the selected root. Several eligible gaps print a bounded
@@ -3890,7 +3936,7 @@ Write reviewer-first report projections from explicit artifacts.
 
 Usage:
   ripr reports index [--root PATH] [--reports-dir PATH] [--review-dir PATH] [--receipts-dir PATH] [--workflow-dir PATH] [--agent-dir PATH] [--pilot-dir PATH] [--ci-dir PATH] [--out PATH] [--out-md PATH]
-  ripr reports ci-packet [--root PATH] [--step NAME]...
+  ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
   ripr reports ci-summary [--root PATH] [--base-ref REF] [--upload-sarif VALUE] [--gate-baseline VALUE] [--comment-mode MODE]
   ripr reports gap-ledger --records PATH [--root PATH] [--out PATH] [--out-md PATH]
   ripr reports gap-ledger --check-output PATH [--root PATH] [--out PATH] [--out-md PATH]
@@ -3914,6 +3960,7 @@ Index options:
 CI packet options:
   --root PATH           Checkout to analyze and write target/ripr and target/ci under. Defaults to current directory.
   --step NAME           Run only the named step (repeatable), still under its condition, to reproduce one step locally.
+  --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 CI summary options:
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
@@ -3934,8 +3981,8 @@ Kani result options:
   --input PATH          Existing Kani native result JSON. Required.
   --binding PATH        Source, configuration and native-artifact binding JSON. Required.
   --root PATH           Root for the bound source files. Defaults to current directory.
-  --out PATH            JSON report. Defaults to target/ripr/reports/kani.json under --root.
-  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani.md under --root.
+  --out PATH            JSON report. Defaults to target/ripr/reports/kani-import.json under --root.
+  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani-import.md under --root.
 
 TypeScript limitation options:
   --check-output PATH   Existing `ripr check --json` output to aggregate.
@@ -4031,11 +4078,12 @@ Examples:
 Run the generated CI workflow's RIPR steps and write its artifact packet.
 
 Usage:
-  ripr reports ci-packet [--root PATH] [--step NAME]...
+  ripr reports ci-packet [--root PATH] [--step NAME]... [--quiet]
 
 CI packet options:
   --root PATH           Checkout to analyze and write target/ripr and target/ci under. Defaults to current directory.
   --step NAME           Run only the named step (repeatable), still under its condition, to reproduce one step locally.
+  --quiet               Run every step with RIPR_QUIET=1, dropping their progress and `wrote <path>` lines.
 
 The CI packet runs the RIPR steps of the `ripr init --ci github` workflow:
 pilot, the agent-loop start, the PR diff capture and guidance, the inline
@@ -4172,8 +4220,8 @@ Kani result options:
   --input PATH          Existing Kani native result JSON. Required.
   --binding PATH        Source, configuration and native-artifact binding JSON. Required.
   --root PATH           Root for the bound source files. Defaults to current directory.
-  --out PATH            JSON report. Defaults to target/ripr/reports/kani.json under --root.
-  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani.md under --root.
+  --out PATH            JSON report. Defaults to target/ripr/reports/kani-import.json under --root.
+  --out-md PATH         Markdown report. Defaults to target/ripr/reports/kani-import.md under --root.
 
 The Kani report imports existing native output and checks its supplied binding
 against the selected source root. Explicit input and output paths are relative
@@ -4342,9 +4390,9 @@ Options:
                  `suppressed_by_policy`, which `gate evaluate` treats as
                  non-blocking. Not combinable with `--gap-ledger`. The default
                  `.ripr/suppressions.toml` is never applied implicitly.
-  --out PATH     JSON output path. Defaults to target/ripr/review/comments.json.
+  --out PATH     JSON output path. Defaults to target/ripr/review/comments.json under --root.
   --timeout-ms MS
-                 Cooperative analysis budget (default 120000ms), checked at
+                 Cooperative analysis budget (default 600000ms), checked at
                  safe boundaries. Non-preemptible operations can overrun it.
                  Use an outer orchestration wrapper for a hard process bound.
 
@@ -4356,7 +4404,7 @@ Environment variables:
                                  owner indexing or loading the workspace corpus.
                                  Receipt status is failed with the named
                                  limitation; no guidance artifacts are published.
-                                 Default: 1200. Must be a positive integer.
+                                 Default: 5000. Must be a positive integer.
   RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES
                                  Byte budget for those inputs plus changed diff
                                  text. Same named refusal; default: 268435456

@@ -129,10 +129,12 @@ impl Fixture {
         let input = CiSummaryInput {
             root: self.root.clone(),
             base_ref: base_ref.to_string(),
+            event_name: "pull_request".to_string(),
             upload_sarif: upload_sarif == "true",
             pull_request: true,
             gate_baseline: !gate_baseline.is_empty(),
             gate_configured: false,
+            gate_mode: String::new(),
             comment_mode: comment_mode.to_string(),
             configured_languages: languages.iter().map(|name| (*name).to_string()).collect(),
         };
@@ -370,7 +372,7 @@ fn empty_root_names_every_missing_artifact_and_its_regeneration() -> TestResult 
         "- Start-here artifact: not generated yet; inspect uploaded artifacts and job logs.",
         "- Status: `missing_start_here`",
         "- State: `missing_artifact`",
-        "- Safe next action: run `ripr first-pr --root . --base origin/trunk --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports`.",
+        "- Safe next action: run `ripr first-pr --root . --base origin/trunk --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`.",
         "PR review summary was not generated.",
         "Safe next action: run `ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md` after attaching at least one explicit input.",
         "Recommended next test was not generated.",
@@ -578,6 +580,21 @@ fn the_agent_review_packet_leads_with_the_repair_before_any_edit() -> TestResult
         )),
         "{packet}"
     );
+
+    // A file at the receipt path that yields no movement is not "no receipt
+    // yet": the packet names the file instead of sending the reader to start
+    // a repair over evidence that exists.
+    fixture.write("target/ripr/reports/agent-receipt.json", "not json")?;
+    let summary = fixture.render(&[])?;
+    let packet = block(&summary, "### Agent review packet");
+    assert!(
+        packet.starts_with(
+            "- Receipt: `target/ripr/reports/agent-receipt.json` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it on a local checkout: rerun `ripr agent verify`, then `ripr agent receipt`.\n- Full packet: `target/ripr/workflow/agent-review-summary.md` (workflow artifact).\n"
+        ),
+        "{packet}"
+    );
+    assert!(!packet.contains(NO_RECEIPT_BEFORE_REPAIR), "{packet}");
+    assert!(!packet.contains("Start repair"), "{packet}");
 
     fixture.json(
         WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT,
@@ -816,6 +833,8 @@ fn checkout_paths_become_the_repository_root_in_copied_commands() -> TestResult 
 fn repo_relative_rewrites_only_whole_path_tokens() {
     let relative = RepoRelative {
         physical: b"/w/repo".to_vec(),
+        display: Vec::new(),
+        quoted: Vec::new(),
         logical: b"/link/repo".to_vec(),
     };
     assert_eq!(
@@ -1334,13 +1353,22 @@ fn render_gate(
     fixture: &Fixture,
     gate_configured: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    render_gate_mode(fixture, if gate_configured { "visible-only" } else { "" })
+}
+
+fn render_gate_mode(
+    fixture: &Fixture,
+    gate_mode: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
     let input = CiSummaryInput {
         root: fixture.root.clone(),
         base_ref: "trunk".to_string(),
+        event_name: "pull_request".to_string(),
         upload_sarif: true,
         pull_request: true,
         gate_baseline: false,
-        gate_configured,
+        gate_configured: !gate_mode.is_empty(),
+        gate_mode: gate_mode.to_string(),
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
@@ -1722,6 +1750,168 @@ fn start_here_is_named_by_artifact_not_a_target_path() -> TestResult {
     Ok(())
 }
 
+/// #14081: a blocked gate is why the job is red, so it is stated before the
+/// findings, with the mode, the count and the first reason.
+#[test]
+fn a_blocked_gate_leads_the_summary() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-blocked")?;
+    fixture.json(
+        "target/ripr/reports/gate-decision.json",
+        &json!({
+            "status": "blocked",
+            "mode": "acknowledgeable",
+            "summary": {"blocking": 2},
+            "decisions": [
+                {"decision": "blocking", "gate_reason": "no `ripr-waive` label", "placement": {"path": "src/a.rs", "line": 4}},
+                {"decision": "blocking", "gate_reason": "second"},
+            ],
+        }),
+    )?;
+    let summary = render_gate_mode(&fixture, "acknowledgeable")?;
+    let verdict = block(&summary, "### RIPR gate: blocked");
+    assert_eq!(
+        verdict,
+        "**The RIPR gate blocked this pull request** under `acknowledgeable` mode: 2 blocking gaps.\n\
+         - First blocking reason: ``no `ripr-waive` label`` at `src/a.rs:4`\n\
+         - Detail: the `Gate decision` section below, and `gate-decision.md` in the `ripr-reports` artifact.\n"
+    );
+    let at = |heading: &str| summary.find(heading).ok_or(format!("no {heading}"));
+    assert!(at("## RIPR advisory summary")? < at("### RIPR gate: blocked")?);
+    assert!(at("### RIPR gate: blocked")? < at("### What RIPR found in this pull request")?);
+    assert_eq!(summary.matches("### RIPR gate").count(), 1, "{summary}");
+    // The detailed section still follows, unchanged.
+    assert!(block(&summary, "### Gate decision").contains("- Status: `blocked`"));
+    Ok(())
+}
+
+#[test]
+fn a_gate_config_error_leads_the_summary_with_its_message() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-config")?;
+    fixture.json(
+        "target/ripr/reports/gate-decision.json",
+        &json!({
+            "status": "config_error",
+            "mode": "baseline-check",
+            "config_errors": ["baseline-check mode requires an explicit --baseline artifact"],
+        }),
+    )?;
+    let summary = render_gate_mode(&fixture, "baseline-check")?;
+    assert_eq!(
+        block(&summary, "### RIPR gate: configuration error"),
+        "**The RIPR gate could not evaluate this pull request** under `baseline-check` mode. This is a setup problem, not a finding about the code.\n\
+         - Config error: `baseline-check mode requires an explicit --baseline artifact`\n"
+    );
+    assert!(
+        summary.find("### RIPR gate: configuration error")
+            < summary.find("### What RIPR found in this pull request")
+    );
+    Ok(())
+}
+
+/// A set `RIPR_GATE_MODE` the gate refuses writes no decision. The summary
+/// names the value as the cause, at the top and in the gate section, instead
+/// of telling the reader to opt in.
+#[test]
+fn an_unknown_gate_mode_is_named_as_the_cause() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-mode")?;
+    fs::remove_file(fixture.root.join("target/ripr/reports/gate-decision.json"))?;
+    fs::remove_file(fixture.root.join("target/ripr/reports/gate-decision.md"))?;
+    let summary = render_gate_mode(&fixture, "visible_only")?;
+    let verdict = block(&summary, "### RIPR gate: unknown `RIPR_GATE_MODE`");
+    assert!(
+        verdict.contains("- Gate message: ``unknown gate mode \"visible_only\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.``\n"),
+        "{verdict}"
+    );
+    assert!(
+        summary.find("### RIPR gate: unknown `RIPR_GATE_MODE`")
+            < summary.find("### What RIPR found in this pull request")
+    );
+    let gate = block(&summary, "### Gate decision");
+    assert_eq!(
+        gate,
+        "Gate decision was not run: `RIPR_GATE_MODE` is set to `visible_only`, which is not a gate mode. Set it to `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`, or unset it to stay advisory.\n"
+    );
+
+    // An accepted mode without a decision is not an unknown mode, and an
+    // unset mode keeps the opt-in line.
+    let accepted = render_gate_mode(&fixture, "acknowledgeable")?;
+    assert!(!accepted.contains("### RIPR gate"), "{accepted}");
+    assert!(
+        block(&accepted, "### Gate decision").starts_with(
+            "Gate decision was not written although `RIPR_GATE_MODE` is `acknowledgeable`: "
+        ),
+        "{accepted}"
+    );
+    let unset = render_gate_mode(&fixture, "")?;
+    assert!(!unset.contains("### RIPR gate"), "{unset}");
+    assert!(
+        block(&unset, "### Gate decision")
+            .starts_with("Gate decision was not run. Set `RIPR_GATE_MODE` to `visible-only`"),
+        "{unset}"
+    );
+    Ok(())
+}
+
+/// Only a failing verdict adds the block. A decision that passes, is
+/// advisory, is acknowledged, carries a status this renderer does not word,
+/// or is unreadable renders the same bytes whatever accepted mode is set.
+#[test]
+fn a_gate_that_does_not_fail_adds_nothing() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-quiet")?;
+    let baseline = render_gate_mode(&fixture, "visible-only")?;
+    assert!(!baseline.contains("### RIPR gate"), "{baseline}");
+    for status in ["pass", "advisory", "acknowledged"] {
+        fixture.json(
+            "target/ripr/reports/gate-decision.json",
+            &json!({"status": status, "mode": "acknowledgeable", "summary": {"blocking": 0}}),
+        )?;
+        let quiet = render_gate_mode(&fixture, "acknowledgeable")?;
+        assert!(!quiet.contains("### RIPR gate"), "{status}: {quiet}");
+        assert_eq!(
+            quiet,
+            render_gate_mode(&fixture, "calibrated-gate")?,
+            "{status}"
+        );
+    }
+    fixture.write("target/ripr/reports/gate-decision.json", "{not json")?;
+    let unreadable = render_gate_mode(&fixture, "acknowledgeable")?;
+    assert!(!unreadable.contains("### RIPR gate"), "{unreadable}");
+    Ok(())
+}
+
+/// A decision report left by an earlier run is not this run's verdict. The
+/// verdict needs the report to name the mode this run is set to, and a mode
+/// the gate refuses is named first, because the gate did not run under it.
+#[test]
+fn a_decision_from_another_mode_is_not_this_runs_verdict() -> TestResult {
+    let fixture = Fixture::complete("gate-verdict-leftover")?;
+    fixture.json(
+        "target/ripr/reports/gate-decision.json",
+        &json!({
+            "status": "blocked",
+            "mode": "acknowledgeable",
+            "summary": {"blocking": 1},
+            "decisions": [{"decision": "blocking", "gate_reason": "no label"}],
+        }),
+    )?;
+    assert!(
+        render_gate_mode(&fixture, "acknowledgeable")?.contains("### RIPR gate: blocked\n"),
+        "the fixture must be a verdict under its own mode"
+    );
+    for mode in ["calibrated-gate", "visible-only", ""] {
+        let summary = render_gate_mode(&fixture, mode)?;
+        assert!(!summary.contains("### RIPR gate"), "{mode:?}: {summary}");
+    }
+    let refused = render_gate_mode(&fixture, "visible_only")?;
+    assert!(
+        refused.contains("### RIPR gate: unknown `RIPR_GATE_MODE`\n"),
+        "{refused}"
+    );
+    assert!(!refused.contains("### RIPR gate: blocked"), "{refused}");
+    assert_eq!(refused.matches("### RIPR gate").count(), 1, "{refused}");
+    Ok(())
+}
+
 /// #14300: on a manual run the packet renders only the repo seam SARIF, so
 /// an absent seam file is the anomaly and an absent diff file is expected;
 /// a pull request is the reverse (pinned in the empty-root test above).
@@ -1733,8 +1923,10 @@ fn manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif() -> TestResult {
         base_ref: "trunk".to_string(),
         upload_sarif: true,
         pull_request: false,
+        event_name: "workflow_dispatch".to_string(),
         gate_baseline: false,
         gate_configured: false,
+        gate_mode: String::new(),
         comment_mode: String::new(),
         configured_languages: vec!["rust".to_string()],
     };
@@ -1747,5 +1939,129 @@ fn manual_run_flags_a_missing_seam_sarif_not_the_diff_sarif() -> TestResult {
         summary.contains("- Repo seam SARIF: missing or skipped\n"),
         "{summary}"
     );
+    Ok(())
+}
+
+fn render_event(fixture: &Fixture, event_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let input = CiSummaryInput {
+        root: fixture.root.clone(),
+        base_ref: "trunk".to_string(),
+        event_name: event_name.to_string(),
+        upload_sarif: true,
+        pull_request: event_name == "pull_request",
+        gate_baseline: false,
+        gate_configured: false,
+        gate_mode: String::new(),
+        comment_mode: String::new(),
+        configured_languages: vec!["rust".to_string()],
+    };
+    Ok(String::from_utf8(render_ci_summary(&input))?)
+}
+
+/// The First-run status section: up to any collapsed block or the next heading.
+fn visible_first_run(summary: &str) -> &str {
+    let status = summary
+        .split("#### First-run status\n")
+        .nth(1)
+        .unwrap_or_default();
+    status
+        .split("<details>")
+        .next()
+        .and_then(|visible| visible.split("\n### ").next())
+        .unwrap_or_default()
+}
+
+/// #14148: a blocked start-here packet states its own reason, and the
+/// summary shows it with the state; the start-here report itself is only in
+/// the uploaded artifact. A packet without a reason prints no reason line.
+#[test]
+fn a_blocked_start_here_packet_shows_its_reason() -> TestResult {
+    let fixture = Fixture::new("blocked-reason")?;
+    let reason = "The first-pr base `origin/main` does not resolve to a commit. This is a shallow clone, which usually means the base branch was not fetched (in GitHub Actions, set `fetch-depth: 0` on actions/checkout).";
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({
+            "status": "blocked",
+            "selected": {
+                "state": "blocked_artifact",
+                "output_state": "missing_artifacts",
+                "message": reason,
+                "next_command": "git fetch --unshallow origin",
+            },
+            "warnings": [reason],
+        }),
+    )?;
+    fixture.write(
+        "target/ripr/reports/start-here.md",
+        &format!("# Start\n\n- Reason: {reason}\n"),
+    )?;
+    let summary = render_event(&fixture, "pull_request")?;
+    let visible = visible_first_run(&summary);
+    assert!(
+        visible.contains(&format!(
+            "- Selected state: `blocked_artifact`\n- Reason: ``{reason}``\n"
+        )),
+        "{visible}"
+    );
+
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({"status": "advisory", "selected": {"state": "no_action", "message": ""}}),
+    )?;
+    let quiet = render_event(&fixture, "pull_request")?;
+    assert!(!visible_first_run(&quiet).contains("- Reason:"), "{quiet}");
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({"status": "advisory", "selected": {"state": "no_action"}}),
+    )?;
+    assert_eq!(quiet, render_event(&fixture, "pull_request")?);
+    Ok(())
+}
+
+/// #14148: a run whose event is not `pull_request` says it has no pull
+/// request before the states that follow from it. A `pull_request` event and
+/// an unset event (a local run) print no such note.
+#[test]
+fn a_run_without_a_pull_request_says_so() -> TestResult {
+    let fixture = Fixture::complete("no-pull-request")?;
+    let manual = render_event(&fixture, "workflow_dispatch")?;
+    let visible = visible_first_run(&manual);
+    assert!(
+        visible.starts_with(
+            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.\n\
+             - Next step: open or update a pull request to get changed-behavior findings for it.\n"
+        ),
+        "{visible}"
+    );
+    let pull_request = render_event(&fixture, "pull_request")?;
+    assert!(
+        !pull_request.contains("No pull request in this run"),
+        "{pull_request}"
+    );
+    // A local run (no event) prints no note either. Like the manual run it
+    // is not a pull request run, which picks the SARIF rows (#14300), so the
+    // note is the only difference between the two.
+    let local = render_event(&fixture, "")?;
+    assert!(!local.contains("No pull request in this run"), "{local}");
+    assert_eq!(
+        manual.replace(
+            "- No pull request in this run: the event is `workflow_dispatch`, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.\n\
+             - Next step: open or update a pull request to get changed-behavior findings for it.\n",
+            ""
+        ),
+        local,
+        "the note is the only difference"
+    );
+
+    // The event says what kind of run this is, not which stages finished: a
+    // manual run that produced no reports gets the same note, and the note
+    // claims nothing about reports having run.
+    let empty = Fixture::new("no-pull-request-no-reports")?;
+    let bare = render_event(&empty, "workflow_dispatch")?;
+    assert!(
+        visible_first_run(&bare).starts_with("- No pull request in this run: "),
+        "{bare}"
+    );
+    assert!(!bare.contains("still ran"), "{bare}");
     Ok(())
 }

@@ -1,0 +1,15 @@
+crates/ripr/src/analysis/seam_cache.rs|create corpus fingerprint cache dir failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|create module tree scan cache dir failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|decode corpus fingerprint failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|decode failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|decode file facts failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|decode sharded cache file failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|decode sharded manifest failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|encode checksummed cache body failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|encode file facts failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|encode integrity body failed: {err}
+crates/ripr/src/analysis/seam_cache.rs|missing or mismatching semantic payload digest
+crates/ripr/src/analysis/seam_cache.rs|{CARGO_INPUT_IDENTITY_UNAVAILABLE}: restore readable regular Cargo/toolchain configuration within the 1 MiB pe
+crates/ripr/src/analysis/seam_cache.rs|{env_name} must be a positive integer
+crates/ripr/src/analysis/seam_cache.rs|{env_name} must be a positive integer: {err}
+crates/ripr/src/analysis/seam_cache.rs|{env_name} must be valid UTF-8

@@ -211,7 +211,7 @@ impl AnalysisLimitationKind {
             Self::MalformedDiff => "the diff could not be parsed",
             Self::DiffScopeOversized => "the diff is larger than the configured limit",
             Self::LanguageAdapterUnavailable => "no analyzer is available for a changed language",
-            Self::LanguageScopeUnsupported => "some changed files were not analyzed",
+            Self::LanguageScopeUnsupported => "some files were not fully analyzed",
             Self::ChangedFileAbsentFromWorktree => "a changed file is absent from the working tree",
             Self::ProducerTimeout => "the analysis ran out of time",
             Self::ProducerFailure => "part of the analysis failed",
@@ -451,6 +451,14 @@ impl AnalysisRecovery {
     }
 }
 
+/// Limitation detail for a well-formed diff with only binary or file-mode
+/// changes. The schema token stays `malformed_diff`; this detail is what
+/// tells the plain-word label that the diff was parsed (#15862).
+pub(crate) const NON_TEXT_ONLY_DETAIL: &str = "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.";
+
+/// Plain words for a well-formed diff with only binary or mode changes.
+pub(crate) const NON_TEXT_ONLY_LABEL: &str = "the diff has only binary or file-mode changes";
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub(crate) struct AnalysisLimitation {
     pub(crate) kind: AnalysisLimitationKind,
@@ -478,6 +486,23 @@ impl AnalysisLimitation {
             bounded_detail: None,
             recovery,
         }
+    }
+
+    /// Plain words for human surfaces. A well-formed binary- or mode-only
+    /// diff keeps the `malformed_diff` token for schema stability but must
+    /// not read "the diff could not be parsed" (#15862).
+    pub(crate) fn plain_label(&self) -> &'static str {
+        if self.is_non_text_only() {
+            return NON_TEXT_ONLY_LABEL;
+        }
+        self.kind.plain_label()
+    }
+
+    /// The one classification of a well-formed binary- or mode-only diff:
+    /// the stderr zero-findings hedge and the plain-word label both key on it.
+    pub(crate) fn is_non_text_only(&self) -> bool {
+        self.kind == AnalysisLimitationKind::MalformedDiff
+            && self.bounded_detail.as_deref() == Some(NON_TEXT_ONLY_DETAIL)
     }
 
     pub(crate) fn with_path(mut self, path: impl AsRef<str>) -> Result<Self, String> {
@@ -529,6 +554,33 @@ pub(crate) struct AnalysisOutcome {
     /// serialized outcome or its identity.
     #[serde(skip)]
     pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+    /// Run-local index of the diff's changed new-side lines (#15039). Read
+    /// only by the `explain`/`context` location-miss diagnosis; never part of
+    /// the serialized outcome or its identity.
+    #[serde(skip)]
+    pub(crate) changed_lines: Option<ChangedLineIndex>,
+}
+
+/// Which new-side lines the analyzed diff added or modified, per changed
+/// file (#15039). Built by the diff pipeline from the same parsed diff the
+/// counts come from, so a consumer never re-derives it from Git. A file the
+/// diff only removed lines from is present with no lines.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ChangedLineIndex {
+    files: std::collections::BTreeMap<String, std::collections::BTreeSet<usize>>,
+}
+
+impl ChangedLineIndex {
+    /// Record one changed file by its stable root-relative path text.
+    pub(crate) fn record(&mut self, path: String, lines: impl IntoIterator<Item = usize>) {
+        self.files.entry(path).or_default().extend(lines);
+    }
+
+    /// The changed new-side lines of `path`, or `None` when the diff does
+    /// not touch that file.
+    pub(crate) fn lines_of(&self, path: &str) -> Option<&std::collections::BTreeSet<usize>> {
+        self.files.get(path)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -594,6 +646,7 @@ impl AnalysisOutcome {
             claim_boundary: ANALYSIS_OUTCOME_CLAIM_BOUNDARY.to_string(),
             check_findings_inputs: None,
             language_view: None,
+            changed_lines: None,
         })
     }
 
@@ -645,7 +698,7 @@ impl AnalysisOutcome {
         for limitation in scoping.iter().take(MAX_INCOMPLETE_SENTENCE_LIMITATIONS) {
             sentence.push_str(&format!(
                 " Limitation: {} during {}",
-                limitation.kind.plain_label(),
+                limitation.plain_label(),
                 limitation.producer_stage.plain_label()
             ));
             if let Some(path) = &limitation.path {

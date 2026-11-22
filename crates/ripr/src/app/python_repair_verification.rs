@@ -910,6 +910,7 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
             python_guidance.as_ref(),
             generated_skip.as_ref(),
             &report.evidence_limitations,
+            crate::analysis::owner_opt_out::RepoOwnerOptOuts::default(),
             &context,
             &mut writer,
         )
@@ -2256,6 +2257,7 @@ mod python_repair_verification_semantics {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: false,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         })
     }
@@ -3549,6 +3551,7 @@ mod python_repair_verification_semantics {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: false,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         };
         let baseline = crate::edit_cage::capture_attempt_baseline(&fixture.root, &policy)?;

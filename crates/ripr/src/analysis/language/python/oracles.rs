@@ -6,6 +6,7 @@ use super::{
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::text_size::TextRange;
+mod handler_types;
 pub(super) mod unittest_list;
 
 pub(super) fn collect_assertions_from_statements(
@@ -91,9 +92,7 @@ fn collect_assertions(
             }
             Stmt::Try(try_stmt) => {
                 let first = out.len();
-                if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
-                    collect_assertions(&try_stmt.body, source, loops, out);
-                }
+                collect_try_body_assertions(&try_stmt.body, &try_stmt.handlers, source, loops, out);
                 collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
                 collect_assertions(&try_stmt.orelse, source, loops, out);
                 collect_assertions(&try_stmt.finalbody, source, loops, out);
@@ -101,9 +100,7 @@ fn collect_assertions(
             }
             Stmt::TryStar(try_stmt) => {
                 let first = out.len();
-                if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
-                    collect_assertions(&try_stmt.body, source, loops, out);
-                }
+                collect_try_body_assertions(&try_stmt.body, &try_stmt.handlers, source, loops, out);
                 collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
                 collect_assertions(&try_stmt.orelse, source, loops, out);
                 collect_assertions(&try_stmt.finalbody, source, loops, out);
@@ -252,7 +249,7 @@ fn plain_dotted_name(expr: &Expr) -> Option<String> {
 }
 
 /// The truth of a literal condition (`if False:`, `while 0:`), when it is one.
-fn constant_truth(expr: &Expr) -> Option<bool> {
+pub(super) fn constant_truth(expr: &Expr) -> Option<bool> {
     let Expr::Constant(constant) = expr else {
         return None;
     };
@@ -265,35 +262,50 @@ fn constant_truth(expr: &Expr) -> Option<bool> {
     }
 }
 
-/// Whether a `try` handler catches the `AssertionError` its body's `assert`
-/// raises and neither re-raises nor fails afterward, so a failing assertion
-/// still lets the test pass (#9691). A handler that raises, asserts or calls a
-/// `fail` helper keeps the body's assertions live.
-fn handlers_swallow_assertion_errors(handlers: &[ast::ExceptHandler]) -> bool {
-    handlers.iter().any(|handler| {
-        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+/// Rule 23: only the first matching handler decides whether the try body's
+/// assertion failure is swallowed. An unknown type cannot be skipped (#14885).
+fn handlers_swallow_assertion_errors(
+    handlers: &[ast::ExceptHandler],
+    source: &SourceText<'_>,
+) -> Option<bool> {
+    for ast::ExceptHandler::ExceptHandler(handler) in handlers {
         let catches = match handler.type_.as_deref() {
             None => true,
-            Some(kind) => catches_assertion_error(kind),
+            Some(kind) => handler_types::catches(kind, source)?,
         };
-        catches && !statements_fail_again(&handler.body)
-    })
-}
-
-fn catches_assertion_error(kind: &Expr) -> bool {
-    match kind {
-        Expr::Name(name) => is_catching_name(name.id.as_str()),
-        Expr::Attribute(attribute) => {
-            matches!(attribute.value.as_ref(), Expr::Name(root) if root.id.as_str() == "builtins")
-                && is_catching_name(attribute.attr.as_str())
+        if catches {
+            return Some(!statements_fail_again(&handler.body));
         }
-        Expr::Tuple(tuple) => tuple.elts.iter().any(catches_assertion_error),
-        _ => false,
     }
+    Some(false)
 }
 
-fn is_catching_name(name: &str) -> bool {
-    matches!(name, "Exception" | "BaseException" | "AssertionError")
+fn collect_try_body_assertions(
+    body: &[Stmt],
+    handlers: &[ast::ExceptHandler],
+    source: &SourceText<'_>,
+    loops: &[String],
+    out: &mut Vec<PythonAssertion>,
+) {
+    let swallowed = handlers_swallow_assertion_errors(handlers, source);
+    if swallowed == Some(true) {
+        return;
+    }
+    let first = out.len();
+    collect_assertions(body, source, loops, out);
+    if swallowed.is_none() {
+        // Retain assertion-like evidence without claiming either a gap or a
+        // discriminator. Reuse the opaque-oracle path, also used for replaced
+        // unittest oracles; do not let later specialized reads restore credit.
+        for assertion in &mut out[first..] {
+            assertion.oracle_kind = OracleKind::Unknown;
+            assertion.oracle_strength = OracleStrength::Unknown;
+            assertion.oracle_shape = PythonOracleShape::UnknownCustomHelper;
+            assertion.bare_bool_call = None;
+            assertion.known_equality_helper = None;
+            assertion.owner_exact_callee = None;
+        }
+    }
 }
 
 fn statements_fail_again(statements: &[Stmt]) -> bool {
@@ -401,20 +413,30 @@ fn bound_exception_comparison(
         return None;
     };
     for stmt in after {
-        if let Some((left, right)) = equality_operands(stmt) {
-            // One operand reads the error; the other must not, or the
-            // comparison can hold for any message (`str(e.value) ==
-            // str(e.value.args[0])`), as a tautology does (rule 1).
-            let pinned = |read: &Expr, other: &Expr| {
-                reads_raised_error(read, bound, field) && !mentions_name(source, other, bound)
-            };
-            if !same_tokens(source, left, right) && (pinned(left, right) || pinned(right, left)) {
-                // The failure message observes nothing (rule 4).
-                return Some(format!(
-                    "assert {} == {}",
-                    text_for_range(source, left.range()).trim(),
-                    text_for_range(source, right.range()).trim()
-                ));
+        // In an `and` chain an earlier operand runs before the equality, so a
+        // chain that rebinds or mutates the error credits nothing
+        // (`assert setattr(N.value, "args", ...) is None and str(N.value) ==
+        // "..."`). A lone equality has nothing before it in its statement.
+        let chain_touches = matches!(stmt, Stmt::Assert(assert_stmt)
+            if matches!(assert_stmt.test.as_ref(), Expr::BoolOp(_)))
+            && statement_touches_name(stmt, bound, source);
+        if !chain_touches {
+            for (left, right) in required_equalities(stmt) {
+                // One operand reads the error; the other must not, or the
+                // comparison can hold for any message (`str(e.value) ==
+                // str(e.value.args[0])`), as a tautology does (rule 1).
+                let pinned = |read: &Expr, other: &Expr| {
+                    reads_raised_error(read, bound, field) && !mentions_name(source, other, bound)
+                };
+                if !same_tokens(source, left, right) && (pinned(left, right) || pinned(right, left))
+                {
+                    // The failure message observes nothing (rule 4).
+                    return Some(format!(
+                        "assert {} == {}",
+                        text_for_range(source, left.range()).trim(),
+                        text_for_range(source, right.range()).trim()
+                    ));
+                }
             }
         }
         if statement_touches_name(stmt, bound, source) {
@@ -422,6 +444,38 @@ fn bound_exception_comparison(
         }
     }
     None
+}
+
+/// Every equality a passing `stmt` requires: the one `assert A == B` or
+/// `self.assertEqual(A, B)` states, or each `==` conjunct of a positive `and`
+/// chain (`assert len(e.value.args) == 1 and str(e.value) == "text"`, #15646).
+/// `or`, `not` and a comparison inside either require nothing.
+fn required_equalities(stmt: &Stmt) -> Vec<(&Expr, &Expr)> {
+    fn conjuncts<'a>(test: &'a Expr, out: &mut Vec<(&'a Expr, &'a Expr)>) {
+        match test {
+            Expr::BoolOp(bool_op) if bool_op.op == ast::BoolOp::And => {
+                for value in &bool_op.values {
+                    conjuncts(value, out);
+                }
+            }
+            Expr::Compare(compare)
+                if compare.ops.len() == 1 && matches!(compare.ops[0], ast::CmpOp::Eq) =>
+            {
+                if let Some(right) = compare.comparators.first() {
+                    out.push((compare.left.as_ref(), right));
+                }
+            }
+            _ => {}
+        }
+    }
+    match stmt {
+        Stmt::Assert(assert_stmt) if matches!(assert_stmt.test.as_ref(), Expr::BoolOp(_)) => {
+            let mut out = Vec::new();
+            conjuncts(assert_stmt.test.as_ref(), &mut out);
+            out
+        }
+        _ => equality_operands(stmt).into_iter().collect(),
+    }
 }
 
 /// The two operands of `assert A == B` or `self.assertEqual(A, B)`.
@@ -637,8 +691,10 @@ fn assertion_from_assert(
 }
 
 /// `assert f(lit, ..)` and `assert not f(lit, ..)` with a bare callee name and
-/// only literal positional arguments. Whether the call pins a value is
-/// decided once the callee is resolved (`bool_oracle.rs`).
+/// only literal or plain-name positional arguments. Whether the call pins a
+/// value is decided once the callee is resolved (`bool_oracle.rs`); a name
+/// argument counts only once its test settles it as a parametrize argname
+/// (`bool_oracle::settle_parametrized_names`, #15310).
 fn bare_bool_call(expr: &Expr, source: &SourceText<'_>) -> Option<super::PythonBareBoolCall> {
     match expr {
         Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => {
@@ -798,7 +854,12 @@ fn literal_bool_call(
     let Expr::Name(callee) = call.func.as_ref() else {
         return None;
     };
-    if !call.keywords.is_empty() || !call.args.iter().all(is_literal_argument) {
+    if !call.keywords.is_empty()
+        || !call
+            .args
+            .iter()
+            .all(|argument| is_literal_argument(argument) || matches!(argument, Expr::Name(_)))
+    {
         return None;
     }
     Some(super::PythonBareBoolCall {
@@ -816,6 +877,15 @@ fn literal_bool_call(
             })
             .collect(),
         negated,
+        name_arguments: call
+            .args
+            .iter()
+            .filter_map(|argument| match argument {
+                Expr::Name(name) => Some(name.id.to_string()),
+                _ => None,
+            })
+            .collect(),
+        names_settled: false,
     })
 }
 
@@ -1143,12 +1213,18 @@ fn oracle_for_compare(
     compare: &ast::ExprCompare,
     source: &str,
 ) -> (OracleKind, OracleStrength, PythonOracleShape) {
-    let has_exact = compare.ops.iter().any(|op| matches!(op, ast::CmpOp::Eq));
+    // RIPR-SPEC-0238 rule 2: a single `is` against the `True`/`False` singleton
+    // pins the value exactly like `== True|False`, whatever the owner returns.
+    let is_bool_identity = matches!(compare.ops.as_slice(), [ast::CmpOp::Is])
+        && [compare.left.as_ref(), &compare.comparators[0]]
+            .into_iter()
+            .any(is_bool_literal);
+    let has_exact = is_bool_identity || compare.ops.iter().any(|op| matches!(op, ast::CmpOp::Eq));
     // RIPR-SPEC-0238 rule 1: `==` pins a value only when every operator in the
     // chain is `==` and some link compares two different token sequences
     // (`owner(1) == owner(1)` runs the changed code on both sides, while
     // `owner(1) == owner(1) == 30` still pins the result through its last link).
-    let all_exact = compare.ops.iter().all(|op| matches!(op, ast::CmpOp::Eq));
+    let all_exact = is_bool_identity || compare.ops.iter().all(|op| matches!(op, ast::CmpOp::Eq));
     let tautology = std::iter::once(compare.left.as_ref())
         .chain(compare.comparators.iter())
         .collect::<Vec<_>>()
@@ -1178,6 +1254,16 @@ fn oracle_for_compare(
         PythonOracleShape::BoundaryAssertion
     };
     (kind, strength, shape)
+}
+
+fn is_bool_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Constant(ast::ExprConstant {
+            value: ast::Constant::Bool(_),
+            ..
+        })
+    )
 }
 
 fn compare_observes_output(compare: &ast::ExprCompare) -> bool {

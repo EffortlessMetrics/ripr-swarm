@@ -12,6 +12,7 @@ import { Trace } from 'vscode-languageclient';
 import type { RiprConfig } from './config';
 import type { RiprWorkspaceRootState } from './client';
 import { RIPR_DOCUMENT_SELECTORS } from './client';
+import { knownExtensionVersion } from './extensionVersion';
 
 // VS Code matches `pattern` as a glob, so glob metacharacters in the workspace
 // path would otherwise change what it matches (`[a]` as a class, `{a,b}` as
@@ -41,9 +42,9 @@ export function integerSetting(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
+/** The extension version for status and client capabilities; `unknown` only when no manifest can be read (#14647). */
 export function extensionVersion(context: vscode.ExtensionContext): string {
-  const version = context.extension?.packageJSON?.version;
-  return typeof version === 'string' && version.trim() !== '' ? version.replace(/^v/, '') : '0.8.0';
+  return knownExtensionVersion(context) ?? 'unknown';
 }
 
 export function traceFromConfig(trace: RiprConfig['traceServer']): Trace {
@@ -132,7 +133,8 @@ const RUST_OR_RIPR_PROJECT_MARKERS = ['Cargo.toml', 'ripr.toml'] as const;
 /** Matches the README: tsconfig/jsconfig enable TypeScript; package.json alone does not. */
 export const TYPESCRIPT_PROJECT_MARKERS = ['tsconfig.json', 'jsconfig.json'] as const;
 
-const ANALYZABLE_PROJECT_MARKERS: readonly string[] = [
+/** Every root marker `workspaceHasAnalyzableProject` accepts; `activationEvents` lists the same set (#14647). */
+export const ANALYZABLE_PROJECT_MARKERS: readonly string[] = [
   ...RUST_OR_RIPR_PROJECT_MARKERS,
   ...PYTHON_PROJECT_MARKERS,
   ...TYPESCRIPT_PROJECT_MARKERS,
@@ -154,12 +156,97 @@ async function folderRootHasAnalyzableProjectMarker(
   return false;
 }
 
-/** True when any workspace folder root carries a marker ripr can analyze by default. */
+// A repository often keeps its project one or two folders down
+// (`backend/Cargo.toml`, `packages/app/tsconfig.json`), and the server
+// analyzes it from the repository root. The nested check is presence-only and
+// bounded, so a large tree cannot slow activation (#15916).
+export const NESTED_PROJECT_MARKER_MAX_DEPTH = 3;
+export const NESTED_PROJECT_MARKER_MAX_DIRS = 512;
+// Narrower than the root set: below the root, `requirements.txt`, `tox.ini`
+// and `noxfile.py` sit in docs and tooling folders of projects in other
+// languages, and a nested `ripr.toml` does not configure the opened root.
+// The Python names mirror `NESTED_PYTHON_PACKAGE_MARKERS` in
+// `crates/ripr/src/config/python.rs`.
+export const NESTED_PROJECT_MARKERS: ReadonlySet<string> = new Set([
+  'Cargo.toml',
+  'pyproject.toml',
+  'setup.py',
+  'setup.cfg',
+  'pytest.ini',
+  ...TYPESCRIPT_PROJECT_MARKERS,
+]);
+// Dependency, build and environment folders: a marker inside one belongs to
+// another project. Mirrors `PYTHON_EXCLUDED_DIRS` plus `vendor` in the same
+// server file; hidden folders are skipped by name.
+const NESTED_PROJECT_MARKER_SKIPPED_DIRS: ReadonlySet<string> = new Set([
+  'target',
+  'node_modules',
+  '__pycache__',
+  'venv',
+  'env',
+  'site-packages',
+  'dist',
+  'build',
+  'vendor',
+]);
+
+async function folderHasNestedAnalyzableProjectMarker(folderUri: vscode.Uri): Promise<boolean> {
+  let level = [folderUri];
+  // The budget counts directory reads, so a wide folder early in the walk
+  // cannot use it up before its queued siblings are read.
+  let reads = 0;
+  // Depth 0 is the folder root, whose own markers the caller already checked.
+  for (let depth = 0; depth <= NESTED_PROJECT_MARKER_MAX_DEPTH && level.length > 0; depth++) {
+    const next: vscode.Uri[] = [];
+    for (const dir of level) {
+      if (reads >= NESTED_PROJECT_MARKER_MAX_DIRS) {
+        return false;
+      }
+      reads += 1;
+      let entries: [string, vscode.FileType][];
+      try {
+        entries = await vscode.workspace.fs.readDirectory(dir);
+      } catch {
+        continue;
+      }
+      for (const [name, type] of entries) {
+        if (depth > 0 && (type & vscode.FileType.File) !== 0 && NESTED_PROJECT_MARKERS.has(name)) {
+          return true;
+        }
+        // Folders at the last depth are never read, so they are not queued.
+        // A symlinked folder is not entered: it can point back up the tree.
+        if (
+          depth === NESTED_PROJECT_MARKER_MAX_DEPTH ||
+          next.length >= NESTED_PROJECT_MARKER_MAX_DIRS ||
+          type !== vscode.FileType.Directory ||
+          name.startsWith('.') ||
+          NESTED_PROJECT_MARKER_SKIPPED_DIRS.has(name)
+        ) {
+          continue;
+        }
+        next.push(vscode.Uri.joinPath(dir, name));
+      }
+    }
+    level = next;
+  }
+  return false;
+}
+
+/**
+ * True when any workspace folder carries a marker ripr can analyze by default:
+ * at its root, or in a folder up to `NESTED_PROJECT_MARKER_MAX_DEPTH` levels
+ * below it.
+ */
 export async function workspaceHasAnalyzableProject(
   folders: readonly vscode.WorkspaceFolder[]
 ): Promise<boolean> {
   for (const folder of folders) {
     if (await folderRootHasAnalyzableProjectMarker(folder.uri)) {
+      return true;
+    }
+  }
+  for (const folder of folders) {
+    if (await folderHasNestedAnalyzableProjectMarker(folder.uri)) {
       return true;
     }
   }

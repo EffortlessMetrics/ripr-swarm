@@ -1290,6 +1290,10 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "if classify_constituent_docs \"$c_files\"",
         ),
         (
+            "keep agent-contract markdown on the full-proof lane for merge-group constituents",
+            ".agents/skills/*|.claude/skills/*|docs/agent-context/*) return 1 ;;",
+        ),
+        (
             "tip with its own docs-only classification",
             "docs-only: ${{ steps.entry.outputs.tip_docs_only || needs.detect-docs-only.outputs.docs_only || 'false' }}",
         ),
@@ -2057,4 +2061,590 @@ fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
     assert!(!rejects(&format!(
         "      - uses: actions/cache@{sha} # v4.2.0\n"
     )));
+}
+
+const PUBLISHED_COMPARE_STEP: &str = "Compare any published bytes for this version";
+const ATTACH_REQUIRE_STEP: &str = "Require the receipted VSIX before any Release write";
+const PUBLISH_ONLY_WHEN_ABSENT: &str = "if: ${{ steps.published.outputs.state == 'absent' }}";
+
+/// The steps of one job, each starting at its `name:`/`uses:` key.
+fn job_steps(block: &str) -> Vec<&str> {
+    block.split("\n      - ").skip(1).collect()
+}
+
+fn named_step<'a>(block: &'a str, name: &str) -> Option<&'a str> {
+    let header = format!("name: {name}");
+    job_steps(block)
+        .into_iter()
+        .find(|step| step.lines().next() == Some(header.as_str()))
+}
+
+/// The one `run:` script of a named step, as the runner would receive it.
+fn named_step_script(text: &str, job: &str, name: &str) -> Result<String, String> {
+    let block = job_block(text, job);
+    let step = named_step(&block, name).ok_or_else(|| format!("{job} has no step `{name}`"))?;
+    let blocks = crate::extract_workflow_run_blocks(step);
+    let [run] = blocks.as_slice() else {
+        return Err(format!(
+            "`{name}` in {job} must have exactly one run block, found {}",
+            blocks.len()
+        ));
+    };
+    Ok(run.text.clone())
+}
+
+/// Step-level conditions and failure overrides in a job, as trimmed lines. A
+/// guard step that is skipped or allowed to fail guards nothing, and a write
+/// step under `always()` runs after a failed guard.
+fn step_execution_overrides(code: &str) -> Vec<&str> {
+    job_steps(code)
+        .into_iter()
+        .flat_map(str::lines)
+        .filter(|line| line.starts_with("        ") && !line.starts_with("         "))
+        .map(str::trim)
+        .filter(|line| line.starts_with("if:") || line.starts_with("continue-on-error:"))
+        .collect()
+}
+
+fn code_lines(block: &str) -> String {
+    block
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// ripr#1646: a publish job may treat a version as already published only
+/// after comparing the channel's bytes, and must not publish otherwise.
+fn publish_duplicate_violations(text: &str, job: &str, pat: &str) -> Vec<String> {
+    let block = job_block(text, job);
+    let code = code_lines(&block);
+    let mut violations = Vec::new();
+    if code.contains("--skip-duplicate") {
+        violations.push(format!("{job} passes --skip-duplicate"));
+    }
+    if code.contains(" show ") {
+        violations.push(format!("{job} reads the published version list"));
+    }
+    let secret = format!("secrets.{pat}");
+    let publish_steps: Vec<&str> = job_steps(&code)
+        .into_iter()
+        .filter(|step| step.contains(&secret))
+        .collect();
+    let [publish] = publish_steps.as_slice() else {
+        violations.push(format!("{job} must have exactly one step holding {pat}"));
+        return violations;
+    };
+    if publish.contains("exit 0") {
+        violations.push(format!(
+            "{job} publish step has a success exit before publishing"
+        ));
+    }
+    if !publish
+        .lines()
+        .any(|line| line.trim() == PUBLISH_ONLY_WHEN_ABSENT)
+    {
+        violations.push(format!(
+            "{job} publish step must run only when the compared state is absent"
+        ));
+    }
+    // The publish gate is the only condition any step of this job may carry.
+    for line in step_execution_overrides(&code) {
+        if line != PUBLISH_ONLY_WHEN_ABSENT {
+            violations.push(format!("{job} has a step execution override `{line}`"));
+        }
+    }
+    let compare = named_step(&code, PUBLISHED_COMPARE_STEP);
+    if !compare.is_some_and(|step| step.lines().any(|line| line.trim() == "id: published")) {
+        violations.push(format!("{job} must compare published bytes as `published`"));
+    }
+    let compare_at = code.find(&format!("name: {PUBLISHED_COMPARE_STEP}"));
+    let compared_first =
+        matches!((compare_at, code.find(&secret)), (Some(compare), Some(pat)) if compare < pat);
+    if !compared_first {
+        violations.push(format!("{job} must compare published bytes before {pat}"));
+    }
+    violations
+}
+
+/// ripr#1646: the attach job checks its own subject before its Release write.
+fn attach_job_violations(text: &str) -> Vec<String> {
+    let block = job_block(text, "attach-release-asset");
+    let code = code_lines(&block);
+    let mut violations = Vec::new();
+    let needs = code
+        .lines()
+        .find_map(|line| line.strip_prefix("    needs: "))
+        .unwrap_or("");
+    for job in ["admit-dispatch", "verify-server-assets", "package"] {
+        if !needs.contains(job) {
+            violations.push(format!("attach-release-asset must need {job}"));
+        }
+    }
+    if code.contains("dist/*") {
+        violations.push("attach-release-asset globs dist".to_string());
+    }
+    for line in step_execution_overrides(&code) {
+        violations.push(format!(
+            "attach-release-asset has a step execution override `{line}`"
+        ));
+    }
+    let Some(upload_at) = code.find("gh release upload") else {
+        violations.push("attach-release-asset has no upload to guard".to_string());
+        return violations;
+    };
+    let before_upload = &code[..upload_at];
+    let require = named_step(before_upload, ATTACH_REQUIRE_STEP).unwrap_or("");
+    for (needle, what) in [
+        (
+            "MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}",
+            "the receipted manifest digest input",
+        ),
+        (
+            "EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}",
+            "the package VSIX digest",
+        ),
+        ("sha256sum -c -", "a VSIX digest check"),
+        (
+            "grep -Fq \"$MANIFEST_SHA256\" serverDescriptor.js",
+            "an embedded manifest digest check",
+        ),
+    ] {
+        if !require.contains(needle) {
+            violations.push(format!(
+                "attach-release-asset needs {what} before its Release write"
+            ));
+        }
+    }
+    violations
+}
+
+#[test]
+fn publish_jobs_decide_duplicates_by_published_bytes_not_version() -> Result<(), String> {
+    let text = repo_workflow("publish-extension.yml")?;
+    let mut scripts = Vec::new();
+    for (job, pat) in [
+        ("publish-vs-marketplace", "VSCE_PAT"),
+        ("publish-open-vsx", "OVSX_PAT"),
+    ] {
+        assert_eq!(
+            publish_duplicate_violations(&text, job, pat),
+            Vec::<String>::new()
+        );
+        scripts.push(named_step_script(&text, job, PUBLISHED_COMPARE_STEP)?);
+        let block = job_block(&text, job);
+        let gate = format!("        {PUBLISH_ONLY_WHEN_ABSENT}\n");
+        let publish_line = block
+            .lines()
+            .find(|line| line.contains(" publish ") && !line.trim_start().starts_with('#'))
+            .ok_or_else(|| format!("{job} has no publish command"))?;
+        let compare_step = named_step(&block, PUBLISHED_COMPARE_STEP)
+            .ok_or_else(|| format!("{job} has no compare step"))?;
+        for (label, mutated_block, expect) in [
+            (
+                "skip-duplicate restored",
+                block.replace(publish_line, &format!("{publish_line} --skip-duplicate")),
+                "--skip-duplicate",
+            ),
+            (
+                "version-only skip restored",
+                block.replace(
+                    publish_line,
+                    &format!(
+                        "          [ \"$(\"$vsce\" show EffortlessMetrics.ripr --json)\" = \"$version\" ] && exit 0\n{publish_line}"
+                    ),
+                ),
+                "published version list",
+            ),
+            (
+                "success exit before publishing",
+                block.replace(publish_line, &format!("          exit 0\n{publish_line}")),
+                "success exit",
+            ),
+            (
+                "publish no longer gated on absent",
+                block.replace(&gate, ""),
+                "only when the compared state is absent",
+            ),
+            (
+                "gate commented out",
+                block.replace(&gate, &format!("        # {PUBLISH_ONLY_WHEN_ABSENT}\n")),
+                "only when the compared state is absent",
+            ),
+            (
+                "compare step removed",
+                block.replace(&format!("      - {compare_step}\n"), ""),
+                "compare published bytes",
+            ),
+            (
+                "compare step disabled",
+                block.replace(
+                    "        id: published\n",
+                    "        id: published\n        if: ${{ false }}\n",
+                ),
+                "step execution override",
+            ),
+            (
+                "compare step allowed to fail",
+                block.replace(
+                    "        id: published\n",
+                    "        id: published\n        continue-on-error: true\n",
+                ),
+                "step execution override",
+            ),
+            (
+                "publish runs regardless of the comparison",
+                block.replace(&gate, "        if: ${{ always() }}\n"),
+                "step execution override",
+            ),
+        ] {
+            assert_ne!(mutated_block, block, "{label} mutation must change {job}");
+            let mutated = text.replace(&block, &mutated_block);
+            let violations = publish_duplicate_violations(&mutated, job, pat);
+            assert!(
+                violations.iter().any(|v| v.contains(expect)),
+                "{label} on {job} must be rejected ({expect}); got {violations:?}"
+            );
+        }
+    }
+    // One decision for both channels: the linux test below executes it.
+    assert_eq!(scripts[0], scripts[1]);
+    Ok(())
+}
+
+#[test]
+fn attach_job_checks_the_receipted_vsix_before_its_release_write() -> Result<(), String> {
+    let text = repo_workflow("publish-extension.yml")?;
+    assert_eq!(attach_job_violations(&text), Vec::<String>::new());
+    let block = job_block(&text, "attach-release-asset");
+    let require = named_step(&block, ATTACH_REQUIRE_STEP)
+        .ok_or_else(|| "attach-release-asset has no require step".to_string())?;
+    let require_step = format!("      - {require}\n");
+    let without_require = block.replace(&require_step, "");
+    // The same check placed after the upload does not guard the write.
+    let require_after_upload = format!("{without_require}\n{require_step}");
+    for (label, mutated_block, expect) in [
+        (
+            "require step removed",
+            without_require.clone(),
+            "before its Release write",
+        ),
+        (
+            "require step moved after the upload",
+            require_after_upload,
+            "before its Release write",
+        ),
+        (
+            "manifest digest check dropped",
+            block.replace("grep -Fq \"$MANIFEST_SHA256\" serverDescriptor.js", "true"),
+            "embedded manifest digest check",
+        ),
+        (
+            "manifest digest input dropped",
+            block.replace(
+                "          MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}\n",
+                "",
+            ),
+            "receipted manifest digest input",
+        ),
+        (
+            "VSIX digest check dropped",
+            block.replacen("| sha256sum -c -", "", 1),
+            "VSIX digest check",
+        ),
+        (
+            "glob upload restored",
+            block.replace("\"dist/$name\"", "dist/*.vsix"),
+            "globs dist",
+        ),
+        (
+            "guard step disabled",
+            block.replace(
+                &format!("      - name: {ATTACH_REQUIRE_STEP}\n"),
+                &format!("      - name: {ATTACH_REQUIRE_STEP}\n        if: ${{{{ false }}}}\n"),
+            ),
+            "step execution override",
+        ),
+        (
+            "guard step allowed to fail",
+            block.replace(
+                &format!("      - name: {ATTACH_REQUIRE_STEP}\n"),
+                &format!("      - name: {ATTACH_REQUIRE_STEP}\n        continue-on-error: true\n"),
+            ),
+            "step execution override",
+        ),
+        (
+            "upload runs after a failed guard",
+            block.replace(
+                "      - name: Attach VSIX to GitHub Release\n",
+                "      - name: Attach VSIX to GitHub Release\n        if: ${{ always() }}\n",
+            ),
+            "step execution override",
+        ),
+        (
+            "server asset verification no longer needed",
+            block.replace("verify-server-assets, ", ""),
+            "need verify-server-assets",
+        ),
+    ] {
+        assert_ne!(mutated_block, block, "{label} mutation must change the job");
+        let mutated = text.replace(&block, &mutated_block);
+        let violations = attach_job_violations(&mutated);
+        assert!(
+            violations.iter().any(|v| v.contains(expect)),
+            "{label} must be rejected ({expect}); got {violations:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Executes the checked-in step scripts with stand-in `PATH` tools, so the
+/// decisions are observed rather than read. Linux only: the workflow runs on
+/// `ubuntu-latest` and the scripts use GNU `sha256sum`.
+#[cfg(target_os = "linux")]
+mod publish_extension_step_execution {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const BODY: &str = "ripr-vsix-bytes";
+    /// SHA-256 of `BODY`.
+    const BODY_SHA256: &str = "6d4d8f91417d13080bbf66954b225cf6cfc36b619ed1acf1090201fb920c830e";
+    const MANIFEST_SHA256: &str =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    /// Stand-in fetch tool: records the URL, writes `FAKE_BODY` to the `-o`
+    /// path and prints `FAKE_STATUS`, or exits `FAKE_EXIT` like a failed fetch.
+    const FAKE_FETCH: &str = r#"#!/usr/bin/env bash
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+  esac
+  url="$1"
+  shift
+done
+printf '%s' "$url" > "$FAKE_URL_LOG"
+[ "${FAKE_EXIT:-0}" = 0 ] || exit "$FAKE_EXIT"
+printf '%s' "$FAKE_BODY" > "$out"
+printf '%s' "$FAKE_STATUS"
+"#;
+
+    /// Stand-in `unzip -p`: prints `FAKE_DESCRIPTOR` as the extracted member.
+    const FAKE_UNZIP: &str = r#"#!/usr/bin/env bash
+[ "${FAKE_EXIT:-0}" = 0 ] || exit "$FAKE_EXIT"
+printf '%s' "$FAKE_DESCRIPTOR"
+"#;
+
+    struct StepRun {
+        success: bool,
+        output: String,
+        transcript: String,
+        dir: PathBuf,
+    }
+
+    impl Drop for StepRun {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn write_tool(bin: &Path, name: &str, body: &str) -> Result<(), String> {
+        let path = bin.join(name);
+        fs::write(&path, body).map_err(|err| format!("write {}: {err}", path.display()))?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .map_err(|err| format!("chmod {}: {err}", path.display()))
+    }
+
+    fn run_step(
+        script: &str,
+        label: &str,
+        files: &[(&str, &str)],
+        env: &[(&str, &str)],
+    ) -> Result<StepRun, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("clock before epoch: {err}"))?
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-publish-extension-{label}-{}-{stamp}",
+            std::process::id()
+        ));
+        let bin = dir.join("bin");
+        fs::create_dir_all(&bin).map_err(|err| format!("create {}: {err}", bin.display()))?;
+        write_tool(&bin, crate::shell_fetch_tool_name(), FAKE_FETCH)?;
+        write_tool(&bin, "unzip", FAKE_UNZIP)?;
+        fs::write(dir.join("step.sh"), script).map_err(|err| format!("write step: {err}"))?;
+        for (name, body) in files {
+            let path = dir.join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|err| format!("create dir: {err}"))?;
+            }
+            fs::write(&path, body).map_err(|err| format!("write {name}: {err}"))?;
+        }
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").map_err(|err| format!("PATH: {err}"))?
+        );
+        // `shell: bash` semantics, the strictest the runner applies.
+        let result = Command::new("bash")
+            .args(["--noprofile", "--norc", "-eo", "pipefail", "step.sh"])
+            .current_dir(&dir)
+            .env("PATH", path)
+            .env("GITHUB_OUTPUT", dir.join("output"))
+            .env("GITHUB_STEP_SUMMARY", dir.join("summary"))
+            .env("FAKE_URL_LOG", dir.join("url"))
+            .envs(env.iter().copied())
+            .output()
+            .map_err(|err| format!("spawn bash: {err}"))?;
+        let mut transcript = String::from_utf8_lossy(&result.stdout).into_owned();
+        transcript.push_str(&String::from_utf8_lossy(&result.stderr));
+        Ok(StepRun {
+            success: result.status.success(),
+            output: fs::read_to_string(dir.join("output")).unwrap_or_default(),
+            transcript,
+            dir,
+        })
+    }
+
+    fn step_env_value(text: &str, job: &str, step: &str, key: &str) -> Result<String, String> {
+        let block = job_block(text, job);
+        let prefix = format!("{key}: ");
+        named_step(&block, step)
+            .and_then(|step| {
+                step.lines()
+                    .find_map(|line| line.trim().strip_prefix(&prefix))
+            })
+            .map(str::to_string)
+            .ok_or_else(|| format!("{job} `{step}` has no {key}"))
+    }
+
+    #[test]
+    fn published_bytes_decide_publish_skip_or_stop() -> Result<(), String> {
+        let text = repo_workflow("publish-extension.yml")?;
+        for (job, expected_url) in [
+            (
+                "publish-vs-marketplace",
+                "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/EffortlessMetrics/vsextensions/ripr/0.11.0/vspackage",
+            ),
+            (
+                "publish-open-vsx",
+                "https://open-vsx.org/api/EffortlessMetrics/ripr/0.11.0/file/EffortlessMetrics.ripr-0.11.0.vsix",
+            ),
+        ] {
+            let script = named_step_script(&text, job, PUBLISHED_COMPARE_STEP)?;
+            let url = step_env_value(&text, job, PUBLISHED_COMPARE_STEP, "PUBLISHED_VSIX_URL")?;
+            let channel = step_env_value(&text, job, PUBLISHED_COMPARE_STEP, "CHANNEL")?;
+            let run = |label: &str, status: &str, body: &str, expected: &str, exit: &str| {
+                run_step(
+                    &script,
+                    label,
+                    &[],
+                    &[
+                        ("RAW_VERSION", "v0.11.0"),
+                        ("EXPECTED_VSIX_SHA256", expected),
+                        ("PUBLISHED_VSIX_URL", &url),
+                        ("CHANNEL", &channel),
+                        ("FAKE_STATUS", status),
+                        ("FAKE_BODY", body),
+                        ("FAKE_EXIT", exit),
+                    ],
+                )
+            };
+
+            let absent = run("absent", "404", "Not Found", BODY_SHA256, "0")?;
+            assert!(absent.success, "{job}: {}", absent.transcript);
+            assert_eq!(absent.output, "state=absent\n", "{job}");
+            let requested = fs::read_to_string(absent.dir.join("url"))
+                .map_err(|err| format!("read requested url: {err}"))?;
+            assert_eq!(requested, expected_url, "{job}");
+
+            let identical = run("identical", "200", BODY, BODY_SHA256, "0")?;
+            assert!(identical.success, "{job}: {}", identical.transcript);
+            assert_eq!(identical.output, "state=identical\n", "{job}");
+
+            // Same version, other bytes: the version-only skip called this success.
+            let other = run("other-bytes", "200", "other bytes", BODY_SHA256, "0")?;
+            assert!(!other.success, "{job}: {}", other.transcript);
+            assert_eq!(other.output, "", "{job}");
+            assert!(
+                other.transcript.contains("already serves version 0.11.0"),
+                "{job}: {}",
+                other.transcript
+            );
+
+            for (label, status, exit, expected) in [
+                ("server-error", "503", "0", BODY_SHA256),
+                ("rate-limited", "429", "0", BODY_SHA256),
+                ("fetch-failed", "000", "7", BODY_SHA256),
+                // A 404 with no digest to compare against must not publish.
+                ("no-digest", "404", "0", ""),
+            ] {
+                let stopped = run(label, status, BODY, expected, exit)?;
+                assert!(!stopped.success, "{job} {label}: {}", stopped.transcript);
+                assert_eq!(stopped.output, "", "{job} {label}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn attach_require_step_stops_before_the_write_on_any_mismatch() -> Result<(), String> {
+        let text = repo_workflow("publish-extension.yml")?;
+        let script = named_step_script(&text, "attach-release-asset", ATTACH_REQUIRE_STEP)?;
+        let descriptor = format!("exports.manifestSha256 = \"{MANIFEST_SHA256}\";");
+        let run = |label: &str, vsix: &str, manifest: &str, expected: &str, descriptor: &str| {
+            run_step(
+                &script,
+                label,
+                &[("dist/ripr-0.11.0.vsix", vsix)],
+                &[
+                    ("RAW_VERSION", "v0.11.0"),
+                    ("MANIFEST_SHA256", manifest),
+                    ("EXPECTED_VSIX_SHA256", expected),
+                    ("FAKE_DESCRIPTOR", descriptor),
+                ],
+            )
+        };
+        let admitted = run("admitted", BODY, MANIFEST_SHA256, BODY_SHA256, &descriptor)?;
+        assert!(admitted.success, "{}", admitted.transcript);
+        for (label, vsix, manifest, expected, descriptor) in [
+            (
+                "other-vsix",
+                "other bytes",
+                MANIFEST_SHA256,
+                BODY_SHA256,
+                descriptor.as_str(),
+            ),
+            (
+                "no-manifest-digest",
+                BODY,
+                "",
+                BODY_SHA256,
+                descriptor.as_str(),
+            ),
+            (
+                "no-vsix-digest",
+                BODY,
+                MANIFEST_SHA256,
+                "",
+                descriptor.as_str(),
+            ),
+            (
+                "other-manifest-embedded",
+                BODY,
+                MANIFEST_SHA256,
+                BODY_SHA256,
+                "exports.manifestSha256 = \"bbbb\";",
+            ),
+        ] {
+            let stopped = run(label, vsix, manifest, expected, descriptor)?;
+            assert!(!stopped.success, "{label}: {}", stopped.transcript);
+        }
+        Ok(())
+    }
 }

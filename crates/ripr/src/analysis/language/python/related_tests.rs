@@ -4,8 +4,9 @@ use super::fixtures::literal_owner_instance_fixture;
 use super::sink_alignment::AlignmentPrep;
 use super::source_utils::normalized_path;
 use super::{
-    PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
-    python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
+    PrefixScan, PythonImport, PythonOwner, PythonTest, first_python_string_literal,
+    line_prefix_before, python_callee_start_has_boundary, python_prefix_hides_code,
+    python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
 use rayon::prelude::*;
@@ -14,11 +15,15 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 #[cfg(test)]
+mod hidden_code_scan_tests;
+#[cfg(test)]
 mod verify_command_tests;
 
 mod dunder_entries;
 mod dunder_protocol;
 mod project_names;
+mod route_response;
+mod route_response_bindings;
 mod test_local_shadow;
 pub(super) use dunder_entries::{
     PythonClassFacts, apply_class_facts, operator_entry_in_text_with_factories, with_entry,
@@ -28,6 +33,12 @@ pub(super) use project_names::{
     ProjectNameIndex, apply_project_module_names, apply_project_module_names_with,
     owner_import_modules_for,
 };
+pub(super) use route_response::{
+    apply_route_overlaps, rebinds_builtin_dict, route_decorator_lines,
+    withdraw_dict_annotated_routes, workspace_registers_routes_indirectly,
+    workspace_reshapes_responses,
+};
+pub(super) use route_response_bindings::identified_route_response_names;
 use test_local_shadow::test_local_module_shadows;
 pub(super) use test_local_shadow::{
     TestLocalShadow, TestLocalShadowIndex, apply_test_local_shadows,
@@ -44,6 +55,12 @@ pub(super) enum PythonRelationKind {
     ConstructCall,
     ConstructorCall,
     LocalBinding,
+    /// The test reads a plain builtin `@property` owner as an attribute of a
+    /// construction of its class, or of a local bound once to one
+    /// (`property_read.rs`, #15490). Oracle-eligible, but only the strong
+    /// exact read `property_read_credit` establishes lifts the owner's
+    /// `decorator_indirection` limit.
+    PropertyRead,
     DunderProtocol,
     ProtocolEntryCall,
     /// The test's assertion statically depends on an edited module-level
@@ -84,6 +101,7 @@ impl PythonRelationKind {
             Self::ConstructCall => 4,
             Self::ConstructorCall => 4,
             Self::LocalBinding => 4,
+            Self::PropertyRead => 4,
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
             Self::ModuleValueCall => 4,
@@ -108,6 +126,7 @@ impl PythonRelationKind {
                 | Self::ConstructCall
                 | Self::ConstructorCall
                 | Self::LocalBinding
+                | Self::PropertyRead
                 | Self::ProtocolEntryCall
                 | Self::ModuleValueCall
                 | Self::ModuleValueRead
@@ -127,6 +146,7 @@ impl PythonRelationKind {
             Self::ConstructCall => "construct_call",
             Self::ConstructorCall => "constructor_call",
             Self::LocalBinding => "local_binding",
+            Self::PropertyRead => "property_read",
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
             Self::ModuleValueCall => "module_value_call",
@@ -1001,6 +1021,9 @@ fn test_text_mentions(test: &PythonTest, name: &str) -> bool {
             .fixture_defs
             .iter()
             .any(|def| def.body_text.contains(name) || def.imports.iter().any(import_mentions))
+        || test.value_helpers.iter().any(|helper| {
+            helper.body_text.contains(name) || helper.imports.iter().any(import_mentions)
+        })
 }
 
 fn related_test_relation_scan(
@@ -1020,7 +1043,13 @@ fn related_test_relation_scan(
         if fixture_owner_call(test, owner) {
             return Some(PythonRelationKind::FixtureOwnerCall);
         }
-        return route.map(|_| PythonRelationKind::ApiClientRouteUnidentifiedApp);
+        if route.is_some() {
+            return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+        }
+        // A value helper resolves its own module's imports (#15350), so the
+        // test's binding of the name to another module does not decide it.
+        return value_helper_calls_owner(test, owner)
+            .then_some(PythonRelationKind::HelperOwnerCall);
     }
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
@@ -1047,6 +1076,9 @@ fn related_test_relation_scan(
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
     }
+    if super::property_read::property_read_relation(test, owner) {
+        return Some(PythonRelationKind::PropertyRead);
+    }
     if fixture_owner_call(test, owner) {
         return Some(PythonRelationKind::FixtureOwnerCall);
     }
@@ -1055,6 +1087,9 @@ fn related_test_relation_scan(
     }
     if route.is_some() {
         return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    }
+    if value_helper_calls_owner(test, owner) {
+        return Some(PythonRelationKind::HelperOwnerCall);
     }
     // A test is related to an owner only when it references the owner
     // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
@@ -1076,6 +1111,53 @@ fn related_test_relation_scan(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether a same-file value helper the test calls (`value_helpers.rs`,
+/// #15350) calls the owner by the direct-call rules, read as a test whose body
+/// is the helper's and whose imports are the test's plus the helper's own (a
+/// helper-local import replaces the module's import of the same alias). A
+/// helper that binds the owner's name as a parameter or local never relates.
+/// Reach only: the helper's return is not shown to be the owner's result.
+fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.value_helpers.iter().any(|helper| {
+        let mut view = test.clone();
+        view.body_text.clone_from(&helper.body_text);
+        // The helper resolves names in its own module: the module's imports
+        // with its own imports over them, never the calling test's local
+        // imports.
+        view.imports.clone_from(&helper.imports);
+        // A parameter or local that rebinds the owner's name (or an alias the
+        // view imports it as) is not the owner.
+        let rebinds_owner = helper.local_names.iter().any(|local| {
+            *local == owner.name
+                || view.imports.iter().any(|import| {
+                    import.alias == *local && imports_owner_name(&import.imported, &owner.name)
+                })
+        });
+        if rebinds_owner {
+            return false;
+        }
+        view.assertions.clear();
+        // The helper's parameters stand where a test's fixtures do, so a
+        // parameter that shadows a module alias (`def run(core, n):
+        // return core.total(n)`) is read as rebinding it.
+        view.fixtures.clone_from(&helper.local_names);
+        view.fixture_defs.clear();
+        view.value_helpers.clear();
+        !bare_name_bound_to_other_module(&view, owner)
+            && (body_calls_owner(&view.body_text, owner) || import_alias_calls_owner(&view, owner))
+    })
+}
+
+/// Whether an imported spelling names `owner_name` itself: the bare name or a
+/// dotted path ending in it (`pkg.core.total`), never a longer name that only
+/// ends with it (`subtotal`).
+fn imports_owner_name(imported: &str, owner_name: &str) -> bool {
+    imported == owner_name
+        || imported
+            .strip_suffix(owner_name)
+            .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 /// Whether the test imports the free-function owner's name (under any alias)
@@ -1142,7 +1224,6 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
                     .any(|receiver| calls_through(receiver))
         })
 }
-
 /// Records on each free-function owner the module paths of other workspace
 /// files defining a free function of the same name (#8759), the affirmative
 /// evidence [`bare_name_bound_to_other_module`] needs.
@@ -1286,10 +1367,9 @@ fn protocol_entry_calls(text: &str, body: &str, local: &str, builtin: &str) -> V
         _ => None,
     };
     let needle = format!("{builtin}(");
+    let mut hidden = PythonHiddenCode::new(text);
     text.match_indices(&needle)
-        .filter(|(idx, _)| {
-            python_callee_start_has_boundary(text, *idx) && !python_text_hides_code(text, *idx)
-        })
+        .filter(|(idx, _)| python_callee_start_has_boundary(text, *idx) && !hidden.hides(*idx))
         .filter(|(idx, _)| {
             let argument = text[idx + needle.len()..].trim_start();
             let inline = argument.starts_with(&construct) && {
@@ -2182,23 +2262,34 @@ fn import_alias_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
         owner.owner_kind,
         Some(OwnerKind::Method | OwnerKind::ClassMethod)
     );
+    // The call an exception assertion's callable form makes
+    // (`assertRaises(E, levels.parse, "")`, RIPR-SPEC-0238 rule 13) is a
+    // call of the test like one written in its body.
+    let calls = |spelled: &dyn Fn(&str) -> bool| {
+        spelled(&test.body_text)
+            || test
+                .assertions
+                .iter()
+                .filter_map(|assertion| assertion.callable_call.as_deref())
+                .any(spelled)
+    };
     test.imports.iter().any(|import| {
         (!is_method_owner
             && import.imported == owner.name
             && import.alias != owner.name
             && import_module_may_be_owners(import, owner, &test.file)
-            && contains_call_name(&test.body_text, &import.alias))
+            && calls(&|text| contains_call_name(text, &import.alias)))
             || (imported_module_matches_owner(import, owner, &test.file)
                 // A parameter, fixture or assignment named like the module
                 // alias (`def test_one(pkg): pkg.one(...)`) calls a local
                 // value, not the imported module.
                 && !test_rebinds_import_alias(test, &import.alias)
-                && contains_attribute_call(&test.body_text, &import.alias, &owner.name))
+                && calls(&|text| contains_attribute_call(text, &import.alias, &owner.name)))
             || (!is_method_owner
                 && submodule_receivers(import, owner, &test.file)
                     .iter()
                     .any(|receiver| {
-                        contains_attribute_call(&test.body_text, receiver, &owner.name)
+                        calls(&|text| contains_attribute_call(text, receiver, &owner.name))
                     })
                 && !test_rebinds_import_alias(test, &import.alias))
     })
@@ -2281,10 +2372,13 @@ pub(super) fn owner_result_locals(
         let (target, value) = (line[..eq].trim(), &line[eq + 1..]);
         let mut value_start = start + eq + 1 + (value.len() - value.trim_start().len());
         let mut value = value.trim_start();
-        if awaited
-            && let Some(rest) = value.strip_prefix("await")
-            && rest.starts_with([' ', '\t'])
-        {
+        if awaited {
+            let Some(rest) = value
+                .strip_prefix("await")
+                .filter(|rest| rest.starts_with([' ', '\t', '(']))
+            else {
+                continue;
+            };
             value_start += value.len() - rest.trim_start().len();
             value = rest.trim_start();
         }
@@ -2325,7 +2419,8 @@ fn whole_owner_call_end(body: &str, start: usize, callees: &[String]) -> Option<
             }
         }
     }
-    for wrapper in MATERIALIZING_WRAPPERS {
+    // An empty prefix is an ordinary parenthesized expression.
+    for wrapper in std::iter::once("").chain(MATERIALIZING_WRAPPERS) {
         let Some(rest) = value.strip_prefix(wrapper) else {
             continue;
         };
@@ -2337,7 +2432,8 @@ fn whole_owner_call_end(body: &str, start: usize, callees: &[String]) -> Option<
         let close = super::no_behavior::matching_call_paren(body, open)?;
         let inner = open + 1 + (body[open + 1..].len() - body[open + 1..].trim_start().len());
         let inner_end = whole_owner_call_end(body, inner, callees)?;
-        return body[inner_end..close]
+        return body
+            .get(inner_end..close)?
             .trim()
             .is_empty()
             .then_some(close + 1);
@@ -3181,7 +3277,6 @@ fn api_client_route_calls_owner(test: &PythonTest, owner: &PythonOwner) -> Optio
     }
     found
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ClientApp {
     Own,
@@ -4048,13 +4143,14 @@ fn augmented_assignment(body_text: &str, name: &str) -> bool {
 
 /// `name :=` with identifier boundaries, outside comments and strings.
 fn walrus_binds(body_text: &str, name: &str) -> bool {
+    let mut hidden = PythonHiddenCode::new(body_text);
     body_text.match_indices(name).any(|(idx, _)| {
         let end = idx + name.len();
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, end)
             // `(r\n := [1])`: a line break is legal inside the brackets.
             && skip_blank_forward(&body_text[end..], true).starts_with(":=")
-            && !python_text_hides_code(body_text, idx)
+            && !hidden.hides(idx)
     })
 }
 
@@ -4066,12 +4162,13 @@ fn contains_name_reference(body_text: &str, name: &str) -> bool {
     if !is_dotted_python_identifier(name) {
         return false;
     }
+    let mut hidden = PythonHiddenCode::new(body_text);
     body_text.match_indices(name).any(|(idx, _)| {
         let end = idx + name.len();
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, end)
             && !is_binding_target(body_text, end)
-            && !python_text_hides_code(body_text, idx)
+            && !hidden.hides(idx)
     })
 }
 
@@ -4081,10 +4178,11 @@ fn contains_member_reference(body_text: &str, receiver: &str, member: &str) -> b
         return false;
     }
     let needle = format!("{receiver}.{member}");
+    let mut hidden = PythonHiddenCode::new(body_text);
     body_text.match_indices(&needle).any(|(idx, _)| {
         python_callee_start_has_boundary(body_text, idx)
             && !next_char_is_identifier(body_text, idx + needle.len())
-            && !python_text_hides_code(body_text, idx)
+            && !hidden.hides(idx)
     })
 }
 
@@ -4094,9 +4192,9 @@ fn contains_attribute_reference(body_text: &str, attr: &str) -> bool {
         return false;
     }
     let needle = format!(".{attr}");
+    let mut hidden = PythonHiddenCode::new(body_text);
     body_text.match_indices(&needle).any(|(idx, _)| {
-        !next_char_is_identifier(body_text, idx + needle.len())
-            && !python_text_hides_code(body_text, idx)
+        !next_char_is_identifier(body_text, idx + needle.len()) && !hidden.hides(idx)
     })
 }
 
@@ -4124,10 +4222,52 @@ fn is_dotted_python_identifier(name: &str) -> bool {
 
 /// Whether `idx` sits in a comment or string: a `#` or an open quote earlier on
 /// the same line, or an open triple-quoted string (docstring) from an earlier
-/// line.
+/// line. One question about one text; a caller that asks about many offsets of
+/// the same text keeps a `PythonHiddenCode` instead, which reads the text once.
 pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
-    python_prefix_hides_code(line_prefix_before(text, idx))
-        || inside_triple_quoted_string(text, idx)
+    PythonHiddenCode::new(text).hides(idx)
+}
+
+/// The `python_text_hides_code` answer for many offsets of one text. Offsets
+/// asked in increasing order (the order `match_indices` yields them) resume the
+/// two lexers where the previous question left them, so a pass over `k`
+/// matches reads the text once instead of `k` times (#14195). An offset before
+/// the previous one starts over; every answer equals the single-question
+/// function's.
+pub(super) struct PythonHiddenCode<'a> {
+    text: &'a str,
+    /// The previous offset asked about.
+    last: usize,
+    /// Byte offset where the line that holds `last` starts.
+    line_start: usize,
+    line: PrefixScan,
+    triple: TripleScan,
+}
+
+impl<'a> PythonHiddenCode<'a> {
+    pub(super) fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            last: 0,
+            line_start: 0,
+            line: PrefixScan::default(),
+            triple: TripleScan::default(),
+        }
+    }
+
+    /// Whether byte offset `idx` (a char boundary of the text) sits in a
+    /// comment or string.
+    pub(super) fn hides(&mut self, idx: usize) -> bool {
+        if idx < self.last {
+            *self = Self::new(self.text);
+        }
+        if let Some(newline) = self.text[self.last..idx].rfind('\n') {
+            self.line_start = self.last + newline + 1;
+            self.line = PrefixScan::default();
+        }
+        self.last = idx;
+        self.line.hides(&self.text[self.line_start..idx]) || self.triple.hides(self.text, idx)
+    }
 }
 
 /// Whether `idx` falls inside an open triple-quoted string. A small lexer:
@@ -4135,79 +4275,111 @@ pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
 /// comments do not open a docstring, and a backslash escapes the next char.
 /// The replacement fields of a triple-quoted f-string (`f"""{\n  helper(1)\n}"""`)
 /// are code, not string text, so a call inside one stays visible (#8787).
-fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
-    // `(delimiter, is_f_string)` of the open triple-quoted string.
-    let mut triple: Option<(&str, bool)> = None;
-    let mut cursor = 0;
-    while cursor < idx {
-        let rest = &text[cursor..];
-        if let Some((delimiter, formatted)) = triple {
-            if let Some(escaped) = rest.strip_prefix('\\') {
-                // In an f-string a backslash before a brace is a literal
-                // character on its own; the brace then lexes normally.
-                let brace = formatted && matches!(escaped.chars().next(), Some('{' | '}'));
-                cursor += 1 + if brace {
-                    0
+///
+/// The lexer's position between questions: the `(cursor, triple)` pair at the
+/// top of its loop does not depend on the offset asked about (only the step
+/// that holds the offset does), so a later offset continues from it.
+#[derive(Default)]
+struct TripleScan {
+    cursor: usize,
+    /// `(delimiter, is_f_string)` of the open triple-quoted string.
+    triple: Option<(&'static str, bool)>,
+    /// End of the comment or single-line string that starts at `cursor`, once
+    /// the step there is read; `0` before that.
+    span_end: usize,
+    /// That span is an f-string literal, whose replacement fields are code.
+    span_formatted: bool,
+    /// The step at `cursor` is a single-line f-string whose quote pairing
+    /// cannot be followed: every later offset is hidden.
+    hides_rest: bool,
+}
+
+impl TripleScan {
+    /// The answer for `idx`. `text` is the same text on every call and `idx`
+    /// does not decrease between calls.
+    fn hides(&mut self, text: &str, idx: usize) -> bool {
+        while self.cursor < idx {
+            let cursor = self.cursor;
+            let rest = &text[cursor..];
+            if let Some((delimiter, formatted)) = self.triple {
+                if let Some(escaped) = rest.strip_prefix('\\') {
+                    // In an f-string a backslash before a brace is a literal
+                    // character on its own; the brace then lexes normally.
+                    let brace = formatted && matches!(escaped.chars().next(), Some('{' | '}'));
+                    self.cursor += 1 + if brace {
+                        0
+                    } else {
+                        escaped.chars().next().map_or(0, char::len_utf8)
+                    };
+                } else if rest.starts_with(delimiter) {
+                    self.triple = None;
+                    self.cursor += delimiter.len();
+                } else if formatted && rest.starts_with("{{") {
+                    self.cursor += 2;
+                } else if formatted && rest.starts_with('{') {
+                    // A field the scanner cannot prove closed (unterminated, a
+                    // comment, or the string's own delimiter nested inside it)
+                    // hides the rest of the text: a miss, never an invented call.
+                    let Some(field) = fstring_field_scan(rest, delimiter, idx - cursor, 0) else {
+                        return true;
+                    };
+                    if field.target_hidden {
+                        return true;
+                    }
+                    if idx < cursor + field.len {
+                        return false;
+                    }
+                    self.cursor += field.len;
                 } else {
-                    escaped.chars().next().map_or(0, char::len_utf8)
-                };
-            } else if rest.starts_with(delimiter) {
-                triple = None;
-                cursor += delimiter.len();
-            } else if formatted && rest.starts_with("{{") {
-                cursor += 2;
-            } else if formatted && rest.starts_with('{') {
-                // A field the scanner cannot prove closed (unterminated, a
-                // comment, or the string's own delimiter nested inside it)
-                // hides the rest of the text: a miss, never an invented call.
-                let Some(field) = fstring_field_scan(rest, delimiter, idx - cursor, 0) else {
-                    return true;
-                };
-                if field.target_hidden {
-                    return true;
+                    self.cursor += rest.chars().next().map_or(1, char::len_utf8);
                 }
-                if idx < cursor + field.len {
-                    return false;
-                }
-                cursor += field.len;
-            } else {
-                cursor += rest.chars().next().map_or(1, char::len_utf8);
+                continue;
             }
-            continue;
-        }
-        let delimiter = ["\"\"\"", "'''"]
-            .into_iter()
-            .find(|delimiter| rest.starts_with(delimiter));
-        if let Some(delimiter) = delimiter {
-            triple = Some((delimiter, string_prefix_is_f_string(text, cursor)));
-            cursor += 3;
-        } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
-            // A single-line f-string whose quote pairing cannot be followed
-            // (3.12 same-quote nesting in a field, a newline in a field)
-            // hides the rest of the text: a miss, never an invented call
-            // (#9230).
-            let formatted = !rest.starts_with('#') && string_prefix_is_f_string(text, cursor);
-            if formatted && super::static_limits::single_line_fstring_is_ambiguous(rest.chars()) {
+            if self.hides_rest {
                 return true;
             }
-            let len = if rest.starts_with('#') {
-                rest.find('\n').unwrap_or(rest.len())
-            } else {
-                single_line_string_len(rest)
-            };
-            if idx < cursor + len {
-                // A replacement field of a single-line f-string is code, not
-                // string text, so a call there stays visible (#14754 review).
-                if !(formatted && single_line_fstring_offset_is_code(rest, idx - cursor)) {
+            if self.span_end > cursor {
+                // `idx` inside a comment or a (possibly backslash-continued)
+                // string literal is hidden code, not a call. A replacement
+                // field of a single-line f-string is code, not string text,
+                // so a call there stays visible (#14754 review).
+                if idx < self.span_end {
+                    return !(self.span_formatted
+                        && single_line_fstring_offset_is_code(rest, idx - cursor));
+                }
+                self.cursor = self.span_end;
+                continue;
+            }
+            let delimiter = ["\"\"\"", "'''"]
+                .into_iter()
+                .find(|delimiter| rest.starts_with(delimiter));
+            if let Some(delimiter) = delimiter {
+                self.triple = Some((delimiter, string_prefix_is_f_string(text, cursor)));
+                self.cursor += 3;
+            } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
+                // A single-line f-string whose quote pairing cannot be followed
+                // (3.12 same-quote nesting in a field, a newline in a field)
+                // hides the rest of the text: a miss, never an invented call
+                // (#9230).
+                let formatted = !rest.starts_with('#') && string_prefix_is_f_string(text, cursor);
+                if formatted && super::static_limits::single_line_fstring_is_ambiguous(rest.chars())
+                {
+                    self.hides_rest = true;
                     return true;
                 }
+                self.span_formatted = formatted;
+                let len = if rest.starts_with('#') {
+                    rest.find('\n').unwrap_or(rest.len())
+                } else {
+                    single_line_string_len(rest)
+                };
+                self.span_end = cursor + len;
+            } else {
+                self.cursor += rest.chars().next().map_or(1, char::len_utf8);
             }
-            cursor += len;
-        } else {
-            cursor += rest.chars().next().map_or(1, char::len_utf8);
         }
+        self.triple.is_some()
     }
-    triple.is_some()
 }
 
 /// Whether the string literal whose quote opens at `quote` carries an `f`

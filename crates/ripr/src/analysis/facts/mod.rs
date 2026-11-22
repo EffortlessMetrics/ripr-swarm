@@ -50,10 +50,12 @@ pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 pub(crate) use build::SecondaryPassGuard;
 pub(in crate::analysis) use build::manifest_library_name;
+pub(crate) use build::out_of_root_member_dirs;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) use doctests::SYNTHETIC_NAME as DOCTEST_FUNCTION_NAME;
+pub(crate) use doctests::owner_gate_atoms;
 pub(crate) use doctests::test_gate_is_default_enabled;
 pub(crate) use execution_context::ExecutionContext;
 pub(crate) mod cfg_predicates;
@@ -403,11 +405,17 @@ fn reuse_cached_index(
     // test fact a fresh build keeps. So a file the core withheld that the
     // merge links again (an include limitation, a new module edge) falls
     // back when it then has tests (checked below).
+    // #14962: tests withheld because `cargo test` skips every root of the
+    // file's module tree revive the same way when the merge adds a live
+    // root (a `src/main.rs` that declares the shared module).
     let withheld: Vec<PathBuf> = cached
         .index
         .files()
         .iter()
-        .filter(|(_, facts)| facts.role_provenance.outside_module_tree)
+        .filter(|(path, facts)| {
+            facts.role_provenance.outside_module_tree
+                || cached.index.cargo_test_skipped_files.contains(*path)
+        })
         .map(|(path, _)| path.clone())
         .collect();
     if !extras.is_empty() {
@@ -456,7 +464,9 @@ fn reuse_cached_index(
     // A revived file without tests differs in nothing a fresh build keeps.
     let revived = withheld.iter().any(|path| {
         processed.index.files().get(path).is_some_and(|facts| {
-            !facts.role_provenance.outside_module_tree && !facts.tests.is_empty()
+            !facts.role_provenance.outside_module_tree
+                && !processed.index.cargo_test_skipped_files.contains(path)
+                && !facts.tests.is_empty()
         })
     });
     if revived {

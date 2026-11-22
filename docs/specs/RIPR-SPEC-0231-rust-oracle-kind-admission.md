@@ -587,7 +587,19 @@ Two pattern terms are used below.
      region stops early at an item declaration or attribute at statement
      start, because a nested `fn` stays callable from earlier code; a
      divergence nested in a condition, a match arm or a closure ends only
-     its own block.
+     its own block;
+   - the statements after a statement that always diverges on a constant
+     (#14968), up to the same end: a `let PATTERN = VALUE else { .. };`
+     whose pattern is exactly one `Some(..)`, `None`, `Ok(..)` or `Err(..)`
+     variant and whose value is a literal of another variant
+     (`let Some(x) = None::<i32> else { return; };`), or a statement that
+     starts with a literal `Err(..)?` or `None?` (each optionally with a
+     turbofish). A value that can match, an or-pattern, a computed value,
+     `Ok(..)?` and `Some(..)?` stay reached. When the `else` block holds a
+     `return` at its own depth, RIPR-SPEC-0197 execution admission reads
+     that earlier return, so a strong assertion after it stays for that
+     refusal, as after a plain `return`; after any other constant
+     divergence admission reads no exit, so every oracle is dropped.
 
    One oracle stays for the authority that already decides it: a strong
    `assert_eq!` or `assert!` in a literal-false block, an uncalled closure
@@ -645,7 +657,8 @@ Two pattern terms are used below.
    Row cells are also the function's inputs (#6641). Each row runs the
    body with its cells bound to the parameters positionally, so activation
    reads a `test_case` row's literal cells as it reads an rstest `#[case]`
-   row: `#[test_case(10, 90)]`, `#[test_case(10 => 90)]` and
+   row (a named rstest row, `#[case::ten(10, 90)]` or `#[case :: ten(..)]`,
+   binds like `#[case(10, 90)]`; #15341): `#[test_case(10, 90)]`, `#[test_case(10 => 90)]` and
    `#[test_case(10, 90 ; "ten")]` each pass `10` to `q`. The cells are the
    text before the one top-level `=>` or the `;` that starts the name;
    strings and brackets do not split. A row binds nothing when its cell
@@ -703,17 +716,26 @@ Two pattern terms are used below.
     The line reads `unknown` / unknown instead of `exact_value` / strong
     when all of these hold:
 
-    - an operand names a local the same test body binds with `let`, and
-      every visible `let` initializer for that name is exactly a `todo!`,
-      `unimplemented!`, `unreachable!` or `panic!` invocation, with
-      comments and string contents masked first. A second binding of the
-      same name to anything else drops the name, so an ambiguous body
-      keeps today's reading;
+    - in a parsed Rust test, the asserted name resolves at the comparison
+      to a local whose initializer starts with a diverging `todo!`,
+      `unimplemented!`, `unreachable!` or `panic!` invocation (including
+      an expression such as `todo!() == price(10)`). A same-named closure
+      parameter, match-arm pattern or later local only shadows the
+      placeholder within its own lexical scope (#14868). The same rule
+      applies to a local declared inside a comparison operand block and to
+      a qualified assertion helper invoked inside a closure;
     - the reading this replaces is strong (`exact_value`,
-      `whole_object_equality`, `exact_error_variant` or `snapshot`).
+      `whole_object_equality`, `exact_error_variant` or `snapshot`), or
+      a medium or weak one (#14882).
 
-    Only a strong reading is lowered: a weak or smoke reading already
-    withholds the credit and keeps its kind. The rule only removes credit,
+    A weak `relational_check` is lowered too (#14882): the owner return pin
+    raises `assert!(price(amount, threshold) == expected)` to strong relative
+    to the probe, as it does the terminal guard
+    `if price(amount, threshold) != expected { return Err(..) }`, whose
+    assertion twin (#3284) takes this rule on the lexical and parser
+    extraction paths and in harness inline trials (#15020). A smoke
+    or none reading claims no comparison and keeps its kind. The rule
+    only removes credit,
     so it creates no path to `exposed`. A filled initializer
     (`let expected: i32 = 9_990;`), a computed one
     (`let expected = price(amount, threshold);`) and an assertion that
@@ -721,7 +743,10 @@ Two pattern terms are used below.
     the assertion with comments and string literals masked, so a message
     that merely contains the placeholder's name does not lower it, and the
     rule applies on both extraction paths: the parser adapter and the
-    line-scanned `ensure!`/custom-helper path.
+    line-scanned `ensure!`/custom-helper path. Braces in a literal operand,
+    including quoted JSON in a raw string, do not read a local. A capture
+    in a formatting macro’s template reads it in both ordinary and raw
+    strings. Escaped braces and literal value arguments retain credit (#14897).
 
 ### Reveal admission of an excluded sibling
 
@@ -1070,7 +1095,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 41. `assert_ok_eq!(parse(5), 10)` under a verified `use claims::assert_ok_eq;`
     beside an `Ok(..)` tail change: the related test reads `exact_value` /
     strong and the finding reads `exposed`.
-42. The same line with no import, another crate's `assert_ok_eq`, a renamed
+42. [abstain] The same line with no import, another crate's `assert_ok_eq`, a renamed
     or path-qualified import, a local `macro_rules! assert_ok_eq`, or a
     `path`/`package` `claims` dependency: `unknown` / none, and the
     finding keeps `rust_macro_wrapped_assertion_unresolved`.
@@ -1238,6 +1263,8 @@ rejected alternative. Any can be reversed later without touching the rest.
 - `crates/ripr/tests/test_case_row_boundary_inputs.rs` (rule 9 row inputs,
   examples 45 to 47) and the `test_case_*` unit tests in
   `crates/ripr/src/analysis/value_resolution/tests.rs`.
+- `crates/ripr/tests/rstest_named_case_rows.rs` (rule 9 named rstest rows,
+  #15341) and `extract_rstest_cases_reads_named_case_rows`.
 
 ## Implementation Mapping
 

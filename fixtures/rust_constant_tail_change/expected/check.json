@@ -1,0 +1,1351 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_constant_tail_change/input",
+  "summary": {"changed_rust_files":1,"probes":14,"findings":14,"exposed":3,"weakly_exposed":1,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":2,"propagation_unknown":7,"static_unknown":0,"conflicting_expressions":2,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:fa69e849b16c2be4adb18486548ac552f89f5eb9751272e6d7cb4f1637fe54ef","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":26,"candidate_line_count":12,"probe_count":14,"finding_count":14},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:cf50f168",
+      "canonical_gap_id": "gap:rust:src/lib.rs:ready:return_value:return_value:false",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:ready:return_value:return_value:false",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "ready",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "false"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:cf50f168",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 4,
+        "expression": "false"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach ready: ready_is_pinned"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: false"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach ready: ready_is_pinned", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: false", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: false (line 4)", "related test tests/constant_tail_change.rs:4 ready_is_pinned uses strong exact value oracle: assert_eq!(ready(), false);", "source assertion argument value false at line 5"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"false","line":4}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: false", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach ready: ready_is_pinned", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "5": "assert_eq!(ready(), false);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "false",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "false",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "ready_is_pinned",
+          "file": "tests/constant_tail_change.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(ready(), false);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:c5b7895f",
+      "canonical_gap_id": "gap:rust:src/lib.rs:idle:return_value:return_value:false",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:idle:return_value:return_value:false",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "idle",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "false"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.79,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:c5b7895f",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "false"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach idle: idle_is_only_called"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: false"},
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach idle: idle_is_only_called", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: false", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: false (line 8)", "related test tests/constant_tail_change.rs:9 idle_is_only_called uses no oracle"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"false","line":8}
+      ],
+      "evidence": ["Complete propagation witness reaches returned value: false", "No assertion found on related tests", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach idle: idle_is_only_called", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "idle_is_only_called",
+          "file": "tests/constant_tail_change.rs",
+          "line": 9,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "no_assertion",
+          "why": "has no assertion"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
+      "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:383b7bb8",
+      "canonical_gap_id": "gap:rust:src/lib.rs:items:return_value:return_value:vec![]",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:items:return_value:return_value:vec![]",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "items",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "vec![]"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:383b7bb8",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 12,
+        "expression": "vec![]"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach items: items_are_pinned"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: vec![]"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach items: items_are_pinned", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: vec![]", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: vec![] (line 12)", "related test tests/constant_tail_change.rs:14 items_are_pinned uses strong exact value oracle: assert_eq!(items(), Vec::<i32>::new());"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"vec![]","line":12}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: vec![]", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach items: items_are_pinned", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "items_are_pinned",
+          "file": "tests/constant_tail_change.rs",
+          "line": 14,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(items(), Vec::<i32>::new());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:4c75ff46",
+      "canonical_gap_id": "gap:rust:src/lib.rs:bytes:return_value:return_value:vec![blit78_blit79]",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:bytes:return_value:return_value:vec![blit78_blit79]",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "bytes",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "vec![blit78_blit79]"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 1.00,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:4c75ff46",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 16,
+        "expression": "vec![b'x', b'y']"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach bytes: bytes_are_pinned"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: vec![b'x', b'y']"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach bytes: bytes_are_pinned", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: vec![b'x', b'y']", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: vec![b'x', b'y'] (line 16)", "related test tests/constant_tail_change.rs:19 bytes_are_pinned uses strong exact value oracle: assert_eq!(bytes(), vec![b'x', b'y']);", "source assertion argument value 'x' at line 20", "source assertion argument value 'y' at line 20"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"vec![b'x', b'y']","line":16}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: vec![b'x', b'y']", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach bytes: bytes_are_pinned", "Strong oracle found: exact value or pattern assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "20": "assert_eq!(bytes(), vec![b'x', b'y']);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 20,
+            "value": "'x'",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 20,
+            "value": "'y'",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 20,
+          "value": "'x'",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 20,
+          "value": "'y'",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "bytes_are_pinned",
+          "file": "tests/constant_tail_change.rs",
+          "line": 19,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(bytes(), vec![b'x', b'y']);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:7c3be1bd",
+      "canonical_gap_id": "gap:rust:src/lib.rs:enabled:return_value:return_value:false",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:enabled:return_value:return_value:false",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "enabled",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "false"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:7c3be1bd",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 20,
+        "expression": "false"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach enabled: enabled_agrees_where_the_name_holds_the_constant"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach enabled: enabled_agrees_where_the_name_holds_the_constant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 20)", "related test tests/constant_tail_change.rs:24 enabled_agrees_where_the_name_holds_the_constant uses strong exact value oracle: assert_eq!(enabled(flag), false);", "source assertion argument value false at line 26", "source function argument value flag = false at line 26"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":20}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach enabled: enabled_agrees_where_the_name_holds_the_constant", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "26": "assert_eq!(enabled(flag), false);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 26,
+            "value": "false",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 26,
+            "value": "flag = false",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 26,
+          "value": "false",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 26,
+          "value": "flag = false",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "enabled_agrees_where_the_name_holds_the_constant",
+          "file": "tests/constant_tail_change.rs",
+          "line": 24,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(enabled(flag), false);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:1d89ec79",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:flag",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:predicate_boundary:predicate:flag",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "flag"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:1d89ec79",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 24,
+        "expression": "if flag { return false; }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: gate_agrees_on_the_early_return"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Predicate changed, but no literal boundary was visible in the changed expression"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach gate: gate_agrees_on_the_early_return", "infection unknown: Predicate changed, but no literal boundary was visible in the changed expression", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "related test tests/constant_tail_change.rs:30 gate_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(gate(flag), false);", "source assertion argument value false at line 32", "source function argument value flag = true at line 32"],
+      "flow_sinks": [
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Predicate changed, but no literal boundary was visible in the changed expression", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach gate: gate_agrees_on_the_early_return", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No detected boundary input for the changed predicate", "Predicate changed, but no literal boundary was visible in the changed expression"],
+      "assertion_texts": {
+        "32": "assert_eq!(gate(flag), false);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 32,
+            "value": "false",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 32,
+            "value": "flag = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 32,
+          "value": "false",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 32,
+          "value": "flag = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "gate_agrees_on_the_early_return",
+          "file": "tests/constant_tail_change.rs",
+          "line": 30,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(gate(flag), false);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:e8188a95",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:return_value:return_value:if_flag_return_false",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:return_value:return_value:if_flag_return_false",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "if_flag_return_false"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:e8188a95",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 24,
+        "expression": "if flag { return false; }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: gate_agrees_on_the_early_return"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `false`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach gate: gate_agrees_on_the_early_return", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `false`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "local flow reaches unknown sink (line 24)", "related test tests/constant_tail_change.rs:30 gate_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(gate(flag), false);", "source assertion argument value false at line 32", "source function argument value flag = true at line 32"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":24}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `false`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: gate_agrees_on_the_early_return"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "32": "assert_eq!(gate(flag), false);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 32,
+            "value": "false",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 32,
+            "value": "flag = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 32,
+          "value": "false",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 32,
+          "value": "flag = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "gate_agrees_on_the_early_return",
+          "file": "tests/constant_tail_change.rs",
+          "line": 30,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(gate(flag), false);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:21bafef9",
+      "canonical_gap_id": "gap:rust:src/lib.rs:gate:return_value:return_value:false",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:gate:return_value:return_value:false",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "gate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "false"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:21bafef9",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 25,
+        "expression": "false"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: gate_agrees_on_the_early_return"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach gate: gate_agrees_on_the_early_return", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 25)", "related test tests/constant_tail_change.rs:30 gate_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(gate(flag), false);", "source assertion argument value false at line 32", "source function argument value flag = true at line 32"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":25}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: gate_agrees_on_the_early_return", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "32": "assert_eq!(gate(flag), false);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 32,
+            "value": "false",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 32,
+            "value": "flag = true",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 32,
+          "value": "false",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 32,
+          "value": "flag = true",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "gate_agrees_on_the_early_return",
+          "file": "tests/constant_tail_change.rs",
+          "line": 30,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(gate(flag), false);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:predicate:211468fb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:pick:predicate_boundary:predicate:x==0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:pick:predicate_boundary:predicate:x==0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "pick",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x==0"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:211468fb",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 29,
+        "expression": "if x == 0 { return Vec::new(); }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach pick: pick_agrees_on_the_early_return"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Detected related test input at the changed boundary"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach pick: pick_agrees_on_the_early_return", "infection yes: Detected related test input at the changed boundary", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "related test tests/constant_tail_change.rs:36 pick_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(pick(0), Vec::<i32>::new());", "source function argument value x = 0 at line 37", "source function argument value x == 0 at line 37"],
+      "flow_sinks": [
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Detected related test input at the changed boundary", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach pick: pick_agrees_on_the_early_return", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "37": "assert_eq!(pick(0), Vec::<i32>::new());"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 37,
+            "value": "x = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 37,
+            "value": "x == 0",
+            "context": "function_argument",
+            "provenance": "assert_eq!(pick(0), Vec::<i32>::new()); | exact input x = 0; literal operand 0 = 0"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 37,
+          "value": "x = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 37,
+          "value": "x == 0",
+          "context": "function_argument",
+          "provenance": "assert_eq!(pick(0), Vec::<i32>::new()); | exact input x = 0; literal operand 0 = 0"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pick_agrees_on_the_early_return",
+          "file": "tests/constant_tail_change.rs",
+          "line": 36,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick(0), Vec::<i32>::new());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:9e0c05e4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:pick:return_value:return_value:if_x==0_return_vec_new",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:pick:return_value:return_value:if_x==0_return_vec_new",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "pick",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "if_x==0_return_vec_new"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:9e0c05e4",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 29,
+        "expression": "if x == 0 { return Vec::new(); }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach pick: pick_agrees_on_the_early_return"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach pick: pick_agrees_on_the_early_return", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "local flow reaches returned value: if x == 0 { return Vec::new(); } (line 29)", "related test tests/constant_tail_change.rs:36 pick_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(pick(0), Vec::<i32>::new());", "source function argument value x = 0 at line 37", "source function argument value x == 0 at line 37"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"if x == 0 { return Vec::new(); }","line":29}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: if x == 0 { return Vec::new(); }", "Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `vec![]`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach pick: pick_agrees_on_the_early_return"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "37": "assert_eq!(pick(0), Vec::<i32>::new());"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 37,
+            "value": "x = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 37,
+            "value": "x == 0",
+            "context": "function_argument",
+            "provenance": "assert_eq!(pick(0), Vec::<i32>::new()); | exact input x = 0; literal operand 0 = 0"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 37,
+          "value": "x = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 37,
+          "value": "x == 0",
+          "context": "function_argument",
+          "provenance": "assert_eq!(pick(0), Vec::<i32>::new()); | exact input x = 0; literal operand 0 = 0"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pick_agrees_on_the_early_return",
+          "file": "tests/constant_tail_change.rs",
+          "line": 36,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick(0), Vec::<i32>::new());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:02a9f3d4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:pick:return_value:return_value:vec![]",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:pick:return_value:return_value:vec![]",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "pick",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "vec![]"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:02a9f3d4",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 30,
+        "expression": "vec![]"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach pick: pick_agrees_on_the_early_return"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach pick: pick_agrees_on_the_early_return", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 30)", "related test tests/constant_tail_change.rs:36 pick_agrees_on_the_early_return uses strong exact value oracle: assert_eq!(pick(0), Vec::<i32>::new());", "source function argument value x = 0 at line 37"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":30}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach pick: pick_agrees_on_the_early_return", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "37": "assert_eq!(pick(0), Vec::<i32>::new());"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 37,
+            "value": "x = 0",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 37,
+          "value": "x = 0",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pick_agrees_on_the_early_return",
+          "file": "tests/constant_tail_change.rs",
+          "line": 36,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(pick(0), Vec::<i32>::new());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["proc_macro_opaque"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:104a531b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:neg:return_value:return_value:-delta",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:neg:return_value:return_value:-delta",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "neg",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "-delta"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:104a531b",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 38,
+        "expression": "-delta"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach neg: neg_agrees_at_zero"},
+        "infect": {"state":"unknown","confidence":"low","summary":"The returned `delta` and `-delta` agree at `delta = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not credited"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: -delta"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach neg: neg_agrees_at_zero", "infection unknown: The returned `delta` and `-delta` agree at `delta = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not credited", "propagation yes: Complete propagation witness reaches returned value: -delta", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: -delta (line 38)", "related test tests/constant_tail_change.rs:46 neg_agrees_at_zero uses strong exact value oracle: assert_eq!(neg(d), 0);", "source assertion argument value 0 at line 48", "source function argument value delta = 0 at line 48"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"-delta","line":38}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: -delta", "Related tests appear to reach neg: neg_agrees_at_zero", "Strong oracle found: exact value or pattern assertion", "The returned `delta` and `-delta` agree at `delta = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not credited"],
+      "missing": ["The returned `delta` and `-delta` agree at `delta = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not credited"],
+      "assertion_texts": {
+        "48": "assert_eq!(neg(d), 0);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 48,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 48,
+            "value": "delta = 0",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 48,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 48,
+          "value": "delta = 0",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "neg_agrees_at_zero",
+          "file": "tests/constant_tail_change.rs",
+          "line": 46,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(neg(d), 0);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:be3d0f7c",
+      "canonical_gap_id": "gap:rust:src/lib.rs:both:return_value:return_value:a_b",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:both:return_value:return_value:a_b",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "both",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "a_b"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:be3d0f7c",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 42,
+        "expression": "a & b"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach both: both_agree_at_zero"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach both: both_agree_at_zero", "infection weak: Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 42)", "related test tests/constant_tail_change.rs:52 both_agree_at_zero uses strong exact value oracle: assert_eq!(both(0, 0), 0);", "source assertion argument value 0 at line 53", "source function argument value a = 0 at line 53", "source function argument value b = 0 at line 53"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":42}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Every related test calls the owner with literal inputs at which the changed expression and its baseline evaluate to the same value, so no test input reaches a difference", "Propagation is not statically obvious from syntax-first analysis", "Related tests appear to reach both: both_agree_at_zero", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "53": "assert_eq!(both(0, 0), 0);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 53,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 53,
+            "value": "a = 0",
+            "context": "function_argument"
+          },
+          {
+            "line": 53,
+            "value": "b = 0",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 53,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 53,
+          "value": "a = 0",
+          "context": "function_argument"
+        },
+        {
+          "line": 53,
+          "value": "b = 0",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "both_agree_at_zero",
+          "file": "tests/constant_tail_change.rs",
+          "line": 52,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(both(0, 0), 0);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:8f61b185",
+      "canonical_gap_id": "gap:rust:src/lib.rs:px:return_value:return_value:p.x",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:px:return_value:return_value:p.x",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "px",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "p.x"
+
+      },
+      "classification": "propagation_unknown",
+      "severity": "note",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:8f61b185",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 50,
+        "expression": "p.x"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach px: px_agrees_at_zero"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: whole-object equality assertion"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"yes","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach px: px_agrees_at_zero", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: whole-object equality assertion", "local flow reaches unknown sink (line 50)", "related test tests/constant_tail_change.rs:57 px_agrees_at_zero uses strong whole object equality oracle: assert_eq!(px(P { x: 0 }), 0);", "source assertion argument value 0 at line 58", "source function argument value p = 0 at line 58"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":50}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach px: px_agrees_at_zero", "Strong oracle found: whole-object equality assertion"],
+      "missing": ["No clear propagation path from changed behavior to an observable sink"],
+      "assertion_texts": {
+        "58": "assert_eq!(px(P { x: 0 }), 0);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 58,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 58,
+            "value": "p = 0",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 58,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 58,
+          "value": "p = 0",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "px_agrees_at_zero",
+          "file": "tests/constant_tail_change.rs",
+          "line": 57,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(px(P { x: 0 }), 0);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["propagation_evidence_unknown"],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

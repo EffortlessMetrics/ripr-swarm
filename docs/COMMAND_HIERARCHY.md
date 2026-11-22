@@ -22,12 +22,13 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Read detailed help | `ripr help <command>`, `ripr help workflow [name]`, or `ripr help --all` | Options for one command, one bounded workflow's steps, or the full reference. |
 
 The bare `cache`, `baseline`, `policy`, `reports`, `calibrate`, `zero`,
-`assistant-loop`, `config`, `pr-ledger`, `pr-review`, `coverage-grip`, and `gate`
-groups print their own help and exit successfully. For example, `ripr cache`
-shows the same help as `ripr help cache`, without reading configuration or
+`assistant-loop`, `config`, `pr-ledger`, `pr-review`, `pr-comments`,
+`coverage-grip`, and `gate` groups print their own help and exit successfully.
+For example, `ripr cache` shows the same help as `ripr help cache`, without reading configuration or
 writing reports. Choose a subcommand to perform an operation; its required
 inputs still apply. `ripr gate --pr-guidance PATH` also accepts the flag-first
-evaluation shorthand. `ripr pr-comments` retains its default `plan` action.
+evaluation shorthand. `ripr pr-comments` no longer implies `plan`: run
+`ripr pr-comments plan` to write the comment plan.
 
 Mistyped `agent` subcommands list the accepted children and suggest a nearby
 spelling when one exists: `ripr agent brief2` suggests `brief`. Suggestions
@@ -75,11 +76,12 @@ document, or the attempt's status document when it is already complete.
 Under `continue --json`, a typed after-phase refusal or failure prints its
 document on stdout (`repair_after_refusal`, `repair_after_failure`, or the
 verify document) with the same exit code and stderr prose. Every other
-refusal is unchanged by `--json`: `repair` refusals, `continue` selection
-refusals (no current attempt, several attempts, an ended attempt, a blocked
-baseline, an unanchored root), operational errors before the verify step
-and argv usage errors outside the `cli_refusal` classes keep the same exit
-code, prose on stderr and empty stdout. An unknown flag (or, for `continue`,
+refusal keeps its exit code and stderr prose under `--json`. The typed
+`repair` refusals and `continue` selection refusals (no current attempt,
+several attempts, an ended attempt, a blocked baseline, an unanchored root)
+also write the `cli_refusal` document with their reason `code` and
+`disposition` (#14931); operational errors before the verify step and argv
+usage errors outside the `cli_refusal` classes keep empty stdout. An unknown flag (or, for `continue`,
 a stray positional argument) under `--json` keeps exit `2` and its stderr
 prose and also writes the standalone `cli_refusal` document to stdout
 (`docs/OUTPUT_SCHEMA.md`, #6834 decision).
