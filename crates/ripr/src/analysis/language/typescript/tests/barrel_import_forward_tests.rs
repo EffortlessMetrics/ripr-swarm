@@ -26,6 +26,9 @@ const IMPORT_THEN_EXPORT: &str =
 
 const STAR_BARREL: &str = "export * from './discount';\n";
 
+/// One fixture row: label, workspace files, test file.
+type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], String);
+
 /// A vitest file with `imports`, file-level `setup` and one test whose body
 /// is `body`.
 fn test_file(imports: &str, setup: &str, body: &str) -> String {
@@ -209,7 +212,7 @@ fn import_then_export_of_something_else_stays_unreached() -> Result<(), String> 
         "",
         "expect(discount(100, 100)).toBe(100);",
     );
-    let rows: [(&str, &[(&str, &str)], String); 6] = [
+    let rows: [Row<'_>; 6] = [
         (
             "ie-neg-type-only",
             &[(
@@ -301,9 +304,9 @@ fn import_then_export_chain_past_the_hop_bound_stays_unreached() -> Result<(), S
         &[
             ("src/discount.ts", OWNER),
             ("src/h3.ts", &h4),
-            ("src/h2.ts", &h3),
-            ("src/h1.ts", &h2),
-            ("src/index.ts", &h1),
+            ("src/h2.ts", &h2),
+            ("src/h1.ts", &h1),
+            ("src/index.ts", &index),
         ],
         &named_test(),
         ExposureClass::Exposed,
@@ -380,7 +383,7 @@ fn namespace_members_of_several_modules_resolve_one_by_one() -> Result<(), Strin
 fn namespace_whose_member_is_another_binding_stays_unreached() -> Result<(), String> {
     let shadowing_barrel = "export * from './discount';\nexport function applyDiscount(a: number, t: number) { return a; }\n";
     let other = "export function applyDiscount(a: number, t: number): number { return a; }\n";
-    let rows: [(&str, &[(&str, &str)], String); 4] = [
+    let rows: [Row<'_>; 4] = [
         (
             "ns-neg-barrel-own-declaration",
             &[("src/index.ts", shadowing_barrel)],

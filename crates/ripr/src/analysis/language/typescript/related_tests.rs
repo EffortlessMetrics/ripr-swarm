@@ -1795,7 +1795,11 @@ impl ReExportIndex {
         alias_map: Option<&TsAliasMap>,
         workspace_root: Option<&Path>,
     ) {
-        if classes.is_empty() || (self.entries.is_empty() && self.star_edges.is_empty()) {
+        if classes.is_empty()
+            || (self.entries.is_empty()
+                && self.star_edges.is_empty()
+                && self.import_forwards.is_empty())
+        {
             return;
         }
         let mut rewritten: HashMap<*const Vec<TypeScriptImport>, Option<Shared<TypeScriptImport>>> =
@@ -4532,6 +4536,24 @@ fn own_constructor_names_for_method_owner(
             // default-exported class under any local name.
             push_unique_string(&mut names, import.local.clone());
             push_unique_string(&mut imported_class_locals, import.local.clone());
+        }
+    }
+    // `import * as lib from '../src'` + `new lib.Cart()` where the barrel's
+    // member `Cart` resolves to the owner's class (#15923). Member-exact: the
+    // constructor is spelled with the barrel's exported name, which may
+    // differ from the class's (`export { Cart as Basket }`), and a sibling
+    // class of the declaring module is not a member unless the barrel
+    // exports it. The record already refused a written or passed namespace
+    // local and a mocked module on the chain.
+    let owner_module = normalized_module_path(&owner.file);
+    for member in test.barrel_namespace_members_in_file.iter() {
+        let names_class = if owner.class_default_export {
+            !owner.commonjs_default_export && member.name == "default"
+        } else {
+            member.name == class_name
+        };
+        if names_class && member.module == owner_module {
+            push_unique_string(&mut names, format!("{}.{}", member.local, member.member));
         }
     }
     // A constructor name the test scope or body rebinds (`const Cart =

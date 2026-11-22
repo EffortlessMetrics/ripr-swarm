@@ -43,6 +43,9 @@ fn test_file(imports: &str, setup: &str, receiver: &str) -> String {
     )
 }
 
+/// One fixture row: label, workspace files, test file.
+type OwnedRow<'a> = (&'a str, Vec<(&'a str, &'a str)>, String);
+
 /// The finding for the changed `apply` boundary in `src/cart.ts`.
 fn finding(label: &str, files: &[(&str, &str)], test: &str) -> Result<Finding, String> {
     let owner = files
@@ -374,7 +377,7 @@ fn inherited_method_on_a_subclass_instance_reads_like_a_constructed_receiver() -
     let base = base_cart();
     let same_file =
         format!("{base}export class SpecialCart extends BaseCart {{ extra() {{ return 1; }} }}\n");
-    let rows: [(&str, Vec<(&str, &str)>, String); 5] = [
+    let rows: [OwnedRow<'_>; 5] = [
         (
             "recv-inherited-other-module",
             vec![("src/cart.ts", &base), ("src/special.ts", SPECIAL)],
@@ -622,4 +625,100 @@ fn subclass_receiver_the_test_can_replace_stays_unreached() -> Result<(), String
             "class SpecialCart { apply(a: number, t: number) { return a; } }\n    void Imported;\n    const c = new SpecialCart();",
         ),
     )
+}
+
+// ── a class built through a namespace import of a barrel (#15923) ───────────
+
+const NAMESPACE: &str = "import * as lib from '../src';";
+
+#[test]
+fn class_member_of_a_barrel_namespace_reads_like_a_constructed_receiver() -> Result<(), String> {
+    let owner = cart("");
+    let rows = [
+        // commander.js's shape: the barrel imports the class, then exports it.
+        (
+            "recv-ns-import-then-export",
+            "import { Cart } from './cart';\nexport { Cart };\n",
+            "const c = new lib.Cart();",
+        ),
+        (
+            "recv-ns-star",
+            "export * from './cart';\n",
+            "const c = new lib.Cart();",
+        ),
+        // The constructor is spelled with the barrel's name for the class.
+        (
+            "recv-ns-renamed",
+            "export { Cart as Basket } from './cart';\n",
+            "const c = new lib.Basket();",
+        ),
+    ];
+    for (label, barrel, receiver) in rows {
+        assert_reads_like_constructed(
+            label,
+            &[("src/cart.ts", owner.as_str()), ("src/index.ts", barrel)],
+            &test_file(NAMESPACE, "", receiver),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn barrel_namespace_member_that_is_another_class_stays_unreached() -> Result<(), String> {
+    let owner = cart("");
+    let other = class_source("Internal", "");
+    let sibling = format!("{owner}{}", class_source("Sibling", ""));
+    let rows: [(&str, &str, &str, &str, &str); 5] = [
+        // The barrel's `Cart` is another module's class.
+        (
+            "recv-ns-neg-renamed-other",
+            owner.as_str(),
+            "export { Internal as Cart } from './other';\n",
+            "",
+            "const c = new lib.Cart();",
+        ),
+        // A sibling class of the owner's module is not the owner's class.
+        (
+            "recv-ns-neg-sibling",
+            sibling.as_str(),
+            "export * from './cart';\n",
+            "",
+            "const c = new lib.Sibling();",
+        ),
+        // The class is not a member of the barrel under its own name.
+        (
+            "recv-ns-neg-not-exported-under-name",
+            owner.as_str(),
+            "export { Cart as Basket } from './cart';\n",
+            "",
+            "const c = new (lib as any).Cart();",
+        ),
+        (
+            "recv-ns-neg-mocked-owner",
+            owner.as_str(),
+            "export * from './cart';\n",
+            "vi.mock('../src/cart');",
+            "const c = new lib.Cart();",
+        ),
+        // A namespace the file hands to a spy may no longer hold the class.
+        (
+            "recv-ns-neg-spied",
+            owner.as_str(),
+            "export * from './cart';\n",
+            "beforeEach(() => { vi.spyOn(lib, 'Cart'); });",
+            "const c = new lib.Cart();",
+        ),
+    ];
+    for (label, cart_source, barrel, setup, receiver) in rows {
+        assert_no_static_path(
+            label,
+            &[
+                ("src/cart.ts", cart_source),
+                ("src/other.ts", other.as_str()),
+                ("src/index.ts", barrel),
+            ],
+            &test_file(NAMESPACE, setup, receiver),
+        )?;
+    }
+    Ok(())
 }

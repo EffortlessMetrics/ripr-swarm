@@ -280,9 +280,15 @@ fn classes_that_can_replace_the_getter_record_no_entry() {
 }
 
 #[test]
-fn ordinary_methods_record_no_factory_entry() {
-    let source = CACHE.replace("get value(): T", "value(): T");
-    assert!(factory_entry_names(&source).is_empty());
+fn only_getters_and_ordinary_methods_record_a_factory_entry() {
+    // An ordinary method is called on a factory-built receiver as a getter
+    // is read on one (#15924).
+    let method = CACHE.replace("get value(): T", "value(): T");
+    assert_eq!(factory_entry_names(&method), ["cached"]);
+    let setter = CACHE.replace("get value(): T", "set value(next: T)");
+    assert!(factory_entry_names(&setter).is_empty(), "setter");
+    let static_method = CACHE.replace("get value(): T", "static value(): T");
+    assert!(factory_entry_names(&static_method).is_empty(), "static");
 }
 
 #[test]
