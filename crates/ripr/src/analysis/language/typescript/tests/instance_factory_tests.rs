@@ -279,6 +279,31 @@ fn classes_that_can_replace_the_getter_record_no_entry() {
     assert!(factory_entry_names(&repeated).is_empty(), "repeated class");
 }
 
+/// Static factories fill only the slots exported factories leave: a class
+/// with a full set of statics keeps the exported factory a test relates
+/// through.
+#[test]
+fn exported_factory_keeps_its_slot_beside_a_full_set_of_static_factories() -> Result<(), String> {
+    let statics: String = (0..16)
+        .map(|index| {
+            format!("  static a{index:02}(): Cached<number> {{ return new Cached(() => 1); }}\n")
+        })
+        .collect();
+    let owner = CACHE.replace(
+        "  get value(): T {",
+        &format!("{statics}  get value(): T {{"),
+    );
+    let names = factory_entry_names(&owner);
+    assert_eq!(names.len(), 16, "bounded: {names:?}");
+    assert!(names.iter().any(|name| name == "cached"), "{names:?}");
+    assert_eq!(
+        names.iter().filter(|name| name.starts_with('a')).count(),
+        15,
+        "statics fill the rest: {names:?}"
+    );
+    assert_related("mixed-kind-limit", &owner, READ_TEST)
+}
+
 #[test]
 fn only_getters_and_ordinary_methods_record_a_factory_entry() {
     // An ordinary method is called on a factory-built receiver as a getter

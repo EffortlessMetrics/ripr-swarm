@@ -313,16 +313,21 @@ fn static_factories(
         }
         // An indexed or bulk write on the class (`Cart['make'] = ...`,
         // `Object.assign(Cart, ...)`) can replace a static this scan trusts.
-        let indexed = format!("{class_name}[");
-        if text.match_indices(&indexed).any(|(at, _)| {
+        // Whitespace may sit before the bracket or inside the call
+        // (`Cart ['make'] = ...`, `Object.assign( Cart, ...)`).
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let indexed = text.match_indices(class_name).any(|(at, _)| {
+            let after = text[at + class_name.len()..].trim_start();
             // `Cart[]` is an array type, and `SmartCart[` another name.
-            !text[at + indexed.len()..].trim_start().starts_with(']')
+            after
+                .strip_prefix('[')
+                .is_some_and(|rest| !rest.trim_start().starts_with(']'))
                 && !text[..at]
                     .chars()
                     .next_back()
                     .is_some_and(is_javascript_identifier_char)
-        }) || text.contains(&format!("Object.assign({class_name}"))
-        {
+        });
+        if indexed || compact.contains(&format!("Object.assign({class_name}")) {
             return;
         }
         // Every plain member name with how often the class declares it; a

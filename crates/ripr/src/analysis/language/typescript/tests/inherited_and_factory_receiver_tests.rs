@@ -277,6 +277,16 @@ fn static_member_that_is_not_a_sole_fresh_instance_factory_stays_unreached() -> 
             "Cart['make'] = () => ({ apply: () => 100 }) as unknown as Cart;\n",
         ),
         (
+            "recv-neg-static-spaced-index-written-in-owner",
+            "    static make(): Cart { return new Cart(); }\n",
+            "Cart ['make'] = () => ({ apply: () => 100 }) as unknown as Cart;\n",
+        ),
+        (
+            "recv-neg-static-spaced-bulk-written-in-owner",
+            "    static make(): Cart { return new Cart(); }\n",
+            "Object.assign( Cart, { make: () => ({ apply: () => 100 }) });\n",
+        ),
+        (
             "recv-neg-static-async",
             "    static async make(): Promise<Cart> { return new Cart(); }\n",
             "",
