@@ -780,7 +780,14 @@ wrong credits.
      trait's method), except a pure `(**self).name(..)` / `(*self).name(..)`
      forward. A definition the parser did not index (a `macro_rules!` body)
      counts when its `fn name` text is visible. A definition in a
-     lexical-fallback file always counts.
+     lexical-fallback file always counts. For a method call, a definition
+     in an `impl` of a different declared named type does not count
+     (#15276): `impl Shape for Line` cannot take a call on a receiver typed
+     as the owner's `impl Shape for Square`. Both self types must be plain
+     non-generic names of a declared `struct`/`enum`/`union` that no
+     workspace `type` alias, `as` rename, or same-file `impl<..>` generic
+     parameter also binds; same-named types in different modules still
+     compete, as do trait default bodies.
    - An associated call `T::name(..)` (#6617) names only an associated
      function (no `self`) of an inherent `impl T` block, for a
      `return_value` (or bool-tail `predicate`) probe; a whole-value field
@@ -2890,7 +2897,13 @@ branch holding a statement, or code after the chain is outside the subset.
   `define!(assert_eq!(mod tests;))` can emit `macro_rules! assert_eq`
   together with the module whose tests then compile against it. An audited
   pass-through wrapper (`proptest!`, `serde_json::json!`) keeps the site but
-  confines it to the call's own text (RIPR-SPEC-0369, #14116). The other
+  confines it to the call's own text (RIPR-SPEC-0369, #14116). A trusted
+  name with a binding site makes that name's own calls opaque in turn, but
+  only where the site binds (#16053): a site scoped to a function body or
+  block makes calls inside that span opaque, not the name's calls elsewhere
+  in the file, except calls in a `macro_rules!` transcriber, which run
+  wherever the macro is invoked and so read every binding of the name. A
+  confined pass-through mention makes none opaque. The other
   exception is a call to a wrapper that cannot bind a name at all (#6648):
   an unqualified call to a `macro_rules!` this file defines exactly once,
   without an attribute and never names in a `use`. The definition sits at
@@ -3929,12 +3942,19 @@ release is added by re-reading `src/macros.rs` at that version and extending
 `AUDITED_JSON_RELEASES`; persisted classifications key on the analyzer build
 identity, so no cache generation bump is needed.
 The analysis root must declare this dependency directly or in its workspace
-package table. Offline locked Cargo metadata must resolve one canonical package
+dependency table, or (#14116) name a workspace member that declares it in its
+own normal or dev dependency table. Member entries are read as written: a
+relative path of plain `/`-separated components, optionally ending in one `*`
+component (`crates/*`); any other glob, a `.`, `..` or empty component, or an
+absolute path is not read, and more than 256 distinct member directories
+leaves the root ineligible. `workspace.exclude` is not applied here. This check only decides whether
+the metadata process runs. Offline locked Cargo metadata must resolve one canonical package
 and the importing package's unique package edge with matching normal/dev contexts. Optional, renamed,
 conditional, path/git/alternate-registry and ambiguous edges refuse. This uses
 rule 7a's existing bounded metadata process and strict configuration snapshot;
 ambient registry and ancestor/nested source replacements refuse. Windows environment names are canonicalized before registry/home checks. Manifest/config/
-lock identity is rechecked and affects classified-cache reuse.
+lock identity is checked once per importing file per analysis and rechecked by
+the next analysis (#16038); it affects classified-cache reuse.
 
 Visible local, imported, cross-file namespace and workspace macro bindings
 remain subject to the shared fail-closed admission checks. An unavailable or

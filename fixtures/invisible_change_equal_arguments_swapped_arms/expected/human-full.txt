@@ -17,7 +17,6 @@ WARNING ./src/lib.rs:2
 
 Changed
   before: if a > b { a } else { b }
-          old condition: a > b
   after:  a > b
           (condition only; before is the whole old line; open ./src/lib.rs:2 to read the new line)
 

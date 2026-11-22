@@ -102,7 +102,7 @@ pub(in crate::analysis) use binding_return_flow::{
 };
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, assertion_is_discriminating, has_same_test_boundary_oracle_pairing,
-    observed_owner_call_rows_on_line, same_test_pairing_missing_summary,
+    observed_owner_call_rows_on_line, same_test_pairing_missing_summary, unpaired_return_gate,
     wrapper_return_boundary_pinned,
 };
 pub(in crate::analysis) use builder_override::{
@@ -251,9 +251,10 @@ pub(in crate::analysis) use related_tests::{
     find_related_tests_with_candidate_index, free_helper_call_resolves, impl_self_type_name,
     inherent_owner_call_resolves, is_display_fmt_owner, is_drop_destructor, is_partial_eq_method,
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem,
-    owner_call_is_direct, owner_call_selects_generic_sibling, owner_call_text,
-    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
-    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
+    own_crate_qualified_owner_path, owner_call_is_direct, owner_call_selects_generic_sibling,
+    owner_call_text, owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name,
+    package_prefix, requires_inherent_receiver_identity, resolves_method_in_prefix,
+    test_calls_free_function,
 };
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;

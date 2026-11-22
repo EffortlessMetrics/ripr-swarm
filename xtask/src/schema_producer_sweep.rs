@@ -163,6 +163,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/help.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: help_json_conforms_and_reaches_every_branch in crates/ripr/tests/help_json_schema.rs validates the real CLI bytes and asserts they reach every exit-contract kind, flag scope and workflow next-route kind, and published_help_schema_rejects_documents_it_forbids is the negative experiment; the document changes with every catalog edit, so the committed fixture is a capture trimmed to ten command rows and one workflow, kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/help.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/rerun.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
@@ -258,6 +267,20 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
             "tests/fixtures/verification/ripr/check-limited.valid.json",
             "a `ripr check` 0.2 refusal envelope (scope `diff`, carries `mode`), owned by check.schema.json",
         )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-packet.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_packet_json_conforms_for_every_fixture_seam in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for every seam of a fixture crate and asserts they reach both tasks, concrete, unresolved and absent assertion guidance, a proof obligation and the next-step block, and published_packet_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        // The boundary_gap editor-agent-loop golden is generated producer
+        // output for one seam, so it is held to the schema as well.
+        edge_fixtures: &[
+            "tests/fixtures/verification/ripr/agent-packet.valid.json",
+            "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json",
+        ],
+        excluded: &[],
     },
     Binding {
         schema_path: "schemas/ripr/agent-packet-refusal.schema.json",

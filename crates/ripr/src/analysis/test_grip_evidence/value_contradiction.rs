@@ -3241,7 +3241,17 @@ fn single_compared_owner_call(
     test: &TestSummary,
     through_wrapper: bool,
 ) -> Option<Vec<String>> {
-    let operands = assertion_operands(oracle_text, test.body.as_str());
+    single_compared_owner_call_in(owner, oracle_text, test.body.as_str(), through_wrapper)
+}
+
+/// [`single_compared_owner_call`] over a test body given as text.
+fn single_compared_owner_call_in(
+    owner: &FunctionSummary,
+    oracle_text: &str,
+    test_body: &str,
+    through_wrapper: bool,
+) -> Option<Vec<String>> {
+    let operands = assertion_operands(oracle_text, test_body);
     let mut calls = Vec::new();
     for operand in &operands {
         let arguments = owner_call_arguments(&operand.text, &owner.name).or_else(|| {
@@ -3291,18 +3301,58 @@ pub(in crate::analysis) fn return_seam_tail_reached_by_call(
     seam_expression: &str,
     seam_line: usize,
     oracle_text: &str,
+    qualified_owner_path: Option<&str>,
     test: &TestSummary,
     constant: &dyn Fn(&str) -> Option<(String, String)>,
 ) -> bool {
+    // `qualified_owner_path` is the one path the caller established as the
+    // owner's own-crate spelling (`pkg::owner`). The assertion and the test
+    // body are read with that path spelled bare, together, so a `let` the
+    // assertion names is still found by the assertion's own position.
+    let spelled = qualified_owner_path.and_then(|path| {
+        let oracle = spell_path_bare(oracle_text, path, &owner.name);
+        let body = spell_path_bare(test.body.as_str(), path, &owner.name);
+        (oracle.is_some() || body.is_some()).then(|| {
+            (
+                oracle.unwrap_or_else(|| oracle_text.to_string()),
+                body.unwrap_or_else(|| test.body.as_str().to_string()),
+            )
+        })
+    });
+    let (oracle_text, test_body) = match &spelled {
+        Some((oracle, body)) => (oracle.as_str(), body.as_str()),
+        None => (oracle_text, test.body.as_str()),
+    };
     tail_reach(
         owner,
         seam_expression,
         seam_line,
         oracle_text,
-        test,
+        test_body,
         constant,
     )
     .unwrap_or(false)
+}
+
+/// `text` with every occurrence of `path` that is a whole path (not the tail
+/// of a longer one such as `other::pkg::owner`, nor the head of another item
+/// such as `pkg::owner_v2`) replaced by `name`. `None` when there is none.
+fn spell_path_bare(text: &str, path: &str, name: &str) -> Option<String> {
+    let continues_a_path = |ch: char| ch == ':' || ch == '_' || ch.is_alphanumeric();
+    let mut bare = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut rewrote = false;
+    while let Some(at) = rest.find(path) {
+        let after = &rest[at + path.len()..];
+        let whole = !rest[..at].chars().next_back().is_some_and(continues_a_path)
+            && !after.chars().next().is_some_and(continues_a_path);
+        bare.push_str(&rest[..at]);
+        bare.push_str(if whole { name } else { path });
+        rewrote |= whole;
+        rest = after;
+    }
+    bare.push_str(rest);
+    rewrote.then_some(bare)
 }
 
 fn tail_reach(
@@ -3310,7 +3360,7 @@ fn tail_reach(
     seam_expression: &str,
     seam_line: usize,
     oracle_text: &str,
-    test: &TestSummary,
+    test_body: &str,
     constant: &dyn Fn(&str) -> Option<(String, String)>,
 ) -> Option<bool> {
     // Only an equality pins the value; `assert_ne!` excludes one value, and a
@@ -3323,11 +3373,11 @@ fn tail_reach(
     {
         return None;
     }
-    let call_arguments = single_compared_owner_call(owner, oracle_text, test, false)?;
+    let call_arguments = single_compared_owner_call_in(owner, oracle_text, test_body, false)?;
     // The expected side must be a value the test fixes itself: an expected
     // value computed by calling code (`let expected = helper(..)`, where the
     // helper may call the owner) moves with the mutant (#14950 review).
-    for operand in assertion_operands(oracle_text, test.body.as_str()) {
+    for operand in assertion_operands(oracle_text, test_body) {
         let text = operand.text.trim();
         if owner_call_arguments(text, &owner.name).is_none()
             && !matches!(text, "true" | "false")

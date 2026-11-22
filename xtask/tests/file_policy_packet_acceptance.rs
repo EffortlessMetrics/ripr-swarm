@@ -186,7 +186,11 @@ impl Fixture {
             .ok_or("common inventory disclosure missing")?;
         let expected = format!(
             "host={}; declared=all; applicable; selected=2; tests=[{COMMON_FIRST}, {COMMON_SECOND}];",
-            std::env::consts::FAMILY
+            match std::env::consts::OS {
+                "linux" => "linux",
+                "macos" => "macos",
+                _ => std::env::consts::FAMILY,
+            }
         );
         if !common.contains(&expected) {
             return Err(format!("wrong common disclosure: {common}"));
@@ -199,7 +203,12 @@ impl Fixture {
             String::from("host=windows; declared=unix; not_applicable; selected=not_enumerated;")
         } else {
             format!(
-                "host=unix; declared=unix; applicable; selected=2; tests=[{NATIVE_FIRST}, {NATIVE_SECOND}];"
+                "host={}; declared=unix; applicable; selected=2; tests=[{NATIVE_FIRST}, {NATIVE_SECOND}];",
+                match std::env::consts::OS {
+                    "linux" => "linux",
+                    "macos" => "macos",
+                    _ => "unix",
+                }
             )
         };
         if !native.contains(&expected) {

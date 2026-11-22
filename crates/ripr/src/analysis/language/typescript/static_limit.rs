@@ -228,6 +228,7 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
     all_tests: &[TypeScriptTest],
     owner_was_credited: impl Fn(&TypeScriptTest) -> bool,
     workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
     for test in all_tests {
@@ -251,20 +252,42 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
             if !name_matches {
                 continue;
             }
-            if relative_import_resolves_to_workspace_file(
-                workspace_root,
-                &test.file,
-                &import.source,
-            ) {
-                continue;
-            }
+            // An escaping join cannot name an in-workspace package. It
+            // still needs the unresolved-import disclosure.
+            let base = relative_import_base(&test.file, &import.source);
+            let entry = base.as_deref().and_then(|path| {
+                let module = normalized_path(path);
+                alias_map
+                    .and_then(|map| map.own_build_entry(&test.file, &module))
+                    .filter(|_| !file_module_exists(workspace_root, &module))
+            });
+            let why_not_actionable = if let Some(entry) = entry {
+                match entry.source.as_deref() {
+                    Some(source) if normalized_path_eq(&owner.file, source) => format!(
+                        "test `{}` imports `{}`, whose package main `{}` is build output outside the source index. RIPR found the tracked source `{}`, but could not attribute this test to it",
+                        test.name, import.source, entry.main, source
+                    ),
+                    Some(_) => continue,
+                    None => format!(
+                        "test `{}` imports `{}`, whose package main `{}` is build output outside the source index. No unique tracked source entry could be attributed to this import",
+                        test.name, import.source, entry.main
+                    ),
+                }
+            } else {
+                if base.as_deref().is_some_and(|path| {
+                    relative_import_resolves_to_workspace_file(workspace_root, path)
+                }) {
+                    continue;
+                }
+                format!(
+                    "test `{}` name-calls owner `{}` via relative specifier `{}`, which resolves to no workspace file (module renamed or moved without updating the import?); the test is therefore excluded from trusted relations, so `no_static_path` for this owner can be a false negative",
+                    test.name, owner.name, import.source
+                )
+            };
             limitations.push(TypeScriptNamedLimitation {
                 name: "typescript_relative_import_unresolved",
                 sample_source: format!("{}:{}", normalized_path(&test.file), test.line),
-                why_not_actionable: format!(
-                    "test `{}` name-calls owner `{}` via relative specifier `{}`, which resolves to no workspace file (module renamed or moved without updating the import?); the test is therefore excluded from trusted relations, so `no_static_path` for this owner can be a false negative",
-                    test.name, owner.name, import.source
-                ),
+                why_not_actionable,
                 repair_route: "analysis/typescript-relative-import-resolution",
             });
             break;
@@ -273,41 +296,13 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
     limitations
 }
 
-/// `true` when the relative specifier `source`, resolved against the test
-/// file's directory, hits an existing workspace source file — mirroring the
-/// module-extension conventions of the relation layer (explicit extension,
-/// extensionless, or `/index` variants).
-fn relative_import_resolves_to_workspace_file(
-    workspace_root: &Path,
-    test_file: &Path,
-    source: &str,
-) -> bool {
-    // Lexically normalize the joined path so `..` segments collapse before
-    // probing; the test file and specifier are workspace-relative strings.
-    // PathBuf accepts forward slashes in components on every platform.
-    let test_dir = test_file.parent().unwrap_or(Path::new(""));
-    let joined = test_dir.join(source);
-    let mut components: Vec<std::ffi::OsString> = Vec::new();
-    for component in joined.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                components.pop();
-            }
-            std::path::Component::CurDir => {}
-            std::path::Component::Normal(part) => components.push(part.to_os_string()),
-            // Rooted/prefix components cannot occur for workspace-relative
-            // test files; treat the candidate as unresolved (fail-closed).
-            _ => return true,
-        }
-    }
-    let base = components
-        .iter()
-        .fold(PathBuf::new(), |acc, part| acc.join(part));
+/// Whether the relative import hits an indexed-language extension or index file.
+fn relative_import_resolves_to_workspace_file(workspace_root: &Path, base: &Path) -> bool {
     // Forward-slash spelling: PathBuf accepts it on every platform and it
     // keeps the candidate list separator-stable.
     let base_str = base.to_string_lossy().replace('\\', "/");
     let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
-    let mut candidates: Vec<PathBuf> = vec![base.clone()];
+    let mut candidates: Vec<PathBuf> = vec![base.to_path_buf()];
     for ext in extensions {
         if base_str.is_empty() {
             // `require('..')` from `test/`: the workspace root directory
@@ -681,6 +676,25 @@ pub(crate) fn named_limitations_for_spy_fabrication_from_candidates(
                 sample_source: format!("{}:{}", normalized_path(&test.file), test.line),
                 why_not_actionable: format!(
                     "test `{}` replaces `{}` via vi.spyOn/jest.spyOn with a fabricated return value; the observed value does not flow from the changed sink",
+                    test.name, owner.name
+                ),
+                repair_route: "analysis/typescript-spy-oracle-resolution",
+            });
+            break;
+        }
+        // #15939: the same limitation for a replacement the
+        // spy guard does not read (a stub, a member assignment, a spy
+        // fabricated in a hook).
+        if !matches!(
+            owner.owner_kind,
+            OwnerKind::Method | OwnerKind::ClassMethod | OwnerKind::ModuleFunction
+        ) && super::function_replacement::owner_function_replaced_in_file(test, owner)
+        {
+            limitations.push(TypeScriptNamedLimitation {
+                name: "typescript_spy_fabricated_observer",
+                sample_source: format!("{}:{}", normalized_path(&test.file), test.line),
+                why_not_actionable: format!(
+                    "the file of test `{}` replaces `{}` on its module object (a stub, a member assignment or a spy fabricated outside the test body); the observed value does not flow from the changed sink",
                     test.name, owner.name
                 ),
                 repair_route: "analysis/typescript-spy-oracle-resolution",

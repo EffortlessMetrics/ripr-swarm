@@ -13,6 +13,7 @@ mod old_condition;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;
+mod self_type_respelling;
 mod unchanged_code_line;
 mod verification_erased;
 

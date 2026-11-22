@@ -351,7 +351,7 @@ fn parameter_comparison(
 
 /// A number, plain string, `true`/`false`/`null`/`undefined`, or a dotted
 /// member path of identifiers.
-fn parse_arm_constant(text: &str) -> Option<ArmConstant> {
+pub(crate) fn parse_arm_constant(text: &str) -> Option<ArmConstant> {
     let text = text.trim();
     match text {
         "true" => return Some(ArmConstant::Boolean(true)),
