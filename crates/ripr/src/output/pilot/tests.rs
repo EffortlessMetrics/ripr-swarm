@@ -1138,11 +1138,12 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     ];
     let artifacts = pilot_artifacts();
     let context = pilot_context(&artifacts);
-    let ranked = "more are in target/ripr/pilot/pilot-summary.md; --max-seams N shows more";
+    let ranked =
+        "the ranked list is in target/ripr/pilot/pilot-summary.md; --max-seams N lists more there";
 
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
-        terminal.contains(&format!("  3 gaps to fix; showing the top 1 ({ranked})\n")),
+        terminal.contains(&format!("  3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1 ({ranked})\n")),
         "{terminal}"
     );
 
@@ -1162,7 +1163,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     let terminal = render_pilot_terminal(&entries, limited);
     assert!(
         terminal.contains(&format!(
-            "  at least 3 gaps to fix; showing the top 1 ({ranked})\n"
+            "  at least 3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1 ({ranked})\n"
         )),
         "{terminal}"
     );
@@ -1182,7 +1183,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     };
     let terminal = render_pilot_terminal(&entries, declined_context);
     assert!(
-        terminal.contains("  at least 3 gaps to fix; showing the top 1"),
+        terminal.contains("  at least 3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1"),
         "{terminal}"
     );
 
@@ -1198,7 +1199,10 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
         terminal.contains("  1 gap to fix; showing it\n"),
         "{terminal}"
     );
-    assert!(!terminal.contains("--max-seams N shows more"), "{terminal}");
+    assert!(
+        !terminal.contains("--max-seams N lists more there"),
+        "{terminal}"
+    );
 }
 
 #[test]
@@ -5928,4 +5932,46 @@ fn pilot_terminal_for_a_plain_file_name_is_unchanged_by_the_escape() {
             .any(|line| line.starts_with("Next, by hand:") && line.contains("src/pricing.rs")),
         "{terminal}"
     );
+}
+
+/// #15278 item 4: a gap no test reaches says which function a test must
+/// call, instead of describing oracles that never run it or blaming a
+/// missing test file.
+#[test]
+fn pilot_terminal_names_the_function_a_test_must_call_for_an_unreached_gap() {
+    let entry = classified_in_owner(
+        SeamGripClass::Ungripped,
+        "src/lib.rs",
+        "impl Counter::bump",
+        11,
+    );
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(
+        terminal.contains(
+            "  why it matters: no test is seen calling `bump`, so no assertion can notice a change here\n"
+        ),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("  test to add: one that calls `bump` and asserts the exact value"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("has no test file to use"), "{terminal}");
+}
+
+/// The control: a gap tests do reach keeps its own reason and the
+/// no-test-file wording.
+#[test]
+fn pilot_terminal_keeps_the_reached_gap_wording() {
+    let entry = classified_in_owner(
+        SeamGripClass::ReachableUnrevealed,
+        "src/lib.rs",
+        "impl Counter::bump",
+        11,
+    );
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(!terminal.contains("no test is seen calling"), "{terminal}");
+    assert!(terminal.contains("has no test file to use"), "{terminal}");
 }

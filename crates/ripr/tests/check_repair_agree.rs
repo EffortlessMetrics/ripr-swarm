@@ -1585,3 +1585,33 @@ fn seam_id_for_expression(repo: &Repo, expression: &str) -> Result<String, Strin
         )),
     }
 }
+
+/// #15278 item 4: a field change in a method no test calls. Pilot names the
+/// method a test must call instead of describing oracles that never run it.
+#[test]
+fn pilot_names_the_method_a_test_must_call() -> Result<(), String> {
+    const HEAD: &str = "pub struct Counter {\n    pub count: u32,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count += STEP;\n    }\n}\n";
+    let old = HEAD.replace("STEP", "1");
+    let new = HEAD.replace("STEP", "2");
+    let repo = Repo::create_uncommitted(
+        &old,
+        &new,
+        "use ar::Counter;\n\n#[test]\nfn starts_at_zero() {\n    assert_eq!(Counter::new().count, 0);\n}\n",
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: no path"),
+        "precondition, check finds no test path to the changed field:\n{check}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("why it matters: no test is seen calling `bump`")
+            && pilot.contains("test to add: one that calls `bump`"),
+        "pilot must say a test has to call bump:\n{pilot}"
+    );
+    assert!(
+        !pilot.contains("Strongest oracle") && !pilot.contains("has no test file to use"),
+        "pilot must not describe oracles or a missing test file here:\n{pilot}"
+    );
+    Ok(())
+}

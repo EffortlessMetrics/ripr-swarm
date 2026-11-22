@@ -800,6 +800,9 @@ fn render_pilot_terminal_unescaped(
             crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
         ));
     }
+    // #15278: the total is the whole repo's, so it says so beside a
+    // `ripr check` count of the change, and the hint says where
+    // `--max-seams` adds entries: the terminal always shows one.
     // #9368: the terminal shows the top 1 seam; without the total and a
     // pointer to the ranked list, one unexplained pick out of an undisclosed
     // count reads as arbitrariness on large repos. The lower-bound predicate
@@ -816,7 +819,7 @@ fn render_pilot_terminal_unescaped(
         let noun = if actionable == 1 { "gap" } else { "gaps" };
         if actionable > 1 {
             out.push_str(&format!(
-                "  {totals} {noun} to fix; showing the top 1 (more are in {brief}; --max-seams N shows more)\n",
+                "  {totals} {noun} to fix in the whole repo (`ripr check` counts only your change); showing the top 1 (the ranked list is in {brief}; --max-seams N lists more there)\n",
                 brief = display_path(&context.artifacts.pilot_summary_md)
             ));
         } else {
@@ -866,9 +869,16 @@ fn render_pilot_terminal_unescaped(
         ));
         out.push_str(&format!("  why it matters: {}\n", terminal_why_line(entry)));
         if outline.is_not_applicable() {
-            out.push_str(&format!(
-                "  test to add: {TERMINAL_NO_REPAIR_TARGET_TEST}\n"
-            ));
+            match unreached_owner_name(entry) {
+                // #15278: no test calls the function, so the first step is a
+                // test that does; "no test file to use" would misdirect.
+                Some(name) => out.push_str(&format!(
+                    "  test to add: one that calls `{name}` and asserts the exact value this line changes; ripr will not write it, because no test reaches this code to build on\n"
+                )),
+                None => out.push_str(&format!(
+                    "  test to add: {TERMINAL_NO_REPAIR_TARGET_TEST}\n"
+                )),
+            }
         } else {
             out.push_str(&format!(
                 "  test to add: a test such as {} in {}\n",
@@ -1948,7 +1958,29 @@ fn terminal_pick_note(class: crate::analysis::seams::SeamGripClass, in_change: b
     )
 }
 
+/// The function no test is seen calling, for a gap whose reach stage is
+/// `no` (#15278). `None` for every other class, or when no name is known.
+fn unreached_owner_name(entry: &ClassifiedSeam) -> Option<&str> {
+    if entry.class != crate::analysis::seams::SeamGripClass::Ungripped {
+        return None;
+    }
+    entry
+        .seam
+        .owner()
+        .rsplit("::")
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+}
+
 fn terminal_why_line(entry: &ClassifiedSeam) -> String {
+    // #15278: with no test reaching the code, the strongest-oracle summary
+    // describes tests that never run it; say what is missing instead.
+    if let Some(name) = unreached_owner_name(entry) {
+        return format!(
+            "no test is seen calling `{name}`, so no assertion can notice a change here"
+        );
+    }
     if let Some(missing) = entry.evidence.missing_discriminators.first() {
         return format!(
             "the tests we looked at do not check {} ({})",
