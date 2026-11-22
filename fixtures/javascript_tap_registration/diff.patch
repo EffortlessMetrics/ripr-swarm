@@ -1,0 +1,10 @@
+diff --git a/src/lib.js b/src/lib.js
+--- a/src/lib.js
++++ b/src/lib.js
+@@ -1,5 +1,5 @@
+ function stringify(obj, options) {
+-  if (typeof options === 'undefined') {
++  if (typeof options !== 'undefined') {
+     return JSON.stringify(obj);
+   }
+   return JSON.stringify(obj, null, 2);

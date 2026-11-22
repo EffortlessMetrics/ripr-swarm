@@ -1,0 +1,6 @@
+[[extend]]
+id = "RIPR-SPEC-0219"
+tests = [
+  "xtask/src/reports/verdict_corpus_tests.rs::check_affected_classification_matrix",
+  "xtask/src/reports/verdict_corpus_tests.rs::check_affected_selection_and_output_lines",
+]

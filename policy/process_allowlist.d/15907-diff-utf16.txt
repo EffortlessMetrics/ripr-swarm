@@ -1,0 +1,1 @@
+crates/ripr/tests/diff_file_utf16.rs|Command::new|1|diff-utf16|#15907: the integration control drives the built `ripr check` binary on a UTF-16 diff file or piped stdin in a private temp workspace. One direct argv spawn with no shell, waits through `.wait_with_output()`, and uses no network.

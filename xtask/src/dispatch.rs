@@ -152,6 +152,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::OperatorCockpitReport => super::reports::operator_cockpit_report(),
         XtaskCommand::ReleaseReadiness(args) => super::reports::release_readiness(&args),
         XtaskCommand::ReadinessSnapshot(args) => super::readiness_snapshot::run(&args),
+        XtaskCommand::FreezeReadiness(args) => super::policy::freeze_readiness::run(&args),
         XtaskCommand::ReleaseNegativeCorpus(args) => super::reports::release_negative_corpus(&args),
         XtaskCommand::ReleaseManifestProposal(args) => {
             super::reports::release_manifest_proposal(&args)
@@ -299,6 +300,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckProductCopy => super::check_product_copy(),
         XtaskCommand::CheckUserText(args) => super::policy::check_user_text_with_args(&args),
         XtaskCommand::CheckPackagedReadme => super::check_packaged_readme(),
+        XtaskCommand::CheckPackageContent => super::check_package_content(),
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
         XtaskCommand::CheckReleaseTargets(args) => match args.as_slice() {

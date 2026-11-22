@@ -46,6 +46,7 @@ Machine-readable schemas live under `schemas/`:
 | [`schemas/ripr/diff-refusal.schema.json`](../../schemas/ripr/diff-refusal.schema.json) | The refusal envelope `ripr diff --json` writes with exit code 2 when it cannot produce a report. |
 | [`schemas/ripr/rerun-refusal.schema.json`](../../schemas/ripr/rerun-refusal.schema.json) | The refusal envelope `ripr rerun --json` writes with exit code 2 when it cannot produce a targeted rerun report. |
 | [`schemas/ripr/agent-brief-refusal.schema.json`](../../schemas/ripr/agent-brief-refusal.schema.json) | The refusal envelope `ripr agent brief --json` writes with exit code 2 when it cannot produce a brief. |
+| [`schemas/ripr/agent-packet.schema.json`](../../schemas/ripr/agent-packet.schema.json) | `ripr agent packet --seam-id <id> --json` one-seam packet: the task, the recommended test and its edit surface, the evidence record and canonical item, and the next commands for a write task. |
 | [`schemas/ripr/agent-packet-refusal.schema.json`](../../schemas/ripr/agent-packet-refusal.schema.json) | The refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet: exit code 3 for an unknown seam, exit code 2 otherwise. |
 | [`schemas/ripr/gate-decision.schema.json`](../../schemas/ripr/gate-decision.schema.json) | `ripr gate evaluate` decision output and its structured repair route. |
 | [`schemas/ripr/check.schema.json`](../../schemas/ripr/check.schema.json) | `ripr check --json` primary findings and typed analysis-outcome output. |

@@ -17,6 +17,7 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 mod benchmark_oracles;
+mod denominator_floor;
 mod editor_validators;
 mod gap_validators;
 mod general_validators;
@@ -29,6 +30,7 @@ mod report_validators;
 mod retained_files;
 mod upstream_python;
 
+pub(crate) use denominator_floor::FLOOR_PATH as FIXTURE_DENOMINATOR_FLOOR_PATH;
 pub(crate) use editor_validators::*;
 pub(crate) use gap_validators::*;
 pub(crate) use general_validators::*;
@@ -39,7 +41,31 @@ pub(crate) use report_validators::*;
 
 pub(crate) fn check_fixture_contracts() -> Result<(), String> {
     let fixtures_dir = Path::new("fixtures");
+    // #15925: the floor is read before anything else, so an absent or emptied
+    // `fixtures/` reports every named subject as missing instead of passing.
+    let floor = denominator_floor::check(fixtures_dir, Path::new(denominator_floor::FLOOR_PATH))?;
+    // A proposal left by an earlier run would be copied over a floor it no
+    // longer describes, so it never outlives the run that wrote it.
+    match &floor.proposal {
+        Some(proposal) => write_report(denominator_floor::PROPOSAL_REPORT, proposal)?,
+        None => remove_report_in(
+            &Path::new("target").join("ripr").join("reports"),
+            denominator_floor::PROPOSAL_REPORT,
+        )?,
+    }
+    if floor.above > 0 {
+        println!(
+            "check-fixture-contracts: {} fixture gate subjects are above {} and unprotected",
+            floor.above,
+            denominator_floor::FLOOR_PATH
+        );
+    }
     if !fixtures_dir.exists() {
+        let mut violations = vec![
+            "fixtures/ does not exist; no fixture contract was checked, so this is not a pass"
+                .to_string(),
+        ];
+        violations.extend(floor.violations);
         return finish_policy_report_with_disclosures(
             PolicyReportSpec {
                 report_file: "fixture-contracts.md",
@@ -47,19 +73,22 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
                 why_it_matters: "Fixtures are the BDD control bench for analyzer behavior and output contracts.",
                 fix_kind: FixKind::AuthorDecisionRequired,
                 recommended_fixes: &[
+                    "Run from the repository root with fixtures/ present.",
                     "Add BDD fixture directories only with SPEC.md, diff.patch, and expected/check.json.",
                     "Use manifest-only fixture directories only when a dedicated validator owns their corpus contract.",
-                    "Use Given/When/Then/Must Not sections for agent-readable fixture intent.",
                 ],
                 rerun_command: "cargo xtask check-fixture-contracts",
                 exception_template: None,
             },
-            &[],
-            &[benchmark_oracles::unavailable_disclosure()],
+            &violations,
+            &[
+                benchmark_oracles::unavailable_disclosure(),
+                floor.disclosure,
+            ],
         );
     }
 
-    let mut violations = Vec::new();
+    let mut violations = floor.violations;
     validate_evidence_record_contract_fixture_corpus(&mut violations)?;
     validate_lane1_evidence_quality_failure_fixture_corpus(&mut violations)?;
     let benchmark_disclosure = validate_evidence_quality_benchmark_fixture_corpus(&mut violations)?;
@@ -188,12 +217,13 @@ pub(crate) fn check_fixture_contracts() -> Result<(), String> {
                 "Use Given/When/Then/Must Not sections in fixture SPEC.md.",
                 "Keep manifest-only fixture corpora covered by their dedicated validators.",
                 "Keep expected output files aligned with the fixture behavior.",
+                "Restore a golden surface or corpus case that policy/fixture-denominator-floor.txt names, or remove its line in the same change that retires it.",
             ],
             rerun_command: "cargo xtask check-fixture-contracts",
             exception_template: None,
         },
         &violations,
-        &[benchmark_disclosure],
+        &[benchmark_disclosure, floor.disclosure],
     )
 }
 

@@ -50,6 +50,7 @@ mod public_proof;
 mod publish_rehearsal;
 mod publish_stage;
 mod release_authority;
+mod source_package_contents;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;
@@ -337,9 +338,10 @@ use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist,
     check_cli_exit_contract, check_covered_by, check_doc_roles, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
-    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
+    check_no_panic_family, check_package_content, check_packaged_readme,
+    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
+    check_release_targets, check_static_language, check_text_encoding, check_user_text,
+    check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -1161,7 +1163,11 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
         policy: files
             .iter()
             .any(|f| f.starts_with("policy/") || f.starts_with(".ripr/")),
-        fixture: files.iter().any(|f| f.starts_with("fixtures/")),
+        // The floor is the fixture gates' denominator: an edit that removes a
+        // line from it must meet the gate that reads it (#15925).
+        fixture: files.iter().any(|f| {
+            f.starts_with("fixtures/") || f == fixture_contracts::FIXTURE_DENOMINATOR_FLOOR_PATH
+        }),
     }
 }
 
@@ -1326,6 +1332,10 @@ mod check_fast_selector_tests {
             assert!(!categories.rust_src, "{path}");
             assert_eq!(categories.fixture, path.starts_with("fixtures/"), "{path}");
         }
+        // #15925: a floor-only edit selects the gate that reads the floor.
+        let floor = categorize_changed_files(&["policy/fixture-denominator-floor.txt".to_string()]);
+        assert!(floor.fixture && floor.policy);
+        assert!(!categorize_changed_files(&["policy/other.txt".to_string()]).fixture);
     }
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {

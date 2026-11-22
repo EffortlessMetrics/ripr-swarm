@@ -59,6 +59,7 @@ fixtures/blind_journey_installed_python/**/pyproject.toml|fixture_input|analysis
 fixtures/first_successful_pr/python-preview-gap/pyproject.toml|fixture_input|analysis-fixtures|First successful PR Python preview fixture needs a project marker as analyzed input.
 fixtures/python/basic/pyproject.toml|fixture_input|analysis-fixtures|Python project detection fixture needs a project marker as analyzed input.
 fixtures/python_coarse_sign/input/pyproject.toml|fixture_input|analysis-fixtures|Python coarse-projection honesty control retains the original dependency-free verdict-corpus project marker as analyzed input (#12126).
+fixtures/python_membership_removed_member/input/pyproject.toml|fixture_input|analysis-fixtures|Python membership-member honesty control retains the original dependency-free verdict-corpus project marker as analyzed input (#15632).
 fixtures/python_package_alias_attribute_write/input/pyproject.toml|fixture_input|analysis-fixtures|Python package-bound alias honesty witness keeps a dependency-free project marker with a src pythonpath as analyzed input (#13927).
 fixtures/python_package_alias_nested_root/input/pyproject.toml|fixture_input|analysis-fixtures|Python package-bound alias honesty witness keeps a dependency-free project marker with a src pythonpath as analyzed input (#13927).
 fixtures/python_coarse_residue/input/pyproject.toml|fixture_input|analysis-fixtures|Python coarse-projection honesty control retains the original dependency-free verdict-corpus project marker as analyzed input (#12126).
