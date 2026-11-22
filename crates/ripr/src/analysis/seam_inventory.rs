@@ -2849,8 +2849,9 @@ pub(crate) fn classify_seams_in_files_at_with_config(
 }
 
 /// The changed Rust files (root-relative) that diff analysis covers but the
-/// repo seam inventory leaves out by design (#6944): Cargo build scripts,
-/// repository automation, and crate roots declared outside `src`. Roles come
+/// repo seam inventory leaves out by design (#6944): Cargo build scripts and
+/// repository automation. Crate roots declared outside `src` are in the
+/// inventory (#16045), so they are not named. Roles come
 /// from the context the inventory and `ripr check` build, over the changed
 /// files only: a file's build script, declared roots and module directories
 /// come from its own package's manifest, so the rest of the corpus adds
