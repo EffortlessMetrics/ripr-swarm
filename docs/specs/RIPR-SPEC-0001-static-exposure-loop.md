@@ -421,7 +421,9 @@ checkout location (#14230).
 The same pin sets a receipt's `written_at` and the report commands'
 `generated_at`, which are otherwise the only bytes that differ between two
 writes of one receipt or report; a malformed pin refuses those commands
-before anything is written (#14230).
+before anything is written (#14230). The pin never moves a deadline
+judgment: `ripr zero status`, which judges review deadlines against its own
+stamp, stays on the current time.
 
 ## Classifications
 

@@ -5,4 +5,5 @@
   `ripr assistant-loop`, PR review front panel, comment publish plan, policy
   readiness and report packet documents, so two writes of the same receipt
   or report are byte-identical. A malformed pin refuses the command before
-  it writes anything; unset, each still stamps the current time (#14230).
+  it writes anything; unset, each still stamps the current time. `ripr zero status` stays on the current time, because it judges
+  review deadlines against its own stamp (#14230).

@@ -678,11 +678,22 @@ fn first_action_report_repeats_under_a_pinned_generated_at() -> Result<(), Strin
             "pinned report must carry {PINNED_GENERATED_AT} and the guided file:\n{text}"
         ));
     }
+    let markdown = root.join("first-useful-action.md");
+    let read_markdown =
+        || std::fs::read(&markdown).map_err(|err| format!("read {}: {err}", markdown.display()));
+    let first_markdown = read_markdown()?;
     let second = stamped_write(&root, &args, Some(PIN), &report)?;
     if second != first {
         return Err(format!(
             "two reports under the same pin differ at {}",
             first_difference(&first, &second)
+        ));
+    }
+    let second_markdown = read_markdown()?;
+    if second_markdown != first_markdown {
+        return Err(format!(
+            "two Markdown reports under the same pin differ at {}",
+            first_difference(&first_markdown, &second_markdown)
         ));
     }
     let unpinned = stamped_write(&root, &args, None, &report)?;
@@ -694,11 +705,60 @@ fn first_action_report_repeats_under_a_pinned_generated_at() -> Result<(), Strin
             "an unpinned report must stamp its own time:\n{unpinned_text}"
         ));
     }
+    std::fs::remove_file(&markdown)
+        .map_err(|err| format!("remove {}: {err}", markdown.display()))?;
     assert_stamp_refused(
         &root,
         &args,
         "1778179200000",
         &report,
         "RIPR_GENERATED_AT must be unix_ms:",
-    )
+    )?;
+    if markdown.exists() {
+        return Err("a refused pin must not write the Markdown report".to_string());
+    }
+    Ok(())
+}
+
+/// `ripr zero status` judges review deadlines against its own stamp, so the
+/// pin must not reach it: a pin from before a review's deadline would report
+/// an overdue review as current. The fixture review fell due 2026-08-08.
+#[test]
+fn zero_status_keeps_the_wall_clock_under_a_pinned_generated_at() -> Result<(), String> {
+    // 2026-05-07, three months before the fixture review's deadline.
+    const PIN: &str = "unix_ms:1778179200000";
+    let root = std::env::temp_dir().join(format!(
+        "ripr-output-determinism-zero-status-{}",
+        std::process::id()
+    ));
+    let _scratch = Scratch(root.clone());
+    std::fs::create_dir_all(&root).map_err(|err| format!("create {}: {err}", root.display()))?;
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/boundary_gap/expected/baseline-debt-delta/mixed");
+    let baseline = fixture.join("baseline.json");
+    let delta = fixture.join("baseline-debt-delta.json");
+    let (Some(baseline), Some(delta)) = (baseline.to_str(), delta.to_str()) else {
+        return Err(format!("fixture path is not UTF-8: {}", fixture.display()));
+    };
+    let report = root.join("zero-status.json");
+    let args = [
+        "zero",
+        "status",
+        "--baseline",
+        baseline,
+        "--delta",
+        delta,
+        "--out",
+        "zero-status.json",
+        "--out-md",
+        "zero-status.md",
+    ];
+    let pinned = stamped_write(&root, &args, Some(PIN), &report)?;
+    let text = String::from_utf8_lossy(&pinned);
+    if text.contains(PIN) || !text.contains("1 baseline entries have stale review metadata") {
+        return Err(format!(
+            "zero status under a pin must stamp the run time and keep the overdue review stale:\n{text}"
+        ));
+    }
+    Ok(())
 }
