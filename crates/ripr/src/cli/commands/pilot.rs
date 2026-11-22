@@ -4,7 +4,7 @@ use crate::app::{self, CheckInput, Mode, OutputFormat};
 use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
 use crate::cli::commands_options::{PilotOptions, PilotStdoutFormat};
 use crate::cli::help;
-use crate::cli::parse::{expect_value, parse_mode, reconcile_root};
+use crate::cli::parse::{expect_path_value, expect_value, parse_mode, reconcile_root};
 use crate::cli::progress::{CliProgressSink, ProgressPolicy};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -182,7 +182,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let analysis_started = Instant::now();
     let mut timings = PilotTimings::start();
     let analysis_result = if rust_enabled {
-        run_pilot_analysis_with_timeout(
+        run_pilot_inventory_with_deadline(
+            progress.as_deref(),
             options.timeout_ms,
             extension_ms,
             || {
@@ -415,6 +416,21 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .with_absent_file_limitations(absent_file_limitations)
         .with_evidence_limitations(folded.evidence_limitations)
         .with_seams_counted(&classified, folded.caveat_limit);
+    // #15278: a changed spot the inventory reads as gripped may still hold a
+    // gap `ripr check` reports for the changed lines. Check runs only when
+    // such a spot exists, inside what is left of pilot's deadline.
+    let check_reads_open = crate::app::task_first::count_gripped_seams_check_reads_open(
+        &classified,
+        |entry| current_change.touches(entry),
+        || {
+            check_findings_within_deadline(
+                &input.root,
+                &config,
+                spent_timeout_ms.saturating_sub(elapsed_ms(analysis_started)),
+            )
+        },
+    );
+    let current_change = current_change.with_check_reads_open(check_reads_open);
     let budget_started = Instant::now();
     let mut pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
@@ -494,6 +510,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         &input.root,
         !classified.is_empty(),
         config.languages().enabled(),
+        config.source_text().is_none(),
         &analysis::workspace_preview_language_files(&input.root),
     )
     .with_unanalyzed(
@@ -786,6 +803,36 @@ fn name_diff_only_files(
     }
 }
 
+/// The default `ripr check` findings for the #15278 follow-up, under the
+/// `remaining_ms` left of pilot's deadline. A late or failed check yields
+/// `None`, which pilot reports as unconfirmed rather than as agreement. The
+/// miss is reported on stderr even under `--quiet`.
+fn check_findings_within_deadline(
+    root: &Path,
+    config: &RiprConfig,
+    remaining_ms: u64,
+) -> Option<Vec<crate::domain::Finding>> {
+    let missed = || {
+        eprintln!(
+            "ripr pilot: could not run `ripr check` on the current change within its deadline"
+        );
+        None
+    };
+    if remaining_ms == 0 {
+        return missed();
+    }
+    let (root, config) = (root.to_path_buf(), config.clone());
+    match run_pilot_analysis_with_timeout(
+        remaining_ms,
+        None,
+        || {},
+        move || crate::app::task_first::default_check_findings(&root, &config),
+    ) {
+        Ok(PilotAnalysisResult::Complete(findings)) => Some(findings),
+        Ok(PilotAnalysisResult::TimedOut) | Err(_) => missed(),
+    }
+}
+
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -804,6 +851,35 @@ fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgr
         std::io::stderr().is_terminal(),
         ProgressPolicy::STANDARD,
     )))
+}
+
+/// Run the main pilot analysis under its deadline, and close its progress
+/// run when the deadline wins (#5444).
+///
+/// The controller owns the timed-out run's terminal. The detached worker
+/// reaches its own `cancelled` only when it hits a cancellation checkpoint
+/// inside `PILOT_CANCEL_GRACE`, so leaving the line to it made the same
+/// timeout print it on some runs and not others. Exactly one
+/// `cancelled [repo]` line now ends the run, and a worker that wakes later
+/// cannot add to it.
+fn run_pilot_inventory_with_deadline<T, F>(
+    progress: Option<&CliProgressSink>,
+    timeout_ms: u64,
+    extension_ms: Option<u64>,
+    on_extend: impl FnOnce(),
+    runner: F,
+) -> Result<PilotAnalysisResult<T>, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    let result = run_pilot_analysis_with_timeout(timeout_ms, extension_ms, on_extend, runner)?;
+    if matches!(result, PilotAnalysisResult::TimedOut)
+        && let Some(sink) = progress
+    {
+        sink.abandon_with_scope(crate::app::AnalysisProgressScope::Repo);
+    }
+    Ok(result)
 }
 
 /// Run the pilot repo inventory through the shared app-layer
@@ -965,7 +1041,7 @@ fn parse_pilot_options(args: &[String]) -> Result<PilotOptions, String> {
             }
             "--out" => {
                 i += 1;
-                options.out_dir = PathBuf::from(expect_value(args, i, "--out")?);
+                options.out_dir = PathBuf::from(expect_path_value(args, i, "--out")?);
                 out_explicit = true;
             }
             "--mode" => {
@@ -1137,12 +1213,10 @@ where
         }
     }
     cancellation_token.cancel(crate::analysis::cancellation::AnalysisAbortKind::DeadlineExceeded);
-    // #5019: the detached worker owns its progress run's terminal
-    // (`cancelled`), and the caller exits soon after this return.
-    // Give the worker a bounded window to reach a cancellation
-    // checkpoint and finish, so the terminal is not lost to process
-    // exit. A worker stuck past the window cannot be forced (it is
-    // a detached thread): a known, bounded limitation.
+    // #5019: give the worker a bounded window to reach a cancellation
+    // checkpoint and finish. A worker stuck past the window cannot be
+    // forced (it is a detached thread); the caller closes the progress
+    // run itself (#5444), so its `cancelled` line does not depend on it.
     let _ignored = rx.recv_timeout(PILOT_CANCEL_GRACE);
     Ok(PilotAnalysisResult::TimedOut)
 }
@@ -1850,6 +1924,62 @@ mod tests {
         assert!(!extended.get());
     }
 
+    /// #5444: a worker stuck past the cancel grace (no checkpoint reached)
+    /// used to leave the run without its `cancelled` line. The controller now
+    /// closes it, and the worker's later events add nothing.
+    #[test]
+    fn a_worker_stuck_past_the_grace_still_ends_with_one_cancelled_line() {
+        use crate::app::{
+            AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink,
+            AnalysisProgressStage,
+        };
+        let event = |stage| AnalysisProgressEvent {
+            stage,
+            scope: AnalysisProgressScope::Repo,
+            completed_units: None,
+            total_units: None,
+            elapsed_ms: 0,
+        };
+        let buffer = ProgressBuffer::new();
+        let sink = std::sync::Arc::new(CliProgressSink::with_writer(
+            Box::new(buffer.clone()),
+            false,
+            ProgressPolicy::STANDARD,
+        ));
+        sink.hold_success_terminal();
+        let worker_sink = std::sync::Arc::clone(&sink);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel();
+        let result = run_pilot_inventory_with_deadline::<(), _>(
+            Some(&*sink),
+            20,
+            None,
+            || {},
+            move || {
+                worker_sink.emit(event(AnalysisProgressStage::Analyzing));
+                // Never reaches a checkpoint: only the test releases it, after
+                // the controller has given up.
+                let _ignored = release_rx.recv();
+                worker_sink.emit(event(AnalysisProgressStage::Cancelled));
+                worker_sink.emit(event(AnalysisProgressStage::Completed));
+                let _ignored = done_tx.send(());
+                Ok(())
+            },
+        );
+        // The worker is still blocked, so the only possible source of the
+        // terminal is the controller path pilot itself runs.
+        assert!(matches!(result, Ok(PilotAnalysisResult::TimedOut)));
+        let closed = buffer.text();
+        assert_eq!(
+            closed.matches("ripr progress: cancelled [repo]").count(),
+            1,
+            "{closed}"
+        );
+        let _ignored = release_tx.send(());
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)), Ok(()));
+        assert_eq!(buffer.text(), closed, "a late worker must add nothing");
+    }
+
     #[derive(Clone)]
     struct ProgressBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 
@@ -1891,7 +2021,12 @@ mod tests {
         let sink = std::sync::Arc::new(CliProgressSink::with_writer(
             Box::new(buffer.clone()),
             false,
-            ProgressPolicy::STANDARD,
+            ProgressPolicy {
+                // Stage and heartbeat projection only: the #15351 non-TTY
+                // quiet window is pinned in `cli::progress` tests.
+                non_tty_hold: Duration::ZERO,
+                ..ProgressPolicy::STANDARD
+            },
         ));
         let (done_tx, done_rx) = mpsc::channel();
         let result = run_pilot_analysis_with_timeout(
@@ -2274,9 +2409,12 @@ mod tests {
             Err(error) => error,
             Ok(()) => return Err("file occupying --out must fail".to_string()),
         };
+        // The product renders the path through `human_path` (forward slashes
+        // and no verbatim prefix on Windows).
+        let shown = crate::output::path::human_path(&env.target);
         assert!(
             error.contains(&format!(
-                "--out {out} is an existing file, but --out names the directory"
+                "--out {shown} is an existing file, but --out names the directory"
             )),
             "a file occupying the output directory names the flag and the fix: {error}"
         );

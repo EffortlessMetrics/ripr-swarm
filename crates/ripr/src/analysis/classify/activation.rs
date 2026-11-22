@@ -4587,6 +4587,64 @@ fn missing_error_variant_discriminator(
 /// it to keep an unselected arm from counting as activated.
 pub(in crate::analysis) use crate::domain::ARM_UNSELECTED_REASON_PREFIX;
 
+/// #12078: the repo seam view's reading of [`missing_match_arm_discriminator`]
+/// for a `match_arm` seam on `line` of `owner`, so a test whose inputs all
+/// select other arms grips the arm as `ripr check` reads it, never strongly.
+/// The seam has no diff, so the arm is read as one whose pattern did not
+/// change: the probe is the owner's own source line at the seam. The index
+/// is read as complete. That holds for the workspace inventories `repair`,
+/// `agent brief` and repo exposure read. The check screen's in-file seam view
+/// indexes only the finding's file and its related tests; there a rival
+/// outside the subset could go unseen, but that view only chooses which
+/// refusal to print (it never starts a repair), and `ripr repair` re-reads the
+/// full inventory. The same refusals apply as in `check` (a same-named
+/// function, a helper or unreadable use of the owner, a computed input), each
+/// leaving the arm unnamed.
+pub(in crate::analysis) fn repo_seam_unselected_arm(
+    file: &std::path::Path,
+    line: usize,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<MissingDiscriminatorFact> {
+    let source_line = owner
+        .body
+        .lines()
+        .nth(line.checked_sub(owner.start_line)?)?
+        .trim()
+        .to_string();
+    let probe = Probe {
+        id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
+        location: SourceLocation::new(file, line, 1),
+        owner: Some(owner.id.clone()),
+        family: ProbeFamily::MatchArm,
+        delta: DeltaKind::Control,
+        before: None,
+        after: Some(source_line.clone()),
+        expression: source_line,
+        expected_sinks: Vec::new(),
+        required_oracles: Vec::new(),
+    };
+    // The selector read is cheap and refuses most arms (a computed or
+    // guarded arm, a non-parameter scrutinee) before the workspace lookups.
+    super::arm_selection::ArmSelector::establish(&probe, owner)?;
+    let fact =
+        missing_match_arm_discriminator(&probe, Some(owner), related_tests, &[], index, true)?;
+    // The check-side callee-identity defeat (`classifier::evidence`): a test
+    // file that imports the owner's name from a foreign path may call that
+    // item instead, so its bare call's input says nothing about which arm
+    // the owner runs (#15006 review). A same-named function in the test's
+    // package is already refused by the unique-name read above.
+    let context =
+        super::context::ProbeContext::new(&probe, Some(owner), Vec::new(), false, index, true);
+    let imports_foreign = related_tests.iter().any(|test| {
+        index.files().get(&test.file).is_some_and(|facts| {
+            context.test_file_imports_foreign_callee_name(&test.file, &facts.source, &owner.name)
+        })
+    });
+    (!imports_foreign).then_some(fact)
+}
+
 /// RIPR-SPEC-0229 (#5432): name a changed match arm as the missing
 /// discriminator when every related test calls the owner directly and every
 /// call's scrutinee input provably selects a different arm (`reason(Some(5))`
@@ -4603,6 +4661,19 @@ fn missing_match_arm_discriminator(
     workspace_complete: bool,
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
+    // A trait method runs from calls that never name it (`.into()` reaching
+    // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
+    // related set may select the arm and no mention scan below can see it.
+    // An unestablished container may be one, so only a known non-trait
+    // owner reads on.
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
+        return None;
+    }
     // A same-named function elsewhere makes a direct call ambiguous, and a
     // partial index cannot show that the name is unique.
     if related_tests.is_empty()
@@ -4613,6 +4684,16 @@ fn missing_match_arm_discriminator(
     }
     let selector = super::arm_selection::ArmSelector::establish(probe, owner)?
         .in_workspace(index, related_tests.iter().map(|test| test.file.as_path()));
+    // Every test's inputs first: one test that selects the arm, or an input
+    // that does not read, refuses before the workspace-wide lookups below.
+    let mut inputs = Vec::new();
+    for test in related_tests {
+        let observed = selector.observed_inputs(test)?;
+        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
+            return None;
+        }
+        inputs.extend(observed.inputs);
+    }
     // Built once per probe: the helper walk below looks names up for every
     // related test.
     let mut functions_by_name = std::collections::BTreeMap::<&str, Vec<_>>::new();
@@ -4622,16 +4703,20 @@ fn missing_match_arm_discriminator(
             .or_default()
             .push(function);
     }
-    let mut inputs = Vec::new();
-    for test in related_tests {
-        if may_reach_owner_unread(test, &owner.name, &functions_by_name) {
-            return None;
-        }
-        let observed = selector.observed_inputs(test)?;
-        if observed.selection != super::arm_selection::ArmSelection::SelectsOther {
-            return None;
-        }
-        inputs.extend(observed.inputs);
+    if related_tests
+        .iter()
+        .any(|test| may_reach_owner_unread(test, &owner.name, &functions_by_name))
+    {
+        return None;
+    }
+    // A call's input names the first arm it enters, not every arm it runs
+    // (#12078 review): an owner that may run again from inside its own call
+    // (`Size::Small => price_cents(Size::Medium)`, a helper or function value
+    // that calls it back, an operator or `Display` impl that names it) can
+    // run the arm from a call that selects another one. Read after every
+    // test, so a test that selects the arm skips the workspace scan.
+    if owner_may_call_itself(owner, &functions_by_name, index, related_tests) {
+        return None;
     }
     inputs.sort();
     inputs.dedup();
@@ -4665,10 +4750,11 @@ pub(in crate::analysis) use crate::domain::GUARD_UNENTERED_REASON_PREFIX;
 /// (`add(&mut v, 4)` against `if x > 10`; a let-bound literal or a
 /// file-level `const` bound reads too, #7964). The probe then never runs
 /// under the tests, so no assertion over its effect can reveal it. The same
-/// refusals as [`missing_match_arm_discriminator`] apply: one unreadable
-/// use of the owner, one computed input, a partial index, a same-named
-/// function, or a related test that may reach the owner through a helper
-/// or macro leaves the guard unnamed.
+/// refusals as [`missing_match_arm_discriminator`] apply: a trait-method or
+/// unestablished-container owner (#15010), one unreadable use of the owner,
+/// one computed input, a partial index, a same-named function, or a related
+/// test that may reach the owner through a helper or macro leaves the guard
+/// unnamed.
 fn missing_guard_entry_discriminator(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -4679,6 +4765,19 @@ fn missing_guard_entry_discriminator(
 ) -> Option<MissingDiscriminatorFact> {
     let owner = owner_fn?;
     if related_tests.is_empty() || !workspace_complete {
+        return None;
+    }
+    // A trait method runs from calls that never name it (`.into()` reaching
+    // `from`, `==` reaching `eq`, `{}` reaching `fmt`), so a test outside the
+    // related set may enter the guard and no mention scan below can see it
+    // (#15010, as in `missing_match_arm_discriminator`). An unestablished
+    // container may be one, so only a known non-trait owner reads on.
+    if !matches!(
+        owner.item.container,
+        crate::analysis::facts::FunctionContainer::Free
+            | crate::analysis::facts::FunctionContainer::Local
+            | crate::analysis::facts::FunctionContainer::Inherent { .. }
+    ) {
         return None;
     }
     // The cheap text read first: most side effects sit under no readable
@@ -4725,6 +4824,72 @@ fn missing_guard_entry_discriminator(
         inputs.extend(guard.unentered_inputs(test)?);
     }
     Some(guard_unentered_fact(&guard, inputs, flow_sinks))
+}
+
+/// Whether `owner` may run again from inside its own call, so a test input
+/// that selects one arm can still run another. The same refusals as
+/// [`missing_guard_entry_discriminator`]: a callee may call it back
+/// ([`owner_may_reenter`]), its body invokes a macro whose expansion is not
+/// read, a read macro that it, a callee, a related test or a test helper
+/// invokes is rebound ([`invoked_read_macro_rebound`]; the guard reading
+/// asks about every read-macro name), or anything outside the related tests
+/// names it
+/// ([`owner_named_outside_related_tests`]): its own body (a direct,
+/// `Self::`-qualified or `self.` self-call), a helper passed as a function
+/// value, an operator, `Display` or `Drop` impl, a stored pointer. Comments
+/// and strings are masked; any other mention refuses even when it cannot
+/// run inside the owner's call (a production caller the owner never reaches,
+/// a same-named local), which costs coverage but never names an arm a test
+/// may run.
+fn owner_may_call_itself(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+    index: &crate::analysis::rust_index::RustIndex,
+    related_tests: &[&TestSummary],
+) -> bool {
+    owner_may_reenter(owner, functions_by_name)
+        || invokes_unread_macro(&owner.body)
+        || owner_named_outside_related_tests(index, &owner.name, related_tests)
+        // The read macros are trusted by name (#15022, as in
+        // `missing_guard_entry_discriminator`): a workspace that defines,
+        // imports or may glob in another macro under one of those names can
+        // run the owner with an input the call it wraps never shows. Only
+        // the names the owner, its callees, the related tests and their
+        // helpers invoke are asked about, so an unrelated `macro_rules!
+        // assert` elsewhere leaves an `assert_eq!`-only arm readable.
+        || invoked_read_macro_rebound(owner, functions_by_name, index, related_tests)
+}
+
+/// Whether a [`READ_MACROS`] name that the owner, a function it reaches,
+/// a related test or a helper that test reaches invokes is rebound in the
+/// workspace ([`macro_names_rebound`]). A name nothing on those paths
+/// invokes cannot run the owner from a read call.
+fn invoked_read_macro_rebound(
+    owner: &FunctionSummary,
+    functions_by_name: &std::collections::BTreeMap<&str, Vec<&FunctionSummary>>,
+    index: &crate::analysis::rust_index::RustIndex,
+    related_tests: &[&TestSummary],
+) -> bool {
+    let mut invoked = std::collections::BTreeSet::new();
+    let mut pending = Vec::new();
+    collect_read_macros(&owner.body, &mut invoked);
+    pending.extend(owner.calls.iter().map(|call| call.name.as_str()));
+    for test in related_tests {
+        collect_read_macros(&test.body, &mut invoked);
+        pending.extend(test.body_calls().map(|call| call.name.as_str()));
+    }
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !visited.insert(name) {
+            continue;
+        }
+        for function in functions_by_name.get(name).into_iter().flatten() {
+            collect_read_macros(&function.body, &mut invoked);
+            pending.extend(function.calls.iter().map(|call| call.name.as_str()));
+        }
+    }
+    let names = invoked.into_iter().collect::<Vec<_>>();
+    !names.is_empty() && macro_names_rebound(index, &names)
 }
 
 /// Whether a function the owner reaches through its calls names the owner
@@ -4810,14 +4975,41 @@ fn may_reach_owner_unread(
 }
 
 /// Whether any indexed file mentions `owner` more often than the related
-/// tests in it do, names it in a doc comment, or uses `include!`. Mentions in the owner's `fn` header and in plain `use`
-/// paths do not count ([`unread_mentions`]); every other mention must be
-/// one a related test's body holds, since only those calls are read.
+/// tests in it do, names it in a doc comment, or uses `include!`. Mentions
+/// in the owner's `fn` header and in plain `use` paths do not count
+/// ([`unread_mentions`]), nor do mentions inside a function that provably
+/// never runs ([`never_runs`]); every other mention must be one a related
+/// test's body holds, since only those calls are read.
 fn owner_named_outside_related_tests(
     index: &crate::analysis::rust_index::RustIndex,
     owner: &str,
     related_tests: &[&TestSummary],
 ) -> bool {
+    // A mention inside a function nothing can run (#15006 review: an unused
+    // `advertised_small_price()` wrapper) cannot run the owner either.
+    let unreachable = index
+        .functions()
+        .iter()
+        .filter(|function| {
+            function.name != owner
+                && unread_mentions(&function.body, owner) > 0
+                && never_runs(index, function)
+        })
+        .collect::<Vec<_>>();
+    // A nested `fn` is its own function and also sits in its parent's body:
+    // count each mention once, from the outermost function only.
+    let unreachable = unreachable
+        .iter()
+        .filter(|inner| {
+            !unreachable.iter().any(|outer| {
+                outer.id != inner.id
+                    && outer.file == inner.file
+                    && outer.start_line <= inner.start_line
+                    && inner.end_line <= outer.end_line
+            })
+        })
+        .copied()
+        .collect::<Vec<_>>();
     index.files().iter().any(|(path, file)| {
         let mut seen = std::collections::BTreeSet::new();
         let read: usize = related_tests
@@ -4825,11 +5017,125 @@ fn owner_named_outside_related_tests(
             .filter(|test| test.file == *path && seen.insert(test.name.as_str()))
             .map(|test| unread_mentions(&test.body, owner))
             .sum();
-        unread_mentions(&file.source, owner) > read
+        let unreached: usize = unreachable
+            .iter()
+            .filter(|function| function.file == *path)
+            .map(|function| unread_mentions(&function.body, owner))
+            .sum();
+        unread_mentions(&file.source, owner) > read + unreached
             || doc_comment_names(&file.source, owner)
             || crate::analysis::extract::mask_comments_and_strings(&file.source)
                 .contains("include!")
     })
+}
+
+/// Whether `function` provably never runs: an attribute-free production
+/// `fn` (no `#[test]`, `#[no_mangle]`, `#[export_name]`, `#[cfg]` or harness
+/// attribute) outside any trait and outside an attributed `impl`, not
+/// `main`, whose name appears nowhere in the workspace but its own header
+/// (no call, `use`, comment or string names it; not a raw `r#` name; no
+/// file uses `paste` or `concat_idents`), and whose body declares no item and
+/// invokes no macro at all. A trait method runs from calls that never name
+/// it, an attribute may register a function with a harness or a linker, a
+/// nested `impl` runs without its parent, and a macro may expand to either,
+/// so any of those keeps the function reachable.
+fn never_runs(index: &crate::analysis::rust_index::RustIndex, function: &FunctionSummary) -> bool {
+    use crate::analysis::facts::{FunctionContainer, FunctionSourceRole};
+    function.source_role == FunctionSourceRole::Production
+        && function.attrs.is_empty()
+        && function.impl_attrs.is_empty()
+        && matches!(
+            function.item.container,
+            FunctionContainer::Free | FunctionContainer::Inherent { .. }
+        )
+        && function.name != "main"
+        && !function.name.is_empty()
+        // `fn r#name` is called as `name`, which the count below would miss.
+        && !function.name.starts_with("r#")
+        // An item nested in the body can run without its parent: an `impl`
+        // (`impl From<Forward> for u32` reached by `.into()`), an exported
+        // `macro_rules!`, an attributed `#[no_mangle]` or `extern` fn.
+        && !declares_free_standing_item(&function.body)
+        // A macro it invokes may expand to such an item (`reg!(price_cents)`
+        // emitting an `impl Drop`), which no file read here shows. A read
+        // macro's name may be rebound (`macro_rules! dbg`), so none is
+        // trusted here.
+        && !invokes_any_macro(&function.body)
+        // Every whole-word spelling of the name, in code, comments and
+        // strings alike, must be its own `fn` header: a string can name it
+        // to a derive (`#[serde(default = "medium_price")]`) that runs it.
+        && index
+            .files()
+            .iter()
+            .map(|(_, file)| whole_word_count(&file.source, &function.name))
+            .sum::<usize>()
+            == 1
+        // A macro that pastes identifiers together can spell a call to it
+        // that no file holds whole.
+        && !index.files().iter().any(|(_, file)| {
+            whole_word_count(&file.source, "paste") > 0
+                || whole_word_count(&file.source, "concat_idents") > 0
+        })
+}
+
+/// Whether `body` holds an item that runs or is visible without the
+/// enclosing function running: any `impl`, `macro_rules!`, `extern` or
+/// attribute. Comments and strings are masked. Any `#` refuses, since an
+/// attribute may put whitespace or a comment between `#` and `[`
+/// (`# [unsafe(export_name = "cb")]`); an `impl Trait` return type or a raw
+/// identifier also refuses, which only keeps the function counted as
+/// reachable.
+fn declares_free_standing_item(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    masked.contains('#')
+        || ["impl", "macro_rules", "extern"]
+            .iter()
+            .any(|word| whole_word_count(&masked, word) > 0)
+}
+
+/// Whether `body` invokes any macro (`name!(`, `name! [`, `name !{`),
+/// standard or not. Comments and strings are masked.
+fn invokes_any_macro(body: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    masked.match_indices('!').any(|(offset, _)| {
+        let next = bytes[offset + 1..]
+            .iter()
+            .copied()
+            .find(|byte| !byte.is_ascii_whitespace());
+        if !matches!(next, Some(b'(' | b'[' | b'{')) {
+            return false;
+        }
+        let head = masked[..offset].trim_end();
+        let name_start = head
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let name = &head[name_start..];
+        // `if !(done)` is a negation after a keyword, not a macro.
+        !name.is_empty()
+            && !matches!(
+                name,
+                "if" | "while" | "match" | "return" | "in" | "else" | "break"
+            )
+    })
+}
+
+/// How many times `word` appears in `source` with no identifier character on
+/// either side, unmasked.
+fn whole_word_count(source: &str, word: &str) -> usize {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    source
+        .match_indices(word)
+        .filter(|(offset, _)| {
+            !source[..*offset].chars().next_back().is_some_and(is_word)
+                && !source[offset + word.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word)
+        })
+        .count()
 }
 
 /// Whether a doc comment in `source` names `owner`, or a doc attribute
@@ -4912,7 +5218,7 @@ fn in_use_item(before: &str) -> bool {
 
 /// The standard assertion and formatting macros whose expansion cannot
 /// call the owner.
-const READ_MACROS: &[&str] = &[
+pub(super) const READ_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
     "assert_ne",
@@ -4987,46 +5293,69 @@ fn rebound_scan(index: &crate::analysis::rust_index::RustIndex, names: &[&str]) 
 /// Whether `body` invokes a macro other than [`READ_MACROS`], whose
 /// expansion is not read and may call any function.
 fn invokes_unread_macro(body: &str) -> bool {
+    macro_invocations(body)
+        .iter()
+        .any(|(name, foreign_path)| *foreign_path || !READ_MACROS.contains(&name.as_str()))
+}
+
+/// Add to `invoked` each [`READ_MACROS`] name that `body` invokes without a
+/// path outside the standard crates (#15022).
+fn collect_read_macros(body: &str, invoked: &mut std::collections::BTreeSet<&'static str>) {
+    for (name, foreign_path) in macro_invocations(body) {
+        if let Some(read) = READ_MACROS.iter().find(|read| **read == name)
+            && !foreign_path
+        {
+            invoked.insert(*read);
+        }
+    }
+}
+
+/// The macro invocations in `body`, comments and strings masked: each
+/// name, and whether a path outside the standard crates qualifies it.
+fn macro_invocations(body: &str) -> Vec<(String, bool)> {
     let masked = crate::analysis::extract::mask_comments_and_strings(body);
     let bytes = masked.as_bytes();
     // Rust allows whitespace on both sides of the `!` (`exercise! ()`,
     // `exercise !()`), so both are skipped before reading the delimiter
     // and the name.
-    masked.match_indices('!').any(|(offset, _)| {
-        let next = bytes[offset + 1..]
-            .iter()
-            .copied()
-            .find(|byte| !byte.is_ascii_whitespace());
-        if !matches!(next, Some(b'(' | b'[' | b'{')) {
-            return false;
-        }
-        let name_end = masked[..offset].trim_end().len();
-        let name_start = masked[..name_end]
-            .char_indices()
-            .rev()
-            .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
-            .map_or(0, |(index, ch)| index + ch.len_utf8());
-        let name = &masked[name_start..name_end];
-        // A path-qualified name (`util::println!`) is a read macro only
-        // under the standard crates.
-        let qualifier = masked[..name_start].trim_end();
-        let foreign_path = qualifier.ends_with("::")
-            && !["std::", "core::", "alloc::"].iter().any(|root| {
-                qualifier.strip_suffix(root).is_some_and(|head| {
-                    !head
-                        .chars()
-                        .next_back()
-                        .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-                })
-            });
-        // `if !(done)` is a negation after a keyword, not a macro.
-        !name.is_empty()
-            && (foreign_path || !READ_MACROS.contains(&name))
-            && !matches!(
-                name,
-                "if" | "while" | "match" | "return" | "in" | "else" | "break"
-            )
-    })
+    masked
+        .match_indices('!')
+        .filter_map(|(offset, _)| {
+            let next = bytes[offset + 1..]
+                .iter()
+                .copied()
+                .find(|byte| !byte.is_ascii_whitespace());
+            if !matches!(next, Some(b'(' | b'[' | b'{')) {
+                return None;
+            }
+            let name_end = masked[..offset].trim_end().len();
+            let name_start = masked[..name_end]
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| !(ch.is_ascii_alphanumeric() || *ch == '_'))
+                .map_or(0, |(index, ch)| index + ch.len_utf8());
+            let name = &masked[name_start..name_end];
+            // A path-qualified name (`util::println!`) is a read macro only
+            // under the standard crates.
+            let qualifier = masked[..name_start].trim_end();
+            let foreign_path = qualifier.ends_with("::")
+                && !["std::", "core::", "alloc::"].iter().any(|root| {
+                    qualifier.strip_suffix(root).is_some_and(|head| {
+                        !head
+                            .chars()
+                            .next_back()
+                            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                    })
+                });
+            // `if !(done)` is a negation after a keyword, not a macro.
+            (!name.is_empty()
+                && !matches!(
+                    name,
+                    "if" | "while" | "match" | "return" | "in" | "else" | "break"
+                ))
+            .then(|| (name.to_string(), foreign_path))
+        })
+        .collect()
 }
 
 /// Produce a missing-discriminator fact for a `FieldConstruction` seam whose
@@ -5777,6 +6106,36 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
     tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
+    assigned_field_unchecked(owner, expression, path, tests, index, false)
+}
+
+/// RIPR-SPEC-0228 examples 3, 4 and 6 (#12771): whether the changed field
+/// write is a placed gap for `check`'s class. The same policy as
+/// [`assigned_field_weak_read_start`], except that a test may also read only
+/// other declared fields of the binding it ran the owner on, directly or
+/// through a getter that plainly returns one ([`sibling_field_read`]). Such a
+/// test cannot observe the write, and every other guard still withholds when
+/// anything else may read it. The repair start stays with the weak-read
+/// policy alone: a sibling-only test holds no weak read of the field to
+/// strengthen, like a test that reads nothing (`reachable_unrevealed`).
+pub(in crate::analysis) fn assigned_field_gap_is_placed(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    assigned_field_unchecked(owner, expression, path, tests, index, true)
+}
+
+fn assigned_field_unchecked(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+    sibling_reads: bool,
+) -> bool {
     if !owner_borrows_receiver(&owner.body)
         || path.is_empty()
         || tests.iter().any(|test| {
@@ -5808,7 +6167,13 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
             if assigned_field_read_confirms(owner, path, test, assertion, index) {
                 return false;
             }
-            if let Some(binding) = weak_assigned_field_read(owner, path, test, assertion) {
+            if let Some(binding) =
+                weak_assigned_field_read(owner, path, test, assertion).or_else(|| {
+                    sibling_reads
+                        .then(|| sibling_field_read(owner, path, test, assertion, index))
+                        .flatten()
+                })
+            {
                 weak_reads.push((at, binding));
             }
         }
@@ -6002,6 +6367,162 @@ fn weak_assigned_field_read(
             assertion.line,
         ))
     .then_some(binding)
+}
+
+/// RIPR-SPEC-0228 example 4 (#12771): the binding `assertion` reads only
+/// other fields of, after the test ran the owner on it. Every member access
+/// in the masked assertion must be on that one bare binding, and each must be
+/// either a plain field `<binding>.g` or a getter `<binding>.m()` that
+/// [`getter_plainly_reads`](super::builder_override::getter_plainly_reads)
+/// resolves to a field `g`, where `g` is declared on the owner's impl type and
+/// is not the written field `path` (nor a projection of it). The binding
+/// appears nowhere else in the assertion (`&c`, `c.clone()`), the test calls
+/// the owner on it exactly once, and the confirming rule's binding guards
+/// hold. Such a read cannot observe the
+/// write, so it places a test for [`assigned_field_gap_is_placed`]: the rest
+/// of that policy still withholds when anything
+/// else in the test may read `path`. Any other shape (a method on another
+/// local, a chained projection, a computed getter, an unknown field) is
+/// unplaced, so it fails closed.
+fn sibling_field_read(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let call = super::builder_override::OwnerCall::from_symbol(&owner.id.0)?;
+    let impl_type = call.impl_type()?;
+    let root = path.split('.').next().filter(|root| !root.is_empty())?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+    let text = masked.trim();
+    let (name, _) = text.split_once('!')?;
+    if !matches!(name.trim(), "assert_eq" | "assert_ne" | "assert")
+        || macro_names_rebound(index, &["assert", "assert_eq", "assert_ne"])
+    {
+        return None;
+    }
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mut binding: Option<&str> = None;
+    let mut accesses = 0usize;
+    for (dot, _) in text.match_indices('.') {
+        let before = &text[..dot];
+        let receiver_start = before
+            .char_indices()
+            .rev()
+            .take_while(|(_, ch)| is_ident(*ch))
+            .last()
+            .map(|(at, _)| at)?;
+        let receiver = &before[receiver_start..];
+        let preceded = before[..receiver_start].chars().next_back();
+        if receiver.is_empty()
+            || receiver.starts_with(|ch: char| ch.is_ascii_digit())
+            || preceded.is_some_and(|ch| is_ident(ch) || ch == '.' || ch == ':')
+        {
+            return None;
+        }
+        if binding.is_some_and(|known| known != receiver) {
+            return None;
+        }
+        binding = Some(receiver);
+        let after = &text[dot + 1..];
+        let member_len = after.find(|ch: char| !is_ident(ch)).unwrap_or(after.len());
+        let member = &after[..member_len];
+        let tail = &after[member_len..];
+        if member.is_empty() || member.starts_with(|ch: char| ch.is_ascii_digit()) {
+            return None;
+        }
+        let field = if let Some(rest) = tail.strip_prefix("()") {
+            if rest.trim_start().starts_with(['.', '[', '?']) {
+                return None;
+            }
+            getter_field(index, impl_type, member)?
+        } else {
+            if tail.trim_start().starts_with(['.', '[', '(', '?']) {
+                return None;
+            }
+            member.to_string()
+        };
+        // The only refusal of the written field in a placed assertion: the
+        // shared guards skip a placed assertion, so a `.<root>` access here
+        // (`c.n + c.m`) or a getter that returns it must decline. A getter
+        // named after the field that returns another (`c.count()` reading
+        // `self.other`) is a sibling read.
+        if field == root || super::field_reach::declared_field_reach(owner, &field, index).is_none()
+        {
+            return None;
+        }
+        accesses += 1;
+    }
+    let binding = binding?;
+    // Every mention of the binding is one of the member accesses above.
+    if accesses == 0
+        || text
+            .match_indices(binding)
+            .filter(|(at, _)| {
+                !text[..*at].chars().next_back().is_some_and(is_ident)
+                    && !text[at + binding.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_ident)
+            })
+            .count()
+            != accesses
+        || names_format_capture(&assertion.text, binding)
+    {
+        return None;
+    }
+    // One owner call on the binding: a second run can carry the first
+    // write into a sibling (`self.m = self.count; self.count += 1;` run
+    // twice leaves the written value in `m`), so the read could observe it.
+    let body = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
+    let call_text = format!("{binding}.{}(", call.name());
+    if body
+        .match_indices(&call_text)
+        .filter(|(at, _)| !body[..*at].chars().next_back().is_some_and(is_ident))
+        .count()
+        != 1
+    {
+        return None;
+    }
+    let binding = binding.to_string();
+    (!super::reveal::owner_called_on_other_receiver(&test.body, &binding, call.name())
+        && super::reveal::owner_call_precedes_read(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+            call.impl_type(),
+        )
+        && super::reveal::binding_untouched_after_owner_call(
+            &test.body,
+            test.start_line,
+            &binding,
+            call.name(),
+            assertion.line,
+        ))
+    .then_some(binding)
+}
+
+/// The field a getter `<impl_type>::<getter>(&self)` plainly returns
+/// (`self.g`, `&self.g`, a clone of it; see
+/// [`getter_plainly_reads`](super::builder_override::getter_plainly_reads)).
+fn getter_field(
+    index: &crate::analysis::rust_index::RustIndex,
+    impl_type: &str,
+    getter: &str,
+) -> Option<String> {
+    let body = super::builder_override::inherent_method_body(index, impl_type, getter)?;
+    let at = body.rfind("self.")?;
+    let rest = &body[at + "self.".len()..];
+    let len = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(rest.len());
+    let field = &rest[..len];
+    (!field.is_empty()
+        && super::builder_override::getter_plainly_reads(index, impl_type, getter, field))
+    .then(|| field.to_string())
 }
 
 /// The binding whose field `path` the masked assertion reads as one whole
@@ -8711,41 +9232,46 @@ fn replaced_equality_constant(
         .flatten()
 }
 
-fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
-    fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
-        let text = text.trim();
-        let text = text.strip_prefix("if ").unwrap_or(text);
-        let text = text.strip_suffix('{').unwrap_or(text).trim();
-        let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
-        if masked.len() != text.len()
-            || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
-                .iter()
-                .any(|token| masked.contains(token))
-        {
-            return None;
-        }
-        let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
-            (1, 0) => "==",
-            (0, 1) => "!=",
-            _ => return None,
-        };
-        let at = masked.find(operator)?;
-        let left = text.get(..at)?;
-        let right = text.get(at + operator.len()..)?.trim();
-        let literal = !right.is_empty()
-            && if right.starts_with('"') || right.starts_with('\'') {
-                super::match_transfer::is_single_literal(right)
-            } else {
-                right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
-            };
-        (literal && !left.trim().is_empty()).then(|| {
-            (
-                left.split_whitespace().collect::<String>(),
-                operator,
-                right.to_string(),
-            )
-        })
+/// A bare `left == literal` or `left != literal` comparison (whitespace-free
+/// left side, operator, literal text): one operator, no connective, and a
+/// right side that is a single string or char literal or a digits-only
+/// integer. `None` for any other shape.
+fn bare_equality(text: &str) -> Option<(String, &'static str, String)> {
+    let text = text.trim();
+    let text = text.strip_prefix("if ").unwrap_or(text);
+    let text = text.strip_suffix('{').unwrap_or(text).trim();
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(text);
+    if masked.len() != text.len()
+        || ["&&", "||", ">=", "<=", "<", ">", "?", ";", "=>", "|"]
+            .iter()
+            .any(|token| masked.contains(token))
+    {
+        return None;
     }
+    let operator = match (masked.matches("==").count(), masked.matches("!=").count()) {
+        (1, 0) => "==",
+        (0, 1) => "!=",
+        _ => return None,
+    };
+    let at = masked.find(operator)?;
+    let left = text.get(..at)?;
+    let right = text.get(at + operator.len()..)?.trim();
+    let literal = !right.is_empty()
+        && if right.starts_with('"') || right.starts_with('\'') {
+            super::match_transfer::is_single_literal(right)
+        } else {
+            right.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
+        };
+    (literal && !left.trim().is_empty()).then(|| {
+        (
+            left.split_whitespace().collect::<String>(),
+            operator,
+            right.to_string(),
+        )
+    })
+}
+
+fn replaced_literal_swap(probe: &Probe) -> Option<ReplacedConstant> {
     let (before_left, before_operator, before_literal) = bare_equality(probe.before.as_deref()?)?;
     let (after_left, after_operator, after_literal) = bare_equality(&probe.expression)?;
     if before_left != after_left
@@ -8828,6 +9354,11 @@ pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
     if operands.len() == 1 {
         return Some(expression);
     }
+    if let Some(added) =
+        before.and_then(|before| added_equality_disjunct(expression, &operands, before))
+    {
+        return Some(added);
+    }
     let mut comparisons = operands
         .iter()
         .copied()
@@ -8858,6 +9389,69 @@ pub(in crate::analysis) fn changed_comparison_conjunct<'a>(
         }
     }
     Some(comparison)
+}
+
+/// #14726: the one comparison an edit added as a new `||` disjunct of a bare
+/// equality, `x == A` to `x == A || x == B` (either order). An input equal to
+/// `B` makes the added disjunct true and the kept one false, because `A` and
+/// `B` are different literal values, so that input flips the predicate and
+/// `x == B` is its boundary reading. Every part is fail-closed: the
+/// pre-edit text must be one bare `==` comparison kept verbatim as one
+/// operand, the connective must be a single top-level `||`, the added
+/// operand must be a bare `==` on the same left side, and both right sides
+/// must be literals whose values differ. Any other shape, including an added
+/// `&&` conjunct, a `!=` or ordered comparison, a third operand, a left side
+/// that is not a plain place path (a call or index), an escaped literal, or a
+/// second literal equal in value to the first (`5` and `05`), keeps the
+/// two-comparison refusal (RIPR-SPEC-0158).
+fn added_equality_disjunct<'a>(
+    expression: &'a str,
+    operands: &[&'a str],
+    before: &str,
+) -> Option<&'a str> {
+    let [first, second] = operands else {
+        return None;
+    };
+    let base = expression.as_ptr() as usize;
+    let gap_start = first.as_ptr() as usize - base + first.len();
+    let gap_end = second.as_ptr() as usize - base;
+    if expression.get(gap_start..gap_end)?.trim() != "||" {
+        return None;
+    }
+    if top_level_connective_operands(before)?.len() != 1 {
+        return None;
+    }
+    let kept = bare_equality(before)?;
+    let added = match (bare_equality(first), bare_equality(second)) {
+        (Some(one), Some(two)) if one == kept => (*second, two),
+        (Some(one), Some(two)) if two == kept => (*first, one),
+        _ => return None,
+    };
+    let (kept_left, kept_operator, kept_literal) = kept;
+    let (added_text, (added_left, added_operator, added_literal)) = added;
+    if kept_operator != "==" || added_operator != "==" || added_left != kept_left {
+        return None;
+    }
+    // Both sides must name the same value: a plain place path (`flag`,
+    // `self.mode`), never a call or index that may read a different value on
+    // each evaluation (`it.next() == 1 || it.next() == 2`).
+    let place_path = kept_left.split('.').all(|segment| {
+        segment
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    });
+    // An escape can spell one value two ways (`"A"` and `"\x41"`), which the
+    // textual literal comparison would read as different values.
+    if !place_path || kept_literal.contains('\\') || added_literal.contains('\\') {
+        return None;
+    }
+    let kept_value = literal_operand_value(&kept_literal)?;
+    let added_value = literal_operand_value(&added_literal)?;
+    (!same_literal_value(&kept_value, &added_value)).then_some(added_text)
 }
 
 /// `text` with every string and char literal body byte replaced by `x`, so a
@@ -9403,6 +9997,12 @@ fn owner_row_argument_values(
     scope: super::argument_fold::FoldScope<'_>,
 ) -> Vec<String> {
     if let Some(value) = scope.property_argument(argument) {
+        return vec![value];
+    }
+    // RIPR-SPEC-0158: `level("12")` through the file's one closed parse helper
+    // is the number it parses to. The helper call is no literal-carrying
+    // argument, so this reads first.
+    if let Some(value) = super::argument_fold::folded_parse_argument(&test.body, argument, scope) {
         return vec![value];
     }
     let values = owner_argument_values_in(test, argument, text_cells);
@@ -10304,6 +10904,67 @@ mod rebinding_scan;
 
 #[cfg(test)]
 mod tests {
+    /// #14726: `x == A` to `x == A || x == B` reads the added `x == B`; every
+    /// other two-comparison shape keeps no boundary reading (RIPR-SPEC-0158).
+    #[test]
+    fn an_added_equality_disjunct_is_the_boundary_reading() {
+        use super::changed_comparison_conjunct as conjunct;
+        let kept = Some("flag == \"-v\"");
+        assert_eq!(
+            conjunct("flag == \"-v\" || flag == \"--verbose\"", kept),
+            Some("flag == \"--verbose\"")
+        );
+        // Either order, chars and integers.
+        assert_eq!(
+            conjunct("flag == \"--verbose\" || flag == \"-v\"", kept),
+            Some("flag == \"--verbose\"")
+        );
+        assert_eq!(
+            conjunct("c == 'a' || c == 'b'", Some("c == 'a'")),
+            Some("c == 'b'")
+        );
+        assert_eq!(conjunct("n == 1 || n == 2", Some("n == 1")), Some("n == 2"));
+        // A field place path names one value too.
+        assert_eq!(
+            conjunct("self.mode == 1 || self.mode == 2", Some("self.mode == 1")),
+            Some("self.mode == 2")
+        );
+        for (expression, before) in [
+            // No pre-edit text, or a pre-edit text that is not kept verbatim.
+            ("flag == \"-v\" || flag == \"--verbose\"", None),
+            ("flag == \"-x\" || flag == \"--verbose\"", kept),
+            // `&&`, a third operand, and a mixed connective.
+            ("flag == \"-v\" && flag == \"--verbose\"", kept),
+            (
+                "flag == \"-v\" || flag == \"-q\" || flag == \"--verbose\"",
+                kept,
+            ),
+            ("flag == \"-v\" || flag == \"--verbose\" && on", kept),
+            // Another left side, a non-equality, or a non-literal right side.
+            ("flag == \"-v\" || other == \"--verbose\"", kept),
+            ("flag == \"-v\" || flag != \"--verbose\"", kept),
+            ("flag == \"-v\" || flag == VERBOSE", kept),
+            // A left side that may read another value on each evaluation.
+            ("it.next() == 1 || it.next() == 2", Some("it.next() == 1")),
+            ("xs[i] == 1 || xs[i] == 2", Some("xs[i] == 1")),
+            ("f(\"a b\") == 1 || f(\"ab\") == 2", Some("f(\"a b\") == 1")),
+            // An escape can spell the kept value again.
+            ("s == \"A\" || s == \"\\x41\"", Some("s == \"A\"")),
+            ("c == 'a' || c == '\\x61'", Some("c == 'a'")),
+            (
+                "flag != \"-v\" || flag != \"--verbose\"",
+                Some("flag != \"-v\""),
+            ),
+            // The same literal value spelled again flips nothing.
+            ("n == 5 || n == 05", Some("n == 5")),
+            ("flag == \"-v\" || flag == \"-v\"", kept),
+            // A pre-edit text that already held two comparisons.
+            ("a == 1 || a == 2 || a == 3", Some("a == 1 || a == 2")),
+        ] {
+            assert_eq!(conjunct(expression, before), None, "{expression}");
+        }
+    }
+
     #[test]
     fn a_compound_predicate_reads_only_its_one_changed_comparison() {
         use super::changed_comparison_conjunct as conjunct;

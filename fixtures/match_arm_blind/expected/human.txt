@@ -9,7 +9,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:4
   Static exposure: weak (severity: warning, confidence 0.84)
   Why weak: a related test reaches this change but does not observe the exact changed value
@@ -37,7 +37,7 @@ Next: drill into the top finding:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/match_arm_blind/input --diff <cwd>/fixtures/match_arm_blind/diff.patch --mode fast probe:src_lib.rs:match_arm:bb59fbfe
   ripr context --root <cwd>/fixtures/match_arm_blind/input --diff <cwd>/fixtures/match_arm_blind/diff.patch --mode fast --at probe:src_lib.rs:match_arm:bb59fbfe
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that pins which match arm runs; follow the Next step above, then rerun `ripr check`
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/match_arm_blind/input --at src/lib.rs:4 --kind match_arm
 

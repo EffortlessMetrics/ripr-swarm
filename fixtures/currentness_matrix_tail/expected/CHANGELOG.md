@@ -348,3 +348,47 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (27)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (28)
+
+Reason:
+RIPR-SPEC-0122: removed-code-only runs name the static evidence on the removed code in Safe next action (#15335)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (29)
+
+Reason:
+RIPR-SPEC-0122: removal-only runs name why nothing is selected in the State line (#15335)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (33)
+
+Reason:
+RIPR-SPEC-0122: a removal-only run lists the removed lines, their kind and what the static evidence on each shows (#15617)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`

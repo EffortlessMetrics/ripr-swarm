@@ -20,6 +20,49 @@ Static exposure findings are product output, not security claims. Report a
 finding as a vulnerability only when it creates a concrete security risk in the
 tool, packaging, distribution, or release process.
 
+## Analyzing A Repository You Do Not Trust
+
+`ripr` reads a repository through `git`, and `git` can run programs that the
+repository's own configuration names. A `git clone` never copies
+`.git/config`, but an extracted archive or a nested repository inside a
+checkout can carry one. Every `ripr` git call therefore:
+
+- disables `core.fsmonitor`, points `core.hooksPath` at the null device and
+  takes no optional index lock, so no file-system monitor or hook runs;
+- passes `--no-ext-diff --no-textconv` on the diffs it parses, so no external
+  diff or text-conversion program runs;
+- sets `log.showSignature=false`, so `gpg.program` is not run to verify
+  signed commits;
+- resets every `filter.<driver>.clean`, `.smudge`, `.process` and `.required`
+  key that the repository (or worktree) configuration defines to the value
+  your own system or global git configuration gives it, or to nothing. A
+  driver you installed yourself, such as Git LFS from `git lfs install`,
+  keeps working. A driver defined only in the repository, such as one from
+  `git lfs install --local`, does not run during `ripr` reads, so files it
+  filters can show as modified to `ripr`. A repository-defined driver whose
+  name contains `=` cannot be reset, and `ripr` refuses to run git there;
+- passes `--ignore-submodules=dirty` on every diff and status call, so git
+  compares a populated submodule's checked-out commit with the recorded
+  pointer but never examines that submodule's working tree. No git process
+  runs inside a submodule, so programs that the submodule's own configuration
+  names (such as its filter drivers) do not run. Uncommitted edits inside a
+  submodule are therefore not reported; a moved submodule commit still is.
+
+`ripr` also asks Cargo for resolved workspace metadata when it checks the
+identity of a few audited dependencies (such as `serde_json` or `anyhow`).
+That makes Cargo run `rustc`, which Cargo configures from `.cargo/config.toml`
+files found in or above the analyzed tree. Before running Cargo, `ripr` refuses
+the check, and runs nothing, when such a file (other than your own Cargo home
+configuration) sets `build.rustc`, `build.rustc-wrapper`,
+`build.rustc-workspace-wrapper`, `build.rustflags`, `target.*.rustflags`,
+`include`, `unstable` or `host`, or an `[env]` key other than `TEMP`, `TMP`,
+`TMPDIR`, `RUST_BACKTRACE`, `RUST_LOG`, `RUST_MIN_STACK` or `RUST_TEST_THREADS`.
+A refusal only withholds credit that depends on that identity.
+
+Not covered: programs that the analyzed project's own build or test tooling
+runs when you ask `ripr` to execute tests are outside these pins. Treat a
+tree from an untrusted source accordingly.
+
 ## Reporting A Vulnerability
 
 Use GitHub private vulnerability reporting for this repository when available.

@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_infection_shapes/input
 config: <cwd>/fixtures/typescript_infection_shapes/input/ripr.toml
 
-Summary: 6 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 1 reached but not noticed, 0 no test path, 3 unclear. 6 found, 0 suppressed by your settings
+Summary: 6 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 2 reached but not noticed, 0 no test path, 2 unclear. 6 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 2
 
@@ -53,13 +53,13 @@ Hidden:
     - src/pricing.ts:3 (unknown: infection unclear); kind: return_value; reason: The change to `bulk` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion…
     - src/pricing.ts:24 (exposed); kind: return_value; reason: Related test reaches `div` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
     - src/pricing.ts:27 (unknown: infection unclear); kind: return_value; reason: The change to `cap` is a `fallback_literal` edit: the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the…
-    - src/pricing.ts:32 (unknown: infection unclear); kind: predicate; reason: The change to `say` is a `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument. No…
+    - src/pricing.ts:32 (unrevealed); kind: predicate; reason: The change to `say` only moves the default value of `loud`, and every related call passes that argument: observed `say` calls: `("a", true)`. The default never applies under the…
   Hidden classes:
     exposed = tests appear to notice the change
     weak = tests reach it but check it only loosely
+    unrevealed = tests reach it but nothing appears to notice a change
     unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: 2 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

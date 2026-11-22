@@ -12,7 +12,8 @@ use crate::cli::commands_context::{
 };
 use crate::cli::help;
 use crate::cli::parse::{
-    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode, reconcile_root,
+    disclose_attached_terminal_stdin_read, expect_path_value, expect_value, parse_format,
+    parse_mode, reconcile_root,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -595,6 +596,18 @@ fn select_output_format(
     Ok(())
 }
 
+/// The usage refusal for `--suppression-policy` on a format that cannot
+/// apply it (#1441, #15377). It names the requested format: `agent`,
+/// `json-terse` and the SARIF formats refuse too, which the old "SARIF,
+/// badge, or repo formats" wording left out.
+fn suppression_policy_format_refusal(format: OutputFormat) -> String {
+    format!(
+        "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt); \
+         --format {} does not apply it. Drop the flag, or pick one of those formats",
+        format.primary_cli_name()
+    )
+}
+
 /// Refusal exit for a post-argv-parse `check` failure (#6834, widened #7332).
 ///
 /// Machine-readable formats write a refusal document to stdout first — the
@@ -953,7 +966,7 @@ fn check_inner(
             }
             "--diff" => {
                 i += 1;
-                input.diff_file = Some(PathBuf::from(expect_value(args, i, "--diff")?));
+                input.diff_file = Some(PathBuf::from(expect_path_value(args, i, "--diff")?));
                 scope_explicitly_provided = true;
             }
             // #3237/#3278: immutable Git candidate input. The subject
@@ -1037,7 +1050,7 @@ fn check_inner(
             }
             "--suppression-policy" => {
                 i += 1;
-                input.suppression_policy = Some(PathBuf::from(expect_value(
+                input.suppression_policy = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--suppression-policy",
@@ -1052,7 +1065,11 @@ fn check_inner(
             }
             "--write-artifact" => {
                 i += 1;
-                write_artifact = Some(PathBuf::from(expect_value(args, i, "--write-artifact")?));
+                write_artifact = Some(PathBuf::from(expect_path_value(
+                    args,
+                    i,
+                    "--write-artifact",
+                )?));
             }
             "--git-timeout" => {
                 i += 1;
@@ -1096,6 +1113,27 @@ fn check_inner(
             || input.suppression_policy.is_some())
     {
         return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy; pass a named `--diff <file>` and drop the other flags".into());
+    }
+    // #1441: --suppression-policy applies to the findings-based check
+    // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
+    // channel, and badge/repo formats have their own suppression
+    // projections — silently ignoring the flag there would misreport policy
+    // application, so fail closed. #15377: this is a usage error decided by
+    // argv alone, so it is refused here, before the refusal-envelope
+    // snapshot: an agent or json-terse record would label it
+    // `analysis_failed`, which reads as an analyzer failure.
+    if input.suppression_policy.is_some()
+        && !matches!(
+            input.format,
+            OutputFormat::Human
+                | OutputFormat::HumanFull
+                | OutputFormat::Json
+                | OutputFormat::JsonCompact
+                | OutputFormat::Github
+                | OutputFormat::MissedTxt
+        )
+    {
+        return Err(suppression_policy_format_refusal(input.format));
     }
     // #6834: refusal-envelope context for every failure below. Argv usage
     // errors above return before this snapshot exists and stay prose-only.
@@ -1284,31 +1322,6 @@ fn check_inner(
                 message,
             ));
         }
-    }
-    // #1441: --suppression-policy applies to the findings-based check
-    // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
-    // finding_id channel, and badge/repo formats have their own suppression
-    // projections — silently ignoring the flag there would misreport policy
-    // application, so fail closed with a named limitation instead.
-    if input.suppression_policy.is_some()
-        && !matches!(
-            input.format,
-            OutputFormat::Human
-                | OutputFormat::HumanFull
-                | OutputFormat::Json
-                | OutputFormat::JsonCompact
-                | OutputFormat::Github
-                | OutputFormat::MissedTxt
-        )
-    {
-        return Err(super::check_fanout::refuse(
-            super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
-            &envelope_input,
-            effective_format,
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt); \
-             it is not yet supported for SARIF, badge, or repo formats"
-                .to_string(),
-        ));
     }
     // #3237/#3278: bind the immutable subject before the analysis
     // call. Construction runs #3276's typed validation (malformed OIDs,
@@ -2062,16 +2075,31 @@ fn check_inner(
                     None,
                     || {},
                     move || {
-                        app::check_with_progress_core(retry, &retry_config, progress_scope, None)
+                        // Buffer the run's stderr disclosures (for example the
+                        // deletion-only note): they describe the retry's diff,
+                        // so they print only if the retry replaces the output
+                        // (#15330).
+                        let (result, disclosures) = crate::analysis::capture_disclosures(|| {
+                            app::check_with_progress_core(
+                                retry,
+                                &retry_config,
+                                progress_scope,
+                                None,
+                            )
+                        });
+                        result.map(|retried| (retried, disclosures))
                     },
                 )
             });
-        if let Some(Ok(retried)) = retried
+        if let Some(Ok((retried, disclosures))) = retried
             && retried
                 .analysis_outcome
                 .as_ref()
                 .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
         {
+            for message in disclosures {
+                eprintln!("{message}");
+            }
             eprintln!(
                 "ripr: analyzed the last commit (--base HEAD~1). Pass --base to choose another range."
             );
@@ -2117,6 +2145,7 @@ fn check_inner(
             &limited_check_input,
             &config,
             &output.findings,
+            &output.owner_opt_outs,
             worktree_run,
         )
         .map_err(|err| {
@@ -2537,10 +2566,11 @@ fn zero_findings_diff_hedge(
     // A well-formed binary- or mode-only diff already got its own stderr note
     // from the pipeline; the generic "may not be a valid diff" hedge would
     // contradict it.
-    if outcome.limitations.iter().any(|limitation| {
-        limitation.kind == AnalysisLimitationKind::MalformedDiff
-            && limitation.bounded_detail.as_deref() == Some(crate::analysis::NON_TEXT_ONLY_DETAIL)
-    }) {
+    if outcome
+        .limitations
+        .iter()
+        .any(crate::analysis_outcome::AnalysisLimitation::is_non_text_only)
+    {
         return None;
     }
     let causes = outcome
@@ -2561,7 +2591,12 @@ fn zero_findings_diff_hedge(
             causes.join("; ")
         ));
     }
-    if outcome.counts.changed_file_count > 0 {
+    if outcome.counts.changed_file_count > 0
+        || outcome
+            .limitations
+            .iter()
+            .any(crate::analysis::names_parsed_file_limitation)
+    {
         return None;
     }
     Some(generic.to_string())
@@ -3089,6 +3124,46 @@ mod tests {
     }
 
     #[test]
+    fn zero_findings_hedge_is_silent_when_a_located_parse_limitation_explains() -> Result<(), String>
+    {
+        // #15268: a series that edits one file in two sections parses as a
+        // diff and names the refused file; "not a valid unified diff" would
+        // contradict that. Garbage input keeps the generic hint.
+        let series = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-old\n+new\ncommit 0123456789abcdef0123456789abcdef01234567\n\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -0,0 +1 @@\n+pub const A: u8 = 1;\n";
+        for (name, text, expect_hedge) in [
+            ("hedge-repeated-section", series, false),
+            ("hedge-garbage", "not a diff at all\n", true),
+        ] {
+            let root = copy_sample_workspace_to_temp(name)?;
+            std::fs::write(root.join("example.diff"), text).map_err(|err| err.to_string())?;
+            let input = CheckInput {
+                root: root.clone(),
+                diff_file: Some(root.join("example.diff")),
+                ..CheckInput::default()
+            };
+            let result = app::check_workspace_with_config(input, &RiprConfig::default());
+            if let Ok(()) = std::fs::remove_dir_all(&root) {}
+            let outcome = result?
+                .analysis_outcome
+                .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
+            assert_eq!(
+                outcome
+                    .limitations
+                    .iter()
+                    .any(crate::analysis::names_parsed_file_limitation),
+                !expect_hedge,
+                "{name}: {outcome:?}"
+            );
+            assert_eq!(
+                zero_findings_diff_hedge(Some(&outcome), false).is_some(),
+                expect_hedge,
+                "{name}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn zero_findings_hedge_names_unavailable_adapter_before_diff_validity() -> Result<(), String> {
         // #4395(c): a valid diff whose only changed file needs an adapter
         // that is not available (Perl in a default build) must lead with
@@ -3600,7 +3675,7 @@ mod tests {
                     .filter(|flag| flag.starts_with("--"));
             }
             if let Some(flag) = current
-                && line.contains("expect_value(")
+                && (line.contains("expect_value(") || line.contains("expect_path_value("))
             {
                 parsed.insert(flag.to_string());
             }

@@ -8,9 +8,12 @@ mod identifier_rename;
 mod ids;
 mod lexical;
 mod macro_definition;
+mod moved_item;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;
+mod self_type_respelling;
+mod unchanged_code_line;
 mod verification_erased;
 
 use crate::analysis::diagnostic_origin::ParserByteSpan;
@@ -30,10 +33,14 @@ pub(crate) use classify::parser_expression_for_probe;
 pub(crate) use diff::probes_for_file_with_relations;
 pub(crate) use diff::resolve_probe_source_currentness;
 pub(crate) use diff::same_connectives;
+#[cfg(feature = "lang-typescript")]
 pub(crate) use expectations::{expected_sinks, required_oracles};
+#[cfg(feature = "lang-typescript")]
+pub(crate) use ids::normalize_expression;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+pub(crate) use ids::{collision_ordinals, collision_rank_key};
 pub(crate) use ids::{
-    collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
-    normalize_expression, normalize_rust_expression, sanitize_path,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };
 pub(crate) use lexical::{inline_const_assertion_lines, is_inline_const_assertion_line};
 pub(crate) use macro_definition::{verus_region_line_spans, verus_region_lines};
@@ -115,6 +122,8 @@ mod parameter_boundary_tests;
 mod record_field_boundary_tests;
 #[cfg(test)]
 mod replacement_identity_tests;
+#[cfg(test)]
+mod unsafe_interior_line_tests;
 #[cfg(test)]
 mod where_bound_boundary_tests;
 

@@ -47,6 +47,7 @@ pub(super) struct AgentStartOptions {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentBriefOptions {
+    pub(super) line_ranges: bool,
     pub(super) root: PathBuf,
     /// `--root` was typed, so the root is used as given (#8902).
     pub(super) root_explicit: bool,
@@ -281,6 +282,12 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
 pub(crate) const SEAM_ID_SOURCE_HINT: &str =
     "Use an id that `ripr check` or `ripr pilot --root <dir>` printed";
 
+/// Where the id comes from for `agent start` and `agent brief`, which take an
+/// exact seam id and do not resolve a `ripr check` finding id the way
+/// `agent packet` does. Naming `ripr check` alone would send the reader to a
+/// `probe:...` id these two refuse (#15985).
+pub(crate) const EXACT_SEAM_ID_SOURCE_HINT: &str = "Use an id that `ripr pilot --root <dir>` lists, or the spot id on the `ripr repair` line that `ripr check` prints; a `probe:...` finding id is not accepted here";
+
 fn parse_agent_start_command(args: &[String]) -> Result<AgentCommand, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return Ok(AgentCommand::StartHelp);
@@ -365,10 +372,14 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     let mut test_result: Option<PathBuf> = None;
     let mut store: Option<PathBuf> = None;
     let mut json = false;
+    let mut quiet = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--json" => json = true,
+            // Same meaning as `ripr repair --quiet`: the flag twin of
+            // `RIPR_QUIET`, which this phase already honors.
+            "--quiet" => quiet = true,
             "--root" => {
                 i += 1;
                 let reconciled = reconcile_root(
@@ -770,7 +781,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         test_result,
         store,
         json,
-        quiet: false,
+        quiet,
         facade_start: false,
     }))
 }
@@ -846,7 +857,9 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
         seam_id: seam_id.ok_or_else(|| {
             crate::cli::usage_refusal::missing_required(
                 "--seam-id",
-                "agent start requires --seam-id; add `--seam-id` to the command",
+                &format!(
+                    "agent start requires --seam-id; add `--seam-id <id>`. {EXACT_SEAM_ID_SOURCE_HINT}"
+                ),
             )
         })?,
         out_dir: out_dir.unwrap_or_else(|| PathBuf::from("target/ripr/workflow")),
@@ -859,6 +872,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     let mut root_explicit = false;
     let mut working_set: Option<WorkingSetCandidate> = None;
     let mut json = false;
+    let mut line_ranges = false;
     let mut max_seams = DEFAULT_AGENT_BRIEF_MAX_SEAMS;
     let mut max_seams_explicit = false;
 
@@ -907,6 +921,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
                 )?;
             }
             "--json" => json = true,
+            "--line-ranges" => line_ranges = true,
             "--max-seams" => {
                 refuse_repeated_flag(max_seams_explicit, "agent brief", "--max-seams")?;
                 i += 1;
@@ -922,10 +937,18 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
         .ok_or_else(|| {
             crate::cli::usage_refusal::missing_required(
                 "--diff",
-                "agent brief requires exactly one of --diff, --base, --files, or --seam-id",
+                &format!(
+                    "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev> --json` to brief the changes since that revision, or `--seam-id <id> --json` for one seam. {EXACT_SEAM_ID_SOURCE_HINT}"
+                ),
             )
         })?
         .into_working_set();
+
+    if line_ranges && !json {
+        return Err(
+            "agent brief --line-ranges requires --json; add --json to the command".to_string(),
+        );
+    }
 
     if !json {
         return Err(
@@ -934,6 +957,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
     }
 
     Ok(AgentBriefOptions {
+        line_ranges,
         root,
         root_explicit,
         working_set,
@@ -1964,6 +1988,24 @@ mod tests {
         assert_eq!(parse(&["--json"]), Some(true));
     }
 
+    /// `agent repair` takes `--quiet` like `ripr repair`, the flag twin of
+    /// the `RIPR_QUIET` switch the phase already honors; it leaves `--json`
+    /// alone.
+    #[test]
+    fn agent_repair_quiet_flag_is_the_ripr_quiet_twin() {
+        let parse = |extra: &[&str]| {
+            let mut values = vec!["repair", "--seam-id", "seam:sample", "--phase", "before"];
+            values.extend_from_slice(extra);
+            match parse_agent_args(&args(&values)) {
+                Ok(AgentCommand::Repair(options)) => Some((options.quiet, options.json)),
+                _ => None,
+            }
+        };
+        assert_eq!(parse(&[]), Some((false, false)));
+        assert_eq!(parse(&["--quiet"]), Some((true, false)));
+        assert_eq!(parse(&["--quiet", "--json"]), Some((true, true)));
+    }
+
     #[test]
     fn agent_repair_parses_before_and_exact_after() {
         assert_eq!(
@@ -2515,7 +2557,9 @@ mod tests {
         );
         assert_eq!(
             parse_agent_start_options(&args(&[])),
-            Err("agent start requires --seam-id; add `--seam-id` to the command".to_string())
+            Err(format!(
+                "agent start requires --seam-id; add `--seam-id <id>`. {EXACT_SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_start_options(&args(&["--seam-id", ""])),
@@ -2561,6 +2605,7 @@ mod tests {
         assert_eq!(
             parse_agent_args(&args(&["brief", "--diff", "change.diff", "--json"])),
             Ok(AgentCommand::Brief(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Diff(PathBuf::from("change.diff")),
@@ -2583,6 +2628,7 @@ mod tests {
                 "2",
             ])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("repo"),
                 root_explicit: true,
                 working_set: AgentBriefWorkingSet::Diff(PathBuf::from("change.diff")),
@@ -2597,6 +2643,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--base", "main", "--json"])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Base("main".to_string()),
@@ -2615,6 +2662,7 @@ mod tests {
                 "--json",
             ])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::Files(vec![
@@ -2632,6 +2680,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--seam-id", "f3c9e4d21a0b7c88", "--json",])),
             Ok(AgentBriefOptions {
+                line_ranges: false,
                 root: PathBuf::from("."),
                 root_explicit: false,
                 working_set: AgentBriefWorkingSet::SeamId("f3c9e4d21a0b7c88".to_string()),
@@ -2656,10 +2705,9 @@ mod tests {
     fn agent_brief_requires_exactly_one_working_set() {
         assert_eq!(
             parse_agent_brief_options(&args(&["--json"])),
-            Err(
-                "agent brief requires exactly one of --diff, --base, --files, or --seam-id"
-                    .to_string()
-            )
+            Err(format!(
+                "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev> --json` to brief the changes since that revision, or `--seam-id <id> --json` for one seam. {EXACT_SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[
@@ -3443,7 +3491,10 @@ mod tests {
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", "src/lib.rs"])),
-            Err("--at expects FILE:LINE, got \"src/lib.rs\"".to_string())
+            Err(
+                "--at expects FILE:LINE (for example src/lib.rs:12), got \"src/lib.rs\""
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_agent_stub_options(&args(&["--at", "src/lib.rs:abc"])),

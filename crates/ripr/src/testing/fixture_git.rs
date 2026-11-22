@@ -383,6 +383,25 @@ mod tests {
     }
 
     #[test]
+    fn fixture_git_cannot_leave_background_maintenance_running() -> Result<(), String> {
+        let root = unique_root("no-background")?;
+        fixture_git_ok(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+        // A repository that asks for background maintenance still gets none:
+        // the per-invocation configuration outranks the repository's.
+        fixture_git_ok(&root, &["config", "maintenance.auto", "true"])?;
+        fixture_git_ok(&root, &["config", "gc.auto", "1"])?;
+        for (key, want) in [("maintenance.auto", "false"), ("gc.auto", "0")] {
+            let effective = fixture_git_stdout(&root, &["config", "--get", key])?;
+            if effective != want {
+                return Err(format!(
+                    "fixture git resolves {key} to {effective:?}, want {want:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn reports_a_failing_git_command() -> Result<(), String> {
         let root = unique_root("failing")?;
         match fixture_git_ok(&root, &["no-such-command-xyz"]) {

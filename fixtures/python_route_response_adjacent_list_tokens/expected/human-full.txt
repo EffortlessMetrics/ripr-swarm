@@ -83,5 +83,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_route_response_adjacent_list_tokens/input --diff <cwd>/fixtures/python_route_response_adjacent_list_tokens/diff.patch --mode fast probe:shop_app.py:python_preview:3b630fc6
   ripr context --root <cwd>/fixtures/python_route_response_adjacent_list_tokens/input --diff <cwd>/fixtures/python_route_response_adjacent_list_tokens/diff.patch --mode fast --at probe:shop_app.py:python_preview:3b630fc6
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

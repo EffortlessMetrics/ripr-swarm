@@ -1,0 +1,14 @@
+# A deleted early return that gives the remaining tail's value (#14936).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::deleted_guard_returning_the_remaining_tail_value_agrees",
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs::tests::deleted_guard_whose_value_differs_or_is_unread_keeps_today",
+]
+fixtures = [
+  "fixtures/rust_deleted_guard_same_value",
+]
+code = [
+  "crates/ripr/src/analysis/classify/constant_tail_change.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+]

@@ -8,11 +8,13 @@ import {
   RiprClientRuntime,
   RiprAgentLoopCommandTarget,
   RiprWorkspaceRootState,
+  lspConfigurationForResource,
   readActionableGapQueueStatus,
   readFirstPrPacketStatus,
   validatedAgentLoopCommand
 } from '../../src/client';
-import { explicitSetting } from '../../src/config';
+import { explicitSetting, getConfig } from '../../src/config';
+import { configurationChangeRequiresRestart } from '../../src/extension';
 import { hasUnsafeShellMetacharacter, redirectStaysInWorkspace, redirectTargetMatches, serverShellArg } from '../../src/packetJson';
 import {
   NO_RUNNING_SERVER_MESSAGE,
@@ -350,23 +352,28 @@ suite('Extension Smoke', () => {
   });
 
   test('forwards seam diagnostic settings through LSP initialization options', async () => {
-    await withControllerTestContext({ seamDiagnostics: false, diagnosticProfile: 'full' }, async (context) => {
-      await context.controller.start();
+    await withControllerTestContext(
+      { checkMode: 'fast', includeUnchangedTests: false, seamDiagnostics: false, diagnosticProfile: 'full' },
+      async (context) => {
+        await context.controller.start();
 
-      const initializationOptions = context.client.receivedInitializationOptions;
-      assert.deepStrictEqual(
-        {
-          includeUnchangedTests: initializationOptions?.includeUnchangedTests,
-          seamDiagnostics: initializationOptions?.seamDiagnostics,
-          diagnosticProfile: initializationOptions?.diagnosticProfile
-        },
-        {
-          includeUnchangedTests: true,
-          seamDiagnostics: false,
-          diagnosticProfile: 'full'
-        }
-      );
-    });
+        const initializationOptions = context.client.receivedInitializationOptions;
+        assert.deepStrictEqual(
+          {
+            checkMode: initializationOptions?.checkMode,
+            includeUnchangedTests: initializationOptions?.includeUnchangedTests,
+            seamDiagnostics: initializationOptions?.seamDiagnostics,
+            diagnosticProfile: initializationOptions?.diagnosticProfile
+          },
+          {
+            checkMode: 'fast',
+            includeUnchangedTests: false,
+            seamDiagnostics: false,
+            diagnosticProfile: 'full'
+          }
+        );
+      }
+    );
   });
 
   test('leaves unset seam diagnostic settings to ripr.toml', async () => {
@@ -379,7 +386,102 @@ suite('Extension Smoke', () => {
       const initializationOptions = context.client.receivedInitializationOptions ?? {};
       assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).seamDiagnostics, undefined);
       assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).diagnosticProfile, undefined);
+      // The same rule for ripr.toml [analysis] (#15897): a forwarded
+      // manifest default overrode `mode` and `include_unchanged_tests`.
+      assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).checkMode, undefined);
+      assert.strictEqual(JSON.parse(JSON.stringify(initializationOptions)).includeUnchangedTests, undefined);
     });
+  });
+
+  test('reports a setting sent at initialize that was later unset', async () => {
+    const options: ControllerTestOptions = { includeUnchangedTests: false, seamDiagnostics: false };
+    await withControllerTestContext(options, async (context) => {
+      await context.controller.start();
+      assert.strictEqual(context.controller.initializedSettingWasUnset(), false);
+
+      // Changing a value keeps the key in the configuration pull, so the
+      // server applies it live.
+      options.includeUnchangedTests = true;
+      assert.strictEqual(context.controller.initializedSettingWasUnset(), false);
+
+      // Removing it leaves the server on the initialize value until a restart.
+      options.includeUnchangedTests = undefined;
+      assert.strictEqual(context.controller.initializedSettingWasUnset(), true);
+    });
+
+    // A key the session never sent has no initialize value to go stale.
+    const unset: ControllerTestOptions = {};
+    await withControllerTestContext(unset, async (context) => {
+      await context.controller.start();
+      unset.seamDiagnostics = false;
+      unset.seamDiagnostics = undefined;
+      assert.strictEqual(context.controller.initializedSettingWasUnset(), false);
+    });
+  });
+
+  test('restarts for a removed session setting but not for a changed one', () => {
+    const affecting = (...sections: string[]) => (section: string) => sections.includes(section);
+    const unset = () => true;
+    const stillSet = () => false;
+    for (const section of ['ripr.includeUnchangedTests', 'ripr.seamDiagnostics', 'ripr.diagnosticProfile']) {
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), unset), true, section);
+      // A changed value reaches the server through the configuration pull.
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), stillSet), false, section);
+    }
+    for (const section of ['ripr.enabled', 'ripr.server', 'ripr.check', 'ripr.baseRef']) {
+      assert.strictEqual(configurationChangeRequiresRestart(affecting(section), stillSet), true, section);
+    }
+    // An unrelated change never restarts, whatever the session state.
+    assert.strictEqual(configurationChangeRequiresRestart(affecting('ripr.trace'), unset), false);
+    assert.strictEqual(configurationChangeRequiresRestart(affecting('editor.fontSize'), unset), false);
+  });
+
+  test('reads check mode and unchanged-test settings only from a settings layer', async () => {
+    const manifestDefault = (key: string, defaultValue: unknown) =>
+      ({ inspect: () => ({ key, defaultValue }) }) as unknown as vscode.WorkspaceConfiguration;
+    assert.strictEqual(explicitSetting<string>(manifestDefault('ripr.check.mode', 'draft'), 'check.mode'), undefined);
+    assert.strictEqual(
+      explicitSetting<boolean>(manifestDefault('ripr.includeUnchangedTests', true), 'includeUnchangedTests'),
+      undefined
+    );
+
+    // The real settings read: an unset key is undefined, not the manifest
+    // default, so ripr.toml [analysis] applies; a workspace value is
+    // forwarded (#15897).
+    const uri = workspaceFileUri('src/lib.rs');
+    const inspect = () =>
+      vscode.workspace.getConfiguration('ripr', uri).inspect<boolean>('includeUnchangedTests');
+    const previous = inspect()?.workspaceValue;
+    const update = (value: unknown) =>
+      vscode.workspace
+        .getConfiguration('ripr', uri)
+        .update('includeUnchangedTests', value, vscode.ConfigurationTarget.Workspace);
+    try {
+      await update(undefined);
+      assert.strictEqual(inspect()?.defaultValue, true);
+      assert.strictEqual(getConfig(uri).includeUnchangedTests, inspect()?.globalValue);
+      await update(false);
+      assert.strictEqual(getConfig(uri).includeUnchangedTests, false);
+
+      // The configuration pull as the server receives it: a set value is on
+      // the wire, and removing it drops the key instead of sending the
+      // manifest default.
+      const pulled = () =>
+        JSON.parse(JSON.stringify(lspConfigurationForResource(uri.toString()))) as Record<string, unknown>;
+      assert.strictEqual(pulled().includeUnchangedTests, false);
+      await update(true);
+      assert.strictEqual(pulled().includeUnchangedTests, true);
+      await update(undefined);
+      assert.strictEqual(pulled().includeUnchangedTests, inspect()?.globalValue);
+      assert.strictEqual('includeUnchangedTests' in pulled(), inspect()?.globalValue !== undefined);
+      const mode = vscode.workspace.getConfiguration('ripr', uri).inspect<string>('check.mode');
+      assert.strictEqual(
+        pulled().checkMode,
+        mode?.workspaceFolderValue ?? mode?.workspaceValue ?? mode?.globalValue
+      );
+    } finally {
+      await update(previous);
+    }
   });
 
   test('explicitSetting ignores manifest defaults and returns user layers', () => {
@@ -445,9 +547,7 @@ suite('Extension Smoke', () => {
       assert.deepStrictEqual(delegatedSections, ['other.setting']);
       assert.strictEqual((result[1] as string), 'delegated:other.setting');
       assert.strictEqual(typeof (result[0] as Record<string, unknown>).diagnosticProfile, 'string');
-      assert.strictEqual(typeof (result[0] as Record<string, unknown>).includeUnchangedTests, 'boolean');
       assert.strictEqual(typeof (result[2] as Record<string, unknown>).diagnosticProfile, 'string');
-      assert.strictEqual(typeof (result[2] as Record<string, unknown>).includeUnchangedTests, 'boolean');
     });
   });
 
@@ -1697,6 +1797,109 @@ suite('Extension Smoke', () => {
     }
   });
 
+  for (const blocked of [true, false]) {
+    test(`startCurrentRepair ${blocked ? 'names the server reason for an inert seam start (#13636)' : 'falls back to the related test when the server names no blocker'}`, async function (this: Mocha.Context) {
+      skipUnlessTrustedTestHost(this);
+      const seamId = '67fc764ba37d77bd';
+      const commit = 'git -C /repo --literal-pathspecs commit -m "<message>" -- src/lib.rs';
+      const reason = `Commit your uncommitted source files first, then run the repair start again; it refuses to begin while they are uncommitted. Commit command: ${commit}`;
+      const context = createControllerTestContext({
+        lspResult: blocked
+          ? [{
+            title: 'Start repair: copy repair command',
+            kind: 'quickfix.ripr.inspect',
+            disabled: { reason },
+            data: { action_name: 'copy_agent_repair_command', disabled_reason: 'uncommitted_production_change' },
+          }]
+          : [],
+      });
+      const relativePath = `src/start-blocked-repair-${blocked ? 'named' : 'unnamed'}.rs`;
+      const uri = workspaceFileUri(relativePath);
+      const collection = vscode.languages.createDiagnosticCollection('ripr-start-blocked-repair');
+      let provider: vscode.Disposable | undefined;
+      try {
+        await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
+        // A seam diagnostic alone (no gap record): Start Current Repair must
+        // still reach the seam's start or its blocked reason.
+        const diagnostic = new vscode.Diagnostic(
+          new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+          'weakly gripped seam',
+          vscode.DiagnosticSeverity.Information
+        );
+        diagnostic.source = 'ripr';
+        diagnostic.code = 'ripr-seam-weakly-gripped';
+        (diagnostic as vscode.Diagnostic & { data?: unknown }).data = { seam_id: seamId };
+        collection.set(uri, [diagnostic]);
+
+        // The editor-visible actions carry no enabled start, but a start
+        // candidate is still there (a real eligible seam keeps its
+        // related-test action); a copy-packet candidate makes its run
+        // observable on the clipboard.
+        provider = vscode.languages.registerCodeActionsProvider(
+          { language: 'rust', scheme: 'file' },
+          {
+            provideCodeActions() {
+              const action = new vscode.CodeAction('Agent handoff: copy packet command', vscode.CodeActionKind.QuickFix);
+              action.command = { title: 'Agent handoff: copy packet command', command: 'ripr.copyAgentPacketCommand', arguments: [] };
+              const fallback = new vscode.CodeAction('Copy repair instructions for an AI agent', vscode.CodeActionKind.QuickFix);
+              fallback.command = {
+                title: 'Copy repair instructions for an AI agent',
+                command: 'ripr.copyContext',
+                arguments: [{ label: 'first_repair_packet', packet: 'fallback repair packet' }],
+              };
+              return [action, fallback];
+            },
+          }
+        );
+
+        await context.controller.start();
+        await writeClipboardText('start-blocked-repair-sentinel');
+        await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Copy repair instructions for an AI agent');
+        await context.controller.startCurrentRepair();
+
+        const request = context.client.requests.find((entry) => entry.method === 'textDocument/codeAction');
+        assert.ok(request, `the controller must ask the server directly: ${JSON.stringify(context.client.requests)}`);
+        const sent = request.params as { textDocument: { uri: string }; context: { diagnostics: Array<{ code?: unknown; data?: unknown }> } };
+        assert.strictEqual(sent.textDocument.uri, uri.toString());
+        assert.ok(
+          sent.context.diagnostics.some((wire) => wire.code === 'ripr-seam-weakly-gripped' && (wire.data as { seam_id?: string } | undefined)?.seam_id === seamId),
+          JSON.stringify(sent.context.diagnostics)
+        );
+        assert.ok(!context.runRiprCalls.some((call) => call.args[0] === 'agent' && call.args[1] === 'repair'));
+        if (blocked) {
+          assert.ok(
+            context.infoMessages.some((message) => message === `ripr cannot start this repair yet. ${reason}`),
+            context.infoMessages.join(' | ')
+          );
+          assert.ok(!context.infoMessages.some((message) => message.includes('Refresh saved-workspace analysis')));
+          // The blocked start wins: the fallback candidate never ran.
+          assert.strictEqual(await vscode.env.clipboard.readText(), 'start-blocked-repair-sentinel');
+        } else {
+          // No server reason: the fallback candidate runs as before.
+          assert.strictEqual(
+            await waitForClipboardText((text) => text === 'fallback repair packet'),
+            'fallback repair packet'
+          );
+          assert.ok(
+            !context.infoMessages.some((message) =>
+              message.includes('cannot start this repair') || message.includes('Refresh saved-workspace analysis')
+            ),
+            context.infoMessages.join(' | ')
+          );
+        }
+      } finally {
+        provider?.dispose();
+        collection.dispose();
+        await context.dispose();
+        await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+        await removeWorkspacePath(relativePath);
+      }
+    });
+  }
+
   test('copyRepairPacketAtCursor uses only the packet action for the containing diagnostic', async function (this: Mocha.Context) {
     skipUnlessTrustedTestHost(this);
     const relativePath = 'src/copy-repair-packet-at-cursor.rs';
@@ -2158,7 +2361,7 @@ suite('Extension Smoke', () => {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         failure: { kind: 'analysis_error', message: 'temporary timeout' }
       });
-      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Full Analysis to retry'));
       assert.ok(!String(context.status.tooltip).includes('Restart Server'));
 
       context.client.emitNotification('ripr/analysisStatus', {
@@ -2167,7 +2370,7 @@ suite('Extension Smoke', () => {
         failure: { kind: 'base_unresolvable', message: 'a reworded server diagnostic that names no ref' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
-      assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
+      assert.ok(String(context.status.tooltip).includes('ripr: Refresh Full Analysis'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -2192,7 +2395,7 @@ suite('Extension Smoke', () => {
         failure: { kind: 'deadline_exceeded', message: 'the base `origin/main` does not resolve to a commit' }
       });
       assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
-      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Full Analysis to retry'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -2202,9 +2405,9 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
       for (const [retryCommand, expectedCommand] of [
-        ['ripr.refresh', 'ripr: Refresh Diagnostics'],
-        ['ripr.refreshDiagnostics', 'ripr: Refresh Diagnostics'],
-        ['   ', 'ripr: Refresh Diagnostics'],
+        ['ripr.refresh', 'ripr: Refresh Full Analysis'],
+        ['ripr.refreshDiagnostics', 'ripr: Refresh Full Analysis'],
+        ['   ', 'ripr: Refresh Full Analysis'],
         ['server-owned recovery', 'server-owned recovery']
       ]) {
         context.client.emitNotification('ripr/analysisStatus', {
@@ -2339,7 +2542,7 @@ suite('Extension Smoke', () => {
         'ripr analysis completed with limited evidence.',
         'for example a git invocation timeout',
         'findings may be missing',
-        'Next safe action: Run ripr: Refresh Diagnostics'
+        'Next safe action: Run ripr: Refresh Full Analysis'
       ]);
 
       emitSucceededWithRunStatus('cache_limited');
@@ -2360,7 +2563,7 @@ suite('Extension Smoke', () => {
       assertDegraded([
         'ripr analysis completed with incomplete input.',
         'The run input was incomplete',
-        'Next safe action: Run ripr: Refresh Diagnostics'
+        'Next safe action: Run ripr: Refresh Full Analysis'
       ]);
     } finally {
       await context.dispose();
@@ -2466,7 +2669,7 @@ suite('Extension Smoke', () => {
         tooltip.includes('Next safe action: Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
-      assert.ok(!tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics'), tooltip);
+      assert.ok(!tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis'), tooltip);
     } finally {
       await context.dispose();
     }
@@ -2554,7 +2757,7 @@ suite('Extension Smoke', () => {
       // No degraded component carries a recovery, and the deferred component's
       // recovery must not be promoted: the canned refresh step is the fallback.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to retry the analysis and restore the missing evidence.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to retry the analysis and restore the missing evidence.'),
         tooltip
       );
       assert.ok(!tooltip.includes('not trustworthy evidence'), tooltip);
@@ -2594,7 +2797,7 @@ suite('Extension Smoke', () => {
       // The artifact recovery does not widen the diff partition, so the canned
       // budget remedy must survive composition with the component recovery.
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip.includes('Next safe action: Run ripr: Show Main Analysis Limit to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Full Analysis. Run ripr check to regenerate the gap decision ledger'),
         tooltip
       );
     } finally {
@@ -2634,7 +2837,7 @@ suite('Extension Smoke', () => {
       // The canned tail prescribes a refresh after raising the budget; the
       // running sidecar still reads the old environment, so it must be gone.
       assert.ok(
-        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Diagnostics'),
+        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Full Analysis'),
         tooltip
       );
     } finally {
@@ -2663,7 +2866,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
       const tooltip = String(context.status.tooltip);
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to retry the analysis and restore the missing evidence.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to retry the analysis and restore the missing evidence.'),
         tooltip
       );
       assert.ok(!tooltip.includes('not trustworthy evidence'), tooltip);
@@ -2693,7 +2896,7 @@ suite('Extension Smoke', () => {
       assert.ok(tooltip.includes('ripr analysis completed; spot and gap evidence is deferred.'), tooltip);
       assert.ok(tooltip.includes('Interactive saves defer the spot inventory'), tooltip);
       assert.ok(
-        tooltip.includes('Next safe action: Run ripr: Refresh Diagnostics to compute the full spot inventory.'),
+        tooltip.includes('Next safe action: Run ripr: Refresh Full Analysis to compute the full spot inventory.'),
         tooltip
       );
     } finally {
@@ -3104,6 +3307,7 @@ suite('Extension Smoke', () => {
       'npx --no-install jest tests/discount.test.ts',
       'pnpm exec vitest run src/util.test.ts',
       'yarn ava tests/math.test.ts',
+      'npx --no-install mocha test/age.spec.js',
       'bun run jest tests/discount.test.ts',
       'npm test -- tests/math.test.ts'
     ]) {
@@ -6363,6 +6567,7 @@ suite('Start or Continue Repair shell (#2928 / #4647)', () => {
 interface ControllerTestOptions {
   enabled?: boolean;
   serverVersionWarning?: string;
+  checkMode?: 'instant' | 'draft' | 'fast' | 'deep' | 'ready';
   includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
@@ -6822,9 +7027,9 @@ function createControllerTestContext(options: ControllerTestOptions) {
         autoDownload: false,
         serverVersion: '',
         downloadBaseUrl: '',
-        checkMode: 'draft',
+        checkMode: options.checkMode,
         baseRef: options.baseRef ?? 'origin/main',
-        includeUnchangedTests: options.includeUnchangedTests ?? true,
+        includeUnchangedTests: options.includeUnchangedTests,
         seamDiagnostics: options.seamDiagnostics,
         diagnosticProfile: options.diagnosticProfile,
         traceServer: 'off'
@@ -6902,7 +7107,10 @@ function createControllerTestContext(options: ControllerTestOptions) {
       return undefined;
     },
   };
-  const controller = new RiprClientController({} as vscode.ExtensionContext, output, runtime, status, options.attemptStatusBar);
+  // The fixture's server reports `ripr 0.8.0+test`, so the context names the
+  // matching extension version instead of inheriting the shipped one (#14647).
+  const extensionContext = { extension: { packageJSON: { version: '0.8.0' } } } as unknown as vscode.ExtensionContext;
+  const controller = new RiprClientController(extensionContext, output, runtime, status, options.attemptStatusBar);
   return {
     client,
     controller,

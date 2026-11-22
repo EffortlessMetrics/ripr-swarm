@@ -52,6 +52,8 @@ const AUDITED_PRELUDE_VERSIONS: &[(&str, &str, &[&str])] = &[
     ("creusot_std", "creusot-std", &["0.14.0"]),
     ("vstd", "vstd", &["0.0.0-2026-10-25-0158"]),
     ("prusti_contracts", "prusti-contracts", &["0.3.3"]),
+    ("proptest", "proptest", &["1.12.0"]),
+    ("rayon", "rayon", &["1.12.0"]),
 ];
 
 /// The source crate names with an audit row, for the cross-check against the
@@ -82,6 +84,13 @@ type LiteralJsonMemo = Option<(
     Option<crate::analysis::workspace::LiteralJsonIdentity>,
 )>;
 
+/// The key a binding scan passes to its verification callback for a plain
+/// `use alloc::<macro>;` import (#15263). It is not a crate name (it holds
+/// `::`), so no manifest can claim it; [`DropInManifests::verified_root`]
+/// answers it with the `alloc` declaration proof, which a glob or alias over
+/// `alloc` (asking for plain `alloc`) does not receive.
+pub(crate) const ALLOC_MACRO_IMPORT_ROOT: &str = "alloc::<macro import>";
+
 /// Per-analysis cache of drop-in crate verdicts, keyed by the importing
 /// file's directory. Clones share the cache.
 #[derive(Clone, Debug, Default)]
@@ -89,6 +98,7 @@ pub(crate) struct DropInManifests {
     root: Option<PathBuf>,
     json_root_eligibility: Arc<crate::analysis::workspace::JsonRootEligibilityMemo>,
     json: Arc<Mutex<LiteralJsonMemo>>,
+    json_verdicts: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
     verdicts: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
     standard_roots: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
 }
@@ -105,6 +115,7 @@ impl DropInManifests {
             root: Some(root.to_path_buf()),
             json_root_eligibility: Arc::default(),
             json: Arc::default(),
+            json_verdicts: Arc::default(),
             verdicts: Arc::default(),
             standard_roots: Arc::default(),
         }
@@ -112,10 +123,33 @@ impl DropInManifests {
 
     /// Closed literal json! admission requires a fresh resolved registry edge
     /// and the same strict ambient/source-replacement snapshot as rule 7a.
+    ///
+    /// The verdict is kept per file for the life of this authority (one
+    /// analysis), as [`Self::verified`] keeps drop-in verdicts. The binding
+    /// scan asks once per macro call site, and recomputing the strict
+    /// snapshot for each question made a check of ripr's own tree ten times
+    /// slower (#16038).
     pub(crate) fn verified_literal_json(&self, file: &Path) -> bool {
         let Some(root) = &self.root else {
             return false;
         };
+        let key = root.join(file);
+        if let Some(verdict) = self
+            .json_verdicts
+            .lock()
+            .ok()
+            .and_then(|verdicts| verdicts.get(&key).copied())
+        {
+            return verdict;
+        }
+        let verdict = self.verify_literal_json(root, file);
+        if let Ok(mut verdicts) = self.json_verdicts.lock() {
+            verdicts.insert(key, verdict);
+        }
+        verdict
+    }
+
+    fn verify_literal_json(&self, root: &Path, file: &Path) -> bool {
         if !self.json_root_eligibility.eligible(root) {
             return false;
         }
@@ -177,10 +211,13 @@ impl DropInManifests {
     }
 
     /// [`Self::verified`] for a crate-qualified or glob root, routing the
-    /// standard roots (`std`, `core`, `alloc`) to their own proof; `alloc`
-    /// has none and stays unverified.
+    /// standard roots (`std`, `core`, `alloc`) to their own proof; plain
+    /// `alloc` has none and stays unverified, and only the
+    /// [`ALLOC_MACRO_IMPORT_ROOT`] key gets the `alloc` declaration proof.
     pub(crate) fn verified_root(&self, file: &Path, krate: &str) -> bool {
-        if matches!(krate, "std" | "core" | "alloc") {
+        if krate == ALLOC_MACRO_IMPORT_ROOT {
+            self.unbound_standard_macro_root(file, "alloc")
+        } else if matches!(krate, "std" | "core" | "alloc") {
             self.unbound_standard_root(file, krate)
         } else {
             self.verified(file, krate)
@@ -190,9 +227,19 @@ impl DropInManifests {
     /// Closed declaration proof for an implicit std/core root, not a
     /// registry-package verdict or general standard-library identity.
     pub(crate) fn unbound_standard_root(&self, file: &Path, krate: &str) -> bool {
-        if !matches!(krate, "std" | "core") {
-            return false;
-        }
+        matches!(krate, "std" | "core") && self.manifest_unbound_root(file, krate)
+    }
+
+    /// The same closed declaration proof for a plain standard-macro import
+    /// (`use alloc::vec;`, #15263). `alloc` is admitted only here: the import
+    /// names one macro the crate root exports, so the proof that no manifest,
+    /// patch or package takes the `alloc` name is enough, while a glob or
+    /// facade over `alloc` keeps its stricter refusal.
+    pub(crate) fn unbound_standard_macro_root(&self, file: &Path, krate: &str) -> bool {
+        matches!(krate, "std" | "core" | "alloc") && self.manifest_unbound_root(file, krate)
+    }
+
+    fn manifest_unbound_root(&self, file: &Path, krate: &str) -> bool {
         let Some(root) = &self.root else { return false };
         let file = root.join(file);
         let Some(directory) = file.parent() else {

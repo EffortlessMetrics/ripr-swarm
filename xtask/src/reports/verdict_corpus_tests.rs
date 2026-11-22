@@ -2234,6 +2234,10 @@ fn check_affected_classification_matrix() {
         ("xtask/src/reports/verdict_corpus.rs", All),
         ("xtask/src/reports/verdict_corpus_tests.rs", All),
         ("xtask/src/reports/fixtures.rs", All),
+        ("xtask/src/reports/fixtures/preparation.rs", All),
+        ("xtask/src/run.rs", All),
+        ("xtask/src/run/cargo_output.rs", All),
+        ("xtask/src/main.rs", All),
         ("xtask/src/command.rs", All),
         ("xtask/src/dispatch.rs", All),
         ("docs/specs/RIPR-SPEC-0001.md", All),
@@ -3287,6 +3291,40 @@ fn abstention_is_expected_only_for_caught_changes_whose_citations_all_require_it
     let mut bare = case.clone();
     bare.spec_examples.clear();
     assert!(!abstention_expected(&bare, &rejects));
+    Ok(())
+}
+
+#[test]
+fn a_credited_row_whose_citations_all_require_an_abstention_is_refused() -> Result<(), String> {
+    let corpus = load_corpus(&repo_corpus_dir())?;
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.case_id == "spec-b-0163-computed-argument")
+        .ok_or("case spec-b-0163-computed-argument is missing")?;
+    let rejects: BTreeSet<String> = ["RIPR-SPEC-0163#3".to_string()].into_iter().collect();
+    let err = spec_abstention_violation(case, Verdict::Credited, &rejects)
+        .ok_or("a credited row citing only an abstaining example must be refused")?;
+    assert!(err.contains("spec-b-0163-computed-argument"), "{err}");
+    assert!(err.contains("RIPR-SPEC-0163#3"), "{err}");
+    // Every non-credit verdict obeys the abstaining example.
+    for verdict in [Verdict::Limited, Verdict::Silent, Verdict::Gap] {
+        assert_eq!(spec_abstention_violation(case, verdict, &rejects), None);
+    }
+    // One cited example that does not require an abstention may be the one
+    // the credit rests on, and an uncited case pins nothing.
+    let mut mixed = case.clone();
+    mixed.spec_examples.push("RIPR-SPEC-0163#1".to_string());
+    assert_eq!(
+        spec_abstention_violation(&mixed, Verdict::Credited, &rejects),
+        None
+    );
+    let mut bare = case.clone();
+    bare.spec_examples.clear();
+    assert_eq!(
+        spec_abstention_violation(&bare, Verdict::Credited, &rejects),
+        None
+    );
     Ok(())
 }
 

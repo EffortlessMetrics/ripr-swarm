@@ -231,3 +231,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (18)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — cross_crate_trait_impl_borrows_no_doctest (19)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_borrows_no_doctest --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

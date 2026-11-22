@@ -1,0 +1,30 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_deleted_guard_same_value/input
+
+Summary: 4 changed behaviors checked: 1 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 4 found, 0 suppressed by your settings (4 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 2 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
+
+Start here:
+  State: every finding left is on removed code, which is never an edit target
+  Safe next action: the diff removes code, and removed code is never an edit target, so nothing is selected for repair; static evidence on the removed code: 1 appear noticed by tests, 1 partly noticed, 2 unclear. Rerun with --format human-full for the evidence on each removed line
+  Removed code (static evidence on the old lines, not a test result; each location is where the code stood in the current file):
+    - ./src/lib.rs:4 `if x == 0 { return Vec::new(); }` (kind: predicate): ripr could not tell whether a test checks it (analysis limited, not a verdict)
+    - ./src/lib.rs:4 `if x == 0 { return Vec::new(); }` (kind: return_value): tests reach it but check it only loosely
+    - ./src/lib.rs:8 `if x == 0 { return Vec::new(); }` (kind: predicate): ripr could not tell whether a test checks it (analysis limited, not a verdict)
+    - 1 more: rerun with --format human-full
+
+Hidden:
+  All 4 finding(s) are base-side evidence, not candidate edit targets — rerun with --format human-full for the full evidence.
+    - ./src/lib.rs:4 (unknown: propagation unclear); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:4 (weak); kind: return_value; reason: No assertion was tied to the changed value
+    - ./src/lib.rs:8 (unknown: propagation unclear); kind: predicate; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:8 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
+    unknown: propagation unclear = ripr could not follow the change through an opaque boundary
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

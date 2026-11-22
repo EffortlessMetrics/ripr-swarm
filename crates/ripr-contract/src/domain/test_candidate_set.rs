@@ -230,4 +230,53 @@ mod tests {
             TestCandidateNextRoute::InspectWeakCandidates
         );
     }
+
+    #[test]
+    fn an_empty_window_adds_a_new_test_only_when_discovery_was_complete() {
+        let route = |matched_total: usize, complete: bool| {
+            TestCandidateSet::from_bounded_related_tests(&[], matched_total, complete).next_route
+        };
+        assert_eq!(route(0, true), TestCandidateNextRoute::AddNewFocusedTest);
+        assert_eq!(
+            route(0, false),
+            TestCandidateNextRoute::InspectWeakCandidates
+        );
+        assert_eq!(
+            route(3, true),
+            TestCandidateNextRoute::InspectWeakCandidates
+        );
+    }
+
+    #[test]
+    fn next_routes_use_their_wire_tokens() {
+        let cases = [
+            (
+                TestCandidateNextRoute::RunTargetedPreflight,
+                "run_targeted_preflight",
+            ),
+            (
+                TestCandidateNextRoute::InspectWeakCandidates,
+                "inspect_weak_candidates",
+            ),
+            (
+                TestCandidateNextRoute::AddNewFocusedTest,
+                "add_new_focused_test",
+            ),
+            (
+                TestCandidateNextRoute::ResolveSeamOrOwner,
+                "resolve_seam_or_owner",
+            ),
+            (
+                TestCandidateNextRoute::RefreshStaleAnalysis,
+                "refresh_stale_analysis",
+            ),
+            (
+                TestCandidateNextRoute::ManualOrUnsupported,
+                "manual_or_unsupported",
+            ),
+        ];
+        for (route, token) in cases {
+            assert_eq!(route.as_str(), token);
+        }
+    }
 }

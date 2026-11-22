@@ -229,6 +229,25 @@ fn a_call_that_may_never_run_is_not_reachable_unrevealed() -> Result<(), String>
     Ok(())
 }
 
+#[test]
+fn body_local_variant_items_keep_a_running_unary_tail_call_reached() -> Result<(), String> {
+    for body in [
+        "const None: Option<i32> = Some(1);\n        let Some(_) = None else { return Ok(()); };\n        let _ = f(5);",
+        "fn Err(_: ()) -> Result<(), ()> { Ok(()) }\n        Err(())?;\n        let _ = f(5);",
+    ] {
+        let lib = source(&owner("i32", "a"), &format!("{body}\n        Ok(())"))
+            .replace("fn checks_owner()", "fn checks_owner() -> Result<(), ()>");
+        let findings = TempRepo::create(&lib, &tail_diff("i32", "-a", "a"))?.findings()?;
+        let finding = tail_finding(&findings, 2, "a")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
 /// #14968: a short-circuited right operand, token text inside a macro that
 /// does not evaluate its input, and a call after a statement that always
 /// diverges do not show the input reached the owner either.
@@ -243,6 +262,7 @@ fn a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrev
         "let _ = vec![stringify!(f(5))];",
         "let Some(_x) = None::<i32> else { return; };\n        let _ = f(5);",
         "let Ok(_x) = Err::<i32, i32>(1) else { return; };\n        let _ = f(5);",
+        "fn Err(_: ()) -> Result<(), ()> { Ok(()) }\n        { let Err = Result::<(), ()>::Err; Err(())?;\n        let _ = f(5); }",
         "Err::<(), i32>(1)?;\n        let _ = f(5);",
         "None::<i32>?;\n        let _ = f(5);",
         // #14968 review: an assertion message is formatted only on failure,
@@ -1099,7 +1119,13 @@ fn real_f_class(inline: bool, items: &str) -> Result<(ExposureClass, Finding), S
 /// the owner is `cfg(not(test))`, and the tests run a stand-in that is not
 /// a function. On the base commit both layouts (and the `cfg_attr` form) read
 /// `weakly_exposed` with a complete propagation witness; the glob form was
-/// already refused by another reading and guards the glob rule.
+/// already refused by another reading and guards the glob rule. Each shape
+/// must withhold propagation credit and read `propagation_unknown`, or
+/// `no_static_path` where the reach reading finds no test path to `real::f`
+/// at all (the inline glob form, on the reach reading merged from main:
+/// under `cfg(test)` the glob exports nothing and the test's `f` is the
+/// stand-in constant). Both are below any credited class, so neither can be
+/// a false `exposed`.
 #[test]
 fn a_cfg_gate_on_the_owner_reexport_is_not_exposed() -> Result<(), String> {
     let mut wrong = Vec::new();
@@ -1124,8 +1150,10 @@ fn a_cfg_gate_on_the_owner_reexport_is_not_exposed() -> Result<(), String> {
         ),
     ] {
         let (class, finding) = real_f_class(inline, &items)?;
-        if class != ExposureClass::PropagationUnknown
-            || finding.ripr.propagate.state == StageState::Yes
+        if !matches!(
+            class,
+            ExposureClass::PropagationUnknown | ExposureClass::NoStaticPath
+        ) || finding.ripr.propagate.state == StageState::Yes
         {
             wrong.push(format!("{items}: {class:?} {:?}", finding.ripr.propagate));
         }
@@ -1138,9 +1166,12 @@ fn a_cfg_gate_on_the_owner_reexport_is_not_exposed() -> Result<(), String> {
 /// `include!` (here through a renamed macro, so no `include` name is
 /// visible). No `mod real;` declares it, so its gates are unknown and the
 /// shared identity reports a gate. The unary reading's own refusals also
-/// keep this case `propagation_unknown` without that rule, so it guards the
-/// reading as a whole; `base_owner_cfg_gates.rs` and the identity's unit
-/// tests discriminate the rule itself.
+/// keep this case uncredited without that rule, so it guards the reading
+/// as a whole; `base_owner_cfg_gates.rs` and the identity's unit tests
+/// discriminate the rule itself. The reach reading merged from main finds no
+/// test path to `real::f` here (the test's `f` is the stand-in constant), so
+/// the class is `no_static_path` with reach `no`: below any credited class,
+/// so the conservative answer stands.
 #[test]
 fn an_owner_file_reached_only_through_include_is_not_exposed() -> Result<(), String> {
     let lib = lib_with(&format!(
@@ -1153,7 +1184,9 @@ fn an_owner_file_reached_only_through_include_is_not_exposed() -> Result<(), Str
         "x",
         2,
     )?;
-    assert_eq!(class, ExposureClass::PropagationUnknown, "{finding:?}");
+    assert_eq!(class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert_eq!(finding.ripr.reach.state, StageState::No, "{finding:?}");
+    assert_ne!(finding.ripr.propagate.state, StageState::Yes, "{finding:?}");
     Ok(())
 }
 

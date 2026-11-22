@@ -157,7 +157,9 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      a non-string `state`, `confidence` or `summary`) is a violation rather than
      an empty read that compares equal on both sides. Producer
      version, timestamps and the root are not judged. A repo-seam case without a
-     regenerable subject fails (#12144).
+     regenerable subject fails (#12144). A committed capture selected for
+     regeneration must carry `source_subject.corpus.cache_schema_version` so
+     the gate can decide whether to judge its summaries (#14765).
      Every committed report under `reports/` that carries
      `source_subject.corpus.cache_schema_version` must record the analyzer's
      current `CACHE_SCHEMA_VERSION`, read from `seam_cache.rs`; an older
@@ -182,6 +184,19 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      carries a digest and is not listed fails, and a missing or non-array
      `report_digest_required` is a violation rather than a disabled guard
      (#12816).
+     Against the accepted base, removing a required entry while its original
+     report path still exists fails. Removing the entry together with deleting
+     the report is allowed (#12856); the other corpus checks still apply.
+     Qualification uses the admission-verified first parent; legacy runs use
+     HEAD's first parent read from Git objects (the event payload base can be
+     stale once the base branch moves): a PR run must be on the two-parent
+     merge checkout and a queue run on the single-parent squash (in a batched
+     group that parent is the previous entry), and local runs use the Git
+     merge base. Missing or malformed base evidence
+     fails closed. This path comparison does not detect relocation and is not
+     an authenticity check. Candidate-controlled validator changes require
+     independent review; the current gate does not provide trusted-base
+     matcher enforcement or validate the legacy PR integration's second parent.
      Scope of the guarantee: the digest is recomputed from the file's own
      bytes, so anyone who can recompute it can bless an edit. The check
      detects a stale or hand-edited capture. It is not a tamper-proof seal and
@@ -510,6 +525,15 @@ points and must name the upstream repository, command template, exact 40-hex
 commit, checked-in patch, runtime budget, and artifact-size budget before the
 gate will accept them.
 
+A pure case's corpus `language` label must match a finding language in its
+own report or golden — derived from the findings' probe owner prefixes and
+probe file extensions and from `changed_files_by_language` entries with a
+non-zero file count. When a finding language can be derived and the label is
+none of them, the gate fails closed and names the case; a case whose report
+carries no derivable finding language (for example an empty or repo-seam
+report) leaves its label unconstrained. Relabeling a case never changes its
+assertions or classifications.
+
 The corpus summary envelope is the canonical result/failure projection for this
 corpus runner. The older `evidence-promotion-honesty.md` and
 `evidence-promotion-pinned-external.{json,md}` reports remain detailed
@@ -649,6 +673,16 @@ Run it in a checkout whose diff against `origin/main` is non-empty. On a
 clean checkout the command exits 2 with "analysis outcome NoScope requires
 every count to be zero". This note stands until that defect is fixed.
 
+The `perl_return_without_concrete_discriminator` case uses the existing
+`fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json`
+packet with `patches/14842-perl-return.diff`. Its report retains the return
+finding and advisory guidance. Capture it with the Perl-enabled command above
+using `--diff` for that patch, then make the checkout paths in navigation
+commands repository-relative. The companion fixture test
+`perl_actionability_proptest_fixture_is_actionable` exercises the same
+unmodified packet in the private strict mapper and checks both concrete
+discriminator channels as positive controls.
+
 The packet is the input (the tempting wrong relation or boundary is encoded
 there); the report is the byte-pinned consumer output the gate enforces.
 Packet fingerprints follow the `recompute_packet_fingerprint` recipe in
@@ -679,10 +713,13 @@ Rust family coverage for same-method-other-impl identity (#4760):
 | the same body under a trait the workspace declares, and a plain function no source names | the same unit test | `no_static_path` (no dispatch allowance) |
 | owner whose only naming is a same-named call (`self.inner.get()`) inside its own body, beside an unrelated same-file test | `rust_owner_self_body_same_name_no_unseen_reach` | `no_static_path` (#10160) |
 | the same owner with a caller (`self.get()`) outside its body | `rust_owner_self_body_same_name_with_caller_control` | `weakly_exposed` (reach stays undecided; fixtures differ only by that caller) |
+| two impls of one generic trait on a type (`From<u32>`, `From<&str>`), the test calling the other impl with a typed argument | `rust_generic_trait_sibling_impl` | `reachable_unrevealed`, relation `weak_token_substring` (the argument type at the call site names the sibling impl, so the call is not a direct call of the changed owner; an argument whose type is not read from the call keeps the previous relation; #14074) |
+| the same two impls, the test calling `Cents::from(2)` with an unsuffixed integer | `rust_generic_trait_sibling_impl_inferred_literal` | `reachable_unrevealed`, relation `weak_token_substring` (an integer literal is never `&str`; an unsuffixed or string literal rules out only a primitive owner argument, since an alias may take it; #14074) |
+| `impl Add<u32> for Meters` beside `impl Add<Meters> for Meters`, the diff changing the `Add<Meters>` body, the test calling `Meters(1).add(2u32)` by name with no `+` or `sum` | `rust_generic_trait_sibling_impl_named_operator` | `reachable_unrevealed`, relation `weak_token_substring` (a named operator call is read like any trait method when no operator token could run the owner unnamed; #14074) |
 | private owner whose only same-file test is a compile-time `assert_*::<T>()` check | `rust_compile_time_marker_test_no_observation` | `reachable_unrevealed`, observation `no` (a zero-argument turbofish helper call passes no value and is not an oracle; #10091) |
 | same owner with that marker test beside a test that calls it and asserts its value | `rust_asserting_same_file_test_positive_control` | `exposed` (`direct_owner_call`; the marker neither earns nor withdraws credit; #10091) |
 
-Sibling-crate trait rule (#10061): a trait named through a workspace member crate (`use rcore::Stream;` or `impl rcore::Stream for ..`) is the workspace's only when some workspace member's sources declare a trait of that name, resolved on demand from the member directories when the diff index does not hold the member. That on-demand read skips every directory the workspace walk never enters (`fixtures`, `node_modules`, `target`, `.ripr`, dot-directories), so a trait declared only in a compile-fail fixture declares none and the impl keeps the allowance (#14068). A member that merely re-exports a foreign trait (`pub use std::fmt::Display;`) declares none, so the impl keeps the #9342 dispatch allowance (fixture `member_reexport_foreign_trait_keeps_dispatch_allowance`), and a direct owner call keeps its evidence (fixture `cross_crate_trait_impl_direct_owner_positive`). Limits, none of which gain behavior there: a glob import of a member's trait (`use rcore::*;`), a re-export of a member trait through the impl's own crate (`pub use rcore::Stream;` then `use crate::Stream;`), a trait generated by a macro, a leading-`::` path (`::rcore::Stream`), a dependency renamed with `package =` and a trait declared in the root package itself (only member directories are scanned) are not recognized and keep the foreign-trait reading, so those impls can still borrow a same-leaf-name oracle (fail-open). `[workspace] members` globs that are not a trailing `/*` are not expanded (pre-existing). A member that declares a trait with a std name (`Display`) while another member re-exports the std one reads as the workspace's (fail-closed: credit withheld). The member scan runs once per analysis, only when a member-rooted trait impl is met, and never per function. `cross_crate_trait_impl_direct_owner_positive` is an over-refusal guard, not a discriminator: `cross_crate_trait_impl_borrows_no_doctest` discriminates the refusal and `member_reexport_foreign_trait_keeps_dispatch_allowance` discriminates the declaration requirement.
+Sibling-crate trait rule (#10061): a trait named through a workspace member crate (`use rcore::Stream;` or `impl rcore::Stream for ..`) is the workspace's only when some workspace member's sources declare a trait of that name, resolved on demand from the member directories when the diff index does not hold the member. That on-demand read skips every directory the workspace walk never enters (`fixtures`, `node_modules`, `target`, `.ripr`, dot-directories), so a trait declared only in a compile-fail fixture declares none and the impl keeps the allowance (#14068). A member outside the workspace root (`members = ["../shared"]`) is read the same way although the workspace walk never reaches it, so the classified cache key carries its directory spelling, its manifest text and its sorted trait names: a trait added there, or a manifest change, is a cache miss, an edit there that declares no trait is not, and a workspace with every member below the root keeps its key (#15040). A member that merely re-exports a foreign trait (`pub use std::fmt::Display;`) declares none, so the impl keeps the #9342 dispatch allowance (fixture `member_reexport_foreign_trait_keeps_dispatch_allowance`), and a direct owner call keeps its evidence (fixture `cross_crate_trait_impl_direct_owner_positive`). Limits, none of which gain behavior there: a glob import of a member's trait (`use rcore::*;`), a re-export of a member trait through the impl's own crate (`pub use rcore::Stream;` then `use crate::Stream;`), a trait generated by a macro, a leading-`::` path (`::rcore::Stream`), a dependency renamed with `package =` and a trait declared in the root package itself (only member directories are scanned) are not recognized and keep the foreign-trait reading, so those impls can still borrow a same-leaf-name oracle (fail-open). `[workspace] members` globs that are not a trailing `/*` are not expanded (pre-existing). A member that declares a trait with a std name (`Display`) while another member re-exports the std one reads as the workspace's (fail-closed: credit withheld). The member scan runs once per analysis, only when a member-rooted trait impl is met, and never per function. `cross_crate_trait_impl_direct_owner_positive` is an over-refusal guard, not a discriminator: `cross_crate_trait_impl_borrows_no_doctest` discriminates the refusal and `member_reexport_foreign_trait_keeps_dispatch_allowance` discriminates the declaration requirement.
 
 Foreign-trait dispatch rule (#12900): in diff mode a probe whose resolved owner is a method of a trait the workspace does not declare (`Display::fmt`, `Add::add`, `Arbitrary::arbitrary`) and that has no related test reads reach `weak` (low confidence) instead of `no`, so the class is `infection_unknown`, never `no_static_path`. `owner_runs_through_language_dispatch` is the trait-impl clause of `owner_may_be_reached_unseen` alone, so the rule does not widen to "named elsewhere" (a private helper reached through a caller keeps `no_static_path`; transitive reach is separate). Methods of workspace-declared traits and plain functions are unchanged.
 
@@ -823,6 +860,9 @@ private-member extraction without accepting a complete empty re-bless.
 
 | Test | Spec control |
 |---|---|
+| `pre_label_requires_exact_ordered_published_parents` | The published composition has the advertised target and PR head as its ordered parents |
+| `published_composition_checks_all_reports_and_reasoned_pins` | The pre-label command accepts current reports and valid historical pins and refuses stale compositions, stale reports and malformed pins |
+| `batch_binds_each_record_even_for_repeated_oids_and_embedded_newlines` | The Git batch reader checks each blob identity, type, size and terminator |
 | `nested_private_corpus_rejects_lost_partial_outcome_despite_preview_advisory` | Typed partial outcome and limitation mutations fail despite the retained generic advisory |
 | `partial_analysis_assertion_requires_every_identity_and_count_field` | Missing typed limitation identity or count is rejected |
 | `cargo run -p xtask -- check-evidence-promotion-honesty` | End-to-end gate pass |
@@ -894,6 +934,7 @@ private-member extraction without accepting a complete empty re-bless.
 
 | Component | Location |
 |---|---|
+| Pre-label composition and report checks | `xtask/src/evidence_promotion/pre_label.rs::check` |
 | Corpus manifest | `fixtures/evidence-promotion-honesty-corpus/corpus.json` |
 | First external patch | `fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff` |
 | Gate implementation | `xtask/src/main.rs::check_evidence_promotion_honesty` |

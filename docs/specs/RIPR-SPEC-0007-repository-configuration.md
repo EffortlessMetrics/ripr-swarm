@@ -28,6 +28,12 @@ The configuration layer should:
   (`load_for_root`, workspace-status presence, Python repair
   config-profile detection, first-pr preflight, and agent-receipt
   config fingerprinting share that presence rule);
+- refuse, before opening it, a `ripr.toml` entry that is a symbolic link
+  whose resolved target lies outside the enclosing repository (the nearest
+  directory with a `.git` entry, or the link's own directory when there is
+  none); the refusal is one fixed message naming the entry and the repair,
+  without the resolved path or any target content, and a link whose target
+  stays inside the repository still loads (#14310, Unix);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
 - derive misplaced or retired-key recovery hints from the complete parser
@@ -50,6 +56,13 @@ The configuration layer should:
   `ripr doctor`;
 - provide `ripr config validate [--root PATH]` for isolated ancestor-aware TOML
   validation without workspace tool probes;
+- have `ripr config validate` check the suppressions manifest the config
+  selects (#15308): a configured `[suppressions] path` that names no file, or
+  a manifest path that is a dangling link, fails; a present manifest at the
+  default or configured path is parsed with the same parser `check` uses and
+  its violations fail validation; an absent default
+  `.ripr/suppressions.toml` stays silent; a valid manifest is named on its
+  own line with its entry count;
 - keep output schemas stable unless a later scoped PR explicitly adds config
   metadata.
 
@@ -132,6 +145,29 @@ The committed-source probe that names gitignored source files a diff cannot
 see skips ignored records inside a `target/ripr` tree, at the repository top
 or under a nested root: ripr's own output is not source, so it costs no walk
 of the cache and cannot fail a check through that probe's git calls.
+
+Doctor runs the same output containment guard without writing (#14114).
+When `ripr check` and `ripr pilot` would refuse the default output location,
+because `target` is a regular file or a link that dangles, loops or leaves the
+workspace, doctor fails an `output_location` check with the guard's reason,
+recommends no analysis command, including whole-repository pilot, and drops its
+`✓ Cache` line. `RIPR_CACHE_DIR` waives the check exactly as it waives the guard,
+and a usable output location adds no check. While any `!` check blocks, the
+verbose start-here block gives that recovery instead of packet refresh advice,
+as the compact screen already does.
+
+Without `--root`, doctor diagnoses the root `ripr check` would analyze from the
+invocation directory (#15304): the enclosing Cargo workspace, package,
+JavaScript or Python workspace, or Git top level. It uses the same shared
+resolver and stderr disclosure as check. Language detection, the `enabled`
+tip and `Root:` therefore describe the tree check analyzes, and a run from a
+Python subdirectory of a Rust workspace is not told to replace `rust` with
+`python`. `--root .` diagnoses the invocation directory alone. If that resolver
+fails, doctor says so on stderr and diagnoses the invocation directory.
+The tip's replacement list drops `rust` only when it is the built-in default and
+no Rust marker is found (#7648). A `rust` written in `[languages].enabled` is the
+user's selection and stays in the list; a `[languages]` table without `enabled`,
+or no `ripr.toml`, leaves the default.
 
 ### Doctor blocking and advisory marks (#9033)
 
@@ -548,33 +584,53 @@ then the config is present but unreadable,
 and it is not described as using built-in defaults.
 ```
 
+### A config link that leaves the repository is refused unread (#14310)
+
+```text
+Given a workspace whose ripr.toml is a symbolic link,
+and the link resolves to a path outside the enclosing repository,
+when check, diff, pilot or a structured-output route loads configuration,
+then the run stops with one fixed refusal naming the entry and the repair,
+and the target is not opened,
+and neither the resolved path nor any target content is printed.
+Given the same link resolving inside the repository,
+then the configuration loads as a regular file would.
+```
+
 ### Doctor checks the pytest the Python verify route runs (#13617)
 
 ```text
-Given a Python root that is not unittest-only,
+Given a Python root that is not unittest-only and has no project `.venv` or
+`venv`,
 when ripr doctor runs,
 then doctor checks that PATH `python` (the interpreter of the printed
 `python -m pytest` verify command) imports pytest, from a fresh private
 empty directory with PYTHONSAFEPATH=1 and PYTHONPATH unset, without
 starting pytest, so no checkout or temp-directory code is executed;
 
-Given PATH `python` cannot import pytest,
-when doctor reports the probe,
-then the result is an advisory warning that never changes the exit code;
+Given a project `.venv` or `venv` that statically lists pytest in
+site-packages,
+when ripr doctor runs,
+then doctor reports a pass for that venv interpreter (the one the printed
+verify command names) and does not probe PATH `python`;
 
-Given a project `.venv` or `venv` whose site-packages statically lists
-pytest while PATH `python` lacks it,
-when doctor reports the failure,
-then the warning names that venv's activate script, joined to the selected
-root and shell-quoted so it pastes from the caller's directory; a venv
-without pytest gives no activation advice, and an unreadable venv layout is
-reported as not verified, never as a pass.
+Given a project venv whose site-packages statically lacks pytest,
+when doctor reports the probe,
+then it is a non-required failure that never changes the exit code and names
+one install command for the venv interpreter, joined to the selected root and
+shell-quoted: `uv pip install --python <venv python> pytest` when `uv.lock`
+exists, otherwise `<venv python> -m pip install pytest`; the generic static
+hint is suppressed so only one message is shown;
+
+Given a project venv whose layout is not statically readable,
+when doctor reports the probe,
+then it is reported as not verified (a failure, never a pass).
 ```
 
 The virtualenv is read statically and never executed. The printed verify
-command itself names the project venv interpreter when one exists
-(RIPR-SPEC-0028, #13801); doctor still probes only PATH `python`, so it never
-executes an interpreter from the checkout.
+command names the project venv interpreter when one exists (RIPR-SPEC-0028,
+#13801), and doctor now follows that same interpreter via static facts, so it
+never executes an interpreter from the checkout.
 
 ### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
 
@@ -615,6 +671,15 @@ keeps exit 0 when the other checks pass, and recommends
 `ripr check --base REF` bound to the diagnosed root instead of a bare
 `ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
 never produces the advisory, and a failed prerequisite still outranks it.
+
+When the repository is mid-merge, mid-rebase or mid-cherry-pick (Git's
+operation marker exists), doctor records an advisory `git_operation` check
+naming the operation and its finish and abort commands, and keeps exit 0 when
+the other checks pass. While conflict markers remain, `ripr check` quarantines
+their regions, including regions a zero-context diff splits across hunks,
+records the `unresolved_conflict_markers` limitation and exits 2 instead of
+listing findings from rival source states. An unanswered Git probe never
+produces the advisory.
 
 ### Doctor separates analysis readiness from source-build prerequisites
 
@@ -697,6 +762,17 @@ Cargo.toml exists;
 and doctor's selected --root is not rebound;
 and language detection remains a shallow root scan (the locator stays
 cargo-only).
+
+Given a root whose projects sit below the shallow marker scan (for example
+`backend/Cargo.toml` and `frontend/package.json` with no marker at the root
+or in `src/`) and a loaded `ripr.toml` whose `[languages] enabled` names
+languages,
+when ripr doctor runs with the human screen,
+then the detected-languages line says where the scan looked and names the
+languages the loaded ripr.toml enables, instead of "none detected" (#15195);
+and with no loaded ripr.toml the line still says "none detected";
+and any detected language keeps the ordinary detected-languages line;
+and the marker scan and doctor JSON output are unchanged.
 ```
 
 ### Literal artifact-root rule excludes no source sibling
@@ -852,6 +928,14 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_only_the_workspace_has_ripr_toml`
 - `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_the_member_file_is_a_symlink_to_the_workspace_file`
 - `crates/ripr/src/config.rs::tests::closer_config_names_the_member_entry_when_it_is_a_symlink_to_a_different_file`
+- `crates/ripr/src/config/tests.rs::config_link_leaving_the_repository_is_refused_before_it_is_read`
+  pins the refusal for file, directory, named pipe, link chain and linked
+  directory targets at root, ancestor and member entries (#14310, Unix).
+- `crates/ripr/src/config/tests.rs::unresolvable_config_links_and_absent_entries_keep_their_contracts`
+- `crates/ripr/src/config/tests.rs::config_link_inside_the_repository_still_loads`
+- `crates/ripr/src/config/tests.rs::config_link_without_a_repository_marker_is_bounded_by_its_own_directory`
+- `crates/ripr/tests/config_link_escape_refusal.rs::a_config_link_to_an_outside_file_is_refused_on_every_route`
+- `crates/ripr/tests/config_link_escape_refusal.rs::a_config_link_inside_the_repository_still_loads_on_every_route`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_both_files_and_the_recovery_root`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_built_in_defaults_when_the_workspace_has_no_file`
 - `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_keeps_root_dot_when_the_invocation_path_has_an_apostrophe`

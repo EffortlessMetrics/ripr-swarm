@@ -7,6 +7,11 @@
 //! crate still runs, a doc example still runs under rustdoc, and a library
 //! that leaves `test` on keeps its in-crate credit. The skip is read from
 //! cargo metadata, so these controls need the `cargo` that runs them.
+//!
+//! #14972 adds roots cargo never discovers (`autobins = false`, `autolib =
+//! false`) and examples, which `cargo test` builds without their tests
+//! unless `[[example]] test = true`. #15262 adds benches, which plain
+//! `cargo test` does not build unless `[[bench]] test = true`.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
@@ -93,6 +98,20 @@ impl TempCrate {
         self.finding_in(Mode::Ready)
     }
 
+    /// Every finding the run reports, in any file (#15877).
+    fn finding_count_in(&self, mode: Mode) -> Result<usize, String> {
+        let output = check_workspace(CheckInput {
+            root: self.root.clone(),
+            base: None,
+            diff_file: Some(self.root.join("diff.patch")),
+            mode,
+            format: OutputFormat::Json,
+            include_unchanged_tests: true,
+            ..CheckInput::default()
+        })?;
+        Ok(output.findings.len())
+    }
+
     fn finding_in(&self, mode: Mode) -> Result<Finding, String> {
         let output = check_workspace(CheckInput {
             root: self.root.clone(),
@@ -145,6 +164,31 @@ fn lib_test_false_unit_tests_are_not_a_discriminator() -> Result<(), String> {
         !credits_a_discriminator(&skipped.class),
         "`[lib] test = false` unit tests never run under cargo test: {skipped:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_forwarded_module_may_mount_only_from_outside_the_skipped_chain() -> Result<(), String> {
+    let passthrough =
+        "macro_rules! passthrough { ($item:item) => { $item }; }\npassthrough! { mod runtime; }\n";
+    let skipped_lib = format!("{OWNER}{passthrough}{UNIT_TESTS}");
+    let skipped = TempCrate::create(
+        LIB_TEST_FALSE,
+        &[("src/lib.rs", &skipped_lib), ("src/runtime.rs", "")],
+    )?
+    .finding()?;
+    assert!(!credits_a_discriminator(&skipped.class), "{skipped:?}");
+
+    let remap = "macro_rules! remap { ($keyword:tt $input:ident;) => { $keyword lib; }; }\nremap! { mod unrelated; }\n";
+    let running = TempCrate::create(
+        &format!("{LIB_TEST_FALSE}\n[[test]]\nname = \"driver\"\npath = \"src/driver.rs\"\n"),
+        &[
+            ("src/lib.rs", &lib_source(UNIT_TESTS)),
+            ("src/driver.rs", remap),
+        ],
+    )?
+    .finding()?;
+    assert!(credits_a_discriminator(&running.class), "{running:?}");
     Ok(())
 }
 
@@ -426,6 +470,31 @@ fn assert_withheld_in_every_mode(fixture: &TempCrate) -> Result<(), String> {
         assert!(
             !credits_a_discriminator(&finding.class),
             "{mode:?}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// The exact withheld class (#14972): a skipped target's tests leave the
+/// changed behavior with no static path to a running discriminator.
+/// A root Cargo never builds is no production root either (#15877): its
+/// change is not behavior any build runs, so no mode reports it, and no
+/// finding can carry a discriminator its tests would supply.
+fn assert_never_built_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    for mode in MODES {
+        let count = fixture.finding_count_in(mode.clone())?;
+        assert_eq!(count, 0, "{label} in {mode:?}");
+    }
+    Ok(())
+}
+
+fn assert_no_static_path_in_every_mode(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    for mode in MODES {
+        let finding = fixture.finding_in(mode.clone())?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::NoStaticPath,
+            "{label} in {mode:?}: {finding:?}"
         );
     }
     Ok(())
@@ -805,4 +874,396 @@ fn a_member_path_mount_of_a_skipped_mod_rs_keeps_credit_in_every_mode() -> Resul
     let fixture = create(MEMBER_A)?;
     let control = create(MEMBER_A_TESTED)?;
     assert_exposed_like_control_in_every_mode(&fixture, &control, "a `#[path]` mount of `mod.rs`")
+}
+
+/// A single-package manifest with `package_keys` in `[package]` and `tail`
+/// after `[workspace]` (#14972).
+fn package_manifest(package_keys: &str, tail: &str) -> String {
+    format!(
+        "[package]\nname = \"auto-targets\"\nversion = \"0.0.0\"\nedition = \"2021\"\n{package_keys}\n[workspace]\n{tail}"
+    )
+}
+
+/// `OWNER`, a `main`, and `UNIT_TESTS`: a crate root whose own `#[test]`
+/// is the only candidate discriminator for the changed `a + 2`.
+fn main_source() -> String {
+    format!("{OWNER}\nfn main() {{\n    println!(\"{{}}\", f(1));\n}}\n{UNIT_TESTS}")
+}
+
+#[test]
+fn autobins_false_main_unit_tests_are_not_a_discriminator_in_every_mode() -> Result<(), String> {
+    // #14972 c04: `autobins = false` and no `[[bin]]`: cargo builds no bin
+    // from `src/main.rs`, so `cargo test` runs 0 tests from it, and since
+    // #15877 its change is not production behavior either.
+    let lib = ("src/lib.rs", "pub fn g() {}\n");
+    let main = main_source();
+    let skipped = TempCrate::create_in(
+        &package_manifest("autobins = false\n", ""),
+        &[lib, ("src/main.rs", &main)],
+        "src/main.rs",
+        1,
+    )?;
+    assert_never_built_in_every_mode(&skipped, "an undiscovered bin")?;
+    // Controls: auto-discovery on, and `autobins = false` with the bin
+    // declared explicitly, both run `t` under `cargo test`.
+    let discovered = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[lib, ("src/main.rs", &main)],
+        "src/main.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&discovered, "an autodiscovered bin")?;
+    let declared = TempCrate::create_in(
+        &package_manifest(
+            "autobins = false\n",
+            "\n[[bin]]\nname = \"auto-targets\"\npath = \"src/main.rs\"\n",
+        ),
+        &[lib, ("src/main.rs", &main)],
+        "src/main.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&declared, "a declared bin under autobins = false")
+}
+
+#[test]
+fn autolib_false_lib_unit_tests_are_not_a_discriminator_in_every_mode() -> Result<(), String> {
+    // #14972 c18: `autolib = false` and no `[lib]`: `src/lib.rs` is no
+    // target, so `cargo test` runs 0 tests from it, and since #15877 its
+    // change is not production behavior either.
+    let lib = lib_source(UNIT_TESTS);
+    let main = ("src/main.rs", "fn main() {}\n");
+    let skipped = TempCrate::create_in(
+        &package_manifest("autolib = false\n", ""),
+        &[("src/lib.rs", &lib), main],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_never_built_in_every_mode(&skipped, "an undiscovered lib")?;
+    let discovered = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[("src/lib.rs", &lib), main],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&discovered, "an autodiscovered lib")?;
+    let declared = TempCrate::create_in(
+        &package_manifest("autolib = false\n", "\n[lib]\npath = \"src/lib.rs\"\n"),
+        &[("src/lib.rs", &lib), main],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&declared, "a declared lib under autolib = false")
+}
+
+/// An example whose own `#[test]` calls the library's changed `f`.
+const EXAMPLE_TESTS: &str = "fn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(auto_targets::f(5), 7);\n    }\n}\n";
+
+#[test]
+fn example_unit_tests_are_not_a_discriminator_unless_the_example_is_tested() -> Result<(), String> {
+    // #14972 c25: `cargo test` builds `examples/demo.rs` as a plain
+    // executable (examples default to `test = false`), so `t` never runs
+    // and the library's changed `f` has no running discriminator.
+    let lib = lib_source("");
+    let files = [
+        ("src/lib.rs", lib.as_str()),
+        ("examples/demo.rs", EXAMPLE_TESTS),
+    ];
+    let skipped = TempCrate::create_in(&package_manifest("", ""), &files, "src/lib.rs", 1)?;
+    assert_no_static_path_in_every_mode(&skipped, "a default example")?;
+    // Control: `test = true` makes `cargo test` run the example's tests.
+    // `--mode instant` does not index `examples/` at all, so it finds no
+    // static path there with or without this change; every other mode
+    // credits the running example test.
+    let tested = TempCrate::create_in(
+        &package_manifest("", "\n[[example]]\nname = \"demo\"\ntest = true\n"),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep, Mode::Ready] {
+        let finding = tested.finding_in(mode.clone())?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "a `test = true` example in {mode:?}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A bench whose own `#[test]` calls the library's changed `f`.
+const BENCH_TESTS: &str = "#[test]\nfn t() {\n    assert_eq!(auto_targets::f(5), 7);\n}\n";
+
+#[test]
+fn bench_unit_tests_are_not_a_discriminator_unless_the_bench_is_tested() -> Result<(), String> {
+    // #15262: a bench defaults to `test = false`, so plain `cargo test`
+    // does not build `benches/load.rs` and `t` never runs; the library's
+    // changed `f` has no running discriminator.
+    let lib = lib_source("");
+    let files = [
+        ("src/lib.rs", lib.as_str()),
+        ("benches/load.rs", BENCH_TESTS),
+    ];
+    let skipped = TempCrate::create_in(&package_manifest("", ""), &files, "src/lib.rs", 1)?;
+    assert_no_static_path_in_every_mode(&skipped, "a default bench")?;
+    // Control: `test = true` makes `cargo test` build and run the bench's
+    // tests. `--mode instant` does not index `benches/`, so every other
+    // mode credits the running bench test.
+    let tested = TempCrate::create_in(
+        &package_manifest("", "\n[[bench]]\nname = \"load\"\ntest = true\n"),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    assert_credited_beyond_instant(&tested, "a `test = true` bench")
+}
+
+#[test]
+fn a_bench_included_into_an_integration_test_keeps_credit() -> Result<(), String> {
+    // #15262: `tests/it.rs` compiles `benches/load.rs` through `include!`
+    // inside a module body, so `cargo test` runs `t` although the bench
+    // target itself is skipped; the mount scan sees the running target.
+    let lib = lib_source("");
+    let fixture = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[
+            ("src/lib.rs", lib.as_str()),
+            ("benches/load.rs", BENCH_TESTS),
+            (
+                "tests/it.rs",
+                "mod load {\n    include!(\"../benches/load.rs\");\n}\n",
+            ),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_credited_beyond_instant(&fixture, "a bench included by an integration test")
+}
+
+#[test]
+fn a_member_path_mount_of_an_undiscovered_root_keeps_credit_in_every_mode() -> Result<(), String> {
+    // #14972 merge with #14962 round 7/8: `a` turns `autobins` off, so
+    // cargo builds nothing from `a/src/main.rs`, but `b` compiles it through
+    // `#[path]` and `cargo test -p b` runs `t`. An undiscovered root is no
+    // listed target, so the mount scan asks about it like any other
+    // ancestry member; a run whose index omits `b` must not withhold it.
+    let main = main_source();
+    let fixture = TempCrate::create_in(
+        WORKSPACE,
+        &[
+            (
+                "a/Cargo.toml",
+                "[package]\nname = \"a\"\nversion = \"0.0.0\"\nedition = \"2021\"\nautobins = false\n",
+            ),
+            ("a/src/lib.rs", "pub fn g() {}\n"),
+            ("a/src/main.rs", &main),
+            ("b/Cargo.toml", MEMBER_B),
+            (
+                "b/src/lib.rs",
+                "#[path = \"../../a/src/main.rs\"]\npub mod cli;\n",
+            ),
+        ],
+        "a/src/main.rs",
+        1,
+    )?;
+    assert_exposed_in_every_mode(&fixture, "a `#[path]` mount of an undiscovered root")
+}
+
+#[test]
+fn skipped_example_shapes_are_withheld_in_every_mode() -> Result<(), String> {
+    // #14972 review: putting example roots under the mount scan must not
+    // restore credit where nothing mounts the example. A multi-file example
+    // directory, a `test = true` example whose required feature is off, and
+    // an example whose required feature is on by default but which leaves
+    // `test` at its `false` default all run no `t` under `cargo test`.
+    let lib = lib_source("");
+    let multi = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[
+            ("src/lib.rs", lib.as_str()),
+            ("examples/demo/main.rs", "mod h;\nfn main() {}\n"),
+            (
+                "examples/demo/h.rs",
+                "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(auto_targets::f(5), 7);\n    }\n}\n",
+            ),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_no_static_path_in_every_mode(&multi, "a multi-file example directory")?;
+    let files = [
+        ("src/lib.rs", lib.as_str()),
+        ("examples/demo.rs", EXAMPLE_TESTS),
+    ];
+    let unmet = TempCrate::create_in(
+        &package_manifest(
+            "",
+            "\n[features]\nx = []\n\n[[example]]\nname = \"demo\"\ntest = true\nrequired-features = [\"x\"]\n",
+        ),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    assert_no_static_path_in_every_mode(&unmet, "a `test = true` example with an unmet feature")?;
+    let skipped_example = TempCrate::create_in(
+        &package_manifest(
+            "",
+            "\n[features]\ndefault = [\"x\"]\nx = []\n\n[[example]]\nname = \"demo\"\nrequired-features = [\"x\"]\n",
+        ),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    assert_no_static_path_in_every_mode(
+        &skipped_example,
+        "a default-feature example without `test = true`",
+    )
+}
+
+/// Every mode that indexes `examples/` credits the running example test;
+/// `--mode instant` does not index `examples/`, so it reads no static path
+/// on `main` and here alike.
+fn assert_credited_beyond_instant(fixture: &TempCrate, label: &str) -> Result<(), String> {
+    for mode in [Mode::Draft, Mode::Fast, Mode::Deep, Mode::Ready] {
+        let finding = fixture.finding_in(mode.clone())?;
+        assert!(
+            credits_a_discriminator(&finding.class),
+            "{label} in {mode:?}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_example_included_into_the_library_test_tree_keeps_credit() -> Result<(), String> {
+    // #14972 review x5: `src/lib.rs` compiles `examples/demo.rs` through
+    // `include!` inside `mod ex`, so `cargo test` runs `ex::tests::t`. The
+    // index records no edge for an `include!` in a module body, so only the
+    // mount scan sees the running target that mounts the example root.
+    let lib = lib_source("\n#[cfg(test)]\nmod ex {\n    include!(\"../examples/demo.rs\");\n}\n");
+    let fixture = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[
+            ("src/lib.rs", lib.as_str()),
+            (
+                "examples/demo.rs",
+                "fn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(crate::f(5), 7);\n    }\n}\n",
+            ),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_credited_beyond_instant(&fixture, "an example included by the library")
+}
+
+#[test]
+fn an_example_included_into_an_integration_test_keeps_credit() -> Result<(), String> {
+    // #14972 review x2: `tests/it.rs` compiles `examples/demo.rs` through
+    // `include!` inside `mod demo`, so `cargo test` runs `demo::tests::t`
+    // in the integration binary.
+    let lib = lib_source("");
+    let fixture = TempCrate::create_in(
+        &package_manifest("", ""),
+        &[
+            ("src/lib.rs", lib.as_str()),
+            ("examples/demo.rs", EXAMPLE_TESTS),
+            (
+                "tests/it.rs",
+                "mod demo {\n    include!(\"../examples/demo.rs\");\n}\n",
+            ),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    assert_credited_beyond_instant(&fixture, "an example included by an integration test")
+}
+
+/// An edition 2015 manifest (no `edition` key) that declares one `[[test]]`
+/// leaves `autotests` off unless it says otherwise (#15877): Cargo builds
+/// only the declared test, so `tests/integration.rs` never runs and credits
+/// no discriminator. Edition 2021 and an explicit `autotests = true` build
+/// it and keep the credit.
+#[test]
+fn edition_2015_declared_test_turns_off_test_discovery() -> Result<(), String> {
+    let manifest = |package_keys: &str| {
+        format!(
+            "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\n{package_keys}\n[[test]]\nname = \"declared\"\npath = \"tests/declared.rs\"\n\n[workspace]\n"
+        )
+    };
+    // Edition 2015 integration tests name the library through `extern
+    // crate`, so the opt-in control is a test Cargo can build and run.
+    let integration = format!("extern crate lib_test_false;\n\n{INTEGRATION_TEST}");
+    let files = [
+        ("src/lib.rs", OWNER),
+        ("tests/declared.rs", "#[test]\nfn unrelated() {}\n"),
+        ("tests/integration.rs", integration.as_str()),
+    ];
+    let legacy = TempCrate::create_in(&manifest(""), &files, "src/lib.rs", 1)?;
+    let finding = legacy.finding()?;
+    assert!(
+        !credits_a_discriminator(&finding.class),
+        "edition 2015 never builds tests/integration.rs: {finding:?}"
+    );
+    for (keys, label) in [
+        ("edition = \"2021\"\n", "edition 2021"),
+        ("autotests = true\n", "edition 2015 with autotests = true"),
+    ] {
+        let built = TempCrate::create_in(&manifest(keys), &files, "src/lib.rs", 1)?;
+        let finding = built.finding()?;
+        assert!(
+            credits_a_discriminator(&finding.class),
+            "{label} builds tests/integration.rs: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A unit test inside a binary root Cargo never builds is no discriminator
+/// (#16051 review): `autobins = false` with no `[[bin]]`, or edition 2015
+/// declaring a different `[[bin]]`, leaves `src/bin/extra.rs` undiscovered,
+/// so its test cannot run. The discovered binary keeps the credit.
+#[test]
+fn a_test_in_an_undiscovered_bin_is_not_a_discriminator() -> Result<(), String> {
+    let manifest = |package_keys: &str, targets: &str| {
+        format!(
+            "[package]\nname = \"lib-test-false\"\nversion = \"0.0.0\"\n{package_keys}\n{targets}\n[workspace]\n"
+        )
+    };
+    let bin = "extern crate lib_test_false;\n\nfn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() {\n        assert_eq!(lib_test_false::f(5), 7);\n    }\n}\n";
+    let files = [
+        ("src/lib.rs", OWNER),
+        ("src/bin/extra.rs", bin),
+        ("src/declared.rs", "fn main() {}\n"),
+    ];
+    let discovered = TempCrate::create_in(
+        &manifest("edition = \"2021\"\n", ""),
+        &files,
+        "src/lib.rs",
+        1,
+    )?;
+    let finding = discovered.finding()?;
+    assert!(
+        credits_a_discriminator(&finding.class),
+        "control: the discovered bin's test runs: {finding:?}"
+    );
+    for (keys, targets, label) in [
+        (
+            "edition = \"2021\"\nautobins = false\n",
+            "",
+            "autobins = false",
+        ),
+        (
+            "",
+            "[[bin]]\nname = \"declared\"\npath = \"src/declared.rs\"\n",
+            "edition 2015 with a declared bin",
+        ),
+    ] {
+        let undiscovered = TempCrate::create_in(&manifest(keys, targets), &files, "src/lib.rs", 1)?;
+        let finding = undiscovered.finding()?;
+        assert!(
+            !credits_a_discriminator(&finding.class),
+            "{label} never builds src/bin/extra.rs: {finding:?}"
+        );
+    }
+    Ok(())
 }

@@ -349,3 +349,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — rust_slice_table_boundary (28)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_slice_table_boundary (29)
+
+Reason:
+RIPR-SPEC-0224: distinguish the file-proximity miss from an assertion-free direct caller (#14808).
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

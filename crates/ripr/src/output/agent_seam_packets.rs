@@ -658,6 +658,11 @@ pub(crate) struct BeforePhaseAttemptContinuation {
     /// summary only; the `--json` continuation is unchanged. `None` when no
     /// exact command can be established.
     pub(crate) focused_test_command: Option<String>,
+    /// The selected file is a `[[test]]` target the manifest declares
+    /// outside `tests/` (#15910), from the attempt's cage policy. The human
+    /// summary then words it as a test file, not as a source file's inline
+    /// test module, which is what its path shape alone would suggest.
+    pub(crate) declared_cargo_test_target: bool,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -713,6 +718,40 @@ pub(crate) fn render_before_phase_attempt_stdout(
     Ok(rendered)
 }
 
+/// Augment the `ripr repair --json` start stdout (the packet envelope, or the
+/// resumed attempt's status document) with the additive top-level
+/// `repair_start_scope` block (#13701), present only when the bare start was
+/// not narrowed to the change: `narrowed_to_change` (always `false`),
+/// `note` (the same plain note the human start prints) and `base_command`
+/// (the `--base` rerun template; its `<ref>` is the reader's to name). Like the `repair_attempt` block, it is
+/// inserted into the rendered document without re-rendering packet content.
+pub(crate) fn render_repair_start_scope_stdout(
+    start_stdout: &str,
+    note: &str,
+    base_command: &str,
+) -> Result<String, String> {
+    let mut value: serde_json::Value = serde_json::from_str(start_stdout)
+        .map_err(|error| format!("decode repair start stdout failed: {error}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "repair start stdout is not a JSON object".to_string())?;
+    if object.contains_key("repair_start_scope") {
+        return Err("repair start stdout already carries a repair_start_scope block".to_string());
+    }
+    object.insert(
+        "repair_start_scope".to_string(),
+        json!({
+            "narrowed_to_change": false,
+            "note": note,
+            "base_command": base_command,
+        }),
+    );
+    let mut rendered = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("render repair start stdout failed: {error}"))?;
+    rendered.push('\n');
+    Ok(rendered)
+}
+
 /// Render one explicit GapRecord as an agent packet. This is the same
 /// agent-packet envelope used by seam packets, but the source is the gap
 /// decision ledger, so callers do not rerun analysis or infer repairability
@@ -737,6 +776,12 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
     let Some(verify_command) = record.verification_commands.first().cloned() else {
         return Err("requires verification_commands".to_string());
     };
+    // #15302: a nested Python project's verify command is relative to its
+    // project directory; every copyable or prose form runs it from there.
+    let verify_display = crate::output::python_repair_card::rooted_verify_display(
+        record.verify_cwd.as_deref(),
+        &verify_command,
+    );
     let current_evidence_strength = gap_record_current_evidence_strength(record);
     let stop_conditions = stop_conditions_for(route);
     let anchor = record.anchor.as_ref();
@@ -775,7 +820,7 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         record,
         route,
         discriminator: &discriminator,
-        verify_command: &verify_command,
+        verify_command: &verify_display,
         allowed_edit_surface: &allowed_edit_surface,
         stop_conditions: &stop_conditions,
         authority_boundary: authority_boundary.as_str(),
@@ -812,9 +857,14 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
     {
         object.insert("command_specs".to_string(), command_specs.clone());
     }
+    if let Some(cwd) = record.verify_cwd.as_deref()
+        && let Some(object) = repair_card_json.as_object_mut()
+    {
+        object.insert("verify_cwd".to_string(), json!(cwd));
+    }
     let llm_guidance_json = json!({
-        "prompt": gap_record_prompt(route, &discriminator, &verify_command),
-        "verify_command": &verify_command,
+        "prompt": gap_record_prompt(route, &discriminator, &verify_display),
+        "verify_command": &verify_display,
         "stop_conditions": &stop_conditions,
         "copyable_packet": pasteable_packet,
     });
@@ -863,6 +913,11 @@ pub(crate) fn render_agent_gap_record_packet_json_with_causal(
         && let Some(object) = packet.as_object_mut()
     {
         object.insert("command_specs".to_string(), command_specs);
+    }
+    if let Some(cwd) = record.verify_cwd.as_deref()
+        && let Some(object) = packet.as_object_mut()
+    {
+        object.insert("verify_cwd".to_string(), json!(cwd));
     }
     if let Some(projection) = causal_projection
         && let Some(delta) = projection.delta_for(non_empty(&record.canonical_gap_id).as_deref())
@@ -1008,7 +1063,10 @@ pub(crate) fn build_gap_record_queue_model(
                 .allows_targeted_test()
                 .then(|| route.related_test.clone())
                 .flatten(),
-            verify_command: verify_command.clone(),
+            verify_command: crate::output::python_repair_card::rooted_verify_display(
+                record.verify_cwd.as_deref(),
+                verify_command,
+            ),
             receipt_command: record.receipt_command.clone(),
             command_specs: gap_record_command_specs_json(record),
             conflict_group,
@@ -3085,7 +3143,39 @@ fn uniquify_recommended_test_name(base: &str, entry: &ClassifiedSeam, target_fil
 pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> bool {
     let recommended = recommended_test_for(entry);
     crate::analysis::is_test_surface_path(&recommended.file)
+        || recommended_test_is_declared_test_target(entry, &recommended)
         || recommended_inline_test_module(entry, &recommended.file).is_some()
+}
+
+/// Whether the recommended test is an existing test in a `[[test]]` target
+/// entry the package manifest declares outside the test layouts (#15910).
+/// The producer read the manifest and recorded the answer on the related
+/// test (`TestKind::DeclaredIntegration`); this projection only reads it, and
+/// the edit cage asks the manifest again before it admits the file
+/// (`edit_cage_policy_from_packet_in`).
+/// The recommended test file when it is a manifest-declared test target
+/// ([`recommended_test_is_declared_test_target`]).
+pub(crate) fn declared_test_target_file(entry: &ClassifiedSeam) -> Option<String> {
+    let recommended = recommended_test_for(entry);
+    recommended_test_is_declared_test_target(entry, &recommended).then_some(recommended.file)
+}
+
+fn recommended_test_is_declared_test_target(
+    entry: &ClassifiedSeam,
+    recommended: &RecommendedTest,
+) -> bool {
+    let Some(symbol_id) = recommended.symbol_id.as_deref() else {
+        return false;
+    };
+    recommended.target_kind == RecommendedTestTargetKind::ExistingTest
+        && entry.evidence.related_tests.iter().any(|test| {
+            test.test_target.as_ref().is_some_and(|target| {
+                target.symbol_id().0 == symbol_id
+                    && target.test_kind()
+                        == crate::analysis::test_grip_evidence::TestKind::DeclaredIntegration
+                    && display_path(target.file()) == recommended.file
+            })
+        })
 }
 
 /// Whether the packet's recommended test file is exactly `proposed_file`. A
@@ -3342,17 +3432,20 @@ pub(crate) fn nearest_strong_test_to_imitate(
     seam_kind: SeamKind,
     evidence: &TestGripEvidence,
 ) -> Option<&crate::analysis::test_grip_evidence::RelatedTestGrip> {
-    evidence
-        .related_tests
-        .iter()
-        .find(|test| {
-            test.oracle_strength == crate::domain::OracleStrength::Strong
-                && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
-                    seam_kind,
-                    &test.oracle_kind,
-                )
-        })
-        .map(std::sync::Arc::as_ref)
+    first_strong_test_to_imitate(seam_kind, evidence.related_tests.iter().map(AsRef::as_ref))
+}
+
+pub(super) fn first_strong_test_to_imitate<'a>(
+    seam_kind: SeamKind,
+    mut tests: impl Iterator<Item = &'a crate::analysis::test_grip_evidence::RelatedTestGrip>,
+) -> Option<&'a crate::analysis::test_grip_evidence::RelatedTestGrip> {
+    tests.find(|test| {
+        test.oracle_strength == crate::domain::OracleStrength::Strong
+            && crate::analysis::test_grip_evidence::oracle_kind_matches_seam_kind(
+                seam_kind,
+                &test.oracle_kind,
+            )
+    })
 }
 
 fn push_related_test_reference(
@@ -4447,6 +4540,7 @@ mod tests {
         relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence,
     ) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from("tests/service.rs"),
             line: 21,
@@ -4494,6 +4588,7 @@ mod tests {
     /// oracle: the shape that projects a navigation-only external target.
     fn external_observer_test() -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "blob copies resizable buffers".to_string(),
             file: PathBuf::from("test/js/web/fetch/blob.test.ts"),
             line: 41,
@@ -4550,6 +4645,7 @@ mod tests {
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -4969,6 +5065,7 @@ mod tests {
         use crate::analysis::test_grip_evidence::{RelationConfidence, RelationReason};
         let mut entry = weakly_gripped_classified();
         let high = RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "z_high_confidence".to_string(),
             file: PathBuf::from("tests/zeta.rs"),
             line: 1,
@@ -4986,6 +5083,7 @@ mod tests {
             relation_confidence: RelationConfidence::High,
         };
         let low = RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "a_low_confidence".to_string(),
             file: PathBuf::from("tests/alpha.rs"),
             line: 1,
@@ -6577,6 +6675,59 @@ mod tests {
         Ok(())
     }
 
+    /// #15302: a record whose verify command is relative to a nested project
+    /// keeps the raw command next to `verify_cwd`, and every copyable or prose
+    /// form runs it from that directory.
+    #[cfg(not(windows))]
+    #[test]
+    fn gap_record_packet_and_queue_run_a_nested_verify_command_from_its_directory()
+    -> Result<(), String> {
+        let raw = "python -m pytest tests/test_price.py::test_discount";
+        let rooted = "(cd -- py && python -m pytest tests/test_price.py::test_discount)";
+        let record = GapRecord {
+            verification_commands: vec![raw.to_string()],
+            verify_cwd: Some("py".to_string()),
+            command_specs: None,
+            ..typed_gap_record()?
+        };
+        let packet = render_agent_gap_record_packet_json("gap-ledger.json", &record)?;
+        let envelope: Value =
+            serde_json::from_str(&packet).map_err(|error| format!("parse packet: {error}"))?;
+        let packet = &envelope["packets"][0];
+        assert_eq!(packet["verify_command"], raw, "{packet}");
+        assert_eq!(packet["verify_cwd"], "py", "{packet}");
+        assert_eq!(packet["repair_card"]["verify_cwd"], "py", "{packet}");
+        assert_eq!(packet["llm_guidance"]["verify_command"], rooted, "{packet}");
+        let prompt = packet["llm_guidance"]["prompt"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(prompt.contains(rooted), "{prompt}");
+        let copyable = packet["llm_guidance"]["copyable_packet"].to_string();
+        assert!(copyable.contains("cd -- py"), "{copyable}");
+
+        let queue = render_agent_gap_record_queue_json(
+            ".",
+            "gap-ledger.json",
+            std::slice::from_ref(&record),
+            record.language.as_str(),
+            10,
+        )?;
+        assert!(
+            queue.contains(&serde_json::to_string(rooted).unwrap_or_default()),
+            "{queue}"
+        );
+
+        let root_level = GapRecord {
+            verification_commands: vec![raw.to_string()],
+            command_specs: None,
+            ..typed_gap_record()?
+        };
+        let packet = render_agent_gap_record_packet_json("gap-ledger.json", &root_level)?;
+        assert!(!packet.contains("verify_cwd"), "{packet}");
+        assert!(!packet.contains("cd -- py"), "{packet}");
+        Ok(())
+    }
+
     #[test]
     fn gap_record_packet_and_queue_reject_blank_or_mixed_legacy_commands() -> Result<(), String> {
         let valid = typed_gap_record()?;
@@ -6874,6 +7025,7 @@ mod tests {
             .evidence
             .related_tests
             .push(std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: expected_base.clone(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 40,
@@ -6896,6 +7048,7 @@ mod tests {
             .evidence
             .related_tests
             .push(std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: format!("{expected_base}_2"),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 41,

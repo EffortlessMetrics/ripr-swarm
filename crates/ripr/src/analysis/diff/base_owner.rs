@@ -22,11 +22,11 @@
 
 use super::{ChangedFile, reconstruct_old_lines_with_origins};
 use ra_ap_syntax::{
-    AstNode, SyntaxKind, SyntaxNode,
+    AstNode, AstToken, SyntaxKind, SyntaxNode,
     ast::{self, HasName, HasVisibility},
 };
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 /// A function whose base-side item is verified to be the same item.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,6 +171,51 @@ pub(crate) fn verified_base_owner(
             || modules.chain_gated(owner_file, &chain, &names)
             || !modules.declares(owner_file),
     })
+}
+
+/// #15104: whether a test may run some other function in place of the
+/// new-side function `name` spanning `start_line..=end_line` of
+/// `new_source`. This is the new-side half of [`verified_base_owner`]'s
+/// gate decision, for a claim that reads only the new item (no base-side
+/// body): `true` when a `cfg` or `cfg_attr` sits on the function, an
+/// enclosing item or the file, when another function of that name shares
+/// its attribute-free path (a `cfg` twin), when `modules` reports a gated
+/// or changed declaration on the owner file's module chain, or when any of
+/// that cannot be read (fail closed).
+pub(crate) fn owner_may_be_swapped(
+    new_source: &str,
+    owner_file: &Path,
+    modules: &ModuleDeclarations,
+    name: &str,
+    start_line: usize,
+    end_line: usize,
+) -> bool {
+    let chain = module_chain_names(owner_file);
+    let name = unraw(name);
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(new_source) else {
+        return true;
+    };
+    let root = parse.tree().syntax().clone();
+    // Innermost last, as in `verified_base_owner`.
+    let Some(function) = named_functions(&root, name).rfind(|function| {
+        node_lines(new_source, function.syntax())
+            .is_some_and(|(first, last)| first <= start_line && end_line <= last)
+    }) else {
+        return true;
+    };
+    // The gates outside `mod` declarations (#14952) apply here as in
+    // `verified_base_owner`; its declaration check
+    // (`ModuleDeclarations::declares`) is not applied here (#15037).
+    let names = owner_names(&function, name);
+    if modules.chain_changed(owner_file, &chain, &names)
+        || modules.chain_gated(owner_file, &chain, &names)
+    {
+        return true;
+    }
+    let Some(bare) = bare_path(new_source, &function) else {
+        return true;
+    };
+    cfg_gated(&function) || !unique_under(new_source, &root, name, &bare)
 }
 
 fn named_functions<'a>(
@@ -490,16 +535,26 @@ fn macro_scope_reaches(scopes: &BTreeSet<MacroScope>, file: &Path) -> bool {
 /// an owner when its name equals a component of the owner file's path. That
 /// over-approximates the declaration chain, so among `mod` declarations it
 /// can only gate or refuse more owners, never fewer. A `#[path]` declaration
-/// breaks the name mapping, so its presence gates every owner and a change
-/// to one refuses every owner.
+/// breaks the name mapping, so its presence gates, and a change to one
+/// refuses, every owner it may reach: the file its literal names (resolved
+/// against the declaring file's directory, case-insensitively), any file
+/// under that file's directory except a default crate root (`src/lib.rs`,
+/// `src/main.rs`), and any file whose path spells the declaration's name.
+/// A target that does not read as a literal on a top-level out-of-line
+/// declaration (an inline module's `#[path]`, a `#[path]` declaration inside
+/// an inline module, a non-literal value) reaches every owner
+/// (#15104).
 ///
 /// Gates that live outside a `mod` declaration are read too (#14952):
 ///
 /// - a `use` with a `cfg`/`cfg_attr` of its own, or a `pub` one under a
 ///   gated item or file, gates every owner it names (by its last path
-///   segment or its rename) and every owner whose path has a component
-///   named like one of its path's segments, since the leaf may itself be a
-///   module (`use real as imp;`, `use a::imp;`, #15035 review F1). Two kinds
+///   segment or its rename, or by a name in the self type or trait of an
+///   `impl` enclosing the owner), and every owner whose path has a
+///   component named like a module the `use` may alias: its last segment
+///   (`use a::imp;`), its rename and the renamed segment (`use real as
+///   imp;`), or any segment of a glob or `self` import (#15035 review F1,
+///   narrowed in round 5). Two kinds
 ///   of `use` are not gates. One rooted at a sysroot crate (`std`, `core`,
 ///   `alloc`, `proc_macro`, `test`, with or without a leading `::`) cannot
 ///   name a workspace module, unless some `extern crate .. as` (in any file,
@@ -522,8 +577,8 @@ fn macro_scope_reaches(scopes: &BTreeSet<MacroScope>, file: &Path) -> bool {
 ///   cannot be resolved (absolute, or climbing above the including path)
 ///   gates its file stem by name. An `include!` whose argument is not a
 ///   single plain string literal (`concat!(env!(..), "/src/real.rs")`)
-///   gates the stem of its last string literal by name when that literal
-///   ends in a `.rs` file name, and every owner otherwise;
+///   gates by name the stem of the path its trailing string literals spell
+///   when that ends in a `.rs` file name, and every owner otherwise;
 /// - a `macro_rules!` (or `macro`) whose body may emit an out-of-line module
 ///   (`mod` followed by a name and no `{` body), an `include!` or a `#[path]`
 ///   (`path =`) gates every owner outside a crate root file of the package
@@ -555,6 +610,16 @@ pub(crate) struct ModuleDeclarations {
     sysroot_gated: BTreeSet<String>,
     /// Some `extern crate .. as` renames a crate to a sysroot crate's name.
     sysroot_shadowed: bool,
+    /// Files a `#[path]` literal on a read or changed declaration names,
+    /// resolved against its declaring file's directory and normalized
+    /// lexically (lowercase, so a case-insensitive file system cannot hide a
+    /// match).
+    retarget_targets: BTreeSet<PathBuf>,
+    /// Names of `#[path]` declarations: a file whose path spells one may be
+    /// the module that declaration replaced.
+    retarget_names: BTreeSet<String>,
+    /// A `#[path]` declaration's target could not be read as a literal.
+    retarget_opaque: bool,
     /// Names of declarations the diff touched: an added or removed line on
     /// the declaration or its attributes, on the header of an inline module
     /// enclosing it, or on an inner attribute of its file.
@@ -634,6 +699,12 @@ impl ModuleDeclarations {
                 continue;
             };
             let root = parse.tree().syntax().clone();
+            // An inline module's `#[path]` moves its children's directory;
+            // which files that reaches is not read, so it gates every owner.
+            if inline_retargets(&root) {
+                reading.retargeted = true;
+                reading.retarget_opaque = true;
+            }
             for module in root.descendants().filter_map(ast::Module::cast) {
                 let Some(name) = module.name() else {
                     reading.unreadable = true;
@@ -647,6 +718,7 @@ impl ModuleDeclarations {
                 reading.declared.insert(name.clone());
                 if module_retargets(&module) {
                     reading.retargeted = true;
+                    reading.note_retarget_targets(file, &module);
                 }
                 if cfg_gated_node(module.syntax()) {
                     reading.gated.insert(name);
@@ -658,7 +730,10 @@ impl ModuleDeclarations {
             reading.gated_names.extend(gates.names);
             reading.gated_files.extend(gates.files);
             reading.sysroot_gated.extend(gates.sysroot);
+            // An `include!` naming a file its tokens do not spell may
+            // compile any owner's file, so it reaches every owner.
             reading.retargeted |= gates.opaque_include;
+            reading.retarget_opaque |= gates.opaque_include;
             reading.sysroot_shadowed |= gates.shadows_sysroot;
         }
         for (changed, new_source) in changed_files {
@@ -729,6 +804,10 @@ impl ModuleDeclarations {
             if !file_attrs_touched && !touches(start, usize::from(end)) {
                 continue;
             }
+            if module.item_list().is_some() && module_retargets(&module) {
+                self.changed_retarget = true;
+                self.retarget_opaque = true;
+            }
             // An out-of-line declaration itself, or every one an inline
             // module's header encloses.
             //
@@ -739,6 +818,7 @@ impl ModuleDeclarations {
             {
                 if module_retargets(&declaration) {
                     self.changed_retarget = true;
+                    self.note_retarget_targets(file, &declaration);
                 }
                 match declaration.name() {
                     Some(name) => {
@@ -760,7 +840,80 @@ impl ModuleDeclarations {
         self.changed_macro_scopes.extend(gates.macro_scopes);
         self.changed_sysroot.extend(gates.sysroot);
         self.changed_retarget |= gates.opaque_include;
+        self.retarget_opaque |= gates.opaque_include;
         self.changed_sysroot_shadow |= gates.shadows_sysroot;
+    }
+
+    /// Record the file each `#[path]` literal on `module` (declared in
+    /// `declaring_file`) names, or that one could not be read.
+    fn note_retarget_targets(&mut self, declaring_file: &Path, module: &ast::Module) {
+        match module.name() {
+            Some(name) => {
+                self.retarget_names.insert(unraw(name.text()).to_string());
+            }
+            None => self.retarget_opaque = true,
+        }
+        // Inside an inline `mod outer { .. }` the target resolves under the
+        // inline modules' directories (and a non-mod-rs file's stem), which
+        // is not read here.
+        let nested = module
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .filter_map(ast::Module::cast)
+            .any(|ancestor| ancestor.item_list().is_some());
+        if nested {
+            self.retarget_opaque = true;
+            return;
+        }
+        let mut named = false;
+        for attr in ast::HasAttrs::attrs(module) {
+            if !matches!(attr_name(&attr).as_deref(), Some("path" | "cfg_attr")) {
+                continue;
+            }
+            for literal in attr
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .filter_map(ast::String::cast)
+            {
+                match literal
+                    .value()
+                    .ok()
+                    .and_then(|target| retarget_target(declaring_file, &target))
+                {
+                    Some(target) => {
+                        named = true;
+                        self.retarget_targets.insert(target);
+                    }
+                    None => self.retarget_opaque = true,
+                }
+            }
+        }
+        if !named {
+            self.retarget_opaque = true;
+        }
+    }
+
+    /// Whether a `#[path]` declaration may move, duplicate or replace
+    /// `owner_file` (whose module chain names are `chain`): its target is the
+    /// owner's file, the owner's file sits under the target's directory,
+    /// where the target's own `mod` declarations resolve (a default crate
+    /// root is never such a child module), or the owner's path spells the
+    /// declaration's name, whose default file it replaced.
+    fn retarget_reaches(&self, owner_file: &Path, chain: &BTreeSet<String>) -> bool {
+        if self.retarget_opaque || !self.retarget_names.is_disjoint(chain) {
+            return true;
+        }
+        let Some(owner) = normalized(owner_file) else {
+            return true;
+        };
+        let root = default_crate_root(owner_file);
+        self.retarget_targets.iter().any(|target| {
+            target.is_absolute() != owner.is_absolute()
+                || *target == owner
+                || (!root && target.parent().is_some_and(|dir| owner.starts_with(dir)))
+        })
     }
 
     /// Whether the diff may have changed which module `chain` (the names on
@@ -773,7 +926,7 @@ impl ModuleDeclarations {
         names: &BTreeSet<String>,
     ) -> bool {
         self.unreadable
-            || self.changed_retarget
+            || (self.changed_retarget && self.retarget_reaches(owner_file, chain))
             || self.changed_sysroot_shadow
             || !self.changed.is_disjoint(chain)
             || !self.changed_names.is_disjoint(names)
@@ -790,7 +943,7 @@ impl ModuleDeclarations {
         chain: &BTreeSet<String>,
         names: &BTreeSet<String>,
     ) -> bool {
-        self.retargeted
+        (self.retargeted && self.retarget_reaches(owner_file, chain))
             || !self.gated.is_disjoint(chain)
             || !self.gated_names.is_disjoint(names)
             || self.sysroot_shadowed && touches_chain(&self.sysroot_gated, chain, names)
@@ -1546,6 +1699,20 @@ fn declares_out_of_line(rest: &[String]) -> bool {
     };
     rest.first().is_none_or(|next| next != "{")
 }
+/// Whether `source` may hold a `mod` declaration: the keyword `mod` as a
+/// whole word, anywhere (comments and strings included), so `mod real;`,
+/// `mod\nreal;` and `mod/* gap */real;` all count. A superset for [`ModuleDeclarations::read`]'s declaring
+/// sources, so a file the index could not parse still reaches it and reads
+/// as unreadable, whatever its comments or line breaks (#15104).
+pub(crate) fn may_declare_module(source: &str) -> bool {
+    source.match_indices("mod").any(|(at, _)| {
+        let before = source.get(..at).and_then(|text| text.chars().next_back());
+        let after = source.get(at + 3..).and_then(|text| text.chars().next());
+        let word_edge = |c: char| !(c.is_alphanumeric() || c == '_');
+        before.is_none_or(word_edge) && after.is_some_and(word_edge)
+    })
+}
+
 /// Every out-of-line `mod name;` declaration under `node`.
 fn out_of_line_modules(node: &SyntaxNode) -> Vec<ast::Module> {
     node.descendants()
@@ -1561,6 +1728,64 @@ fn module_retargets(module: &ast::Module) -> bool {
         Some("cfg_attr") => attr.syntax().text().to_string().contains("path"),
         _ => false,
     })
+}
+
+/// The file a `#[path]` literal on an out-of-line declaration in
+/// `declaring_file` names: relative to the declaring file's directory,
+/// with a backslash read as a separator. `None` when it names no file.
+fn retarget_target(declaring_file: &Path, target: &str) -> Option<PathBuf> {
+    let target = target.replace('\\', "/");
+    // A rooted or drive-qualified literal is compared against no relative
+    // owner path on every platform, so it reads as opaque.
+    if target.is_empty() || target.ends_with('/') || target.starts_with('/') || target.contains(':')
+    {
+        return None;
+    }
+    let dir = declaring_file.parent().unwrap_or_else(|| Path::new(""));
+    normalized(&dir.join(target))
+}
+
+/// `path` with `.` dropped, `..` folded into its parent where one exists
+/// and every component lowercased; `None` when it is not valid UTF-8.
+fn normalized(path: &Path) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else {
+                    out.push("..");
+                }
+            }
+            Component::Normal(name) => out.push(name.to_str()?.to_ascii_lowercase()),
+            Component::RootDir | Component::Prefix(_) => out.push(component.as_os_str()),
+        }
+    }
+    Some(out)
+}
+
+/// Whether `file` is `src/lib.rs` or `src/main.rs` of some package.
+fn default_crate_root(file: &Path) -> bool {
+    let name = file.file_name().and_then(|name| name.to_str());
+    let parent = file
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str());
+    // A nested `src` (`src/a/src/lib.rs`) may be a module file.
+    let src_components = file
+        .components()
+        .filter(|component| component.as_os_str() == "src")
+        .count();
+    matches!(name, Some("lib.rs" | "main.rs")) && parent == Some("src") && src_components == 1
+}
+
+/// Whether an inline `mod name { .. }` under `node` carries `#[path]`.
+fn inline_retargets(node: &SyntaxNode) -> bool {
+    node.descendants()
+        .filter_map(ast::Module::cast)
+        .any(|module| module.item_list().is_some() && module_retargets(&module))
 }
 
 /// An attribute's name: the last segment of its path with any `r#` removed,
@@ -1741,6 +1966,221 @@ mod tests {
             "pub struct A;\nimpl A {\n    pub fn ready(&self) -> bool {\n        true\n    }\n}\n";
         let new = "pub struct A;\nimpl Flag for A {\n    fn ready(&self) -> bool {\n        false\n    }\n}\n";
         assert_eq!(verify(old, new, "ready", "false")?, None);
+        Ok(())
+    }
+
+    /// #15104: the new-side gate decision for a claim that reads no
+    /// base-side body. Twins, gates on the item or an enclosing module, a
+    /// gated module declaration on the owner's chain and an unparseable file
+    /// may swap the owner; an ungated unique owner, a same-named function on
+    /// another path and an unrelated gated module do not.
+    #[test]
+    fn owner_swap_reads_new_side_gates_and_twins() -> Result<(), String> {
+        let lib = Path::new("src/lib.rs");
+        let unchanged = |source: &str| -> Result<ModuleDeclarations, String> {
+            let changed_file = changed(source, source)?;
+            Ok(ModuleDeclarations::read(
+                [(lib, source)],
+                [(&changed_file, Some(source))],
+            ))
+        };
+        let swapped = |source: &str, file: &Path, line: usize| -> Result<bool, String> {
+            Ok(owner_may_be_swapped(
+                source,
+                file,
+                &unchanged(source)?,
+                "ready",
+                line,
+                line,
+            ))
+        };
+        let plain = "pub fn ready() -> i32 {\n    2\n}\n";
+        assert!(!swapped(plain, lib, 2)?, "plain");
+        let elsewhere = "pub fn ready() -> i32 {\n    2\n}\npub mod other {\n    pub fn ready() -> i32 {\n        5\n    }\n}\n";
+        assert!(!swapped(elsewhere, lib, 2)?, "same name on another path");
+        let unrelated = "pub fn ready() -> i32 {\n    2\n}\n#[cfg(test)]\nmod fake {\n    pub fn stub() -> i32 {\n        2\n    }\n}\n";
+        assert!(!swapped(unrelated, lib, 2)?, "unrelated cfg(test) module");
+        let twins = "#[cfg(not(test))]\npub fn ready() -> i32 {\n    2\n}\n#[cfg(test)]\npub fn ready() -> i32 {\n    2\n}\n";
+        assert!(swapped(twins, lib, 3)?, "function-level twin");
+        let bare_twins = "pub fn ready() -> i32 {\n    2\n}\npub fn ready() -> i32 {\n    2\n}\n";
+        assert!(swapped(bare_twins, lib, 2)?, "same-path twin");
+        let gated_mod =
+            "#[cfg(not(test))]\nmod m {\n    pub fn ready() -> i32 {\n        2\n    }\n}\n";
+        assert!(swapped(gated_mod, lib, 3)?, "gated enclosing module");
+        let file_gate = "#![cfg(unix)]\npub fn ready() -> i32 {\n    2\n}\n";
+        assert!(swapped(file_gate, lib, 3)?, "file inner attribute");
+        assert!(swapped("pub fn ready( {\n", lib, 1)?, "unparseable");
+        assert!(swapped(plain, lib, 9)?, "no function encloses the span");
+        // The owner's file is declared by a gated `mod real;` elsewhere.
+        let parent = "#[cfg(not(test))]\nmod real;\n";
+        let changed_file = changed(plain, plain)?;
+        let modules = ModuleDeclarations::read([(lib, parent)], [(&changed_file, Some(plain))]);
+        assert!(
+            owner_may_be_swapped(plain, Path::new("src/real.rs"), &modules, "ready", 2, 2),
+            "gated module declaration on the chain"
+        );
+        assert!(
+            owner_may_be_swapped(plain, lib, &ModuleDeclarations::unread(), "ready", 2, 2),
+            "unread declarations"
+        );
+        Ok(())
+    }
+
+    /// #15104: the lexical prefilter keeps every file that may declare a
+    /// module, whatever its comments or line breaks.
+    #[test]
+    fn may_declare_module_keeps_any_mod_keyword() {
+        assert!(may_declare_module("mod real;"));
+        assert!(may_declare_module("mod real; // comment"));
+        assert!(may_declare_module("#[cfg(x)]\nmod\n    real;"));
+        assert!(may_declare_module("pub(crate) mod a {}"));
+        assert!(may_declare_module("mod/* gap */real;"));
+        assert!(!may_declare_module("fn model() {}"));
+        assert!(!may_declare_module("let xmod = 1;"));
+        assert!(!may_declare_module("let mod_count = 1;"));
+        assert!(!may_declare_module("fn f() -> u8 { 7 }"));
+    }
+
+    /// #15104: a `#[path]` declaration gates only the owners it may move:
+    /// its named file, files under that file's directory (never a default
+    /// crate root), files whose path spells its name, or every owner when a
+    /// target cannot be read.
+    #[test]
+    fn path_declarations_gate_only_the_files_they_may_move() -> Result<(), String> {
+        let plain = "pub fn ready() -> i32 {\n    2\n}\n";
+        let swapped = |declaring: &str, file: &str, touched: bool| -> Result<bool, String> {
+            let source = format!("{plain}{declaring}");
+            let changed_file = if touched {
+                changed(plain, &source)?
+            } else {
+                changed(&source, &source)?
+            };
+            let modules = ModuleDeclarations::read(
+                [(Path::new("src/lib.rs"), source.as_str())],
+                [(&changed_file, Some(source.as_str()))],
+            );
+            Ok(owner_may_be_swapped(
+                &source,
+                Path::new(file),
+                &modules,
+                "ready",
+                2,
+                2,
+            ))
+        };
+        let test_support = "#[cfg(test)]\n#[path = \"test_support.rs\"]\nmod tests;\n";
+        for touched in [false, true] {
+            assert!(
+                !swapped(test_support, "src/lib.rs", touched)?,
+                "crate root beside a #[path] test module (touched {touched})"
+            );
+            assert!(
+                !swapped(test_support, "crates/a/src/main.rs", touched)?,
+                "binary root (touched {touched})"
+            );
+            assert!(
+                swapped(test_support, "src/inner.rs", touched)?,
+                "a non-root file may be the target (touched {touched})"
+            );
+            assert!(
+                swapped(test_support, "src/nested/lib.rs", touched)?,
+                "lib.rs outside src/ is not a default root (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(test)]\n#[path = \"../src/lib.rs\"]\nmod again;\n",
+                    "src/lib.rs",
+                    touched
+                )?,
+                "a #[path] naming the root's file (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg_attr(test, path = \"lib.rs\")]\nmod again;\n",
+                    "src/lib.rs",
+                    touched
+                )?,
+                "a cfg_attr path naming the root's file (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg_attr(test, path)]\nmod again;\n",
+                    "src/lib.rs",
+                    touched
+                )?,
+                "an unreadable target (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(test)]\n#[path = \"..\\\\src\\\\LIB.rs\"]\nmod again;\n",
+                    "src/lib.rs",
+                    touched
+                )?,
+                "a backslash, differently cased literal (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(test)]\n#[path = \"main.rs\"]\nmod again;\n",
+                    "src/main.rs",
+                    touched
+                )?,
+                "a literal naming the binary root (touched {touched})"
+            );
+            assert!(
+                swapped(test_support, "src/a/src/lib.rs", touched)?,
+                "a nested src/ may hold a module file (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(test)]\n#[path = \"other\"]\nmod a {\n    mod inner;\n}\n",
+                    "src/lib.rs",
+                    touched
+                )?,
+                "an inline module's #[path] (touched {touched})"
+            );
+            let mount = "#[path = \"../../b/src/noop.rs\"]\nmod noop;\n";
+            assert!(
+                !swapped(mount, "src/shared.rs", touched)?,
+                "a target in another package leaves this one's files alone (touched {touched})"
+            );
+            assert!(
+                swapped(mount, "src/noop.rs", touched)?,
+                "the default file the declaration replaced (touched {touched})"
+            );
+            assert!(
+                swapped(mount, "../b/src/inner/x.rs", touched)?,
+                "a file under the target's directory (touched {touched})"
+            );
+            assert!(
+                swapped("#[path = \"sub/g.rs\"]\nmod g;\n", "src/sub/f.rs", touched)?,
+                "a child the target may declare (touched {touched})"
+            );
+            assert!(
+                swapped(
+                    "#[cfg(not(test))]\nmod outer {\n    #[path = \"sub/real.rs\"]\n    mod x;\n}\n",
+                    "src/outer/sub/real.rs",
+                    touched
+                )?,
+                "a #[path] nested in an inline module (touched {touched})"
+            );
+            assert!(
+                !swapped("#[path = \"sub/g.rs\"]\nmod g;\n", "other/f.rs", touched)?,
+                "a file outside the target's directory (touched {touched})"
+            );
+            // The drive letter is joined at run time so the source holds no
+            // literal local path.
+            let drive = format!("{}:/abs/x.rs", 'C');
+            for rooted in ["/abs/x.rs", drive.as_str(), "", "sub/"] {
+                assert!(
+                    swapped(
+                        &format!("#[path = \"{rooted}\"]\nmod x;\n"),
+                        "src/shared.rs",
+                        touched
+                    )?,
+                    "an opaque literal {rooted:?} (touched {touched})"
+                );
+            }
+        }
         Ok(())
     }
 

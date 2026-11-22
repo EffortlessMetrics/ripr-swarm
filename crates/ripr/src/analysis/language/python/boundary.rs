@@ -49,9 +49,9 @@ use super::no_behavior::{
     split_top_level_args,
 };
 use super::related_tests::{
-    PythonRelatedCandidate, import_module_may_be_owners, import_source_module_matches_owner,
-    is_python_identifier_char, owner_module_callees, owner_module_paths, python_text_hides_code,
-    test_body_binds_local,
+    PythonHiddenCode, PythonRelatedCandidate, import_module_may_be_owners,
+    import_source_module_matches_owner, is_python_identifier_char, owner_module_callees,
+    owner_module_paths, python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
 use crate::{
@@ -134,6 +134,14 @@ pub(super) enum BoundaryActivation {
     /// No strong related call binds a literal owner input, so static evidence
     /// cannot see the activating inputs either way.
     Unresolved,
+    /// Strong related tests do call the owner, but pass the inputs through a
+    /// channel the reader cannot see (a `*args` unpack, a test local, a
+    /// parametrize row naming a value), so no call is established to reach
+    /// the boundary (#15287). Unlike `Unresolved`, the activating input is
+    /// test-side text the analysis failed to read, not owner-internal state,
+    /// so the finding fails closed; no repair target is named because the
+    /// unread input may already sit on the boundary.
+    UnreadInput,
 }
 
 /// Boundary activation evidence for one changed relational predicate.
@@ -199,8 +207,11 @@ pub(super) fn python_boundary_evidence(
         .map(|(left, right)| format!("{left} == {right}"));
 
     let constants = unrebound_constants(owner, related_candidates);
-    let (mut rows, gaps) =
-        strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
+    let StrongOwnerCallRows {
+        mut rows,
+        gaps,
+        unread_inputs,
+    } = strong_owner_call_rows_detail(owner, &constants, related_candidates, focus);
     // A once-bound `local = len(param)` takes the length of the literal string
     // each call passes, so the comparison against it is readable (#11103).
     let mut derived_locals: Vec<String> = Vec::new();
@@ -259,21 +270,32 @@ pub(super) fn python_boundary_evidence(
         .then_some(walk)
     });
     if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
-        for operand in [left, right] {
+        for (operand, other) in [(left, right), (right, left)] {
+            let small_bound = static_operand(other, &constants)
+                .and_then(|value| value.parse::<f64>().ok())
+                .is_some_and(|value| value.abs() < 9_007_199_254_740_992.0);
             if owner
                 .parameters
                 .iter()
                 .any(|parameter| parameter.name == *operand)
                 && name_rebound_in_owner(source, owner, operand)
                 && walk.is_none()
+                && !numeric_coercion_rebinding(source, owner, operand, &rows, small_bound)
             {
                 // The owner rebinds the operand (a loop counter such as
                 // `start -= 1`), so the call argument does not stay the
                 // value the predicate reads and the boundary may be reached
                 // inside the owner. Static evidence cannot place the input
-                // either way: unknown, never a missing-boundary gap.
+                // either way: unknown, never a missing-boundary gap. When
+                // the tests also pass inputs the reader could not see, the
+                // unread input fails closed the same as an unrebound one
+                // (#15287), still without naming a repair target.
                 return Some(PythonBoundaryEvidence {
-                    activation: BoundaryActivation::Unresolved,
+                    activation: if unread_inputs {
+                        BoundaryActivation::UnreadInput
+                    } else {
+                        BoundaryActivation::Unresolved
+                    },
                     discriminator: None,
                     observed_values: Vec::new(),
                     reason: format!(
@@ -317,6 +339,22 @@ pub(super) fn python_boundary_evidence(
         }));
     }
     if observed_values.is_empty() {
+        // A recognized strong call whose arguments went unread (a `*` unpack,
+        // a bare name it could not bind) is test-side input the analysis could
+        // not see. A call it did read (a list display, a constructor call) and
+        // no recognized call at all (an implicit dunder, a construct-call)
+        // keep the oracle verdict with the named limitation (#15287).
+        if unread_inputs {
+            return Some(PythonBoundaryEvidence {
+                activation: BoundaryActivation::UnreadInput,
+                discriminator: None,
+                observed_values,
+                reason: format!(
+                    "no strong related test call to `{}` binds a literal argument, and some pass inputs in a form static evidence cannot read (a `*args` unpack, a test local, a parametrize row naming a value), so no call is established to reach the changed boundary of `{condition}`",
+                    owner.name
+                ),
+            });
+        }
         return Some(PythonBoundaryEvidence {
             activation: BoundaryActivation::Unresolved,
             discriminator,
@@ -1370,14 +1408,15 @@ fn contains_ungated_identity_or_inequality(text: &str) -> bool {
 }
 
 fn live_token(text: &str, token: &str) -> bool {
-    text.match_indices(token)
-        .any(|(idx, _)| !python_text_hides_code(text, idx))
+    let mut hidden = PythonHiddenCode::new(text);
+    text.match_indices(token).any(|(idx, _)| !hidden.hides(idx))
 }
 
 fn live_keyword(text: &str, keyword: &str) -> bool {
+    let mut hidden = PythonHiddenCode::new(text);
     text.match_indices(keyword).any(|(idx, _)| {
         let end = idx + keyword.len();
-        !python_text_hides_code(text, idx)
+        !hidden.hides(idx)
             && !text[..idx]
                 .chars()
                 .next_back()
@@ -1564,11 +1603,13 @@ fn starts_with_keyword(text: &str, keyword: &str) -> bool {
 type CaseArguments = Vec<(String, String)>;
 
 /// What one call's arguments bind: scalar literals, the parametrize pairing,
-/// and the element literals of list-like arguments.
+/// the element literals of list-like arguments, and whether an explicit
+/// argument was a bare name the reader could not bind (#15287).
 type BoundArguments = (
     BTreeMap<String, Binding>,
     CaseArguments,
     BTreeMap<String, Vec<String>>,
+    bool,
 );
 
 /// A literal binding for one owner parameter in one test call.
@@ -1607,6 +1648,27 @@ pub(super) fn strong_owner_call_rows_with_gaps(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> (Vec<CallRow>, bool) {
+    let detail = strong_owner_call_rows_detail(owner, constants, related_candidates, focus);
+    (detail.rows, detail.gaps)
+}
+
+/// [`strong_owner_call_rows_with_gaps`], also saying whether some strong
+/// related test has a recognized owner call whose inputs went unread: an
+/// argument list that did not bind (a `*args` unpack, a comment inside it) or
+/// an argument that is a bare name the reader could not bind (a reassigned
+/// test local, a parametrize argname without readable cases).
+struct StrongOwnerCallRows {
+    rows: Vec<CallRow>,
+    gaps: bool,
+    unread_inputs: bool,
+}
+
+fn strong_owner_call_rows_detail(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> StrongOwnerCallRows {
     let (method_call, skip) = match owner.owner_kind {
         Some(OwnerKind::Method) => (true, 1),
         Some(OwnerKind::ClassMethod) => (
@@ -1619,10 +1681,17 @@ pub(super) fn strong_owner_call_rows_with_gaps(
             ),
         ),
         Some(OwnerKind::Function) => (false, 0),
-        _ => return (Vec::new(), true),
+        _ => {
+            return StrongOwnerCallRows {
+                rows: Vec::new(),
+                gaps: true,
+                unread_inputs: false,
+            };
+        }
     };
     let mut rows = Vec::new();
     let mut gaps = false;
+    let mut unread_inputs = false;
     for candidate in related_candidates {
         if !candidate.relation.uses_oracle() {
             continue;
@@ -1637,12 +1706,17 @@ pub(super) fn strong_owner_call_rows_with_gaps(
         if !strong {
             continue;
         }
-        let (candidate_rows, candidate_gaps) =
+        let (candidate_rows, candidate_gaps, candidate_unread) =
             candidate_call_rows(owner, constants, candidate, method_call, skip);
         rows.extend(candidate_rows);
         gaps |= candidate_gaps;
+        unread_inputs |= candidate_unread;
     }
-    (rows, gaps)
+    StrongOwnerCallRows {
+        rows,
+        gaps,
+        unread_inputs,
+    }
 }
 
 /// The analyzable owner calls of one related test regardless of how strong
@@ -1657,21 +1731,23 @@ pub(super) fn owner_call_rows_for_candidate(
     if owner.owner_kind != Some(OwnerKind::Function) || !candidate.relation.uses_oracle() {
         return None;
     }
-    let (rows, gaps) = candidate_call_rows(owner, constants, candidate, false, 0);
+    let (rows, gaps, _) = candidate_call_rows(owner, constants, candidate, false, 0);
     (!gaps && !rows.is_empty()).then_some(rows)
 }
 
-/// One related test's owner-call rows, and whether some call went unbound or
-/// none was recognized.
+/// One related test's owner-call rows, whether some call went unbound or
+/// none was recognized, and whether some recognized call went unbound or
+/// passed a bare name the reader could not bind.
 fn candidate_call_rows(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
     candidate: &PythonRelatedCandidate<'_>,
     method_call: bool,
     skip: usize,
-) -> (Vec<CallRow>, bool) {
+) -> (Vec<CallRow>, bool, bool) {
     let mut rows = Vec::new();
     let mut gaps = false;
+    let mut unbound = false;
     // The test body, plus the call each callable-form exception assertion
     // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
     // calls `owner(20)`).
@@ -1690,7 +1766,7 @@ fn candidate_call_rows(
                 // the call's position in it (#10707).
                 let call_start = std::ptr::eq(*text, candidate.test.body_text.as_str())
                     .then(|| arglist.as_ptr().addr() - text.as_ptr().addr());
-                let Some((bindings, case_arguments, elements)) = bind_call_arguments(
+                let Some((bindings, case_arguments, elements, unread_name)) = bind_call_arguments(
                     owner,
                     constants,
                     candidate.test,
@@ -1699,8 +1775,10 @@ fn candidate_call_rows(
                     call_start,
                 ) else {
                     gaps = true;
+                    unbound = true;
                     continue;
                 };
+                unbound |= unread_name;
                 candidate_rows += 1;
                 let line = first_line + text[..offset].matches('\n').count();
                 // The call runs from its name to its closing parenthesis,
@@ -1710,6 +1788,15 @@ fn candidate_call_rows(
                 let text = call_line_text(text, offset, arglist_end + 1 - offset);
                 match (&candidate.test.parametrize, case_arguments.is_empty()) {
                     (Some(parametrize), false) => {
+                        // A case row naming a value (`(MUSL_AMD64, (1, 2))`)
+                        // passes an input the reader does not bind (#15287).
+                        unbound |= parametrize.cases.iter().any(|case| {
+                            case_arguments.iter().any(|(_, argname)| {
+                                case.get(argname).is_some_and(|value| {
+                                    literal_value(value).is_none() && is_bare_name(value.trim())
+                                })
+                            })
+                        });
                         rows.extend(parametrize.cases.iter().map(|case| {
                             parametrize_case_row(
                                 &candidate.test.file,
@@ -1734,7 +1821,7 @@ fn candidate_call_rows(
         }
     }
     gaps |= candidate_rows == 0;
-    (rows, gaps)
+    (rows, gaps, unbound)
 }
 
 /// The owner's own name plus any `from M import owner as alias` alias and
@@ -1853,6 +1940,7 @@ fn bind_call_arguments(
     let mut bindings = BTreeMap::new();
     let mut elements = BTreeMap::new();
     let mut case_arguments = Vec::new();
+    let mut unread_name = false;
     let mut position = 0usize;
     for segment in split_top_level_args(arglist) {
         let segment = segment.trim();
@@ -1930,6 +2018,8 @@ fn bind_call_arguments(
             && !case_name_may_be_rebound(&test.body_text, value)
         {
             case_arguments.push((name, value.to_string()));
+        } else if is_bare_name(value) {
+            unread_name = true;
         }
     }
     for parameter in owner.parameters.iter().skip(skip) {
@@ -1946,7 +2036,21 @@ fn bind_call_arguments(
             );
         }
     }
-    Some((bindings, case_arguments, elements))
+    Some((bindings, case_arguments, elements, unread_name))
+}
+
+/// A bare (optionally dotted) name such as `quantity` or `cases.LOW`: test
+/// text whose value lives elsewhere, unlike a call or display the test
+/// spells out.
+fn is_bare_name(text: &str) -> bool {
+    !text.is_empty()
+        && text.split('.').all(|part| {
+            part.chars()
+                .next()
+                .is_some_and(|first| first.is_alphabetic() || first == '_')
+                && part.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        })
+        && !matches!(text, "True" | "False" | "None")
 }
 
 /// The scalar literals of a list, tuple or set display whose every element is
@@ -2055,6 +2159,145 @@ fn imported_constant_value(
         })
     })?;
     Some(constant.value.clone())
+}
+
+/// Whether the owner's only binding of parameter `name` is its first body
+/// statement `name = float(name)` or `name = int(name)`, and every strong call
+/// row binds `name` to a numeric literal that conversion leaves equal
+/// (#15287: marshmallow `value = float(value)` before `if value < 0:`). The
+/// conversion then runs unconditionally before any comparison and the call's
+/// literal still fixes the compared value. An `int` conversion takes only
+/// integer literals (it truncates a float); a `float` one takes floats and
+/// integers within 2**53. A larger integer may round onto a neighbour, so it
+/// is taken only when the other operand is a literal below 2**53 in
+/// magnitude (`small_bound`): the rounded value can then never equal it, and
+/// equality is all the boundary rule reads.
+/// Anything else stays a rebinding the boundary rule cannot see through.
+fn numeric_coercion_rebinding(
+    owner_source: &str,
+    owner: &PythonOwner,
+    name: &str,
+    rows: &[CallRow],
+    small_bound: bool,
+) -> bool {
+    let Some(conversion) = leading_numeric_coercion(owner_source, owner, name) else {
+        return false;
+    };
+    if rows.is_empty() {
+        return false;
+    }
+    rows.iter().all(|row| {
+        row.bindings.get(name).is_some_and(|binding| {
+            let value = binding.value.as_str();
+            match value.parse::<i128>() {
+                Ok(integer) => {
+                    conversion == "int" || integer.unsigned_abs() <= 1 << 53 || small_bound
+                }
+                // A float literal is kept only when its decimal spelling is
+                // the value Python stores: `1.0000000000000001` is the float
+                // `1.0`, so its spelling would compare unequal to a `1` bound
+                // that the call actually meets.
+                Err(_) => {
+                    conversion == "float"
+                        && value.bytes().any(|byte| matches!(byte, b'.' | b'e' | b'E'))
+                        && value.parse::<f64>().is_ok_and(|float| {
+                            float.is_finite()
+                                && canonical_decimal(value).is_some()
+                                && canonical_decimal(value)
+                                    == canonical_decimal(&format!("{float}"))
+                        })
+                }
+            }
+        })
+    })
+}
+
+/// `"float"` or `"int"` when the parsed module defines the function owner
+/// once, undecorated, and its body opens with `name = float(name)` (or
+/// `int`), after an optional docstring, and binds `name` nowhere else. The
+/// parse avoids the line reader's over-refusal (`fromtimestamp(value, tz=..)`
+/// reads like a tuple target there); a nested scope, `global`, `match` or any
+/// other binding the scope walk cannot enumerate refuses, and so does any
+/// binding of the conversion's own name in the module.
+fn leading_numeric_coercion(
+    owner_source: &str,
+    owner: &PythonOwner,
+    name: &str,
+) -> Option<&'static str> {
+    use rustpython_parser::ast::{Constant, Expr, Mod, Stmt};
+    if owner.owner_kind != Some(OwnerKind::Function)
+        || !owner.class_path.is_empty()
+        || !owner.decorators.is_empty()
+    {
+        return None;
+    }
+    // A parameter named `float`/`int` (`fee(value, float=lambda x: 0)`)
+    // shadows the builtin inside the body.
+    if owner
+        .parameters
+        .iter()
+        .any(|parameter| matches!(parameter.name.as_str(), "float" | "int"))
+    {
+        return None;
+    }
+    let Ok(Mod::Module(module)) =
+        super::source_facts::parse_module_result(std::path::Path::new("<owner>"), owner_source)
+    else {
+        return None;
+    };
+    let mut definitions = module.body.iter().filter(|stmt| match stmt {
+        Stmt::FunctionDef(function) => function.name.as_str() == owner.name,
+        Stmt::AsyncFunctionDef(function) => function.name.as_str() == owner.name,
+        _ => false,
+    });
+    let Some(Stmt::FunctionDef(function)) = definitions.next() else {
+        return None;
+    };
+    if definitions.next().is_some() || !function.decorator_list.is_empty() {
+        return None;
+    }
+    let mut body = function.body.as_slice();
+    if let [Stmt::Expr(docstring), rest @ ..] = body
+        && matches!(
+            docstring.value.as_ref(),
+            Expr::Constant(constant) if matches!(constant.value, Constant::Str(_))
+        )
+    {
+        body = rest;
+    }
+    let [Stmt::Assign(assign), rest @ ..] = body else {
+        return None;
+    };
+    let [Expr::Name(target)] = assign.targets.as_slice() else {
+        return None;
+    };
+    let Expr::Call(call) = assign.value.as_ref() else {
+        return None;
+    };
+    let Expr::Name(callee) = call.func.as_ref() else {
+        return None;
+    };
+    let conversion = match callee.id.as_str() {
+        "float" => "float",
+        "int" => "int",
+        _ => return None,
+    };
+    let [Expr::Name(argument)] = call.args.as_slice() else {
+        return None;
+    };
+    if target.id.as_str() != name
+        || argument.id.as_str() != name
+        || !call.keywords.is_empty()
+        || super::module_constants::body_rebinds_name(rest, name)
+        || super::module_constants::body_bound_names(rest)?
+            .iter()
+            .any(|bound| bound == name)
+        // A module that binds `float`/`int` anywhere may shadow the builtin.
+        || super::related_tests::text_binds_name(owner_source, conversion)
+    {
+        return None;
+    }
+    Some(conversion)
 }
 
 /// A comparison operand's value in one call row: its own literal, the literal
@@ -2312,4 +2555,469 @@ mod call_line_text_tests {
         let text = call_line_text(&body, offset, call_len);
         assert!(text.contains(&format!("({argument})")), "{text}");
     }
+}
+
+/// A deliberately narrow unresolved case: an adjacent comparison change in
+/// the first statement of a loop, observed by one direct literal-sequence or literal-tuple value
+/// assertion. The loop element and accumulator are not owner arguments, so a
+/// literal list alone does not place either operand at the changed boundary.
+/// Identity assertions and other test shapes retain their existing treatment.
+pub(super) fn unresolved_loop_list_boundary(
+    line: usize,
+    line_text: &str,
+    old_line: Option<&str>,
+    source: Option<&str>,
+    owner: &PythonOwner,
+    candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> bool {
+    let Some(old_line) = old_line else {
+        return false;
+    };
+    if !line_text.trim_start().starts_with("if ") || !old_line.trim_start().starts_with("if ") {
+        return false;
+    }
+    let new = predicate_condition(line_text);
+    let old = predicate_condition(old_line);
+    let new_ops = relational_operators(&new);
+    let old_ops = relational_operators(&old);
+    let ([(ns, nl)], [(os, ol)]) = (new_ops.as_slice(), old_ops.as_slice()) else {
+        return false;
+    };
+    let (Some((left, right)), Some((old_left, old_right))) = (
+        simple_comparison_operands(&new, *ns, *nl),
+        simple_comparison_operands(&old, *os, *ol),
+    ) else {
+        return false;
+    };
+    if left != old_left
+        || right != old_right
+        || !matches!(
+            (old.get(*os..os + ol), new.get(*ns..ns + nl)),
+            (Some(">"), Some(">="))
+                | (Some(">="), Some(">"))
+                | (Some("<"), Some("<="))
+                | (Some("<="), Some("<"))
+        )
+    {
+        return false;
+    }
+    // The edit must change only the relational operator: any other change to
+    // the condition (for example removing `or True`) is a different edit.
+    let (Some(old_op), Some(new_prefix), Some(new_suffix)) =
+        (old.get(*os..os + ol), new.get(..*ns), new.get(ns + nl..))
+    else {
+        return false;
+    };
+    if format!("{new_prefix}{old_op}{new_suffix}").trim() != old.trim() {
+        return false;
+    }
+    // The condition must be the comparison alone. A further conjunct or
+    // disjunct (`if x >= best and xs.pop():`) can run on different iterations
+    // after the edit and change the selected value, so an integer pin can
+    // tell the two sides apart there.
+    let Some(new_op) = new.get(*ns..ns + nl) else {
+        return false;
+    };
+    let unspaced = |text: &str| text.split_whitespace().collect::<String>();
+    // The one exception is the `None`-seeded selector's own guard,
+    // `best is None or x > best`: `is None` has no effect and only holds
+    // before the first element is taken (checked with the body below).
+    let none_guarded =
+        unspaced(&new) == unspaced(&format!("{right} is None or {left}{new_op}{right}"));
+    if !none_guarded && unspaced(&new) != unspaced(&format!("{left}{new_op}{right}")) {
+        return false;
+    }
+    // Only the complete accumulator-selection owner is understood here. An
+    // arbitrary loop can visibly return or mutate on the equality branch.
+    let Some(source) = source else { return false };
+    let Some(parameter) = owner.parameters.first() else {
+        return false;
+    };
+    if !(1..=2).contains(&owner.parameters.len()) || parameter.keyword_only {
+        return false;
+    }
+    if owner.owner_kind != Some(OwnerKind::Function) || left == right {
+        return false;
+    }
+    if owner.parameters.get(1).is_some_and(|extra| {
+        extra.name == left
+            || extra.name == right
+            || matches!(extra.name.as_str(), "iter" | "next" | "StopIteration")
+    }) {
+        return false;
+    }
+    let Some(start) = owner.start_line.checked_sub(1) else {
+        return false;
+    };
+    let Some(length) = owner
+        .end_line
+        .checked_sub(owner.start_line)
+        .and_then(|n| n.checked_add(1))
+    else {
+        return false;
+    };
+    let lines: Vec<_> = source.lines().skip(start).take(length).collect();
+    let indentation = |text: &str| super::guard_activation::leading_whitespace(text);
+    let valid_shape = match lines.as_slice() {
+        [
+            definition,
+            iterator,
+            try_line,
+            initial,
+            handler,
+            empty,
+            loop_line,
+            condition,
+            update,
+            result,
+        ] if line == owner.start_line + 7 => {
+            let Some(iterator_name) = iterator
+                .trim()
+                .strip_suffix(&format!(" = iter({})", parameter.name))
+            else {
+                return false;
+            };
+            let indent = indentation(definition);
+            !none_guarded
+                && !iterator_name.is_empty()
+                && owner
+                    .parameters
+                    .get(1)
+                    .is_none_or(|extra| extra.name != iterator_name)
+                && iterator_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && iterator.trim() == format!("{iterator_name} = iter({})", parameter.name)
+                && try_line.trim() == "try:"
+                && initial.trim() == format!("{right} = next({iterator_name})")
+                && handler.trim() == "except StopIteration:"
+                && empty.trim() == "return None"
+                && loop_line.trim() == format!("for {left} in {iterator_name}:")
+                && condition.trim() == line_text.trim()
+                && update.trim() == format!("{right} = {left}")
+                && result.trim() == format!("return {right}")
+                && [iterator, try_line, handler, loop_line, result]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 4)
+                && [initial, empty, condition]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 8)
+                && indentation(update) == indent + 12
+        }
+        [definition, initial, loop_line, condition, update, result]
+            if line == owner.start_line + 3 =>
+        {
+            let indent = indentation(definition);
+            let seeded = if none_guarded {
+                // `best = None` takes the first element through the guard,
+                // then compares the rest exactly as the `xs[0]` forms do.
+                initial.trim() == format!("{right} = None")
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+            } else if initial.trim().starts_with(&format!("{right} = float(")) {
+                // `best = float("-inf")` (`"inf"` for a minimum) takes the first
+                // finite element under either operator, then compares the rest
+                // exactly as the `xs[0]` forms do.
+                let infinity = if new_op.starts_with('>') {
+                    "-inf"
+                } else {
+                    "inf"
+                };
+                [
+                    format!("{right} = float(\"{infinity}\")"),
+                    format!("{right} = float('{infinity}')"),
+                ]
+                .contains(&initial.trim().to_string())
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+            } else if initial.trim().starts_with(&format!("{right} = "))
+                && initial.trim().ends_with("math.inf")
+            {
+                // `best = -math.inf` (`math.inf` for a minimum) is the same
+                // infinity once nothing in the module can rebind `math`.
+                let infinity = if new_op.starts_with('>') {
+                    "-math.inf"
+                } else {
+                    "math.inf"
+                };
+                initial.trim() == format!("{right} = {infinity}")
+                    && loop_line.trim() == format!("for {left} in {}:", parameter.name)
+                    && super::math_infinity::stdlib_math_unrebound(source)
+            } else {
+                initial.trim() == format!("{right} = {}[0]", parameter.name)
+                    // `for x in xs:` also visits `xs[0]` first; comparing it
+                    // with itself keeps `best` or rebinds it to the same object.
+                    && [
+                        format!("for {left} in {}[1:]:", parameter.name),
+                        format!("for {left} in {}:", parameter.name),
+                    ]
+                    .contains(&loop_line.trim().to_string())
+            };
+            seeded
+                && condition.trim() == line_text.trim()
+                && update.trim() == format!("{right} = {left}")
+                && result.trim() == format!("return {right}")
+                && [initial, loop_line, result]
+                    .iter()
+                    .all(|line| indentation(line) == indent + 4)
+                && indentation(condition) == indent + 8
+                && indentation(update) == indent + 12
+        }
+        _ => false,
+    };
+    if !valid_shape {
+        return false;
+    }
+    let constants = unrebound_constants(owner, candidates);
+    let (rows, _) = strong_owner_call_rows_with_gaps(owner, &constants, candidates, focus);
+    let oracle_candidates: Vec<_> = candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .collect();
+    !oracle_candidates.is_empty()
+        && oracle_candidates.iter().all(|candidate| {
+            // Every assertion must independently be a strong direct literal
+            // sequence value pin. In particular, an identity assertion must
+            // not disappear behind the selected stronger numeric assertion.
+            !candidate.test.assertions.is_empty()
+                && candidate.test.assertions.iter().all(|assertion| {
+                    assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+                        && rows.iter().any(|row| {
+                            row.file == candidate.test.file
+                                && ((row.line == assertion.line
+                                    && is_direct_integer_sequence_assertion(row, owner, candidate))
+                                    || is_indirect_integer_sequence_assertion(
+                                        row, owner, candidate, assertion,
+                                    ))
+                        })
+                })
+        })
+}
+
+/// A literal a selection loop can compare and a value pin can check: an
+/// integer, float, string or boolean constant, optionally signed when numeric.
+/// Elements that compare equal under the selector's `>=`/`<=` also compare
+/// equal under `==` against any such literal, so a value pin cannot tell which
+/// of two equal elements was selected (#12954). `None`, containers and other
+/// expressions are left out.
+fn selection_literal(expr: &rustpython_parser::ast::Expr) -> bool {
+    use rustpython_parser::ast::{self, Expr};
+    match expr {
+        Expr::Constant(value) => matches!(
+            value.value,
+            ast::Constant::Int(_)
+                | ast::Constant::Float(_)
+                | ast::Constant::Str(_)
+                | ast::Constant::Bool(_)
+        ),
+        Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub | ast::UnaryOp::UAdd) => {
+            matches!(
+                unary.operand.as_ref(),
+                Expr::Constant(value)
+                    if matches!(value.value, ast::Constant::Int(_) | ast::Constant::Float(_))
+            )
+        }
+        _ => false,
+    }
+}
+
+fn is_direct_integer_sequence_assertion(
+    row: &CallRow,
+    owner: &PythonOwner,
+    candidate: &PythonRelatedCandidate<'_>,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Stmt};
+    fn integer(expr: &Expr) -> bool {
+        match expr {
+            Expr::Constant(value) => matches!(value.value, ast::Constant::Int(_)),
+            Expr::UnaryOp(unary) if matches!(unary.op, ast::UnaryOp::USub | ast::UnaryOp::UAdd) => {
+                matches!(unary.operand.as_ref(), Expr::Constant(value) if matches!(value.value, ast::Constant::Int(_)))
+            }
+            _ => false,
+        }
+    }
+    let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
+        std::path::Path::new("<loop-boundary-oracle>"),
+        &row.text,
+    ) else {
+        return false;
+    };
+    fn callee_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Name(name) => Some(name.id.to_string()),
+            Expr::Attribute(attribute) => Some(format!(
+                "{}.{}",
+                callee_name(&attribute.value)?,
+                attribute.attr
+            )),
+            _ => None,
+        }
+    }
+    fn value_pin(expr: &Expr, owner: &PythonOwner, candidate: &PythonRelatedCandidate<'_>) -> bool {
+        if let Expr::BoolOp(boolean) = expr {
+            return matches!(boolean.op, ast::BoolOp::And)
+                && !boolean.values.is_empty()
+                && boolean
+                    .values
+                    .iter()
+                    .all(|value| value_pin(value, owner, candidate));
+        }
+        let Expr::Compare(compare) = expr else {
+            return false;
+        };
+        let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+        else {
+            return false;
+        };
+        let observed = if selection_literal(right) {
+            compare.left.as_ref()
+        } else if selection_literal(&compare.left) {
+            right
+        } else {
+            return false;
+        };
+        let Expr::Call(call) = observed else {
+            return false;
+        };
+        let Some(callee) = callee_name(&call.func) else {
+            return false;
+        };
+        let bindings = &candidate.test.constant_rebinding;
+        let Some(root) = callee.split('.').next() else {
+            return false;
+        };
+        if !owner_module_callees(candidate.test, owner).contains(&callee)
+            || bindings.assigns_attribute(&owner.name)
+            || bindings.rebinds(root)
+        {
+            return false;
+        }
+        // Python evaluates defaults at definition time, even when the call
+        // supplies this argument. Do not bypass an effectful default.
+        if owner.parameters.len() == 2
+            && owner
+                .parameters
+                .iter()
+                .filter_map(|parameter| parameter.default.as_deref())
+                .any(|default| {
+                    super::approx_band::parse_expression(default)
+                        .is_none_or(|value| !integer(&value))
+                })
+        {
+            return false;
+        }
+        let argument = match (
+            owner.parameters.as_slice(),
+            call.args.as_slice(),
+            call.keywords.as_slice(),
+        ) {
+            ([_], [argument], []) => argument,
+            ([_, extra], [argument, value], []) if !extra.keyword_only && integer(value) => {
+                argument
+            }
+            ([_, extra], [argument], [keyword])
+                if !extra.positional_only
+                    && keyword
+                        .arg
+                        .as_ref()
+                        .is_some_and(|name| name.as_str() == extra.name)
+                    && integer(&keyword.value) =>
+            {
+                argument
+            }
+            ([_, extra], [argument], [])
+                if extra
+                    .default
+                    .as_deref()
+                    .and_then(super::approx_band::parse_expression)
+                    .is_some_and(|value| integer(&value)) =>
+            {
+                argument
+            }
+            _ => return false,
+        };
+        let elements = match argument {
+            Expr::List(list) => &list.elts,
+            Expr::Tuple(tuple) => &tuple.elts,
+            _ => return false,
+        };
+        !elements.is_empty() && elements.iter().all(selection_literal)
+    }
+    !module.body.is_empty() && module.body.iter().all(|statement| {
+        matches!(statement, Stmt::Assert(assertion) if assertion.msg.is_none() && value_pin(&assertion.test, owner, candidate))
+    })
+}
+
+/// A closed result alias: one direct numeric owner call assigned to a local,
+/// followed immediately by one literal equality assertion on that same local.
+/// Other statements and assertions, decorators, fixtures, and aliases through
+/// wrappers are deliberately outside the rule.
+fn is_indirect_integer_sequence_assertion(
+    row: &CallRow,
+    owner: &PythonOwner,
+    candidate: &PythonRelatedCandidate<'_>,
+    assertion: &super::PythonAssertion,
+) -> bool {
+    use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
+    let rebinding = &candidate.test.constant_rebinding;
+    if row.line >= assertion.line
+        || candidate.test.assertions.len() != 1
+        || !candidate.test.decorators.is_empty()
+        || !candidate.test.fixtures.is_empty()
+        || rebinding.implicit_reach
+        || rebinding.header_reach
+        || rebinding.fixture_substitution
+        || rebinding.module_opaque
+        || rebinding.edited_in_diff
+    {
+        return false;
+    }
+    let Ok(Mod::Module(module)) = super::source_facts::parse_module_result(
+        std::path::Path::new("<loop-boundary-result>"),
+        &candidate.test.body_text,
+    ) else {
+        return false;
+    };
+    let [Stmt::FunctionDef(function)] = module.body.as_slice() else {
+        return false;
+    };
+    let [Stmt::Assign(assignment), Stmt::Assert(check)] = function.body.as_slice() else {
+        return false;
+    };
+    let [Expr::Name(target)] = assignment.targets.as_slice() else {
+        return false;
+    };
+    if !matches!(assignment.value.as_ref(), Expr::Call(_)) || check.msg.is_some() {
+        return false;
+    }
+    let Expr::Compare(compare) = check.test.as_ref() else {
+        return false;
+    };
+    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    else {
+        return false;
+    };
+    let same_local = |value: &Expr| matches!(value, Expr::Name(name) if name.id == target.id);
+    if !((same_local(&compare.left) && selection_literal(right))
+        || (selection_literal(&compare.left) && same_local(right)))
+    {
+        return false;
+    }
+    let Some((row_target, call)) = row.text.split_once('=') else {
+        return false;
+    };
+    if row_target.trim() != target.id.as_str() {
+        return false;
+    }
+    // The row must be this test's own assignment. Rows come from every
+    // related test of the file, and an earlier test's `result = owner([1, 5])`
+    // must not stand in for this test's call on other arguments.
+    let own_call = candidate.test.body_text.get(
+        assignment.value.range().start().to_usize()..assignment.value.range().end().to_usize(),
+    );
+    if own_call.is_none_or(|own| own.trim() != call.trim()) {
+        return false;
+    }
+    let mut direct = row.clone();
+    direct.text = format!("assert {} == 0", call.trim());
+    is_direct_integer_sequence_assertion(&direct, owner, candidate)
 }

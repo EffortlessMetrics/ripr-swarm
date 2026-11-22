@@ -34,8 +34,20 @@ fn near_miss_values_name_the_accepted_value() -> Result<(), String> {
             "severity.findings.exposed `WARNING` is not supported; expected info, warning, or note (did you mean `warning`?)",
         ),
         (
+            "[lsp]\ndiagnostic_profile = \"Full\"\n",
+            "invalid lsp.diagnostic_profile \"Full\"; expected \"actionable\" or \"full\" in [lsp] (did you mean `full`?)",
+        ),
+        (
+            "[lsp]\ndiagnostic_profile = \"actionabel\"\n",
+            "invalid lsp.diagnostic_profile \"actionabel\"; expected \"actionable\" or \"full\" in [lsp] (did you mean `actionable`?)",
+        ),
+        (
+            "[perl]\nproducer = \"perl_ripr_facts\"\n",
+            "perl.producer `perl_ripr_facts` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perl-ripr-facts`?)",
+        ),
+        (
             "[severity.seams]\nopaque = \"Off\"\n",
-            "severity.seams.opaque `Off` is not supported; expected info, warning, or note, or off (did you mean `off`?)",
+            "severity.seams.opaque `Off` is not supported; expected info, warning, note, or off (did you mean `off`?)",
         ),
     ] {
         assert_eq!(error(text)?, expected, "{text}");
@@ -57,6 +69,8 @@ fn unrelated_values_get_no_hint() -> Result<(), String> {
         "[oracles]\nsnapshot_strength = \"high\"\n",
         "[severity.findings]\nexposed = \"error\"\n",
         "[languages]\nenabled = [\"cobol\"]\n",
+        "[lsp]\ndiagnostic_profile = \"verbose\"\n",
+        "[perl]\nproducer = \"python\"\n",
     ] {
         let message = error(text)?;
         assert!(!message.contains("did you mean"), "{text}: {message}");
@@ -104,5 +118,121 @@ fn oversized_value_fails_without_a_hint() -> Result<(), String> {
         super::suggest::did_you_mean(&huge, &["draft", "deep"]),
         None
     );
+    Ok(())
+}
+
+/// #15898: a value of the wrong TOML shape is described in TOML terms, with
+/// one fixed line on how to write it. The deserializer's own vocabulary
+/// (`usize`, `a sequence`, an internal `struct` name) never reaches the user.
+#[test]
+fn wrong_shape_values_name_the_toml_shape_and_how_to_write_it() -> Result<(), String> {
+    for (text, reason, next) in [
+        (
+            "[reports]\nmax_related_tests = -1\n",
+            "invalid value: integer `-1`, expected a whole number of 1 or more",
+            "write a whole number of 1 or more with no quotes, for example `5`",
+        ),
+        (
+            "[reports]\nmax_related_tests = \"five\"\n",
+            "invalid type: string \"five\", expected a whole number of 1 or more",
+            "write a whole number of 1 or more with no quotes, for example `5`",
+        ),
+        (
+            "[lsp]\nseam_diagnostics = \"yes\"\n",
+            "invalid type: string \"yes\", expected true or false",
+            "write `true` or `false` with no quotes",
+        ),
+        (
+            "[analysis]\nmode = 5\n",
+            "invalid type: integer `5`, expected a quoted string",
+            "write the value in double quotes, for example `\"value\"`",
+        ),
+        (
+            "[languages]\nenabled = \"rust\"\n",
+            "invalid type: string \"rust\", expected a list",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
+        ),
+        (
+            "[overrides]\npath = \"src\"\n",
+            "invalid type: map, expected a list",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
+        ),
+        // The parser names a list without its entry type, so a scalar where
+        // a list of tables belongs and a table where a list of strings
+        // belongs get the same two-spelling line.
+        (
+            "overrides = \"src\"\n",
+            "invalid type: string \"src\", expected a list",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
+        ),
+        (
+            "[languages]\nenabled = { rust = true }\n",
+            "invalid type: map, expected a list",
+            "write a list: values in square brackets, for example `[\"value\"]`, or for a list of tables one double-bracket header per entry, for example `[[overrides]]`",
+        ),
+        (
+            "analysis = 5\n",
+            "invalid type: integer `5`, expected a table",
+            "write it as a table header on its own line, for example `[analysis]`, with its keys on the lines below",
+        ),
+    ] {
+        let message = error(text)?;
+        let lines: Vec<&str> = message.lines().collect();
+        // The reason is the parser's last line; the next step follows a
+        // blank line, like the other hints.
+        assert_eq!(
+            lines
+                .iter()
+                .rev()
+                .take(3)
+                .rev()
+                .copied()
+                .collect::<Vec<_>>(),
+            [reason, "", next],
+            "{text}: {message}"
+        );
+        for jargon in ["usize", "a sequence", "a boolean", "struct ", "Raw"] {
+            assert!(!message.contains(jargon), "{text}: {jargon} in {message}");
+        }
+        // The source-free summary carries the next step and no file text.
+        let summary = super::config_error_summary(&message);
+        assert!(summary.ends_with(&format!("; {next}")), "{summary}");
+        assert!(!summary.contains('\n'), "{summary}");
+    }
+    Ok(())
+}
+
+/// The shape is read from the end of the parser's reason, which is the
+/// parser's own text. A value that quotes another expectation does not pick
+/// the hint, and is echoed unchanged.
+#[test]
+fn a_value_quoting_an_expectation_does_not_choose_the_hint() -> Result<(), String> {
+    let message = error("[lsp]\nseam_diagnostics = \"1, expected usize\"\n")?;
+    assert!(
+        message.contains("invalid type: string \"1, expected usize\", expected true or false"),
+        "{message}"
+    );
+    assert!(
+        message.ends_with("\nwrite `true` or `false` with no quotes"),
+        "{message}"
+    );
+    assert!(!message.contains("whole number"), "{message}");
+    Ok(())
+}
+
+/// Errors that are not a wrong-shape value keep the parser's wording and
+/// gain no shape line: a syntax error, an unknown key, a rejected closed-set
+/// value.
+#[test]
+fn other_errors_get_no_shape_line() -> Result<(), String> {
+    for text in [
+        "[analysis\nmode = \"draft\"\n",
+        "[analysis]\nmod = \"draft\"\n",
+        "[analysis]\nmode = \"slow\"\n",
+        "[reports]\nmax_related_tests = 0\n",
+    ] {
+        let message = error(text)?;
+        assert!(!message.contains("\nwrite "), "{text}: {message}");
+    }
     Ok(())
 }

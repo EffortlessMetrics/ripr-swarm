@@ -179,8 +179,12 @@ Only the test function's own body is read. The walker enters `if`, `for`,
 
 1. a comparison with any `==` in its chain: `exact_value` / strong
    (rule 1 narrows this to chains whose operators are all `==`);
-2. any other comparison (`!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`,
-   `in`, `not in`): `relational_check` / weak;
+2. a single `is` whose one side is the literal `True` or `False` and whose
+   two sides are not the same tokens (`f(x) is False`, `True is f(x)`):
+   `exact_value` / strong, like `== True|False`, whatever `f` returns (#15250);
+   any other comparison (`!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`,
+   `in`, `not in`, including `is None` and `is not True|False`):
+   `relational_check` / weak;
 3. a call to `isinstance`: `relational_check` / weak;
 4. any other call: the call table below, else `smoke_only` / smoke;
 5. anything else (a name, `not x`, `a and b`, a subscript): `smoke_only` /
@@ -298,6 +302,29 @@ one changed raise only (#12952); the general class-only table row stays weak.
    `eval`, `setattr`) or a non-function owner leaves the message unresolved
    and keeps the existing verdict (#9185, the attrs `default_if_none`
    instance).
+   Class-attribute text (#15294): when the changed line is a message-only
+   edit of a one-line `name = "..."` or `name: T = "..."` directly in a class
+   body (the owner is the class), the change is `exposed` only if a related
+   oracle test carries a literal that the old text accepts and the new text
+   rejects, with each `{...}` placeholder read as a wildcard. The literals
+   read are: the `match=` / `assertRaisesRegex` pattern (literal characters
+   and the `.` wildcard only, searched as a substring), the string operand of
+   an `assert x == "..."` or `assertEqual` (it must equal the whole
+   text), and the string operand of `assert "..." in x` or `assertIn` against
+   a non-literal container (a substring). The whole statement is read, so
+   it may span lines, and each conjunct of a positive `and` chain is read on
+   its own (`assert len(e.value.args) == 1 and str(e.value) == "..."`,
+   #15646), including a conjunct weaker than the one that grades the
+   assertion; an `or` operand or anything under `not` pins nothing. At least half of the literal must
+   match fixed characters of the old text; against the new text one fixed
+   character is enough, and a non-empty new text made only of placeholders
+   rejects nothing (an empty new text rejects every non-empty literal). A literal shorter than four characters pins only through
+   whole-text equality. Call arguments,
+   assert messages, `!=`, `not in` and two-constant comparisons pin
+   nothing. Otherwise the change is `weakly_exposed`
+   with missing discriminator `class attribute <name> text "<new text>"`.
+   A decorated or multi-line constant and a non-string value keep the
+   existing verdict.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns
@@ -550,8 +577,8 @@ Relations, first match wins (rank, oracle-eligible):
   (comments are not read; an unclosed call is opaque), or any source has
   custom docs or schema URLs (`openapi_url`, `docs_url`, `redoc_url`) or a
   `**` unpack in call arguments (which may pass such an option under a name
-  the source does not spell; markers are matched with and without
-  comments), or has an exception
+  the source does not spell; markers are matched with and without comments),
+  or has an exception
   handler, middleware, a request hook, `dependency_overrides`, a custom
   route class, an imperative or declarative route registration, a router
   or blueprint inclusion, a mount, a `:path` catch-all, a route object
@@ -572,8 +599,8 @@ Relations, first match wins (rank, oracle-eligible):
   needs the old line (repo mode, which has none, never earns it). The handler must return its body as is:
   every decorator is a static route decorator whose keywords cannot reshape
   the body (no `response_model` or `response_class`), there is no return
-  annotation (FastAPI reads one as a response model, and even `-> dict`
-  names a model when the module rebinds `dict`), and the function has exactly one `return`, of a dict literal
+  annotation other than a bare `dict` (FastAPI reads one as a response
+  model), and the function has exactly one `return`, of a dict literal
   whose keys are distinct string literals (no `**` unpack), and no `yield`
   or `raise` (a raised error answers with its own body). A
   changed `detail` key never earns this credit, because `detail` is the key
@@ -582,11 +609,30 @@ Relations, first match wins (rank, oracle-eligible):
   changed `return` never produced), another key, a rebound or inline
   response, an expression around the read, another route or verb, an
   unidentified or rival application, or an inequality grants no credit
-  (`strong_oracle_observes_route_response`, #13869);
+  (`strong_oracle_observes_route_response`, #13869).
+  A handler annotated `-> dict` keeps the credit only while no read
+  source may rebind `dict`, which the annotation would then name as a
+  response model; this withdraws only those handlers' credit, never an
+  unannotated handler's. The scan reads lexer tokens, so strings, comments,
+  brackets and one-line suites cannot hide a statement, and a `dict` token
+  counts as a read only after `->`, after a `:` inside brackets outside a
+  `case` pattern, or before a call's `(` not after `def` or `class`. A
+  source that does not lex, a star import, a non-ASCII name, a string
+  holding the word `dict` or a writer name, any f-string (its braces are not
+  read), a name that runs code or resolves a dotted target held in a string
+  (`patch`, `timeit`, `pdb`, `doctest`, `InteractiveConsole`,
+  `resolve_name`), or a name that can reach or write a namespace without
+  spelling the bound name (`globals`, `vars`, `__dict__`, `getattr`,
+  `setattr`, `exec`, `sys.modules`, frame or function globals, `gc`
+  referents, the builtins) also withdraws it. Python startup hooks outside
+  the workspace, such as `sitecustomize` or installed plugins, are not read.
 - R4: `construct_call` (4, eligible): a `__call__` owner invoked as
   `Class(...)(...)`;
 - R5: `local_binding` (4, eligible): a `__call__` owner invoked through
   one `x = Class(...)` bound once;
+- R5a: `property_read` (4, eligible): a plain builtin `@property` owner
+  read as `Class(...).<name>` or through one `x = Class(...)` bound once
+  (Decision 10);
 - R6: otherwise the test must reference the owner (RIPR-SPEC-0028), or
   the test is unrelated;
 - R7: `same_stem` (3, heuristic), `test_name_similarity` (2, heuristic),
@@ -626,7 +672,8 @@ This order is the existing behavior and is normative:
   internal `async_def` marker, a static route decorator, a `click` or
   `typer` command, group, option, argument or callback decorator, and a
   `<receiver>.command` or `<receiver>.callback` decorator when the owner's
-  module imports `typer` and binds that receiver;
+  module imports `typer` and binds that receiver. A plain builtin
+  `@property` is not an indirection once its Decision 10 credit holds;
 - L6: `mocked_module` from any related candidate, heuristic ones included;
 - L7: `property_based_test`: an eligible candidate with a `given` or
   `example` decorator and no strong assertion;
@@ -686,7 +733,11 @@ This order is the existing behavior and is normative:
   file's only binding of that name) or a `fixture` alias imported from
   `pytest_asyncio` and not rebound before the def: that plugin awaits it
   and hands the test its returned value, while plain `pytest.fixture`
-  hands a strict-mode test the un-awaited coroutine (#14803).
+  hands a strict-mode test the un-awaited coroutine (#14803). A prior
+  reachable `if` arm that can rebind the alias withholds this credit.
+  A dead arm or a read in the condition preserves the provider. A delete
+  or an unanalysed compound statement (such as `try`, `for` or `with`)
+  mentioning the alias also withholds credit (#14846).
   `C` is the owner's class imported under its own
   name from the owner's module, and the fixture's file binds neither the
   fixture name nor `C` a second time. The test takes the fixture as a
@@ -821,7 +872,9 @@ The credit branches are, in order: `direct` by owner identity token;
 `direct` by a method call on a bound receiver; `alias`; `direct` through a
 module-qualified call or a result local that is an asserted operand
 (RIPR-SPEC-0028, #4567; for a coroutine owner the local may bind
-`await f(..)`, which hands back the value its body returned, #14803); `changed_sink_token` from the changed-line token
+`await f(..)` or `await(f(..))`, which hands back the value its body returned.
+Balanced parentheses also preserve a synchronous result, as in
+`result = (f(..))`; tuple construction and boolean fallbacks do not, #14803 and #14846); `changed_sink_token` from the changed-line token
 delta; `direct` through the channel a changed write reaches (rule 17);
 else `orthogonal`. A free-function owner's identity, delta-token and
 effect-channel credit need module identity. An empty owner or changed-sink token
@@ -940,7 +993,9 @@ the rule; ripr still reports only what the static shape shows.
     `self.assertRaises(...) as N` or `self.assertRaisesRegex(...) as N`
     (no other receiver), is recorded `exact_error_variant` / strong when a statement after the
     `with` statement, in the same test body, asserts `==` (an `assert`
-    with one `==`, or `assertEqual`) between two operands, one of which
+    with one `==`, an `==` conjunct of an `assert` whose test is a positive
+    `and` chain (#15646; a chain in which any operand could rebind or
+    mutate `N` promotes nothing), or `assertEqual`) between two operands, one of which
     is a value-preserving read of the exception: `N.value` (pytest) or
     `N.exception` (unittest), alone, as `str(...)` or `repr(...)` of it,
     or as its `.args` or a literal index of `.args`, and whose other operand
@@ -980,7 +1035,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     exception (#9542, RIPR-SPEC-0028): a bare `assert f(lit, ..)` or
     `assert not f(lit, ..)` whose single resolved workspace function owner
     provably returns `bool` is an exact pin, read as `f(lit, ..) == True` /
-    `== False`.
+    `== False`. A plain-name argument counts as such a literal only when it
+    is a direct, settled pytest parametrize argname of the test with
+    recorded cases, rebound nowhere in the test body (no statement binding
+    and no `:=`) and not a Hypothesis input (#15310); every other name keeps
+    the assertion smoke. Native Python repo analysis uses this same bare-call
+    rule when the selected inventory is complete and the source identifies
+    the callee. A capped or incomplete inventory cannot establish uniqueness
+    for this credit (#10945).
 16. **A constant offset is a static boundary operand.** In a changed
     comparison, an operand `C - k` or `C + k`, where `k` is an integer
     literal and `C` a literal or a module constant resolving to one, is
@@ -1242,6 +1304,19 @@ mutant calibrates the rule; ripr reports only the static shape.
     `from pytest import fixture as fx`, unless a later import, assignment, `def` or `class`
     rebinds that name before the decorated def); otherwise the reading abstains. An assertion about
     unrelated text keeps its verdict.
+    When the new line, and the old line if there is one, is a logging call
+    (`.exception`, `.fatal`, `.log` and keyword arguments included) on one
+    receiver whose last name segment contains `log` and whose arguments are
+    built from literals and names without a call, the edit cannot change
+    what the owner returns, so an exact, field, status-code or exception
+    assertion that does not itself read `caplog` (`assert f(5) is False`,
+    `== False`, or a bound `r = f(5)` then `assert r is False`) is not
+    applicable to it and never credits it, however exact. Relational reads
+    stay applicable for the caplog evaluation; an exact compare of a
+    captured-log alias (`msgs == [...]`) is not read. A result pin in the same
+    assertion as a `caplog` read (`f(5) is False and "x" not in caplog.text`),
+    or with `caplog` only in its failure message, is `static_unknown` with
+    `unsupported_syntax` rather than credited (#15250).
     The same evaluation reads the captured records' formatted messages,
     which carry no record header: `"<text>" in caplog.messages` and
     `"<text>" in [r.message for r in caplog.records]` (or
@@ -1407,8 +1482,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
     `addopts`) withholds credit for its scope. A `norecursedirs` entry with
     exactly one trailing `/` and no other `/` (`env/`) is read as the
-    basename pattern without the slash; every other `/`-bearing entry
-    (`a/b/`, `/`, `env//`) still refuses the config as unevaluated. This
+    basename pattern without the slash. A plain relative path with an
+    interior `/` (`tests/mypy_test_cases`: no glob metacharacter, no `\`,
+    no empty, `.` or `..` segment) is evaluated as pytest's `*/<entry>`
+    match: it excludes a directory whose config-relative path equals the
+    entry or ends in `/<entry>`, and, because ancestors above the config
+    directory are unseen, also a directory that is a tail of the entry.
+    Every other `/`-bearing entry (`a/b/`, `/`, `env//`, `tests/*_cases`)
+    still refuses the config as unevaluated. This
     deliberately over-withholds relative to pytest, whose path-pattern match
     likely excludes nothing for `env/`; it never grants credit. Not modelled, so credit is
     unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
@@ -1815,6 +1896,66 @@ mutant calibrates the rule; ripr reports only the static shape.
     helper substitution, which keeps its own module-attribute rule, and
     fixture definitions' imports are not rewritten.
 
+34. **An edited member of a literal membership collection needs an input
+    equal to that member** (#15632). The rule only withholds `exposed`; it
+    never credits and never moves another verdict up. It reads the parsed
+    owner module on the new side and on the old side (the new source with
+    the changed line restored) and engages on the one `<subject> in
+    <display>` or `<subject> not in <display>` comparison whose lines
+    include the changed line and whose members differ, wherever it sits in
+    the changed statement: an `if`/`elif`/`while` condition, an `and`/`or`
+    compound, `not (...)`, a parenthesized test, a one-line `if`, a
+    `return`, an assignment, or a display spanning several lines. The
+    display is a tuple, list or set of scalar literals (numbers,
+    `True`/`False`, `None`, plain strings without escapes), at least one
+    member is kept, and the subject text and operator match on both sides.
+    When the changed line also edits code outside the display (`and` to
+    `or`, added `not` or parentheses, a one-line `if` whose body changes),
+    or some member on either side is not such a literal (`"\t"`, `1e0`,
+    `0x1`, a name, `b"y"`), the change reads `weakly_exposed` without
+    reading rows, naming the first readable altered member when there is
+    one. A removed-only line inside a multi-line display is read from the
+    old file and the new one: the old comparison holding the line pairs with
+    the new comparison whose members are the old ones without the line's
+    elements, and the same hit rule applies; when no such new comparison is
+    found the change reads `weakly_exposed`. The subject is
+    a bare owner parameter `p`, or `p.lower()`, `p.casefold()`,
+    `p.upper()`, `p.strip()` or `str(p)`. The altered members are those
+    present on one side only under Python equality (`True == 1`,
+    `False == 0`, `1 == 1.0`): a removed member, an added member, or both
+    for a changed one. A strong related call row hits an altered member
+    when its literal input equals the member and the old and new membership
+    results for that input differ; a compound condition may still not flip
+    on that input, which the rule accepts because it never credits by
+    itself. A string input counts under a case normalization of the
+    parameter (`val = val.lower()`, `.casefold()`, `.upper()`, before the
+    comparison and outside any loop) or a transforming subject only when the
+    transform leaves it unchanged (for `strip`, an ASCII string with no
+    surrounding whitespace); a non-string counts under a normalization only
+    when each normalization line sits directly under
+    `if isinstance(<subject>, str):`, and never under a transforming
+    subject. Any other rebinding of the parameter before the comparison, a
+    walrus or `;`-separated statement binding it on the comparison line, any
+    rebinding inside a loop around it, and any rebinding after a `while`
+    comparison places no input. A plain `val = val in (...)` assigns after
+    the comparison reads the call input, so it keeps the input. Every altered
+    member needs a hit, or the change reads `weakly_exposed` with the first
+    unhit member named as the boundary discriminator (`val == "y"`),
+    including when no strong row binds a literal, some strong call goes
+    unread, or the rebinding is not modelled. A changed line that holds
+    only literal elements inside a display an `in` comparison owns, whose
+    old side cannot be paired (the restored old source does not parse, or
+    its comparisons do not match the new ones), reads `weakly_exposed` the
+    same way. Removing `1` while `True` stays alters nothing, so a row
+    passing `1` never hits it. Not engaged, so the existing verdict stands:
+    a whole-collection replacement (no member kept) with nothing else on the
+    line changed, a non-literal or computed display (`TRUTHY + ("t",)`, a
+    named constant), a subject that is not a parameter or one of the
+    transforms above (an alias bound from the parameter, `self.attr`,
+    `cfg["key"]`), and an owner source that does not parse. The membership
+    rule does not govern `match` arm patterns. See RIPR-SPEC-0260 and #15691
+    for match-arm evidence.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -1915,9 +2056,49 @@ rejected alternative. Any can be reversed later without touching the rest.
    `KeyError("blank")` mutant, so the R7 reading is a false actionable
    verdict. Rejected: relate any name passed to any call, because only
    these assertions are documented to call their argument.
-10. **Non-transparent decorators.** Adopted: unchanged, `@property` and
-    `@functools.lru_cache` stay `decorator_indirection`. Rejected for now:
-    make `@property` transparent, because it adds credit.
+10. **Non-transparent decorators.** Adopted: unchanged, `@functools.lru_cache`
+    stays `decorator_indirection`, and so does `@property` by default.
+    Amended (#15490): a plain builtin `@property` getter is credited, and
+    its limit lifted, only by a strong exact read. The owner is a method of
+    a top-level class with no bases, keywords or decorators, decorated
+    exactly `@property`; its module is ASCII, spells `property` only on the
+    bare `@property` decorator line, never binds or imports it (no star
+    import, no `builtins`), names the class nowhere outside its body, and
+    holds no attribute hook (`__getattr__`, `__getattribute__`,
+    `__setattr__`, `__dict__`, `__class__`, `type`, `setattr(`,
+    `delattr(`, `vars(`, a metaclass). The class body holds only methods
+    and literal attributes, never names the class (`Box.total = 6` in
+    `__init__`), never stores or deletes the property name
+    (`self.total = 0`, `del self.total`), and binds the owner name once: a
+    same-name setter, deleter or getter sibling, or any decorator naming
+    the property, keeps the limit. The getter is an optional docstring and
+    simple assignments followed by its one `return`, and the changed line
+    is that return, with no conditional expression, `and`/`or`,
+    comprehension, lambda or walrus anywhere in the getter: a branching
+    getter, a changed return under an `if` or a changed line before the
+    return keeps the limit. A
+    related pytest test relates as `property_read` (R5a) when it reads
+    `Cls(...).<name>` or `v.<name>` with `v` bound once to `Cls(...)`, `Cls`
+    imported once under its own name from the owner's module; every use of
+    the class is a construction, every use of a bound local is that read,
+    the body is straight-line with no other call, no write, `del` or call
+    of the attribute, and no patch or mock marker (`PropertyMock` among
+    them). Nothing outside the test body may reach the class first: the
+    test module neither rebinds the class nor writes an attribute named
+    like the class, the property or any dunder, holds no namespace writer
+    anywhere (`setattr`, `patch`, `sys.modules`, even in a sibling test or
+    on an unrelated receiver), no autouse fixture, setup hook or
+    definition-time call, no conftest fixture or hook on its directory
+    chain, and no fixture substitutes the owner. The credit (`strong_oracle_observes_property_read`, `direct`)
+    needs a changed `return` line of the getter (`return_value` family)
+    and the test's row-selected strong assertion to be a top-level
+    `assert <read> == <literal>` with no message. A bare `assert v.<name>`,
+    `!=`, `is`, `in`, a chained comparison, an `or` chain, a message, an
+    assertion under `if` or `with`, a relational or computed comparison, a read through a helper, a class
+    access `Cls.<name>` or any doubt keeps `decorator_indirection`.
+    `functools.cached_property` is unchanged. Rejected: make `@property`
+    transparent, because the earlier lift alone (#8551) read a direct
+    property assertion as a false actionable `weakly_exposed`.
 11. **`and` chains.** Adopted (2026-10-05, #6599): rule 15, the strongest
     conjunct. The first draft kept example 5's `smoke_only` reading, but
     the corpus case `py-spec0233-ex05-and-chain` fails on its mutant, so
@@ -1949,7 +2130,8 @@ rejected alternative. Any can be reversed later without touching the rest.
     largest shape whose value static evidence reads without running code.
 15. **A mock passed for a called parameter.** Adopted (2026-10-13,
     #7586): rule 17 reads a changed `p(...)` like `p.m(...)`, and reaches
-    the mock through the owner's result when the owner returns `p`. The
+    the mock through the owner's result when the owner returns `p`. For a
+    coroutine owner the test must await that result (#14846). The
     corpus case `py-spec0233-ex09-mock-arg` fails at runtime on the
     handed 2 while ripr read it `weakly_exposed`. A rewrite that keeps the
     old argument inside it, other than literal arithmetic, does not credit
@@ -2225,7 +2407,13 @@ and the test is `tests/test_subject.py`, which imports each owner from
     `mocker.patch('os.getcwd')`: `static_unknown`, `mocked_module`
     (unchanged).
 30. Owner `@property def v(self)` in `class C`, changed body line:
-    `static_unknown`, `decorator_indirection` (unchanged).
+    `static_unknown`, `decorator_indirection` (unchanged). Decision 10's
+    one exception: in a plain `class C` whose getter is a single changed
+    `return`, a related test `assert C().v == 1` in a test module with no
+    namespace writer, autouse fixture or setup hook reads `exposed`,
+    `strong_oracle_observes_property_read` (#15490). The corpus case
+    `py-spec0233-ex30-property` keeps the limit: a sibling test in its
+    module calls `client.patch(...)`, a namespace writer.
 31. Owner `def fmt(n): return f"NO:{n}"`, changed from `f"ID:{n}"`.
     `test_a` asserts `assert len(fmt(7)) == 4`; `test_b` calls `fmt(7)` and
     asserts `assert other == "x"`: `weakly_exposed`, `orthogonal` (today
@@ -2652,11 +2840,18 @@ strong assertions is retained.
   swallowed `try` bodies, rule 23) and `test_activation.rs` (empty tables and
   module-level skips, rule 24), pinned by `unreachable_assertion_tests.rs` and
   the `py-trap-*` corpus cases.
+- `crates/ripr/src/analysis/language/python/property_read.rs`: the R5a
+  `property_read` relation and its Decision 10 credit, applied by
+  `static_limits.rs` (L5) and `classify.rs`, pinned by
+  `property_read_tests.rs` and `py-spec0233-ex30-property`.
 - `oracles.rs` (`is_property_compare`: idempotence and loop-variable identity
   checks, rule 25), pinned by `property_assertion_tests.rs` and the
   `py-grid-*-property` corpus cases.
 - `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
   pinned by `package_alias_tests.rs`.
+- `crates/ripr/src/analysis/language/python/membership_activation.rs`:
+  rule 34, read by `classify.rs` ahead of the boundary rule and pinned by
+  `membership_activation_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.

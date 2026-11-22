@@ -133,6 +133,21 @@ The canonical gap id inside the receipt JSON is unchanged; only its
 filesystem representation is made portable. Explicit `--out` / `--path`
 values are used verbatim.
 
+### Receipts written by 0.10
+
+ripr 0.10 and earlier wrote the default receipt at the raw gap id,
+`target/ripr/receipts/<canonical_gap_id>.json`, creating a directory for
+every `/` in the id. When no file exists at the current percent-encoded
+path, `receipt check --gap` looks for that 0.10 path so the check reports
+what is wrong with the old receipt (it does not record `current_head`)
+instead of reporting that no receipt exists. The current path wins when
+both exist. The 0.10 path is used only when every component of the id is an
+ordinary name (no root, drive prefix, `..`, backslash or control character)
+and the resolved file is a regular file inside the resolved
+`target/ripr/receipts/` directory; a link that leads out of that directory
+is not followed. No id is translated: a receipt written under one gap id is
+not found under another, and the not-found message names `--path`.
+
 ### Repository HEAD binding
 
 Every receipt written by `ripr receipt write` records the commit returned by
@@ -147,6 +162,16 @@ a resolvable HEAD, fails closed.
 40-character hexadecimal SHA before reporting the receipt structurally valid.
 This is format/provenance validation only; the checker does not yet compare a
 transported receipt's head with a selected repository root.
+
+`ripr receipt check` also requires the identity fields to name exactly the
+record this ripr writes (#14291): `kind` is `"receipt"`, `tool` is `"ripr"`
+and `schema_version` is `"0.1"`, the same values the receipt lifecycle reader
+requires. Any other value (a future or unknown schema, a number, another
+record kind such as an agent receipt, or another tool) is rejected with a
+non-zero exit and a message naming the field, the expected value and the next
+step. The message echoes the found value only when it is a short printable
+string and otherwise names its shape, because the file is untrusted input.
+There is one receipt schema; reading another is a separate decision.
 
 This is the first provenance floor for the receipt writer. It does not yet
 bind the receipt to an analysis artifact, configuration digest, executed
@@ -362,6 +387,7 @@ Unit tests (app layer) — `crates/ripr/src/app/receipt.rs`:
 - `receipt_write_invalid_status_exits_nonzero`
 - `receipt_write_missing_verify_command_exits_nonzero`
 - `receipt_check_valid_receipt_exits_zero`
+- `receipt_check_rejects_foreign_identity_fields` (#14291)
 - `receipt_check_missing_file_exits_nonzero`
 - `receipt_check_malformed_json_exits_nonzero`
 - `receipt_check_missing_required_field_exits_nonzero`
@@ -383,6 +409,14 @@ Integration smoke tests — `crates/ripr/tests/cli_smoke.rs`:
 - `receipt_help_exits_zero_smoke`
 - `agent_receipt_legacy_alias_still_dispatches_smoke`
 - `receipt_default_long_gap_path_round_trips_smoke`
+
+0.10 receipt lookup — `crates/ripr/tests/cli_smoke/receipt_legacy_nested.rs`:
+
+- `receipt_check_gap_explains_a_0_10_receipt_for_a_rust_gap_id`
+- `receipt_check_gap_finds_a_0_10_receipt_under_a_linked_target`
+- `receipt_check_gap_does_not_follow_a_0_10_path_out_of_the_receipts_directory`
+- `receipt_check_gap_prefers_the_current_file_over_a_0_10_receipt`
+- `receipt_check_gap_names_the_file_it_looked_for_and_the_path_route`
 
 Emitter-alignment tests (PR 2):
 

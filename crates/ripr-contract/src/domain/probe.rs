@@ -5,16 +5,29 @@ use super::{
     ExposureClass, OracleKind, OracleStrength, ProbeId, RiprEvidence, SourceLocation, SymbolId,
 };
 
+/// The shape of changed behavior a probe stands for. Serialized as the
+/// snake_case `family` token in JSON output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProbeFamily {
+    /// `predicate`: a changed condition or comparison that decides a branch.
     Predicate,
+    /// `return_value`: a changed value the function returns or computes.
     ReturnValue,
+    /// `error_path`: a changed error path, such as an error return or raise.
     ErrorPath,
+    /// `call_deletion`: a call site the diff removed.
     CallDeletion,
+    /// `field_construction`: a changed field value in a constructed struct
+    /// or object.
     FieldConstruction,
+    /// `side_effect`: a changed effect outside the return value, such as a
+    /// call made for its effect or a process exit code.
     SideEffect,
+    /// `match_arm`: a changed match arm.
     MatchArm,
+    /// `static_unknown`: a changed line whose behavior shape `ripr` could not
+    /// classify.
     StaticUnknown,
 }
 
@@ -42,6 +55,7 @@ impl ProbeFamily {
         })
     }
 
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             ProbeFamily::Predicate => "predicate",
@@ -56,16 +70,23 @@ impl ProbeFamily {
     }
 }
 
+/// What kind of difference a probe's change makes. Serialized as the
+/// snake_case `delta` token in JSON output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeltaKind {
+    /// `value`: a different value is produced.
     Value,
+    /// `control`: a different branch or path is taken.
     Control,
+    /// `effect`: a different effect happens outside the returned value.
     Effect,
+    /// `unknown`: the kind of difference is not known.
     Unknown,
 }
 
 impl DeltaKind {
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             DeltaKind::Value => "value",
@@ -76,19 +97,44 @@ impl DeltaKind {
     }
 }
 
+/// Why static analysis stopped short for a finding. Serialized as snake_case
+/// tokens in `stop_reasons`. RIPR-SPEC-0411 lists each value's role and
+/// current producer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
+    /// `max_depth_reached`: reserved wire value; not emitted today.
     MaxDepthReached,
+    /// `external_crate_boundary`: reserved wire value; not emitted today.
     ExternalCrateBoundary,
+    /// `dynamic_dispatch_unresolved`: the path goes through a dynamic call
+    /// `ripr` cannot resolve statically.
     DynamicDispatchUnresolved,
+    /// `proc_macro_opaque`: heuristic annotation. The changed expression
+    /// contains a macro call (`name!(`) whose expansion `ripr` does not see.
     ProcMacroOpaque,
+    /// `fixture_opaque`: heuristic annotation. A related test mentions a
+    /// fixture, builder, or generator, so its inputs may come from values
+    /// `ripr` does not evaluate.
     FixtureOpaque,
+    /// `feature_unknown`: reserved wire value; not emitted today.
     FeatureUnknown,
+    /// `async_boundary_opaque`: heuristic annotation. The changed expression
+    /// names `async`, `spawn`, or `await`, so the path may cross a task
+    /// boundary `ripr` does not follow. A name match alone does not mean a
+    /// boundary is crossed.
     AsyncBoundaryOpaque,
+    /// `no_changed_rust_line`: heuristic annotation. `ripr` could not place
+    /// the changed line inside a Rust function it analyzes.
     NoChangedRustLine,
+    /// `infection_evidence_unknown`: added when a finding is
+    /// `infection_unknown` and has no more specific reason.
     InfectionEvidenceUnknown,
+    /// `propagation_evidence_unknown`: added when a finding is
+    /// `propagation_unknown` and has no more specific reason.
     PropagationEvidenceUnknown,
+    /// `static_probe_unknown`: added when a finding is `static_unknown` and
+    /// has no more specific reason.
     StaticProbeUnknown,
     /// Reach through internal calls is unresolved. A bounded walk may retain
     /// a candidate path (RIPR-SPEC-0114), but an unmodeled private-member
@@ -123,6 +169,7 @@ pub enum StopReason {
 }
 
 impl StopReason {
+    /// The snake_case wire token, as serialized in JSON output.
     pub fn as_str(&self) -> &'static str {
         match self {
             StopReason::MaxDepthReached => "max_depth_reached",
@@ -214,6 +261,11 @@ impl StopReason {
         }
     }
 
+    /// The generic stop reason for an unknown class: `infection_evidence_unknown`,
+    /// `propagation_evidence_unknown` or `static_probe_unknown` for the
+    /// matching `*_unknown` class, and `None` for every other class. The
+    /// classifier adds it when an unknown finding has no more specific stop
+    /// reason.
     pub fn for_unknown_class(class: &ExposureClass) -> Option<Self> {
         match class {
             ExposureClass::InfectionUnknown => Some(StopReason::InfectionEvidenceUnknown),
@@ -224,17 +276,49 @@ impl StopReason {
     }
 }
 
+/// One behavior that ripr checks the tests against: a source location, the
+/// family of behavior there, and what a test would need to observe to notice
+/// a change in it.
+///
+/// Most diff probes sit on a changed line. Some sit on an unchanged use of a
+/// changed value, such as a predicate that reads a changed binding, and
+/// repo-mode probes cover existing code with no diff at all.
+///
+/// A probe is static evidence. It names where the behavior is and what kind
+/// of oracle could discriminate it; it makes no claim about any runtime
+/// mutation outcome for the line.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probe {
+    /// Identifier for this probe within one run. A [`Finding`] built from the
+    /// probe reuses it as the finding id.
     pub id: ProbeId,
+    /// Where the probed source is. For a diff probe the line is the new-file
+    /// (head-side) coordinate, also for a removed line.
     pub location: SourceLocation,
+    /// The function or other owner that contains the probed source, when one
+    /// was found. `None` otherwise, including for a line of a function the
+    /// diff removed entirely.
     pub owner: Option<SymbolId>,
+    /// What kind of behavior this probe is about.
     pub family: ProbeFamily,
+    /// What kind of program delta the family implies.
     pub delta: DeltaKind,
+    /// Base-side text of the change, when the producer has one. `None` for a
+    /// purely added line and for probes with no base side, such as repo-mode
+    /// probes.
     pub before: Option<String>,
+    /// Head-side text of the change or of the probed source, when the
+    /// producer has one. `None` for a removed-only line.
     pub after: Option<String>,
+    /// The source expression the probe is about, as the producer read it. For
+    /// a probe on a changed line this is the trimmed line; a probe placed on
+    /// another site carries that site's expression.
     pub expression: String,
+    /// Places a test could observe this change, such as `return value` or
+    /// `field:<name>`. Empty when none are named.
     pub expected_sinks: Vec<String>,
+    /// Oracle shapes that would discriminate this change, such as
+    /// `exact error variant assertion`. Empty when none are named.
     pub required_oracles: Vec<String>,
 }
 
@@ -286,23 +370,42 @@ pub fn declared_const_name(expression: &str) -> Option<&str> {
     named_item.then_some(name)
 }
 
+/// Where a changed value appears to become observable. Serialized as the
+/// snake_case token that [`FlowSinkKind::as_str`] returns.
+///
+/// The side-effect kinds (`event_call`, `state_write`, `persistence`,
+/// `log_message`, `config_change`) refine the generic `call_effect` when
+/// syntax-first analysis can name them; `call_effect` stays the fallback for
+/// other observable calls.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowSinkKind {
+    /// `return_value`: the value the owner returns.
     ReturnValue,
+    /// `error_variant`: an error the owner returns or constructs.
     ErrorVariant,
+    /// `struct_field`: a field of a constructed value.
     StructField,
+    /// `event_call`: an event or outbound call.
     EventCall,
+    /// `state_write`: a write to state outside the expression.
     StateWrite,
+    /// `persistence`: a persistence write.
     Persistence,
+    /// `log_message`: a log message.
     LogMessage,
+    /// `config_change`: a configuration change.
     ConfigChange,
+    /// `call_effect`: some other observable call.
     CallEffect,
+    /// `match_arm`: the result of a match arm.
     MatchArm,
+    /// `unknown`: no sink was identified.
     Unknown,
 }
 
 impl FlowSinkKind {
+    /// The snake_case wire token for this kind.
     pub fn as_str(&self) -> &'static str {
         match self {
             FlowSinkKind::ReturnValue => "return_value",
@@ -319,6 +422,7 @@ impl FlowSinkKind {
         }
     }
 
+    /// A short human-readable name for this kind, such as `returned value`.
     pub fn label(&self) -> &'static str {
         match self {
             FlowSinkKind::ReturnValue => "returned value",
@@ -336,30 +440,48 @@ impl FlowSinkKind {
     }
 }
 
+/// One place a changed value appears to flow to, read statically from the
+/// changed source.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlowSinkFact {
+    /// What kind of sink this is.
     pub kind: FlowSinkKind,
+    /// The source text of the sink, such as the returned expression.
     pub text: String,
+    /// The source line of the sink.
     pub line: usize,
+    /// The owner whose sink this is, when the producer named one.
     pub owner: Option<SymbolId>,
 }
 
+/// Where in test source a [`ValueFact`] value was found. Serialized as the
+/// snake_case token that [`ValueContext::as_str`] returns. It records the
+/// value's origin, not an execution state.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValueContext {
+    /// `function_argument`: an argument to a call.
     FunctionArgument,
+    /// `assertion_argument`: an argument to an assertion.
     AssertionArgument,
+    /// `builder_method`: an argument to a builder-style method.
     BuilderMethod,
+    /// `table_row`: a row of a table-driven test.
     TableRow,
+    /// `enum_variant`: an enum variant path. Ambiguous all-caps paths also
+    /// stay here rather than in `constant`.
     EnumVariant,
     /// A qualified path whose spelling establishes a constant (`u64::MAX`,
     /// `crate::KIB`), not an enum variant (#5357).
     Constant,
+    /// `return_value`: a value in a return position.
     ReturnValue,
+    /// `unknown`: the origin was not identified.
     Unknown,
 }
 
 impl ValueContext {
+    /// The snake_case wire token for this context.
     pub fn as_str(&self) -> &'static str {
         match self {
             ValueContext::FunctionArgument => "function_argument",
@@ -388,9 +510,13 @@ impl ValueContext {
 /// consumers recover it via `finding.assertion_texts[line.to_string()]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
+    /// The test source line the value was read from.
     pub line: usize,
+    /// Retained source or value-transfer provenance for the value.
     pub text: String,
+    /// The value itself, such as `amount = 50`.
     pub value: String,
+    /// Where in test source the value was found.
     pub context: ValueContext,
 }
 
@@ -415,10 +541,17 @@ pub enum DiscriminatorShape {
     Other,
 }
 
+/// A discriminating input or check that no related test was seen to supply,
+/// such as an equality boundary value. Static evidence only: it names what
+/// the analysis did not find, not a runtime result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MissingDiscriminatorFact {
+    /// The missing discriminator, such as `amount == discount_threshold`.
     pub value: String,
+    /// Why the analysis reports it missing.
     pub reason: String,
+    /// The sink the missing discriminator would be observed through, when
+    /// known.
     pub flow_sink: Option<FlowSinkFact>,
     /// The concrete drafted boundary call for the equality boundary this
     /// fact names, when the analyzer's static model can pin the boundary
@@ -444,7 +577,9 @@ pub struct MissingDiscriminatorFact {
 /// behavior, not an observed or verified result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DraftedBoundaryAssertion {
+    /// The owner-call argument texts, as plain integer literals.
     pub arguments: Vec<String>,
+    /// The statically folded expected value, when the fold derives one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected: Option<String>,
 }
@@ -577,22 +712,41 @@ pub const MISSING_DISCRIMINATOR_VALUE_PREFIX: &str = "Missing check value: ";
 /// [`Finding::is_unreferenced_no_static_path`] reads it back (#14820).
 pub const UNREFERENCED_IN_WORKSPACE: &str = "(unreferenced in workspace)";
 
+/// The identity parts behind a finding's `canonical_gap_id`: a stable,
+/// language-qualified name for a behavioral gap that does not rely on line
+/// numbers alone. The parts are an identity, not a claim that the gap is
+/// established. Producers fill some parts in their own way; for example the
+/// Perl projection stores the selected assertion shape as `probe_kind`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FindingCanonicalGap {
+    /// The canonical gap id. Its shape depends on the producer: Rust and
+    /// Python spell the parts out
+    /// (`gap:<language>:<path>:<owner>:<behavior_kind>:<probe_kind>:<normalized_discriminator>`),
+    /// while Perl uses a hash of them (`gap:perl:<hash>`).
     pub id: String,
+    /// The language token in the id, such as `rust` or `python`.
     pub language: String,
+    /// The file the gap is in.
     pub file: String,
+    /// The owner the gap belongs to.
     pub owner: String,
+    /// The kind of behavior the gap is about.
     pub behavior_kind: String,
+    /// The probe-kind part of the identity, as the producer fills it.
     pub probe_kind: String,
+    /// The discriminator the gap is keyed on, in normalized form.
     pub normalized_discriminator: String,
 }
 
+/// Values that related tests were seen to use, as call inputs or assertion
+/// arguments, and discriminators that no related test was seen to supply.
+/// Static evidence read from test source, not execution.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActivationEvidence {
     /// Historical field name for source values; see ValueFact's non-execution
     /// contract. Oracle observation remains a separate admitted stage.
     pub observed_values: Vec<ValueFact>,
+    /// Discriminating values or checks no related test was seen to supply.
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
 }
 
@@ -601,13 +755,24 @@ pub struct ActivationEvidence {
 /// and the preview card reads it, so both stay in step (#12463).
 pub const STRONG_CHECK_UNTIED_NEXT_STEP: &str = "TypeScript preview advisory: the related test's check is already strong, but ripr cannot tie it to the changed line; exercise the changed branch with an input that flips it. No actionable repair packet is emitted until the target shape is explicit.";
 
+/// One test related by ripr to a finding's changed behavior, with the
+/// assertion it uses. Relating a test is static evidence; it does not mean the test runs
+/// the changed code.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelatedTest {
+    /// The test's name.
     pub name: String,
+    /// The file the test is in.
     pub file: PathBuf,
+    /// The line the test starts on.
     pub line: usize,
+    /// Assertion text from this test, when ripr kept one. For a row listed
+    /// only to show an examined test, it is the first assertion, kept so a
+    /// reader can check the claim even though it supplies no oracle.
     pub oracle: Option<String>,
+    /// What kind of oracle the assertion is.
     pub oracle_kind: OracleKind,
+    /// How strongly the oracle could discriminate the change.
     pub oracle_strength: OracleStrength,
     /// Why this test was related to the probe. `None` when the match origin
     /// is unknown (legacy callers). `Some` for all diff-check findings that
@@ -684,6 +849,7 @@ pub enum RelatedTestRole {
 }
 
 impl RelatedTestRole {
+    /// The snake_case wire token for this role.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Contributing => "contributing",
@@ -802,6 +968,7 @@ pub enum RelatedTestMiss {
 }
 
 impl RelatedTestMiss {
+    /// The snake_case wire token for this miss.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NoCallPath => "no_call_path",
@@ -826,23 +993,49 @@ impl RelatedTestMiss {
     }
 }
 
+/// ripr's static verdict on one [`Probe`]: whether the related tests appear
+/// to contain a discriminator that would notice the changed behavior, with
+/// the evidence and gaps behind that verdict.
+///
+/// The class is static exposure evidence. It is not a runtime mutation
+/// outcome and does not establish that the tests are sufficient.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Finding {
+    /// Finding identifier. The classifiers set it to the probe id.
     pub id: String,
+    /// Identity parts of the canonical gap this finding belongs to, when a
+    /// producer assigned one. `None` means no canonical gap identity was
+    /// assigned.
     pub canonical_gap: Option<FindingCanonicalGap>,
+    /// The changed behavior this finding is about.
     pub probe: Probe,
+    /// The exposure classification, such as `exposed` or
+    /// `reachable_unrevealed`.
     pub class: ExposureClass,
+    /// Per-stage evidence for reach, infect, propagate and reveal.
     pub ripr: RiprEvidence,
+    /// Headline confidence in the classification, between 0 and 1. For Rust
+    /// it is derived from the stage evidence and capped by the weakest stage;
+    /// preview adapters use a per-class constant that is not on the same
+    /// scale (see `confidence_basis`).
     pub confidence: f32,
     /// Why `confidence` is held at its value, for preview-adapter findings
     /// (#10700). Empty for Rust, whose score is not a per-class constant.
     /// Explains the number only; no decision helper reads it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub confidence_basis: Vec<crate::domain::ConfidenceCap>,
+    /// Human-readable lines naming the evidence the analysis found.
     pub evidence: Vec<String>,
+    /// Human-readable lines naming evidence the analysis looked for and did
+    /// not find.
     pub missing: Vec<String>,
+    /// Where the changed value appears to flow, such as a return value.
     pub flow_sinks: Vec<FlowSinkFact>,
+    /// Values related tests were seen to use, and discriminating values no
+    /// related test was seen to use.
     pub activation: ActivationEvidence,
+    /// Why the static analysis stopped short of a firmer verdict. Empty when
+    /// nothing stopped it.
     pub stop_reasons: Vec<StopReason>,
     /// Number of matched related-test/oracle rows after the existing dedup,
     /// before bounded unique-first packing. Metadata only: the retained
@@ -851,7 +1044,12 @@ pub struct Finding {
     /// vector count; absence cannot establish how many rows were discarded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub related_tests_matched_total: Option<usize>,
+    /// Tests ripr related to this change, with the oracle each one uses.
+    /// Bounded: see `related_tests_matched_total` for the count before
+    /// packing.
     pub related_tests: Vec<RelatedTest>,
+    /// One suggested next action for a person or agent, when the producer
+    /// named one.
     pub recommended_next_step: Option<String>,
     /// Source language the adapter that produced this finding identifies as.
     /// Additive optional per RIPR-SPEC-0026; populated by the per-language
@@ -1104,10 +1302,16 @@ impl Finding {
             .max(self.related_tests.len())
     }
 
+    /// Whether this finding meets the stop-reason rule: true when its class
+    /// needs no stop reason (only the `*_unknown` classes do), or when at
+    /// least one stop reason is recorded.
     pub fn unknown_has_stop_reason(&self) -> bool {
         !self.class.requires_stop_reason() || !self.stop_reasons.is_empty()
     }
 
+    /// The stop reasons to report: the recorded ones, or the generic reason
+    /// from [`StopReason::for_unknown_class`] when an unknown-class finding
+    /// has none recorded.
     pub fn effective_stop_reasons(&self) -> Vec<StopReason> {
         if self.unknown_has_stop_reason() {
             return self.stop_reasons.clone();
@@ -1442,5 +1646,676 @@ mod candidate_actionable_predicate_tests {
             SourceCurrentness::from_probe_delta(Some("base"), None),
             BaseDeleted
         );
+    }
+}
+
+#[cfg(test)]
+mod decision_helper_tests {
+    use super::{
+        ARM_UNSELECTED_REASON_PREFIX, ActivationEvidence, AnalysisScope, DeltaKind,
+        DiscriminatorShape, Finding, GUARD_UNENTERED_REASON_PREFIX, MissingDiscriminatorFact,
+        Probe, ProbeFamily, RelatedTest, RelatedTestMiss, RelatedTestRole, SourceCurrentness,
+        StopReason, UNREFERENCED_IN_WORKSPACE, boundary_input_observed_with_weak_oracle,
+        exact_assertion_fact, first_observing_related_test, input_boundary_fact,
+        is_unselected_input_reason, row_exact_discriminator_fact,
+    };
+    use crate::domain::language_capability::{AnalysisMode, REPO_SCOPE_EVIDENCE_LINE};
+    use crate::domain::{
+        BOUNDARY_INPUT_OBSERVED_SUMMARY, BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP, Confidence,
+        ExposureClass, OracleKind, OracleStrength, ProbeId, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StaticLimitKind,
+    };
+    use std::path::PathBuf;
+
+    const ALL_FAMILIES: [(ProbeFamily, &str); 8] = [
+        (ProbeFamily::Predicate, "predicate"),
+        (ProbeFamily::ReturnValue, "return_value"),
+        (ProbeFamily::ErrorPath, "error_path"),
+        (ProbeFamily::CallDeletion, "call_deletion"),
+        (ProbeFamily::FieldConstruction, "field_construction"),
+        (ProbeFamily::SideEffect, "side_effect"),
+        (ProbeFamily::MatchArm, "match_arm"),
+        (ProbeFamily::StaticUnknown, "static_unknown"),
+    ];
+
+    fn stage(state: StageState, summary: &str) -> StageEvidence {
+        StageEvidence::new(state, Confidence::Medium, summary)
+    }
+
+    fn fact(value: &str, reason: &str, shape: DiscriminatorShape) -> MissingDiscriminatorFact {
+        MissingDiscriminatorFact {
+            value: value.to_string(),
+            reason: reason.to_string(),
+            flow_sink: None,
+            drafted_boundary: None,
+            shape,
+        }
+    }
+
+    fn related(name: &str, strength: OracleStrength) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/limits.rs"),
+            line: 7,
+            oracle: None,
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            role: RelatedTestRole::Contributing,
+            miss_support: None,
+        }
+    }
+
+    /// A weak predicate finding whose one related test reaches the boundary
+    /// input and carries the boundary-observed Next step: every condition of
+    /// the weak-oracle advisory holds.
+    fn boundary_weak_finding() -> Finding {
+        Finding {
+            analysis_scope: AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: "finding:limit".to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId("probe:limit".to_string()),
+                location: SourceLocation::new("src/lib.rs", 4, 5),
+                owner: None,
+                family: ProbeFamily::Predicate,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "n >= limit".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: stage(StageState::Yes, "Related test at_limit calls over_limit"),
+                infect: stage(StageState::Yes, BOUNDARY_INPUT_OBSERVED_SUMMARY),
+                propagate: stage(StageState::Yes, "value is returned"),
+                reveal: RevealEvidence {
+                    observe: stage(StageState::Yes, "assertion observes the result"),
+                    discriminate: stage(StageState::Weak, "Only weak oracle found"),
+                },
+            },
+            confidence: 0.5,
+            evidence: Vec::new(),
+            missing: Vec::new(),
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests: vec![related("at_limit", OracleStrength::Weak)],
+            recommended_next_step: Some(BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string()),
+            language: None,
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn edited(edit: impl FnOnce(&mut Finding)) -> Finding {
+        let mut finding = boundary_weak_finding();
+        edit(&mut finding);
+        finding
+    }
+
+    #[test]
+    fn every_probe_family_token_round_trips_and_unknown_tokens_are_refused() {
+        for (family, token) in ALL_FAMILIES {
+            assert_eq!(family.as_str(), token);
+            assert_eq!(ProbeFamily::from_wire(token), Some(family));
+        }
+        for token in ["", "Predicate", "predicate ", "return-value"] {
+            assert_eq!(ProbeFamily::from_wire(token), None, "{token:?}");
+        }
+    }
+
+    #[test]
+    fn delta_role_and_miss_tokens_are_the_wire_vocabulary() {
+        for (delta, token) in [
+            (DeltaKind::Value, "value"),
+            (DeltaKind::Control, "control"),
+            (DeltaKind::Effect, "effect"),
+            (DeltaKind::Unknown, "unknown"),
+        ] {
+            assert_eq!(delta.as_str(), token);
+        }
+        assert_eq!(RelatedTestRole::Contributing.as_str(), "contributing");
+        assert_eq!(RelatedTestRole::ExaminedOnly.as_str(), "examined_only");
+        for (miss, token, refusal) in [
+            (RelatedTestMiss::NoCallPath, "no_call_path", false),
+            (RelatedTestMiss::NoAssertion, "no_assertion", false),
+            (
+                RelatedTestMiss::AssertionNotObserving,
+                "assertion_not_observing",
+                false,
+            ),
+            (
+                RelatedTestMiss::AssertionNotCredited,
+                "assertion_not_credited",
+                true,
+            ),
+            (RelatedTestMiss::AssertionInert, "assertion_inert", true),
+            (
+                RelatedTestMiss::AssertionAdmissionUnproven,
+                "assertion_admission_unproven",
+                true,
+            ),
+            (RelatedTestMiss::WeakAssertion, "weak_assertion", false),
+            (RelatedTestMiss::MissingInput, "missing_input", false),
+            (
+                RelatedTestMiss::MissingExactAssertion,
+                "missing_exact_assertion",
+                false,
+            ),
+            (
+                RelatedTestMiss::ObservationUnconfirmed,
+                "observation_unconfirmed",
+                false,
+            ),
+        ] {
+            assert_eq!(miss.as_str(), token);
+            assert_eq!(miss.is_assertion_refusal_miss(), refusal, "{token}");
+        }
+    }
+
+    #[test]
+    fn stop_reason_glosses_say_something_distinct_for_every_reason() {
+        let reasons = [
+            StopReason::MaxDepthReached,
+            StopReason::ExternalCrateBoundary,
+            StopReason::DynamicDispatchUnresolved,
+            StopReason::ProcMacroOpaque,
+            StopReason::FixtureOpaque,
+            StopReason::FeatureUnknown,
+            StopReason::AsyncBoundaryOpaque,
+            StopReason::NoChangedRustLine,
+            StopReason::InfectionEvidenceUnknown,
+            StopReason::PropagationEvidenceUnknown,
+            StopReason::StaticProbeUnknown,
+            StopReason::TransitiveReachUnresolved,
+            StopReason::MacroReachUnresolved,
+            StopReason::GapEvidenceUnresolved,
+            StopReason::HelperIdentityUnresolved,
+            StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
+        ];
+        let glosses: std::collections::BTreeSet<&str> =
+            reasons.iter().map(StopReason::describe).collect();
+        assert_eq!(glosses.len(), reasons.len());
+        for gloss in glosses {
+            assert!(gloss.split(' ').count() >= 6, "{gloss}");
+        }
+        assert_eq!(
+            StopReason::ExternalCrateBoundary.describe(),
+            "the path crosses into another crate, which ripr does not analyze"
+        );
+    }
+
+    #[test]
+    fn each_unknown_class_has_its_own_fallback_stop_reason() {
+        for (class, reason) in [
+            (
+                ExposureClass::InfectionUnknown,
+                Some(StopReason::InfectionEvidenceUnknown),
+            ),
+            (
+                ExposureClass::PropagationUnknown,
+                Some(StopReason::PropagationEvidenceUnknown),
+            ),
+            (
+                ExposureClass::StaticUnknown,
+                Some(StopReason::StaticProbeUnknown),
+            ),
+            (ExposureClass::WeaklyExposed, None),
+            (ExposureClass::NoStaticPath, None),
+        ] {
+            assert_eq!(StopReason::for_unknown_class(&class), reason, "{class:?}");
+        }
+    }
+
+    #[test]
+    fn only_arm_and_guard_reasons_name_an_unselected_input() {
+        assert!(is_unselected_input_reason(&format!(
+            "{ARM_UNSELECTED_REASON_PREFIX} `Mode::Fast`"
+        )));
+        assert!(is_unselected_input_reason(&format!(
+            "{GUARD_UNENTERED_REASON_PREFIX} `n > 10`"
+        )));
+        assert!(!is_unselected_input_reason(
+            "No related test asserts the variant"
+        ));
+        assert!(!is_unselected_input_reason(&format!(
+            "note: {ARM_UNSELECTED_REASON_PREFIX}"
+        )));
+    }
+
+    #[test]
+    fn the_input_boundary_fact_is_chosen_by_family() {
+        let arm = format!("{ARM_UNSELECTED_REASON_PREFIX} `Mode::Fast`");
+        let guard_reason = format!("{GUARD_UNENTERED_REASON_PREFIX} `n > 10`");
+        let facts = [
+            fact("exact", "No test pins the value", DiscriminatorShape::Other),
+            fact("domain", "guard domain", DiscriminatorShape::GuardDomain),
+            fact("n == 10", "boundary", DiscriminatorShape::Boundary),
+            fact("arm", &arm, DiscriminatorShape::Other),
+            fact("guard", &guard_reason, DiscriminatorShape::Other),
+        ];
+        let chosen = |family: ProbeFamily| {
+            input_boundary_fact(&facts, &family).map(|fact| fact.value.as_str())
+        };
+        // The equality boundary wins over the guard domain even when listed later.
+        assert_eq!(chosen(ProbeFamily::Predicate), Some("n == 10"));
+        assert_eq!(chosen(ProbeFamily::ReturnValue), Some("n == 10"));
+        assert_eq!(chosen(ProbeFamily::MatchArm), Some("arm"));
+        assert_eq!(chosen(ProbeFamily::SideEffect), Some("guard"));
+        assert_eq!(chosen(ProbeFamily::CallDeletion), Some("guard"));
+        assert_eq!(chosen(ProbeFamily::ErrorPath), Some("guard"));
+        assert_eq!(chosen(ProbeFamily::FieldConstruction), None);
+        assert_eq!(chosen(ProbeFamily::StaticUnknown), None);
+
+        // Without an equality boundary, predicate and return-value read the guard domain.
+        let without_boundary = &facts[..2];
+        for family in [ProbeFamily::Predicate, ProbeFamily::ReturnValue] {
+            assert_eq!(
+                input_boundary_fact(without_boundary, &family).map(|fact| fact.value.as_str()),
+                Some("domain"),
+                "{family:?}"
+            );
+        }
+        // A reason prefix alone is not a boundary for a predicate.
+        assert_eq!(
+            input_boundary_fact(&facts[3..], &ProbeFamily::Predicate),
+            None
+        );
+        assert_eq!(
+            input_boundary_fact(&facts[..1], &ProbeFamily::MatchArm),
+            None
+        );
+    }
+
+    #[test]
+    fn exact_facts_skip_the_input_boundary_and_row_facts_also_skip_unselected_inputs() {
+        let guard_reason = format!("{GUARD_UNENTERED_REASON_PREFIX} `n > 10`");
+        let facts = [
+            fact("n == 10", "boundary", DiscriminatorShape::Boundary),
+            fact("guard", &guard_reason, DiscriminatorShape::Other),
+            fact(
+                "Error::Full",
+                "No test pins the variant",
+                DiscriminatorShape::Other,
+            ),
+        ];
+        let value = |fact: Option<&MissingDiscriminatorFact>| fact.map(|fact| fact.value.clone());
+
+        // Predicate: the boundary is the input fact, so the exact assertion is
+        // the next fact, and the row fact also steps over the unentered guard.
+        assert_eq!(
+            value(exact_assertion_fact(&facts, &ProbeFamily::Predicate)).as_deref(),
+            Some("guard")
+        );
+        assert_eq!(
+            value(row_exact_discriminator_fact(
+                &facts,
+                &ProbeFamily::Predicate
+            ))
+            .as_deref(),
+            Some("Error::Full")
+        );
+        // Field construction has no input boundary, so the first fact is exact.
+        assert_eq!(
+            value(exact_assertion_fact(
+                &facts,
+                &ProbeFamily::FieldConstruction
+            ))
+            .as_deref(),
+            Some("n == 10")
+        );
+        assert_eq!(
+            value(row_exact_discriminator_fact(
+                &facts,
+                &ProbeFamily::FieldConstruction
+            ))
+            .as_deref(),
+            Some("n == 10")
+        );
+        // Only input facts: nothing exact remains.
+        assert_eq!(
+            exact_assertion_fact(&facts[..1], &ProbeFamily::Predicate),
+            None
+        );
+        assert_eq!(
+            row_exact_discriminator_fact(&facts[..2], &ProbeFamily::Predicate),
+            None
+        );
+        // Identity, not equality, excludes the boundary: an equal twin is still exact.
+        let twins = [facts[0].clone(), facts[0].clone()];
+        let second = exact_assertion_fact(&twins, &ProbeFamily::Predicate);
+        assert!(second.is_some_and(|fact| std::ptr::eq(fact, &twins[1])));
+    }
+
+    #[test]
+    fn related_test_roles_split_decision_rows_from_examined_only_rows() {
+        let contributing = related("at_limit", OracleStrength::Weak);
+        let mut examined = related("elsewhere", OracleStrength::None);
+        examined.role = RelatedTestRole::ExaminedOnly;
+        // The role decides, never the miss.
+        examined.miss = None;
+        let mut contributing_with_miss = contributing.clone();
+        contributing_with_miss.miss = Some(RelatedTestMiss::NoAssertion);
+
+        assert!(RelatedTestRole::Contributing.is_contributing());
+        assert!(!RelatedTestRole::ExaminedOnly.is_contributing());
+        assert!(contributing.is_contributing() && !contributing.is_examined_only());
+        assert!(!examined.is_contributing() && examined.is_examined_only());
+        assert!(contributing_with_miss.is_contributing());
+
+        let finding = edited(|finding| {
+            finding.related_tests = vec![examined.clone(), contributing.clone()];
+        });
+        let names: Vec<&str> = finding
+            .oracle_related_tests()
+            .map(|test| test.name.as_str())
+            .collect();
+        assert_eq!(names, ["at_limit"]);
+    }
+
+    #[test]
+    fn the_related_test_total_never_reads_below_the_retained_rows() {
+        let with_total = |total: Option<usize>, rows: usize| {
+            edited(|finding| {
+                finding.related_tests_matched_total = total;
+                finding.related_tests = (0..rows)
+                    .map(|index| related(&format!("t{index}"), OracleStrength::Weak))
+                    .collect();
+            })
+            .related_tests_total()
+        };
+        assert_eq!(with_total(None, 0), 0);
+        assert_eq!(with_total(None, 3), 3);
+        assert_eq!(with_total(Some(9), 3), 9);
+        assert_eq!(with_total(Some(2), 3), 3);
+    }
+
+    #[test]
+    fn an_unknown_class_without_a_stop_reason_reports_its_fallback() {
+        let weak = boundary_weak_finding();
+        assert!(weak.unknown_has_stop_reason());
+        assert_eq!(weak.effective_stop_reasons(), Vec::new());
+
+        let bare_unknown = edited(|finding| finding.class = ExposureClass::StaticUnknown);
+        assert!(!bare_unknown.unknown_has_stop_reason());
+        assert_eq!(
+            bare_unknown.effective_stop_reasons(),
+            [StopReason::StaticProbeUnknown]
+        );
+
+        let explained = edited(|finding| {
+            finding.class = ExposureClass::StaticUnknown;
+            finding.stop_reasons = vec![StopReason::ProcMacroOpaque, StopReason::FeatureUnknown];
+        });
+        assert!(explained.unknown_has_stop_reason());
+        assert_eq!(
+            explained.effective_stop_reasons(),
+            [StopReason::ProcMacroOpaque, StopReason::FeatureUnknown]
+        );
+    }
+
+    #[test]
+    fn only_a_candidate_current_finding_is_actionable_and_others_disclose_why() {
+        let with = |currentness: SourceCurrentness| {
+            edited(|finding| finding.source_currentness = currentness)
+        };
+        let current = with(SourceCurrentness::CandidateCurrent);
+        assert!(current.is_candidate_actionable());
+        assert_eq!(current.source_currentness_disclosure(), None);
+
+        for (currentness, base_side, disclosure) in [
+            (
+                SourceCurrentness::BaseDeleted,
+                true,
+                "base_deleted \u{2014} base-side evidence, not a candidate edit target",
+            ),
+            (
+                SourceCurrentness::MovedOrRenamed,
+                true,
+                "moved_or_renamed \u{2014} base-side evidence, not a candidate edit target",
+            ),
+            (
+                SourceCurrentness::UnresolvedSubject,
+                false,
+                "unresolved_subject \u{2014} source currentness not established, not a candidate edit target",
+            ),
+        ] {
+            let finding = with(currentness);
+            assert!(!finding.is_candidate_actionable(), "{currentness:?}");
+            assert_eq!(currentness.is_base_side(), base_side, "{currentness:?}");
+            assert_eq!(
+                finding.source_currentness_disclosure().as_deref(),
+                Some(disclosure)
+            );
+        }
+        assert!(!SourceCurrentness::CandidateCurrent.is_base_side());
+    }
+
+    #[test]
+    fn proof_harness_only_needs_both_the_class_and_the_limit_kind() {
+        let harness = |class: ExposureClass, kind: Option<StaticLimitKind>| {
+            edited(|finding| {
+                finding.class = class;
+                finding.static_limit_kind = kind;
+            })
+            .is_proof_harness_only()
+        };
+        let proof = Some(StaticLimitKind::ProofHarnessNotEvaluated);
+        assert!(harness(ExposureClass::NoStaticPath, proof));
+        assert!(!harness(ExposureClass::StaticUnknown, proof));
+        assert!(!harness(ExposureClass::NoStaticPath, None));
+        assert!(!harness(
+            ExposureClass::NoStaticPath,
+            Some(StaticLimitKind::DynamicDispatch)
+        ));
+    }
+
+    #[test]
+    fn marking_repo_scope_sets_the_scope_and_one_evidence_line() {
+        let mut finding = boundary_weak_finding();
+        assert!(finding.analysis_scope.is_diff());
+        assert_eq!(finding.analysis_mode(), Some(AnalysisMode::Diff));
+
+        finding.mark_repo_scoped();
+        finding.mark_repo_scoped();
+        assert_eq!(finding.analysis_scope, AnalysisScope::Repo);
+        assert!(!finding.analysis_scope.is_diff());
+        assert_eq!(finding.evidence, [REPO_SCOPE_EVIDENCE_LINE]);
+        assert_eq!(finding.analysis_mode(), Some(AnalysisMode::Repo));
+
+        // A diff-scoped finding that carries the repo evidence line is
+        // contradictory, so no capability mode is borrowed.
+        let contradictory = edited(|finding| {
+            finding.evidence = vec![REPO_SCOPE_EVIDENCE_LINE.to_string()];
+        });
+        assert_eq!(contradictory.analysis_mode(), None);
+    }
+
+    #[test]
+    fn the_weak_oracle_advisory_holds_only_when_every_condition_does() {
+        assert!(boundary_weak_finding().boundary_input_observed_with_weak_oracle());
+
+        let refused: [(&str, Finding); 12] = [
+            (
+                "class",
+                edited(|finding| finding.class = ExposureClass::ReachableUnrevealed),
+            ),
+            (
+                "family",
+                edited(|finding| finding.probe.family = ProbeFamily::ReturnValue),
+            ),
+            (
+                "infection state",
+                edited(|finding| finding.ripr.infect.state = StageState::Weak),
+            ),
+            (
+                "infection summary",
+                edited(|finding| finding.ripr.infect.summary = "input reaches the change".into()),
+            ),
+            (
+                "discriminator state",
+                edited(|finding| finding.ripr.reveal.discriminate.state = StageState::No),
+            ),
+            (
+                "discriminator summary opening",
+                edited(|finding| {
+                    finding.ripr.reveal.discriminate.summary = "A weak oracle found".into();
+                }),
+            ),
+            (
+                "discriminator summary limitation",
+                edited(|finding| {
+                    finding.ripr.reveal.discriminate.summary = "Only unpaired assertions".into();
+                }),
+            ),
+            (
+                "stop reason",
+                edited(|finding| finding.stop_reasons = vec![StopReason::FixtureOpaque]),
+            ),
+            (
+                "no weak row",
+                edited(|finding| {
+                    finding.related_tests = vec![related("smoke", OracleStrength::Smoke)];
+                }),
+            ),
+            (
+                "strong row",
+                edited(|finding| {
+                    finding
+                        .related_tests
+                        .push(related("exact", OracleStrength::Strong));
+                }),
+            ),
+            (
+                "medium row",
+                edited(|finding| {
+                    finding
+                        .related_tests
+                        .push(related("medium", OracleStrength::Medium));
+                }),
+            ),
+            (
+                "next step",
+                edited(|finding| finding.recommended_next_step = Some("Add a test".into())),
+            ),
+        ];
+        for (condition, finding) in &refused {
+            assert!(
+                !finding.boundary_input_observed_with_weak_oracle(),
+                "{condition}"
+            );
+        }
+
+        // The shared gate ignores the Next step; the finding-level reading adds it.
+        let other_step = &refused[11].1;
+        assert!(boundary_input_observed_with_weak_oracle(
+            &other_step.class,
+            &other_step.probe.family,
+            &other_step.ripr.infect,
+            &other_step.ripr.reveal.discriminate,
+            &other_step.related_tests,
+            &other_step.stop_reasons,
+        ));
+        // A weak row beside a smoke row still qualifies.
+        assert!(
+            edited(|finding| {
+                finding
+                    .related_tests
+                    .push(related("smoke", OracleStrength::Smoke));
+            })
+            .boundary_input_observed_with_weak_oracle()
+        );
+    }
+
+    /// #14820: an unreferenced owner is a test-side gap only when every
+    /// condition holds; dropping any one keeps the finding fail-closed.
+    #[test]
+    fn an_unreferenced_owner_needs_every_condition_of_the_test_side_gap() {
+        let unreferenced = || {
+            edited(|finding| {
+                finding.class = ExposureClass::NoStaticPath;
+                finding.ripr.reach = stage(
+                    StageState::No,
+                    &format!("no caller of over_limit {UNREFERENCED_IN_WORKSPACE}"),
+                );
+            })
+        };
+        assert!(unreferenced().is_unreferenced_no_static_path());
+
+        let mut stale = unreferenced();
+        stale.source_currentness = SourceCurrentness::BaseDeleted;
+        let mut other_class = unreferenced();
+        other_class.class = ExposureClass::StaticUnknown;
+        let mut limited = unreferenced();
+        limited.static_limit_kind = Some(StaticLimitKind::DynamicDispatch);
+        let mut reach_unknown = unreferenced();
+        reach_unknown.ripr.reach.state = StageState::Unknown;
+        let mut unmarked = unreferenced();
+        unmarked.ripr.reach.summary = "no caller of over_limit".to_string();
+        let mut marker_not_last = unreferenced();
+        marker_not_last.ripr.reach.summary =
+            format!("{UNREFERENCED_IN_WORKSPACE} except through a macro");
+        for (label, finding) in [
+            ("stale source", stale),
+            ("another class", other_class),
+            ("a static limit", limited),
+            ("reach not ruled out", reach_unknown),
+            ("no marker", unmarked),
+            ("marker not at the end", marker_not_last),
+        ] {
+            assert!(!finding.is_unreferenced_no_static_path(), "{label}");
+        }
+    }
+
+    /// Higher tiers observe more: a row with no call path ranks below one
+    /// whose assertion misses, which ranks below every other row, and the
+    /// picker takes the first row of the best tier.
+    #[test]
+    fn observation_tiers_rank_no_call_path_lowest_and_pickers_take_the_best() {
+        let with_miss = |name: &str, miss: Option<RelatedTestMiss>| {
+            let mut row = related(name, OracleStrength::Weak);
+            row.miss = miss;
+            row
+        };
+        let cases = [
+            (Some(RelatedTestMiss::NoCallPath), 0),
+            (Some(RelatedTestMiss::AssertionNotObserving), 1),
+            (Some(RelatedTestMiss::NoAssertion), 2),
+            (Some(RelatedTestMiss::WeakAssertion), 2),
+            (None, 2),
+        ];
+        for (miss, tier) in cases {
+            assert_eq!(with_miss("t", miss).observation_tier(), tier, "{miss:?}");
+        }
+        let rows = [
+            with_miss("unreached", Some(RelatedTestMiss::NoCallPath)),
+            with_miss(
+                "not_observing",
+                Some(RelatedTestMiss::AssertionNotObserving),
+            ),
+        ];
+        assert_eq!(
+            first_observing_related_test(&rows).map(|row| row.name.as_str()),
+            Some("not_observing")
+        );
+        assert_eq!(
+            first_observing_related_test(&rows[..1]).map(|row| row.name.as_str()),
+            Some("unreached")
+        );
+        assert_eq!(first_observing_related_test(&[]), None);
     }
 }

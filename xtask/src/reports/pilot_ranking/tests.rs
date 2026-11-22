@@ -85,7 +85,11 @@ fn labels_join_outcomes_by_name_and_count_unviable_and_timeout() -> Result<(), S
         .collect::<Vec<_>>();
     assert_eq!(
         summary,
-        vec![(3, "caught", Some([1, 9])), (5, "missed", Some([1, 9]))]
+        vec![
+            (3, "caught", Some([1, 9])),
+            (5, "missed", Some([1, 9])),
+            (6, "timeout", Some([1, 9])),
+        ]
     );
     assert_eq!(labels.unlabeled.get("unviable"), Some(&1));
     assert_eq!(labels.unlabeled.get("timeout"), Some(&1));
@@ -175,7 +179,9 @@ fn label_validation_refuses_another_revision_unsorted_or_unknown_outcomes() {
     );
     assert!(validate_labels(&repo(), &unsorted).is_err());
     let timeout = file("a".repeat(40), vec![label("m1", 1, "timeout")]);
-    assert!(validate_labels(&repo(), &timeout).is_err());
+    assert_eq!(validate_labels(&repo(), &timeout), Ok(()));
+    let unknown = file("a".repeat(40), vec![label("m1", 1, "bogus")]);
+    assert!(validate_labels(&repo(), &unknown).is_err());
 
     // A file that lost a label still validates on its own; the manifest's
     // count is what refuses it.
@@ -239,9 +245,37 @@ fn fetch_requires_explicit_network_opt_in() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn timeout_labels_block_owner_refutation_through_judge_inputs() -> Result<(), String> {
+    let mutants = json!([
+        mutant("src/a.rs:3:5: replace + with -", 3, 5, "BinaryOperator"),
+        mutant("src/a.rs:2:1: replace f with ()", 2, 1, "FnValue"),
+    ]);
+    let outcomes = json!({"cargo_mutants_version": "27.1.0", "outcomes": [
+        outcome("src/a.rs:3:5: replace + with -", "Timeout"),
+        outcome("src/a.rs:2:1: replace f with ()", "CaughtMutant"),
+    ]});
+    let labels = labels_from_mutants_out(&repo(), &mutants, &outcomes)?;
+    assert!(
+        labels
+            .mutants
+            .iter()
+            .any(|label| label.outcome == "timeout")
+    );
+    let (mutants, outcomes) = judge_inputs(&labels);
+    let seam = json!({"seam_id": "s3", "file": "src/a.rs", "line": 3, "kind": "call_presence", "grip_class": "weakly_gripped"});
+    let judged =
+        pilot::judge_recommendations(&[seam], &mutants, &outcomes, &BTreeMap::new(), &|_, _| None);
+    assert_eq!(judged[0]["verdict"], "unscored");
+    assert_eq!(judged[0]["tier"], "none");
+    Ok(())
+}
+
 /// The labels must reach the shared judge in the shape it reads: a missed
 /// operator mutant on the line confirms, and with no line mutant the
-/// innermost function's whole-body mutant decides.
+/// innermost function's whole-body mutant decides, except it cannot
+/// refute a seam whose function also has that missed mutant, so seam 4
+/// (same function as the missed line-3 mutant) stays unscored.
 #[test]
 fn labels_feed_the_shared_judge_line_then_owner_tier() -> Result<(), String> {
     let mutants = json!([
@@ -270,7 +304,7 @@ fn labels_feed_the_shared_judge_line_then_owner_tier() -> Result<(), String> {
         verdicts,
         vec![
             (Some("confirmed"), Some("line")),
-            (Some("refuted"), Some("owner")),
+            (Some("unscored"), Some("none")),
             (Some("unscored"), Some("none")),
         ]
     );

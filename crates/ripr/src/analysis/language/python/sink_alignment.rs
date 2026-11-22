@@ -2363,6 +2363,7 @@ mod row_sink_alignment_tests {
             nested_result_discarded: false,
             trusted_stdlib_click_alias: false,
             route_returns_body: false,
+            route_dict_annotation: false,
         }
     }
 
@@ -2387,6 +2388,7 @@ mod row_sink_alignment_tests {
             activation_controls: Vec::new(),
             setup_receivers: Vec::new(),
             fixture_defs: Vec::new(),
+            value_helpers: Vec::new(),
             direct_parametrized: Vec::new(),
             unsettled_indirect: Vec::new(),
             parametrize_argnames: Vec::new(),

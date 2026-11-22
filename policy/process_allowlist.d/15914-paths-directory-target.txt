@@ -1,0 +1,2 @@
+crates/ripr/tests/typescript_paths_directory_target.rs|Command::new|2|typescript-tests|#15914 black-box test: runs git to stage a scratch pnpm-style workspace and the built ripr binary on it with fixed `check --json` arguments; no shell or network.
+crates/ripr/tests/typescript_paths_directory_target.rs|use std::process::Command|1|typescript-tests|Import for the two fixed git and ripr invocations above.

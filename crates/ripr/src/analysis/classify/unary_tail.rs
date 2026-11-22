@@ -88,46 +88,13 @@ pub(in crate::analysis) fn unary_tail_change(
         return None;
     }
     let line = probe.location.line;
-    let span = owner.start_line..=owner.end_line;
-    if !span.contains(&line) {
-        return None;
-    }
-    // Inside the owner the diff adds exactly the tail line and removes
-    // exactly the one line it replaced. A removed line anywhere else in the
-    // span (an old early return, a deleted statement) makes the base-side
-    // owner something this reading does not see.
-    let mut added = changed
-        .added_lines
-        .iter()
-        .filter(|added| span.contains(&added.new_side_line));
-    let (Some(added), None) = (added.next(), added.next()) else {
-        return None;
-    };
-    let mut removed = changed
-        .removed_lines
-        .iter()
-        .filter(|removed| span.contains(&removed.new_side_line));
-    let (Some(removed), None) = (removed.next(), removed.next()) else {
-        return None;
-    };
-    if added.new_side_line != line
-        || changed
-            .replaced_line_counterpart(line)
-            .is_none_or(|counterpart| counterpart != removed)
-    {
-        return None;
-    }
-    let offset = line.checked_sub(owner.start_line)?;
-    let lines: Vec<&str> = owner.body.as_str().split('\n').collect();
-    let current_line = lines.get(offset)?.trim_end_matches('\r');
-    if current_line != added.text.trim_end_matches('\r') {
-        return None;
-    }
-    let old_line = removed.text.trim_end_matches('\r');
-    let (operator, inserted) = one_prefix_operator_apart(old_line, current_line)?;
-    let mut baseline_lines: Vec<String> = lines.iter().map(|line| (*line).to_string()).collect();
-    *baseline_lines.get_mut(offset)? = old_line.to_string();
-    let baseline = baseline_lines.join("\n");
+    let SoleReplacedLine {
+        offset,
+        current: current_line,
+        old: old_line,
+        baseline,
+    } = sole_replaced_line(owner, changed, line)?;
+    let (operator, inserted) = one_prefix_operator_apart(&old_line, &current_line)?;
 
     if !base_item_is_the_restored_owner(
         owner,
@@ -135,8 +102,8 @@ pub(in crate::analysis) fn unary_tail_change(
         index,
         modules,
         line,
-        current_line,
-        old_line,
+        &current_line,
+        &old_line,
     ) {
         return None;
     }
@@ -174,6 +141,69 @@ pub(in crate::analysis) fn unary_tail_change(
     })
 }
 
+/// The one line of an owner the diff replaces, with the base-side owner text.
+pub(super) struct SoleReplacedLine {
+    /// The line's offset inside the owner's text.
+    pub(super) offset: usize,
+    /// The line's current text.
+    pub(super) current: String,
+    /// The text the diff replaced.
+    pub(super) old: String,
+    /// The owner's text with the old line restored.
+    pub(super) baseline: String,
+}
+
+/// The replaced `line` when, inside `owner`'s span, the diff adds exactly
+/// that line and removes exactly the one line it pairs with it. A removed
+/// line anywhere else in the span (an old early return, a deleted statement)
+/// makes the base-side owner something these readings do not see.
+pub(super) fn sole_replaced_line(
+    owner: &FunctionSummary,
+    changed: &ChangedFile,
+    line: usize,
+) -> Option<SoleReplacedLine> {
+    let span = owner.start_line..=owner.end_line;
+    if !span.contains(&line) {
+        return None;
+    }
+    let mut added = changed
+        .added_lines
+        .iter()
+        .filter(|added| span.contains(&added.new_side_line));
+    let (Some(added), None) = (added.next(), added.next()) else {
+        return None;
+    };
+    let mut removed = changed
+        .removed_lines
+        .iter()
+        .filter(|removed| span.contains(&removed.new_side_line));
+    let (Some(removed), None) = (removed.next(), removed.next()) else {
+        return None;
+    };
+    if added.new_side_line != line
+        || changed
+            .replaced_line_counterpart(line)
+            .is_none_or(|counterpart| !std::ptr::eq(counterpart, removed))
+    {
+        return None;
+    }
+    let offset = line.checked_sub(owner.start_line)?;
+    let lines: Vec<&str> = owner.body.as_str().split('\n').collect();
+    let current = lines.get(offset)?.trim_end_matches('\r');
+    if current != added.text.trim_end_matches('\r') {
+        return None;
+    }
+    let old = removed.text.trim_end_matches('\r');
+    let mut baseline_lines: Vec<String> = lines.iter().map(|line| (*line).to_string()).collect();
+    *baseline_lines.get_mut(offset)? = old.to_string();
+    Some(SoleReplacedLine {
+        offset,
+        current: current.to_string(),
+        old: old.to_string(),
+        baseline: baseline_lines.join("\n"),
+    })
+}
+
 /// The base-side owner is the same item (#14815 review F1). The line pairing
 /// inside the owner's span says nothing about which function the removed
 /// line belonged to: swapping two same-name functions between modules, or
@@ -189,7 +219,7 @@ pub(in crate::analysis) fn unary_tail_change(
 /// since a test may run a twin compiled in its place. The verified base item
 /// must then be exactly the current item with the one replaced tail line
 /// restored.
-fn base_item_is_the_restored_owner(
+pub(super) fn base_item_is_the_restored_owner(
     owner: &FunctionSummary,
     changed: &ChangedFile,
     index: &RustIndex,
@@ -237,7 +267,10 @@ fn base_item_is_the_restored_owner(
 /// a `macro_rules!` whose body emits a `mod`, a `fn $name` or a `fn` of the
 /// owner's name. A file that matches the lexical prefilter but does not parse
 /// refuses too.
-fn another_definition_may_answer_the_name(owner: &FunctionSummary, index: &RustIndex) -> bool {
+pub(super) fn another_definition_may_answer_the_name(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
     let name = owner.name.as_str();
     let mut same_name = index
         .functions()

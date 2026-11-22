@@ -174,6 +174,149 @@ pub(in super::super) fn workspace_reshapes_responses(source: &str) -> bool {
         })
 }
 
+/// Withdraws the response-body credit from every `-> dict` route handler
+/// when any read source may rebind `dict` (#13869). Only those owners lose
+/// it: the rebinding scan reads broadly (any f-string, any `patch` name), and
+/// an unannotated handler's body does not depend on the name.
+pub(in super::super) fn withdraw_dict_annotated_routes(
+    owners: &mut [PythonOwner],
+    dict_may_be_rebound: bool,
+) {
+    if dict_may_be_rebound {
+        for owner in owners
+            .iter_mut()
+            .filter(|owner| owner.route_dict_annotation)
+        {
+            owner.route_returns_body = false;
+        }
+    }
+}
+
+/// Whether a source may rebind the name `dict` (#13869): FastAPI reads a
+/// `-> dict` return annotation as a response model when the name is a model
+/// class, which may coerce the returned values. The scan reads the Python
+/// lexer's tokens (so strings, comments, brackets and one-line suites cannot
+/// hide a statement) and fails closed. A `dict` name token is a read only as
+/// a return annotation (after `->`), a bracketed annotation or value (after a
+/// `:` inside brackets, outside a `case` pattern), or a call (before `(`, not
+/// after `def` or `class`); any other `dict` token may bind it. A source that
+/// does not lex, a star import, a non-ASCII name (Python folds names under
+/// NFKC, so `ｄｉｃｔ` is `dict`), a string holding the word `dict` or a
+/// writer name (`patch("shop.app.dict")`, code run by `timeit`), any f-string (the
+/// lexer keeps its braces whole, so code inside them is unread), and any name
+/// that can reach or write a namespace without spelling the bound name
+/// (`globals`, `vars`, `__dict__`, `getattr`, `setattr`, `exec`,
+/// `sys.modules`, frame and function globals, `gc` referents, `importlib`,
+/// and the like) or that runs code or resolves a dotted target held in a
+/// string (`patch`, `timeit`, `pdb`, `doctest`, `InteractiveConsole`,
+/// `resolve_name`, and the like) all count as a rebinding. An over-read only refuses.
+pub(in super::super) fn rebinds_builtin_dict(source: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    // Names that reach or write a namespace without spelling the bound
+    // name, or run code or resolve a dotted target held in a string.
+    const NAMESPACE_WRITERS: [&str; 48] = [
+        "builtins",
+        "__builtins__",
+        "globals",
+        "locals",
+        "vars",
+        "__dict__",
+        "modules",
+        "setattr",
+        "__setattr__",
+        "delattr",
+        "getattr",
+        "__getattribute__",
+        "attrgetter",
+        "operator",
+        "exec",
+        "eval",
+        "compile",
+        "__import__",
+        "importlib",
+        "import_module",
+        "f_globals",
+        "f_locals",
+        "f_back",
+        "__globals__",
+        "_getframe",
+        "currentframe",
+        "inspect",
+        "gc",
+        "get_referents",
+        "get_referrers",
+        "__subclasses__",
+        "pickle",
+        "marshal",
+        "ctypes",
+        "runpy",
+        "InteractiveInterpreter",
+        "runsource",
+        "patch",
+        "mock",
+        "timeit",
+        "Timer",
+        "pdb",
+        "cProfile",
+        "profile",
+        "doctest",
+        "InteractiveConsole",
+        "interact",
+        "resolve_name",
+    ];
+    let mut tokens = Vec::new();
+    for result in lex(source, Mode::Module) {
+        match result {
+            Ok((token, _)) => tokens.push(token),
+            Err(_) => return true,
+        }
+    }
+    let mut depth = 0i64;
+    let mut in_case_pattern = false;
+    let mut previous: Option<&Tok> = None;
+    for (at, token) in tokens.iter().enumerate() {
+        match token {
+            Tok::Lpar | Tok::Lsqb | Tok::Lbrace => depth += 1,
+            Tok::Rpar | Tok::Rsqb | Tok::Rbrace => depth -= 1,
+            Tok::Case => in_case_pattern = true,
+            Tok::Colon if depth <= 0 => in_case_pattern = false,
+            Tok::Newline => in_case_pattern = false,
+            Tok::Import if matches!(tokens.get(at + 1), Some(Tok::Star)) => return true,
+            // The lexer keeps an f-string whole, so a binding or a call in its
+            // braces (`f"{(dict := Model)}"`) never reaches the name checks. A
+            // string can also hold code or a dotted target that a runner or a
+            // patcher executes (`patch("shop.app.dict", ...)`), so a word
+            // `dict` or a writer name anywhere in one refuses.
+            Tok::String { value, kind, .. }
+                if kind.is_any_fstring()
+                    || value
+                        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                        .any(|word| word == "dict" || NAMESPACE_WRITERS.contains(&word)) =>
+            {
+                return true;
+            }
+            Tok::Name { name } => {
+                if !name.is_ascii() || NAMESPACE_WRITERS.contains(&name.as_str()) {
+                    return true;
+                }
+                if name == "dict" {
+                    let annotation = matches!(previous, Some(Tok::Rarrow))
+                        || (depth > 0 && !in_case_pattern && matches!(previous, Some(Tok::Colon)));
+                    let call = matches!(tokens.get(at + 1), Some(Tok::Lpar))
+                        && !in_case_pattern
+                        && !matches!(previous, Some(Tok::Def | Tok::Class));
+                    if !(annotation || call) {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        previous = Some(token);
+    }
+    false
+}
+
 /// A physical line without its `#` comment (a `#` inside a one-line string
 /// is kept). A string spanning lines is read as code, which can only add
 /// refusals.

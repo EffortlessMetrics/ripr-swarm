@@ -21,6 +21,7 @@ use crate::analysis::extract::{
 };
 use crate::analysis::facts::{FunctionContainer, FunctionImplContext, OracleFact};
 use crate::analysis::seam_cache::path_dependencies::PathDependencySection;
+use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphStatus};
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use ra_ap_syntax::{
@@ -30,11 +31,15 @@ use ra_ap_syntax::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod dependent_test_hosts;
+mod dispatch_target;
 mod drop_dispatch;
 mod equality_dispatch;
+mod generic_sibling;
 mod implicit_dispatch;
 mod iterator_dispatch;
 mod operator_dispatch;
+mod parse_dispatch;
 mod path_arg;
 mod std_receiver;
 pub(in crate::analysis::classify) use operator_dispatch::stringified_ranges;
@@ -69,6 +74,8 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     /// admit needs; every other admit keeps the whole-workspace
     /// precondition.
     pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
+    /// Packages hosting indexed tests, populated on the first unresolved finding.
+    pub(in crate::analysis) test_host_manifests: std::sync::OnceLock<BTreeSet<String>>,
     /// The scan root, for reading a manifest's package and library name.
     pub(in crate::analysis) root: &'a std::path::Path,
 }
@@ -98,6 +105,83 @@ pub(in crate::analysis) fn manifests_with_unindexed_files(
 const ASSERTION_TOKEN_MIN_LEN: usize = 5;
 
 const RELATION_TRIGRAM_WIDTH: usize = 3;
+
+/// Run-scoped masked-source cache for helper-entry call lines (#13868).
+///
+/// `masked_call_line` used to re-request the FULL masked test file on
+/// every (probe x candidate test x matching call x hop) evaluation: an
+/// `extract::mask` memo compare and copy for sources inside its
+/// 16 KiB-2 MiB / 8-slot window, or a full re-mask outside it. This memo
+/// masks each indexed test file once per classification run and hands back
+/// only the requested line. Entries are pure in their file key, so a
+/// concurrent first miss may build the same mask twice and the first insert
+/// wins (`SyncMemo` semantics); the sequential build count is exact.
+#[derive(Clone, Debug, Default)]
+struct MaskedCallLineCache {
+    by_file: SyncMemo<BTreeMap<std::path::PathBuf, std::sync::Arc<str>>>,
+    /// Mask builds through this cache, so a test can tell a hit from a
+    /// rebuild. Sequential runs only: concurrent first misses may each
+    /// build once before the first insert wins.
+    #[cfg(test)]
+    builds: SyncMemo<usize>,
+    /// Indexed-path `masked_call_line` invocations, for the exact
+    /// fixture-count assertions (probes x tests x calls x hops).
+    #[cfg(test)]
+    calls: SyncMemo<usize>,
+}
+
+impl MaskedCallLineCache {
+    fn masked_line(
+        &self,
+        index: &RustIndex,
+        test: &TestSummary,
+        line: usize,
+        text: &str,
+    ) -> String {
+        #[cfg(test)]
+        {
+            *self.calls.borrow_mut() += 1;
+        }
+        // A test with no indexed file (a synthetic index) keeps the call
+        // fact's own line text; every real analysis indexes the test file.
+        let Some(facts) = index.files().get(&test.file) else {
+            return text.to_string();
+        };
+        let masked = self.masked_source(&test.file, &facts.source);
+        line.checked_sub(1)
+            .and_then(|at| masked.lines().nth(at).map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    fn masked_source(&self, file: &Path, source: &str) -> std::sync::Arc<str> {
+        if let Some(found) = self.by_file.borrow().get(file) {
+            return std::sync::Arc::clone(found);
+        }
+        // Built outside the lock: other files keep reading while one file
+        // is masked. A concurrent duplicate build is identical.
+        let built: std::sync::Arc<str> = std::sync::Arc::from(mask_comments_and_strings(source));
+        #[cfg(test)]
+        {
+            *self.builds.borrow_mut() += 1;
+        }
+        std::sync::Arc::clone(
+            self.by_file
+                .borrow_mut()
+                .entry(file.to_path_buf())
+                .or_insert(built),
+        )
+    }
+
+    #[cfg(test)]
+    fn builds_for_test(&self) -> usize {
+        *self.builds.borrow()
+    }
+
+    #[cfg(test)]
+    fn calls_for_test(&self) -> usize {
+        *self.calls.borrow()
+    }
+}
 
 /// Deterministic candidate-generation indexes for Rust test relations.
 ///
@@ -134,6 +218,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     owner_pin_syntax: super::OwnerPinSyntax,
     /// Run-scoped `FmtContext` memo by owner slot (#9260).
     fmt_contexts: fmt_dispatch::FmtContextMemo,
+    /// Run-scoped masked test-file sources for helper-entry call lines
+    /// (#13868): one mask build per indexed test file per run.
+    masked_call_lines: MaskedCallLineCache,
     /// Source-expansion facts for this immutable classification run.
     implicit_expansion: super::ImplicitExpansionMemo,
     /// Run-scoped unseen-reach scan. `includes_external_docs` parses each
@@ -347,6 +434,27 @@ impl RelatedTestCandidateIndex {
         self
     }
 
+    /// #15104: record a module declaration reading of every index file that
+    /// may declare a module, for a run without a diff (a repo scan): no
+    /// declaration changed.
+    pub(in crate::analysis) fn with_unchanged_module_declarations(
+        self,
+        index: &crate::analysis::rust_index::RustIndex,
+    ) -> Self {
+        let modules = crate::analysis::diff::ModuleDeclarations::read(
+            index
+                .files()
+                .iter()
+                .filter(|(_, facts)| {
+                    !facts.module_declarations.is_empty()
+                        || crate::analysis::diff::may_declare_module(&facts.source)
+                })
+                .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
+            std::iter::empty(),
+        );
+        self.with_module_declarations(modules)
+    }
+
     /// The run's module declaration reading; an unread one when the run did
     /// not compute it.
     pub(in crate::analysis) fn module_declarations(
@@ -389,6 +497,29 @@ impl RelatedTestCandidateIndex {
 
     fn fmt_contexts(&self) -> &fmt_dispatch::FmtContextMemo {
         &self.fmt_contexts
+    }
+
+    /// The call's source line as code, read from this run's cached mask of
+    /// the test's file (#13868). Falls back to the call fact's own text
+    /// when the test file is not indexed.
+    fn masked_call_line(
+        &self,
+        index: &RustIndex,
+        test: &TestSummary,
+        line: usize,
+        text: &str,
+    ) -> String {
+        self.masked_call_lines.masked_line(index, test, line, text)
+    }
+
+    #[cfg(test)]
+    fn masked_call_line_builds_for_test(&self) -> usize {
+        self.masked_call_lines.builds_for_test()
+    }
+
+    #[cfg(test)]
+    fn masked_call_line_calls_for_test(&self) -> usize {
+        self.masked_call_lines.calls_for_test()
     }
 
     fn candidate_indices(
@@ -439,8 +570,8 @@ impl RelatedTestCandidateIndex {
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
-        // Operator, loop and scope-end syntax has no token worth indexing;
-        // same-file tests of such an impl are scanned in full.
+        // Operator, loop, scope-end and `str::parse` syntax has no token worth
+        // indexing; same-file tests of such an impl are scanned in full.
         if owner_fn.is_some_and(implicit_dispatch::has_implicit_shape) {
             scan_all = true;
         }
@@ -1290,6 +1421,19 @@ fn find_related_tests_with_candidates<'a>(
                     )
                 })
             });
+        // A doctest compiles as a separate crate. Its file and the spelling
+        // of a free call cannot establish that it calls the library owner.
+        if calls_owner_by_name
+            && index.doctest_source(test).is_some()
+            && owner_fn.is_none_or(|owner| {
+                owner.item.container != crate::analysis::facts::FunctionContainer::Free
+                    || !super::call_identity::doctest_calls_free_owner(
+                        index, owner, test, pin_syntax,
+                    )
+            })
+        {
+            continue;
+        }
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
@@ -1408,7 +1552,7 @@ fn find_related_tests_with_candidates<'a>(
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
                         && ((is_spaced_direct_call_site(
-                            &masked_call_line(index, test, call.line, &call.text),
+                            &masked_call_line_for(candidates, index, test, call.line, &call.text),
                             &hop.caller.name,
                         ) && imported_own_crate_prefix_is_bound_to_the_library(
                             index,
@@ -1439,6 +1583,24 @@ fn find_related_tests_with_candidates<'a>(
             && !calls_helper_entry
             && call_identity.as_ref().is_some_and(|identity| {
                 identity.resolve_test(test, index) == super::CallTarget::Other
+            })
+        {
+            continue;
+        }
+        // #14087: with or without a rival, a bare call that a test-local
+        // `const`, `static` or tuple `struct` of the owner's name binds runs
+        // that item, not the owner. A test that also calls another hop
+        // caller of the helper chain keeps its relation; the test's own
+        // name-only hop (its body spells the owner's name) is not one.
+        if calls_owner
+            && owner_fn.is_some_and(|owner| {
+                super::call_identity::test_calls_only_a_local_value_item(index, owner, test)
+            })
+            && !helper_chain.is_some_and(|chain| {
+                chain.hops.iter().any(|hop| {
+                    !(hop.caller.file == test.file && hop.caller.start_line == test.start_line)
+                        && test.calls.iter().any(|call| call.name == hop.caller.name)
+                })
             })
         {
             continue;
@@ -2811,6 +2973,29 @@ pub(super) fn own_crate_qualified_entry_path(
     .then_some(spelled_path)
 }
 
+/// The path an integration test spells `owner` through when it calls it by
+/// the package's own library path with no `use` (`pkg::owner`,
+/// `pkg::module::owner`), for a reader that otherwise evaluates only a bare
+/// owner call (the reached-tail pin).
+///
+/// The path is [`own_crate_qualified_entry_path`]'s, so the same authority
+/// that relates the test to the owner decides the spelling: no second
+/// resolver. `None` when no call of the owner in `test` is established that
+/// way. A call written bare never reaches the authority, so the common
+/// spelling pays no file scan here.
+pub(in crate::analysis) fn own_crate_qualified_owner_path(
+    index: &RustIndex,
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    test.calls.iter().find_map(|call| {
+        (call.name == owner.name
+            && !super::helper_transfer::is_direct_call_site(&call.text, &owner.name))
+        .then(|| own_crate_qualified_entry_path(index, test, owner, call.line))
+        .flatten()
+    })
+}
+
 /// Whether `owner` is a top-level `impl` item of a file of the root package's library (`src/lib.rs` or a
 /// module composed under it), the only owner a root integration test reaches
 /// through the library's own crate name.
@@ -3061,10 +3246,34 @@ pub(super) fn own_crate_name_unshadowed_in_test_crate_root(
         && !may_rebind_crate_name(body)
 }
 
+/// `masked_call_line` through the candidate route in force: the indexed
+/// route reads this run's cached per-file mask (#13868); the test-only
+/// full-scan oracle keeps masking directly so its bytes stay independent
+/// of the cache it parity-checks.
+fn masked_call_line_for(
+    candidates: RelatedTestCandidates<'_>,
+    index: &RustIndex,
+    test: &TestSummary,
+    line: usize,
+    text: &str,
+) -> String {
+    match candidates {
+        RelatedTestCandidates::Indexed(candidate_index) => {
+            candidate_index.masked_call_line(index, test, line, text)
+        }
+        #[cfg(test)]
+        RelatedTestCandidates::FullScan => masked_call_line(index, test, line, text),
+    }
+}
+
 /// The call's source line as code: the line at `line` of the comment/string-
 /// masked FULL test file, so text inside a multiline raw string or block
 /// comment (or a single-line string) is blanked before the call spelling is
 /// matched. A line past the end of an indexed file yields an empty line.
+///
+/// Test-only: production reads through the run-scoped cache above; this
+/// direct form is the full-scan oracle and the byte-parity reference.
+#[cfg(test)]
 fn masked_call_line(index: &RustIndex, test: &TestSummary, line: usize, text: &str) -> String {
     // A test with no indexed file (a synthetic index) keeps the call fact's own
     // line text; every real analysis indexes the test file.
@@ -3382,11 +3591,41 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
     if !suffix_resolves(&facts.source) || !suffix_resolves(&test.body) {
         return false;
     }
+    // #15073: a lone `use <lib>::*;` glob delivers a crate-root entry the way
+    // `use <lib>::<entry>;` does: the entry is defined in `src/lib.rs`, or the
+    // root re-exports it exactly once, and no other glob in the test file or
+    // body could also bring a same-named item in.
+    let globs = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .into_iter()
+            .filter(|import| import.path.ends_with('*'))
+            .collect::<Vec<_>>()
+    };
+    // The test file's text already holds the test body, so its globs are
+    // counted once from the file.
+    let all_globs = globs(&facts.source);
+    let root_glob_delivers_entry = matches!(all_globs.as_slice(), [only] if {
+        let segments: Vec<String> = only
+            .path
+            .trim_start_matches("::")
+            .split("::")
+            .map(unraw)
+            .collect();
+        only.alias.is_none()
+            && !in_src_unit_test
+            && segments.len() == 2
+            && segments[0] == crate_name
+            && segments[1] == "*"
+    }) && entry_module
+        .as_deref()
+        .is_some_and(|module| module_bound && (module.is_empty() || root_reexports_entry(module)))
+        && !test_file_declares_item_named(&facts.source, &caller.name)
+        && glob_and_test_share_the_file_scope(&facts.source, &test.name);
     let rebinds = |source: &str| {
         super::reveal::flattened_use_paths(source)
             .iter()
             .any(|import| {
-                import.path.ends_with('*')
+                (import.path.ends_with('*') && !root_glob_delivers_entry)
                     || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
                     || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
             })
@@ -3399,6 +3638,84 @@ fn imported_own_crate_prefix_is_bound_to_the_library(
         && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !rebinds(&facts.source)
         && !rebinds(&test.body)
+}
+
+/// Whether the test file's one glob import is a top-level item of the file
+/// and the test `test_name` is a top-level function of the same file, so the
+/// glob is in scope at the test's calls. A glob in a sibling module, a nested
+/// block or the test's own body, a test inside a module, or a second `fn`
+/// of the test's name anywhere in the file, declines (#15073).
+fn glob_and_test_share_the_file_scope(source: &str, test_name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasModuleItem, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return false;
+    };
+    let mut top_level_globs = 0usize;
+    let mut top_level_test = false;
+    for item in parse.tree().items() {
+        match &item {
+            ast::Item::Use(use_item) => {
+                top_level_globs +=
+                    super::reveal::flattened_use_paths(&use_item.syntax().text().to_string())
+                        .iter()
+                        .filter(|import| import.path.ends_with('*'))
+                        .count();
+            }
+            ast::Item::Fn(function) => {
+                top_level_test |= function
+                    .name()
+                    .is_some_and(|name| name.text().trim_start_matches("r#") == test_name);
+            }
+            _ => {}
+        }
+    }
+    // The bare name is the only identity the test carries here, so a
+    // same-named function anywhere else in the file (a decoy beside a nested
+    // test) could be the one matched: the name must name exactly one `fn`.
+    let functions_so_named = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == test_name)
+        })
+        .count();
+    top_level_globs == 1 && top_level_test && functions_so_named == 1
+}
+
+/// Whether the test file declares any item named `name` at any depth (a `fn`,
+/// a tuple or unit `struct`, an enum, a `const`/`static`, a module, a macro),
+/// or does not parse cleanly. A file item beats a glob import, so a root glob
+/// delivers the library's entry only when no such item exists (#15073).
+fn test_file_declares_item_named(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    parse.tree().syntax().descendants().any(|node| {
+        let Some(item) = ast::Item::cast(node) else {
+            return false;
+        };
+        let named = match &item {
+            ast::Item::Fn(i) => i.name(),
+            ast::Item::Const(i) => i.name(),
+            ast::Item::Static(i) => i.name(),
+            ast::Item::Struct(i) => i.name(),
+            ast::Item::Enum(i) => i.name(),
+            ast::Item::Union(i) => i.name(),
+            ast::Item::Trait(i) => i.name(),
+            ast::Item::TypeAlias(i) => i.name(),
+            ast::Item::Module(i) => i.name(),
+            ast::Item::MacroRules(i) => i.name(),
+            ast::Item::MacroDef(i) => i.name(),
+            _ => None,
+        };
+        named.is_some_and(|found| found.text().trim_start_matches("r#") == name)
+    })
 }
 
 /// Whether the test file declares a `const` or `static` named `name` anywhere
@@ -4799,7 +5116,9 @@ pub(super) fn path_is_absolute_form(path: &Path) -> bool {
 }
 
 /// The workspace-package scope of a source path (`crates/foo/src/lib.rs`
-/// -> `crates/foo/`), or `None` when the path carries no package scope:
+/// -> `crates/foo/`; a relative path keeps the directories above `crates/`,
+/// so `rust/crates/foo/src/lib.rs` -> `rust/crates/foo/`, #15299), or `None`
+/// when the path carries no package scope:
 /// single-crate relative paths (`src/lib.rs`, `tests/basic.rs`) and
 /// absolute paths are unscopable (#3235). Shared with the classifier's
 /// evidence stage, whose cross-package same-name defeat gate (#3731 review
@@ -4808,12 +5127,24 @@ pub(in crate::analysis) fn package_prefix(path: &Path) -> Option<String> {
     let normalized = normalize_path(path);
     let crate_relative = normalized
         .strip_prefix("crates/")
-        .or_else(|| normalized.rsplit_once("/crates/").map(|(_, rest)| rest));
-    if let Some(crate_relative) = crate_relative
+        .map(|rest| ("", rest))
+        .or_else(|| normalized.rsplit_once("/crates/"));
+    if let Some((leading, crate_relative)) = crate_relative
         && let Some((crate_name, package_relative)) = crate_relative.split_once('/')
         && (package_relative.starts_with("src/") || package_relative.starts_with("tests/"))
     {
-        return Some(format!("crates/{crate_name}/"));
+        // Keep the directories above `crates/`: a workspace nested below the
+        // analysis root (`rust/crates/x`) or two workspaces that both have a
+        // `crates/x` are distinct packages, not one.
+        if path_is_absolute_form(path) {
+            return Some(format!("crates/{crate_name}/"));
+        }
+        let leading = if leading.is_empty() {
+            String::new()
+        } else {
+            format!("{leading}/")
+        };
+        return Some(format!("{leading}crates/{crate_name}/"));
     }
     if path_is_absolute_form(path) {
         return None;
@@ -5857,79 +6188,142 @@ fn text_resolves_method_to_type(
     scope_body: &str,
     whole_body: bool,
 ) -> bool {
-    let bytes = text.as_bytes();
+    method_call_sites(text, method).any(|at| {
+        call_site_resolves_to_type(
+            text,
+            at,
+            method,
+            impl_type,
+            impl_trait,
+            body_for_lets,
+            scope_body,
+            whole_body,
+        )
+    })
+}
+
+/// Byte offsets of every `method` token in `text` at an identifier boundary
+/// and followed (after whitespace) by `(`: each spelling that may call it.
+fn method_call_sites<'t>(text: &'t str, method: &'t str) -> impl Iterator<Item = usize> + 't {
     let mut search = 0usize;
-    while let Some(relative) = text[search..].find(method) {
-        let at = search + relative;
-        let after = at + method.len();
-        // A binding is read only from `let`s before this call, so a later
-        // shadowing `let s = Site::new()` cannot type an earlier `s`. A raw call
-        // line has no position in the body, so it does not consult `let`s.
-        // Only `let`s finished (`;`) before the call count, so the statement
-        // being declared (`let s = Site { x: s.build() }`) cannot type `s`.
-        let body_for_lets = if whole_body {
-            body_for_lets
-                .get(..at)
-                .and_then(|before| before.rfind(';').map(|end| &before[..=end]))
-                .unwrap_or("")
-        } else {
-            ""
-        };
-        if ident_boundary(text, at, after) && skip_ws_if_paren(text, after) {
-            if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
-                let qualifier = ident_ending_at(text, at - 2);
-                if qualifier.is_some_and(|ty| ty == impl_type) {
-                    return true;
-                }
-                // `<f64 as Render>::render(..)` names the impl outright;
-                // `Render::render(&-0.0f64)` dispatches on its first
-                // argument's type. A raw call line is unmasked, so a form
-                // quoted in a string or comment there must not count: only
-                // the masked body reads these.
-                if whole_body
-                    && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
-                        || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
-                            && first_argument_has_type(
-                                text,
-                                after,
-                                impl_type,
-                                body_for_lets,
-                                text,
-                                scope_body,
-                                at,
-                            )))
-                {
-                    return true;
-                }
-            } else if at > 0 && bytes[at - 1] == b'.' {
-                if let Some(recv) = ident_ending_at(text, at - 1) {
-                    if recv == impl_type
-                        // `1.5f64.m()` reads only the fragment after the `.`
-                        // (`5f64`), which still carries the literal's suffix.
-                        // A raw call line is unmasked, so a literal quoted in
-                        // a string or comment there must not type a receiver.
-                        || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
-                        || let_binding_mentions_type_at(
-                            body_for_lets,
-                            text,
-                            scope_body,
-                            at,
-                            recv,
-                            impl_type,
-                        )
-                    {
-                        return true;
-                    }
-                } else if whole_body
-                    && receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets)
-                {
-                    return true;
-                }
+    std::iter::from_fn(move || {
+        if method.is_empty() {
+            return None;
+        }
+        while let Some(relative) = text.get(search..)?.find(method) {
+            let at = search + relative;
+            let after = at + method.len();
+            search = at + method.chars().next().map_or(1, char::len_utf8);
+            if ident_boundary(text, at, after) && skip_ws_if_paren(text, after) {
+                return Some(at);
             }
         }
-        search = at + method.chars().next().map_or(1, char::len_utf8);
+        None
+    })
+}
+
+/// Whether the call of `method` spelled at byte `at` of `text` resolves its
+/// receiver (or its trait-qualified first argument) to `impl_type`, as
+/// [`text_resolves_method_to_type`] reads one site.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one call site of text_resolves_method_to_type, which takes the same inputs"
+)]
+fn call_site_resolves_to_type(
+    text: &str,
+    at: usize,
+    method: &str,
+    impl_type: &str,
+    impl_trait: Option<&str>,
+    body_for_lets: &str,
+    scope_body: &str,
+    whole_body: bool,
+) -> bool {
+    let bytes = text.as_bytes();
+    let after = at + method.len();
+    // A binding is read only from `let`s before this call, so a later
+    // shadowing `let s = Site::new()` cannot type an earlier `s`. A raw call
+    // line has no position in the body, so it does not consult `let`s.
+    // Only `let`s finished (`;`) before the call count, so the statement
+    // being declared (`let s = Site { x: s.build() }`) cannot type `s`.
+    let body_for_lets = if whole_body {
+        body_for_lets
+            .get(..at)
+            .and_then(|before| before.rfind(';').map(|end| &before[..=end]))
+            .unwrap_or("")
+    } else {
+        ""
+    };
+    if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
+        let qualifier = ident_ending_at(text, at - 2);
+        if qualifier.is_some_and(|ty| ty == impl_type) {
+            return true;
+        }
+        // `<f64 as Render>::render(..)` names the impl outright;
+        // `Render::render(&-0.0f64)` dispatches on its first
+        // argument's type. A raw call line is unmasked, so a form
+        // quoted in a string or comment there must not count: only
+        // the masked body reads these.
+        whole_body
+            && (qualified_self_type_matches(text, at - 2, impl_type, impl_trait)
+                || (impl_trait.is_some_and(|tr| qualifier == Some(tr))
+                    && first_argument_has_type(
+                        text,
+                        after,
+                        impl_type,
+                        body_for_lets,
+                        text,
+                        scope_body,
+                        at,
+                    )))
+    } else if at > 0 && bytes[at - 1] == b'.' {
+        if let Some(recv) = ident_ending_at(text, at - 1) {
+            recv == impl_type
+                // `1.5f64.m()` reads only the fragment after the `.`
+                // (`5f64`), which still carries the literal's suffix.
+                // A raw call line is unmasked, so a literal quoted in
+                // a string or comment there must not type a receiver.
+                || (whole_body && suffixed_numeric_literal_type(recv) == Some(impl_type))
+                || let_binding_mentions_type_at(
+                    body_for_lets,
+                    text,
+                    scope_body,
+                    at,
+                    recv,
+                    impl_type,
+                )
+        } else {
+            whole_body && receiver_expr_resolves_to_type(text, at - 1, impl_type, body_for_lets)
+        }
+    } else {
+        false
     }
-    false
+}
+
+/// #15277: whether the test calls `<impl_type as impl_trait>::method(..)`,
+/// which names one trait impl outright. It is read for an owner without
+/// `self` (`fn make(n: u32) -> Self`), whose trait-qualified call
+/// `Make::make(..)` has no receiver to type, so only this spelling settles
+/// which impl runs. Comments and strings are masked.
+fn fully_qualified_call_names_impl(
+    test: &TestSummary,
+    method: &str,
+    impl_type: &str,
+    impl_trait: &str,
+) -> bool {
+    if method.is_empty() || impl_type.is_empty() {
+        return false;
+    }
+    let masked = mask_comments_and_strings(&test.body);
+    let bytes = masked.as_bytes();
+    masked.match_indices(method).any(|(at, _)| {
+        at >= 2
+            && bytes[at - 2] == b':'
+            && bytes[at - 1] == b':'
+            && ident_boundary(&masked, at, at + method.len())
+            && skip_ws_if_paren(&masked, at + method.len())
+            && qualified_self_type_matches(&masked, at - 2, impl_type, Some(impl_trait))
+    })
 }
 
 /// `<f64 as Render>::m(..)`: the qualified path ending at `colons` names
@@ -5968,6 +6362,31 @@ fn qualified_self_type_matches(
         && compact_impl_type_name(trait_ty).as_deref() == Some(impl_trait)
 }
 
+/// Byte range of the first argument of the call whose name ends at
+/// `after_name`: from just past the `(` to the first top-level `,` or the
+/// closing `)`. `None` when no `(` follows the name or the list never closes.
+fn first_argument_span(text: &str, after_name: usize) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let mut open = after_name;
+    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
+        open += 1;
+    }
+    if bytes.get(open) != Some(&b'(') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => return Some((open + 1, index)),
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => return Some((open + 1, index)),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Whether the first argument of the call whose name ends at `after_name`
 /// has type `impl_type`: a suffixed literal (`&-0.0f64`), a `let` binding
 /// typed as `impl_type`, or a struct, tuple-struct or variant literal
@@ -5981,35 +6400,10 @@ fn first_argument_has_type(
     scope_body: &str,
     call_at: usize,
 ) -> bool {
-    let bytes = text.as_bytes();
-    let mut open = after_name;
-    while open < bytes.len() && bytes[open].is_ascii_whitespace() {
-        open += 1;
-    }
-    if bytes.get(open) != Some(&b'(') {
-        return false;
-    }
-    let mut depth = 0usize;
-    let mut end = None;
-    for (index, &byte) in bytes.iter().enumerate().skip(open + 1) {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' if depth == 0 => {
-                end = Some(index);
-                break;
-            }
-            b')' | b']' | b'}' => depth -= 1,
-            b',' if depth == 0 => {
-                end = Some(index);
-                break;
-            }
-            _ => {}
-        }
-    }
-    let Some(end) = end else {
+    let Some((start, end)) = first_argument_span(text, after_name) else {
         return false;
     };
-    let arg = text[open + 1..end].trim();
+    let arg = text[start..end].trim();
     let arg = arg.strip_prefix('&').map_or(arg, str::trim_start);
     let arg = arg.strip_prefix("mut ").map_or(arg, str::trim_start);
     let literal = arg.strip_prefix('-').map_or(arg, str::trim_start);
@@ -7887,7 +8281,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
         && index
             .call_identity_memos
             .receiver_pin_syntax
-            .target_placement_unavailable(index)
+            .target_placement_unavailable(&caller.file, index)
         && relation(false) != RelationReason::DirectOwnerCall
         && relation(true) == RelationReason::DirectOwnerCall
 }
@@ -7923,7 +8317,7 @@ pub(in crate::analysis) fn inherent_owner_call_resolves_inside_unreadable_macro(
         && !index
             .call_identity_memos
             .receiver_pin_syntax
-            .target_placement_unavailable(index)
+            .target_placement_unavailable(&caller.file, index)
         && relation(false) != RelationReason::DirectOwnerCall
         && relation(true) == RelationReason::DirectOwnerCall
 }
@@ -8225,6 +8619,19 @@ pub(in crate::analysis) fn owner_impl_identity_shadowed(
     impl_identity_is_shadowed(test, owner, &impl_type, test_source, index)
 }
 
+/// Whether every call of `owner`'s name in `test` provably selects a sibling
+/// impl of the same generic trait on the same type (#14074), so the test
+/// cannot run `owner`. The seam-side relation applies the same refusal the
+/// finding-level relation applies to a direct owner call. Fails open: any
+/// part that is not established keeps the credit.
+pub(in crate::analysis) fn owner_call_selects_generic_sibling(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+}
+
 /// Whether a same-named `trait` declared in the test's own module scope (or at
 /// the root of an out-of-line parent module) shadows a trait-declaration
 /// default-method owner (#7123, #7087). The trait name comes from the
@@ -8337,6 +8744,14 @@ fn owner_call_relation_reason_gated(
             {
                 return RelationReason::WeakTokenSubstring;
             }
+            // #15273: a default method never runs for a type whose impl
+            // overrides it. When every call in the test resolves to such a
+            // type, the name match reaches only the overrides.
+            if indexed_same_name_count > 1
+                && dispatch_target::every_call_runs_an_override(test, owner, same_name_ids, index)
+            {
+                return RelationReason::WeakTokenSubstring;
+            }
             return RelationReason::DirectOwnerCall;
         }
         if !free_function_call_spells_free_call(test, owner_name) {
@@ -8394,6 +8809,15 @@ fn owner_call_relation_reason_gated(
     if impl_identity_is_shadowed(test, owner, &impl_type, test_source, index) {
         return RelationReason::WeakTokenSubstring;
     }
+    // #14074: one type implementing a generic trait twice (`From<u32>` and
+    // `From<&str>`) shares a self type and a method name across both impls,
+    // so nothing below tells them apart. A test whose every call passes a
+    // value written as a sibling's trait argument cannot run this owner.
+    if indexed_same_name_count > 1
+        && generic_sibling::every_call_selects_generic_sibling(test, owner, index)
+    {
+        return RelationReason::WeakTokenSubstring;
+    }
     if requires_inherent_receiver_identity(owner) {
         return if inherent_receiver_call_resolves_with(
             test,
@@ -8414,8 +8838,18 @@ fn owner_call_relation_reason_gated(
     if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
         return RelationReason::DirectOwnerCall;
     }
+    // #15273: an inherent `area(&self)` on the impl's own type takes
+    // `Square(3).area()` before the trait impl does.
+    if dispatch_target::inherent_twin_takes_every_call(test, owner, same_name_ids, index) {
+        return RelationReason::WeakTokenSubstring;
+    }
     let impl_trait = owner_dispatch_trait(owner);
-    if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref()) {
+    if method_call_resolves_to_impl(test, owner_name, &impl_type, impl_trait.as_deref())
+        || (!owner.item.has_self_param
+            && impl_trait_name(&owner.id.0).is_some_and(|impl_trait| {
+                fully_qualified_call_names_impl(test, owner_name, &impl_type, &impl_trait)
+            }))
+    {
         RelationReason::DirectOwnerCall
     } else {
         RelationReason::WeakTokenSubstring
@@ -10478,6 +10912,53 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #15277: `<f64 as FromF64>::from_f64(..)` names one impl of a function
+    /// without `self` outright, so it reaches that impl and no other.
+    #[test]
+    fn given_fully_qualified_call_to_a_function_without_self_then_only_the_named_impl_is_direct() {
+        let mut float = impl_function("src/lib.rs", "from_f64", "impl FromF64 for f64");
+        float.item.has_self_param = false;
+        let mut byte = impl_function("src/lib.rs", "from_f64", "impl FromF64 for u8");
+        byte.item.has_self_param = false;
+        let mut other_trait = impl_function("src/lib.rs", "from_f64", "impl Parse for f64");
+        other_trait.item.has_self_param = false;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![float.clone(), byte.clone(), other_trait.clone()],
+            tests: vec![test_with_call(
+                "tests/convert.rs",
+                "t",
+                "let x = <f64 as FromF64>::from_f64(2.5f64); assert_eq!(x, 2.5);",
+                "from_f64",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "n");
+        let reason = |owner: &FunctionSummary| {
+            let related = find_related_tests(&probe, Some(owner), &index, true, None, None);
+            assert_eq!(related.len(), 1, "{}", owner.id.0);
+            related[0].1
+        };
+
+        assert_eq!(reason(&float), RelationReason::DirectOwnerCall);
+        assert_eq!(reason(&byte), RelationReason::WeakTokenSubstring);
+        assert_eq!(reason(&other_trait), RelationReason::WeakTokenSubstring);
+
+        // A trait-path call names no impl, so it settles none of them.
+        let trait_path = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![float.clone(), byte.clone(), other_trait.clone()],
+            tests: vec![test_with_call(
+                "tests/convert.rs",
+                "t",
+                "let x = FromF64::from_f64(2.5f64); assert_eq!(x, 2.5);",
+                "from_f64",
+            )],
+            ..Default::default()
+        });
+        let related = find_related_tests(&probe, Some(&float), &trait_path, true, None, None);
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
@@ -12848,6 +13329,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
     ) -> DependencyEdgeContext<'a> {
         static NONE_UNINDEXED: BTreeSet<String> = BTreeSet::new();
         DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency,
             manifest_dir_prefixes,
             index,
@@ -14647,6 +15129,20 @@ fn crate_c_score_test() {
             package_prefix(Path::new("crates/ripr/examples/sample/src/lib.rs")).as_deref(),
             Some("crates/ripr/examples/sample/")
         );
+        // A workspace below the analysis root keeps the directories above
+        // `crates/`, so two workspaces' `crates/alpha` stay two packages (#15299).
+        assert_eq!(
+            package_prefix(Path::new("w2/crates/alpha/src/lib.rs")).as_deref(),
+            Some("w2/crates/alpha/")
+        );
+        assert_eq!(
+            package_prefix(Path::new("rust/crates/alpha/tests/a.rs")).as_deref(),
+            Some("rust/crates/alpha/")
+        );
+        assert_ne!(
+            package_prefix(Path::new("w1/crates/alpha/src/lib.rs")),
+            package_prefix(Path::new("w2/crates/alpha/src/lib.rs"))
+        );
     }
 
     #[test]
@@ -15112,6 +15608,7 @@ fn crate_c_score_test() {
             2
         );
         let context = DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &adjacency,
             manifest_dir_prefixes: &prefixes,
             index: &index,
@@ -15981,6 +16478,7 @@ fn crate_c_score_test() {
             .map(|manifest| (*manifest).to_string())
             .collect();
         let context = DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &adjacency,
             manifest_dir_prefixes: &prefixes,
             index: &index,
@@ -16143,6 +16641,319 @@ fn crate_c_score_test() {
             ])
         );
         assert!(manifests_with_unindexed_files(&prefixes, &analyzable, &analyzable).is_empty());
+    }
+
+    // #13868: the masked test-file source is built once per run, however
+    // many (probe x test x call x hop) evaluations read lines from it.
+    // The fixture is exact: 1 call per test, 1 hop, no async polling, and
+    // the first `||` arm admits, so the sibling qualified-path mask never
+    // runs; P*K counts this cache's OWN invocations only.
+    fn masked_line_fixture(
+        file_lines: usize,
+        test_count: usize,
+    ) -> (
+        RustIndex,
+        RelatedTestCandidateIndex,
+        Probe,
+        FunctionSummary,
+        crate::analysis::classify::helper_transfer::HelperChain,
+    ) {
+        let file = "tests/big.rs";
+        let call_line = |at: usize| 100 + at * 10;
+        let mut lines: Vec<String> = (1..=file_lines)
+            .map(|at| format!("// filler line {at} with text to mask"))
+            .collect();
+        lines[4] = "let decoy = \"entry_fn(9)\";".to_string();
+        let mut tests = Vec::new();
+        for at in 0..test_count {
+            lines[call_line(at) - 1] = "entry_fn(1);".to_string();
+            let mut summary =
+                test_with_call(file, &format!("case_{at}"), "entry_fn(1);", "entry_fn");
+            summary.calls[0].line = call_line(at);
+            summary.calls[0].text = "entry_fn(1);".into();
+            tests.push(summary);
+        }
+        let source = lines.join("\n");
+        let owner = function("src/lib.rs", "target_owner");
+        let entry = function("src/lib.rs", "entry_fn");
+        let facts = FileFacts {
+            path: PathBuf::from(file),
+            source: source.into(),
+            tests: tests.clone(),
+            ..Default::default()
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), entry.clone()],
+            tests,
+            files: std::iter::once((PathBuf::from(file), facts)).collect(),
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: entry,
+                call_text: "target_owner(value)".to_string(),
+                arguments: vec!["value".to_string()],
+                receiver: None,
+                through_macro: false,
+                multi_site: false,
+                module_qualified: false,
+                crate_qualifier: None,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        (index, candidate_index, probe, owner, chain)
+    }
+
+    #[test]
+    fn masked_call_line_masks_each_file_once_per_run_at_any_size() {
+        for file_lines in [2_000usize, 4_000, 8_000] {
+            let (index, candidate_index, probe, owner, chain) = masked_line_fixture(file_lines, 20);
+            let mut related_names: Vec<Vec<String>> = Vec::new();
+            for _ in 0..8 {
+                let related = find_related_tests_with_candidate_index(
+                    &probe,
+                    Some(&owner),
+                    &index,
+                    true,
+                    Some(&chain),
+                    None,
+                    &candidate_index,
+                );
+                assert_eq!(related.len(), 20, "every fixture test relates");
+                assert!(
+                    related
+                        .iter()
+                        .all(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+                    "the helper-entry route admits every fixture test"
+                );
+                related_names.push(related.iter().map(|(test, _)| test.name.clone()).collect());
+            }
+            // Sequential runs: exactly one mask build for the one file,
+            // however large, across 8 probes x 20 tests x 1 call x 1 hop.
+            // (Concurrent first misses may duplicate a build; see the
+            // cache's SyncMemo note.)
+            assert_eq!(candidate_index.masked_call_line_calls_for_test(), 160);
+            assert_eq!(candidate_index.masked_call_line_builds_for_test(), 1);
+            // The full-scan oracle agrees on every probe's relations.
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                Some(&owner),
+                &index,
+                true,
+                Some(&chain),
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            let full_names: Vec<String> = full_scan
+                .iter()
+                .map(|(test, _)| test.name.clone())
+                .collect();
+            assert_eq!(related_names[0], full_names);
+        }
+    }
+
+    #[test]
+    fn masked_call_line_never_runs_without_a_matching_hop_call() {
+        // No helper chain: the entry check never evaluates a call line.
+        let (index, candidate_index, probe, owner, _chain) = masked_line_fixture(2_000, 4);
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+            &candidate_index,
+        );
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason != RelationReason::HelperOwnerCall)
+        );
+        assert_eq!(candidate_index.masked_call_line_calls_for_test(), 0);
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 0);
+    }
+
+    #[test]
+    fn masked_call_line_skips_calls_that_never_name_the_hop_caller() {
+        let file = "tests/big.rs";
+        let mut lines: Vec<String> = (1..=2_000)
+            .map(|at| format!("// filler line {at}"))
+            .collect();
+        lines[99] = "other_fn(1);".to_string();
+        let source = lines.join("\n");
+        let owner = function("src/lib.rs", "target_owner");
+        let entry = function("src/lib.rs", "entry_fn");
+        let mut summary = test_with_call(file, "target_owner_case", "other_fn(1);", "other_fn");
+        summary.calls[0].line = 100;
+        let tests = vec![summary];
+        let facts = FileFacts {
+            path: PathBuf::from(file),
+            source: source.into(),
+            tests: tests.clone(),
+            ..Default::default()
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), entry.clone()],
+            tests,
+            files: std::iter::once((PathBuf::from(file), facts)).collect(),
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: entry,
+                call_text: "target_owner(value)".to_string(),
+                arguments: vec!["value".to_string()],
+                receiver: None,
+                through_macro: false,
+                multi_site: false,
+                module_qualified: false,
+                crate_qualifier: None,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        let _related = find_related_tests_with_candidate_index(
+            &probe,
+            Some(&owner),
+            &index,
+            true,
+            Some(&chain),
+            None,
+            &candidate_index,
+        );
+        assert_eq!(candidate_index.masked_call_line_calls_for_test(), 0);
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 0);
+    }
+
+    #[test]
+    fn masked_call_line_falls_back_to_call_text_without_indexed_file() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test_with_call(
+                "tests/absent.rs",
+                "absent_case",
+                "entry_fn(1);",
+                "entry_fn",
+            )],
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let test = index.test_at(0);
+        assert_eq!(
+            candidate_index.masked_call_line(&index, test, 1, "entry_fn(1);"),
+            "entry_fn(1);",
+            "a synthetic index without file facts keeps the call text"
+        );
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 0);
+        // Byte-identical to the direct (full-scan) route.
+        assert_eq!(
+            candidate_index.masked_call_line(&index, test, 1, "entry_fn(1);"),
+            masked_call_line(&index, test, 1, "entry_fn(1);")
+        );
+    }
+
+    #[test]
+    fn masked_call_line_builds_once_per_distinct_file() {
+        let owner = function("src/lib.rs", "target_owner");
+        let entry = function("src/lib.rs", "entry_fn");
+        let mut tests = Vec::new();
+        let mut files = BTreeMap::new();
+        for at in 0..5 {
+            let file = format!("tests/part_{at}.rs");
+            let source = "// head\nentry_fn(1);\n// tail\n".to_string();
+            let mut summary =
+                test_with_call(&file, &format!("case_{at}"), "entry_fn(1);", "entry_fn");
+            summary.calls[0].line = 2;
+            summary.calls[0].text = "entry_fn(1);".into();
+            tests.push(summary.clone());
+            files.insert(
+                PathBuf::from(&file),
+                FileFacts {
+                    path: PathBuf::from(&file),
+                    source: source.into(),
+                    tests: vec![summary],
+                    ..Default::default()
+                },
+            );
+        }
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), entry.clone()],
+            tests,
+            files,
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let chain = crate::analysis::classify::helper_transfer::HelperChain {
+            hops: vec![crate::analysis::classify::helper_transfer::HelperHop {
+                caller: entry,
+                call_text: "target_owner(value)".to_string(),
+                arguments: vec!["value".to_string()],
+                receiver: None,
+                through_macro: false,
+                multi_site: false,
+                module_qualified: false,
+                crate_qualifier: None,
+                transparent_macros_rebound: false,
+                diverging_handlers: Vec::new(),
+            }],
+            stop_above: None,
+        };
+        let probe = probe("src/lib.rs", "target_owner(value)");
+        for _ in 0..2 {
+            let related = find_related_tests_with_candidate_index(
+                &probe,
+                Some(&owner),
+                &index,
+                true,
+                Some(&chain),
+                None,
+                &candidate_index,
+            );
+            assert_eq!(related.len(), 5);
+        }
+        assert_eq!(candidate_index.masked_call_line_calls_for_test(), 10);
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 5);
+    }
+
+    #[test]
+    fn masked_call_line_returns_only_the_masked_requested_line() {
+        let file = "tests/lines.rs";
+        let source = "let a = \"entry_fn(9)\";\nentry_fn(1); // entry_fn(2)\nlet b = 3;\n";
+        let summary = test_with_call(file, "line_case", "entry_fn(1);", "entry_fn");
+        let facts = FileFacts {
+            path: PathBuf::from(file),
+            source: source.into(),
+            tests: vec![summary.clone()],
+            ..Default::default()
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![summary],
+            files: std::iter::once((PathBuf::from(file), facts)).collect(),
+            ..Default::default()
+        });
+        let candidate_index = RelatedTestCandidateIndex::new(&index);
+        let test = index.test_at(0);
+        let line = candidate_index.masked_call_line(&index, test, 2, "unused");
+        assert_eq!(line, masked_call_line(&index, test, 2, "unused"));
+        assert!(is_spaced_direct_call_site(&line, "entry_fn"));
+        let string_line = candidate_index.masked_call_line(&index, test, 1, "unused");
+        assert!(
+            !is_spaced_direct_call_site(&string_line, "entry_fn"),
+            "string contents stay masked: {string_line:?}"
+        );
+        assert_eq!(
+            candidate_index.masked_call_line(&index, test, 99, "unused"),
+            "",
+            "a line past the end yields an empty line"
+        );
+        assert_eq!(candidate_index.masked_call_line_builds_for_test(), 1);
     }
 
     /// #14270: the diff-mode relation must apply the same test-local rival

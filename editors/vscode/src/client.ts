@@ -232,17 +232,37 @@ const RIPR_RELATED_TEST_LANGUAGE_BY_EXTENSION = new Map<string, 'rust' | 'typesc
 ]);
 const RIPR_CONFIG_RELATIVE_PATH = 'ripr.toml';
 
-function lspConfigurationForResource(scopeUri: string | undefined): Record<string, unknown> {
+/** The `ripr` section answer to a server `workspace/configuration` pull.
+ * Exported so the wire values are testable without a live server. */
+export function lspConfigurationForResource(scopeUri: string | undefined): Record<string, unknown> {
   const resource = scopeUri ? vscode.Uri.parse(scopeUri) : undefined;
   const config = vscode.workspace.getConfiguration('ripr', resource);
   return {
     baseRef: config.get<string>('baseRef'),
-    checkMode: config.get<string>('check.mode'),
-    includeUnchangedTests: config.get<boolean>('includeUnchangedTests'),
+    // Sent only when a settings layer sets them, so `ripr.toml` `[analysis]`
+    // applies otherwise (#15897).
+    checkMode: explicitSetting<string>(config, 'check.mode'),
+    includeUnchangedTests: explicitSetting<boolean>(config, 'includeUnchangedTests'),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<string>(config, 'diagnosticProfile'),
     gitTimeoutMs: integerSetting(config.get<number>('gitTimeoutMs')),
     refreshDeadlineMs: integerSetting(config.get<number>('refreshDeadlineMs'))
+  };
+}
+
+// Settings forwarded only when a VS Code settings layer sets them; unset, the
+// repository's ripr.toml decides (#4717, #15897).
+type OptionalSessionSettings = Pick<
+  RiprConfig,
+  'checkMode' | 'includeUnchangedTests' | 'seamDiagnostics' | 'diagnosticProfile'
+>;
+
+function optionalSessionSettings(config: RiprConfig): OptionalSessionSettings {
+  return {
+    checkMode: config.checkMode,
+    includeUnchangedTests: config.includeUnchangedTests,
+    seamDiagnostics: config.seamDiagnostics,
+    diagnosticProfile: config.diagnosticProfile
   };
 }
 
@@ -477,6 +497,10 @@ export interface RiprClientRuntime {
   ): RiprLanguageClient;
   createFileSystemWatcher(pattern: vscode.GlobPattern): vscode.FileSystemWatcher;
   readFile(filePath: string): Promise<string | undefined>;
+  /** Existence probe that does not read the file (`ripr.openReport`, #15318). */
+  fileExists?(filePath: string): Promise<boolean>;
+  /** Opens a file in an editor; the default uses the VS Code document APIs. */
+  openFileInEditor?(filePath: string): Promise<void>;
   runRipr(command: string, args: string[], cwd: string): Promise<string>;
   runRiprProcess?(
     command: string,
@@ -523,6 +547,8 @@ const defaultRuntime: RiprClientRuntime = {
       : new LanguageClient('ripr', 'ripr', serverOptions, clientOptions),
   createFileSystemWatcher: (pattern) => vscode.workspace.createFileSystemWatcher(pattern),
   readFile: readOptionalFile,
+  fileExists: fileExistsOnDisk,
+  openFileInEditor: openFileInVsCodeEditor,
   runRipr,
   writeClipboard: async (text) => {
     await vscode.env.clipboard.writeText(text);
@@ -622,6 +648,13 @@ export class RiprClientController {
    * server-leak race described in #2123.
    */
   private startGeneration = 0;
+  // What the current session's initialize handshake carried (#15897).
+  private initializedSessionSettings: OptionalSessionSettings = {
+    checkMode: undefined,
+    includeUnchangedTests: undefined,
+    seamDiagnostics: undefined,
+    diagnosticProfile: undefined
+  };
   private readonly agentHandoff: AgentHandoffController;
 
   constructor(
@@ -849,6 +882,8 @@ export class RiprClientController {
     };
 
     const workspaceRoot = this.workspaceRoot;
+    const sessionSettings = optionalSessionSettings(config);
+    this.initializedSessionSettings = sessionSettings;
     const clientOptions: LanguageClientOptions = {
       documentSelector: riprDocumentSelectorsForWorkspace(workspaceRoot),
       // Bind the session to the one folder this controller selected. Without
@@ -860,10 +895,7 @@ export class RiprClientController {
       ),
       initializationOptions: {
         baseRef: config.baseRef,
-        checkMode: config.checkMode,
-        includeUnchangedTests: config.includeUnchangedTests,
-        seamDiagnostics: config.seamDiagnostics,
-        diagnosticProfile: config.diagnosticProfile
+        ...sessionSettings
       },
       outputChannel: this.output,
       traceOutputChannel: this.output,
@@ -1017,6 +1049,25 @@ export class RiprClientController {
     this.resetCrashRecoveryForExplicitRestart();
     await this.stop();
     await this.start();
+  }
+
+  /**
+   * Whether a setting the running session sent at initialize has since been
+   * unset. The server keeps an initialization option as the fallback for a
+   * key the configuration pull stops returning (RIPR-SPEC-0136), so the
+   * removed value stays in effect until a restart hands the key back to
+   * ripr.toml (#15897).
+   */
+  initializedSettingWasUnset(): boolean {
+    if (!this.client) {
+      return false;
+    }
+    const current = optionalSessionSettings(
+      this.runtime.getConfig(this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined)
+    );
+    return (Object.keys(current) as Array<keyof OptionalSessionSettings>).some(
+      (key) => this.initializedSessionSettings[key] !== undefined && current[key] === undefined
+    );
   }
 
   /** User-initiated restart clears an open crash-recovery circuit (#1744). */
@@ -2282,7 +2333,7 @@ export class RiprClientController {
         kind: 'analysisFailed',
         summary: 'ripr analysis refresh failed.',
         detail: message,
-        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
+        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Full Analysis.'
       });
     }
   }
@@ -2348,10 +2399,10 @@ export class RiprClientController {
       : 'The last analysis attempt failed.';
     const retry = status.retry_command === 'ripr.refresh'
       || status.retry_command === 'ripr.refreshDiagnostics'
-      ? 'ripr: Refresh Diagnostics'
+      ? 'ripr: Refresh Full Analysis'
       : typeof status.retry_command === 'string' && status.retry_command.trim()
         ? status.retry_command
-        : 'ripr: Refresh Diagnostics';
+        : 'ripr: Refresh Full Analysis';
     const retained = status.snapshot_id ? ' The last completed snapshot remains available but is stale.' : '';
     switch (status.state) {
       case 'queued':
@@ -2376,7 +2427,7 @@ export class RiprClientController {
           summary: 'ripr analysis failed; last-known-good evidence is retained.',
           detail: `${analysisStatusDetail(status)}\n${failureMessage}${retained}`,
           nextStep: isBaseUnresolvableFailure(failure?.kind, failureMessage)
-            ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
+            ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Full Analysis.'
             : `Run ${retry} to retry the saved-workspace analysis.`
         });
         return;
@@ -2847,26 +2898,33 @@ export class RiprClientController {
       this.runtime.showInformationMessage('Open a workspace before using ripr: Open Report.');
       return;
     }
-    const primaryPath = path.join(workspaceRoot, 'target', 'ripr', 'reports', 'pr-evidence-summary.md');
-    const fallbackPath = path.join(workspaceRoot, 'target', 'ripr', 'reports', 'start-here.md');
+    const reportsDir = riprReportsDir(workspaceRoot);
+    const fileExists = this.runtime.fileExists ?? fileExistsOnDisk;
     let resolvedPath: string | undefined;
-    for (const candidate of [primaryPath, fallbackPath]) {
-      const content = await this.runtime.readFile(candidate);
-      if (content !== undefined) {
-        resolvedPath = candidate;
-        break;
+    try {
+      for (const name of OPEN_REPORT_CANDIDATES) {
+        const candidate = path.join(reportsDir, name);
+        if (await fileExists(candidate)) {
+          resolvedPath = candidate;
+          break;
+        }
       }
+    } catch (error) {
+      // A stat error other than "not found" (EACCES, ENOTDIR) is not a missing
+      // report; say so instead of leaving an unhandled command rejection.
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`ripr open report could not check ${reportsDir}: ${message}`);
+      this.warnWithOutput(`ripr could not check ${reportsDir} for a report.`);
+      return;
     }
     if (!resolvedPath) {
       this.runtime.showInformationMessage(
-        'No report yet. Run `ripr pr-summary` in this workspace to generate one.'
+        `No ripr report found in ${reportsDir}. Run \`ripr pr-summary\` in this workspace to generate one.`
       );
       return;
     }
     try {
-      const document = await vscode.workspace.openTextDocument(vscode.Uri.file(resolvedPath));
-      await vscode.window.showTextDocument(document);
-      this.runtime.showInformationMessage('Opened ripr report.');
+      await (this.runtime.openFileInEditor ?? openFileInVsCodeEditor)(resolvedPath);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.output.appendLine(`ripr open report failed: ${message}`);
@@ -2876,8 +2934,17 @@ export class RiprClientController {
 
   async showTopLimitation(): Promise<void> {
     const client = this.client;
-    if (!client) {
-      this.runtime.showInformationMessage('RIPR has not completed an analysis snapshot yet.');
+    // A stopped client can stay bound after the crash circuit opens, so treat
+    // any client that is not actively running as missing (#15303).
+    if (!client || !this.clientIsActivelyRunning(client)) {
+      const enabled = this.runtime.getConfig(
+        this.workspaceRoot ? vscode.Uri.file(this.workspaceRoot) : undefined
+      ).enabled;
+      this.runtime.showInformationMessage(
+        enabled
+          ? 'ripr top limitation requires a running server; the server is not running. Run ripr: Restart Server, then try again.'
+          : `ripr top limitation requires a running server; ripr is disabled. ${disabledStatus().nextStep}`
+      );
       return;
     }
     let response: Record<string, unknown> | null = null;
@@ -2922,7 +2989,8 @@ export class RiprClientController {
       this.output.appendLine(`  unlock_condition: ${unlock}`);
     }
     this.output.show();
-    const summary = status || category || repairRoute || 'See ripr output for limitation details.';
+    const rawSummary = status || category || repairRoute;
+    const summary = rawSummary ? rawSummary.replace(/_/g, ' ') : 'See ripr output for limitation details.';
     this.runtime.showInformationMessage(`ripr top limitation: ${summary}`);
   }
 
@@ -3548,7 +3616,7 @@ function evidenceFreshnessSummary(kind: RiprStatusKind): string {
     case 'stale':
       return 'stale; save or refresh before acting';
     case 'analysisLimited':
-      return 'limited; run ripr: Refresh Diagnostics for full evidence';
+      return 'limited; run ripr: Refresh Full Analysis for full evidence';
     case 'analysisQueued':
     case 'analysisRunning':
     case 'starting':
@@ -4226,7 +4294,7 @@ function analysisStatusDetail(status: RiprAnalysisStatusPayload): string {
 }
 
 /** Palette title of the registered `ripr.refreshDiagnostics` command. */
-const REFRESH_DIAGNOSTICS_COMMAND_TITLE = 'ripr: Refresh Diagnostics';
+const REFRESH_DIAGNOSTICS_COMMAND_TITLE = 'ripr: Refresh Full Analysis';
 
 /**
  * Per-status disclosure for the limited run-status family (#4326). The server
@@ -4241,7 +4309,7 @@ const LIMITED_RUN_STATUS_PRESENTATIONS: Record<string, { summary: string; detail
   cache_limited: {
     summary: 'ripr analysis completed with a limited evidence cache.',
     detail: 'Gap-artifact cache entries were rejected this refresh, so cache-derived evidence is missing.',
-    nextStep: 'Rerun ripr check to regenerate the rejected gap-artifact reports, then run ripr: Refresh Diagnostics.'
+    nextStep: 'Rerun ripr check to regenerate the rejected gap-artifact reports, then run ripr: Refresh Full Analysis.'
   },
   limited: {
     summary: 'ripr analysis completed with limited evidence.',
@@ -5446,6 +5514,36 @@ async function readReceiptStatus(
     repoRoot,
     generatedAt: provenance ? stringField(provenance, 'generated_at') : undefined
   };
+}
+
+/** Report names `ripr.openReport` tries, in order. */
+const OPEN_REPORT_CANDIDATES = ['pr-evidence-summary.md', 'start-here.md'];
+
+/**
+ * Where the ripr server and CLI write reports: `<workspace>/target/ripr/reports`.
+ * The Rust side hardcodes this workspace-relative root (`DEFAULT_OUTPUT_ROOT` in
+ * `atomic_file.rs`) and does not consult `CARGO_TARGET_DIR` or
+ * `build.target-dir`, so the extension must not either, or it would look
+ * somewhere the server never writes (#15318).
+ */
+export function riprReportsDir(workspaceRoot: string): string {
+  return path.join(workspaceRoot, 'target', 'ripr', 'reports');
+}
+
+async function openFileInVsCodeEditor(filePath: string): Promise<void> {
+  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+  await vscode.window.showTextDocument(document);
+}
+
+async function fileExistsOnDisk(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(filePath)).isFile();
+  } catch (error) {
+    if (isFileNotFound(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function readOptionalFile(filePath: string): Promise<string | undefined> {

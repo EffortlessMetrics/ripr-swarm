@@ -624,3 +624,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_no_config_repair_gap (32)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_no_config_repair_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

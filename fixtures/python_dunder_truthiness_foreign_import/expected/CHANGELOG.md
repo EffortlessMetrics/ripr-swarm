@@ -105,3 +105,60 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_foreign_import (9)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_foreign_import --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_dunder_truthiness_foreign_import (10)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_foreign_import --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_foreign_import (11)
+
+Reason:
+RIPR-SPEC-0201: dunder dynamic_dispatch limit makes the reach stage unknown instead of no (#15339)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_foreign_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_foreign_import (12)
+
+Reason:
+RIPR-SPEC-0201: reach summary names the dunder path for both the dunder owner and its self.-helper variant (#15339 review)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_foreign_import --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_dunder_truthiness_foreign_import (13)
+
+Reason:
+RIPR-SPEC-0201 example 8: reach summary says the owner may be reached, not that it is reached (#15339 review)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_foreign_import --reason "..."`
+
+Updated:
+- `expected/human.txt`

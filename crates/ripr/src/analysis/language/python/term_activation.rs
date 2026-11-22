@@ -35,7 +35,7 @@ use super::boundary::{
 use super::effect_alignment::ChangedEffect;
 use super::module_constants::{body_bound_names, mentions_identifier};
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
-use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
+use super::related_tests::{PythonHiddenCode, PythonRelatedCandidate, python_text_hides_code};
 use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::static_limits::has_identifier_boundary;
 use super::{PythonAssertion, PythonOwner, PythonParameter, PythonTest, expr_full_name};
@@ -128,13 +128,17 @@ pub(super) fn term_facts(
     parameters: &[PythonParameter],
     owner_text: &str,
     wrapped: bool,
-    // Synchronous, with every decorator `@classmethod` or `@staticmethod`.
+    // Every decorator is `@classmethod` or `@staticmethod`.
     binding_only: bool,
 ) -> PythonTermFacts {
     let bound_names = body_bound_names(body);
+    // The outer async declaration changes how a caller obtains the return
+    // value. It does not rebind a parameter inside the function.
+    let async_signature = owner_text.strip_prefix("async");
+    let scope_text = async_signature.unwrap_or(owner_text);
     let opaque_scope = ["lambda", "for", "async", "await", ":="]
         .into_iter()
-        .any(|keyword| code_mentions(owner_text, keyword));
+        .any(|keyword| code_mentions(scope_text, keyword));
     let stable_parameters = match (&bound_names, opaque_scope) {
         (Some(bound), false) => parameters
             .iter()
@@ -164,7 +168,12 @@ pub(super) fn term_facts(
         guarded_return: (!wrapped)
             .then(|| guarded_return(source, body, parameters))
             .flatten(),
-        stable_parameters,
+        // Existing call-site propagation only models synchronous callers.
+        stable_parameters: if async_signature.is_some() {
+            Vec::new()
+        } else {
+            stable_parameters
+        },
         bound_names,
         returned_parameter,
         calls_own_name: false,
@@ -183,13 +192,14 @@ fn code_mentions(text: &str, token: &str) -> bool {
 fn code_mention_count(text: &str, token: &str) -> usize {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let word = token.chars().all(is_word);
+    let mut hidden = PythonHiddenCode::new(text);
     text.match_indices(token)
         .filter(|(start, _)| {
             let (start, end) = (*start, start + token.len());
             let whole = !word
                 || (!text[..start].chars().next_back().is_some_and(is_word)
                     && !text[end..].chars().next().is_some_and(is_word));
-            whole && !python_text_hides_code(text, start)
+            whole && !hidden.hides(start)
         })
         .count()
 }

@@ -394,7 +394,8 @@ memory_ratchet = "2026-11-04: ceiling 1024 MB, ladder bar 512 MB; measured 457 M
 # when the analysis is the typed partial outcome and its only limitations are
 # of the declared kind. A complete result, or any other limitation kind
 # beside it, fails the row. The admitted row stays visibly partial and is
-# never scanned for contradictions.
+# never scanned for contradictions; its contradiction sample is not_measured
+# (out of declared scope), not a lost completion (#10809).
 # The ceilings stay (#12052).
 [[corpus]]
 id = "typescript-compiler"
@@ -659,16 +660,17 @@ source = "verdict-corpus:fixtures/rust-verdict-corpus#false_actionable_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 # The bar sits on the avoidable rate below (RIPR-SPEC-0219, #12766). This
-# total also counts abstentions a spec's `Reject` example asks for (0.0128 of
-# the corpus when the split landed), so its target is the avoidable bar plus
-# that share; it stays here so the total remains visible and ratcheted.
+# total also counts abstentions a spec example asks for (39/862 = 0.0452 of
+# the corpus once `[abstain]`-marked examples counted; 0.0128 when the split
+# landed), so its target is the avoidable bar plus that share, rounded down;
+# it stays here so the total remains visible and ratcheted.
 [[metric]]
 id = "trust.verdict_corpus_abstention"
 board = "trust"
 title = "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
 unit = "ratio"
 direction = "lower_is_better"
-target = 0.21
+target = 0.24
 regression_pct = 0
 regression_floor = 0.02
 runner_dependent = false
@@ -676,8 +678,9 @@ source = "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
 
 # Abstentions analyzer work can remove: a row whose tests catch the change,
-# whose case cites only spec `Reject` examples that pin the outcome as
-# unresolved, and which accepts `limited` abstains because its spec asks it
+# whose case cites only spec examples that require an abstention (an
+# `[abstain]` marker, or a `Reject` example that pins the outcome as
+# unresolved), and which accepts `limited` abstains because its spec asks it
 # to, so it is left out of this numerator (RIPR-SPEC-0219).
 [[metric]]
 id = "trust.verdict_corpus_avoidable_abstention"
@@ -974,6 +977,42 @@ board = "trust"
 title = "Real mutants that join a ripr seam precisely enough to score"
 unit = "ratio"
 direction = "higher_is_better"
+target = 0.5
+regression_pct = 0
+regression_floor = 0.02
+runner_dependent = false
+source = "ingest:mutation-spot-check"
+
+[[metric]]
+id = "trust.mutation_recall_of_missed"
+board = "trust"
+title = "Runtime-missed mutants ripr flags ungripped (strict recall of missed, informational)"
+unit = "ratio"
+direction = "higher_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0.05
+runner_dependent = false
+source = "ingest:mutation-spot-check"
+
+[[metric]]
+id = "trust.mutation_recall_flagged_or_unknown"
+board = "trust"
+title = "Runtime-missed mutants ripr flags as a gap or honest unknown"
+unit = "ratio"
+direction = "higher_is_better"
+target = 0.8
+regression_pct = 0
+regression_floor = 0.05
+runner_dependent = false
+source = "ingest:mutation-spot-check"
+
+[[metric]]
+id = "trust.mutation_no_seam_share"
+board = "trust"
+title = "Real mutants with no containing static seam"
+unit = "ratio"
+direction = "lower_is_better"
 target = 0.5
 regression_pct = 0
 regression_floor = 0.02

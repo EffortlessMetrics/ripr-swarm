@@ -1565,6 +1565,42 @@ fn unknown_argument_names_keep_bounded_explicit_diagnostics() -> Result<(), Stri
     Ok(())
 }
 
+/// #14186: only the SDK's bare-name `-32601` is rewritten. Every other error
+/// passes through untouched, so the rewrite cannot rename a real diagnostic.
+#[test]
+fn only_the_sdk_bare_method_not_found_is_renamed() {
+    use rmcp::model::{ErrorCode, ErrorData};
+    let bare = ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "prompts/get", None);
+    let renamed = name_missing_method(bare, "prompts/get");
+    assert_eq!(renamed.code, ErrorCode::METHOD_NOT_FOUND);
+    assert_eq!(renamed.message.as_ref(), "Method not found: prompts/get");
+    assert!(renamed.data.is_none());
+
+    for untouched in [
+        // Another code whose message happens to equal the method.
+        ErrorData::new(ErrorCode::INVALID_PARAMS, "prompts/get", None),
+        // A method-not-found that already explains itself.
+        ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            "Method not found: prompts/get",
+            None,
+        ),
+        // A bare-name message that carries data of its own.
+        ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            "prompts/get",
+            Some(serde_json::json!({"method": "prompts/get"})),
+        ),
+        // A bare name that is not this request's method.
+        ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "tasks/get", None),
+    ] {
+        assert_eq!(
+            name_missing_method(untouched.clone(), "prompts/get"),
+            untouched
+        );
+    }
+}
+
 /// #13220: preserve the protocol category and ordinary message while making
 /// a long method name a disclosed preview, never a response-sized echo.
 #[test]
@@ -2304,5 +2340,344 @@ async fn refresh_verify_route_follows_the_retained_snapshot_base() -> Result<(),
         "with no snapshot the requested base is the only scope"
     );
     let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+fn invalid_params_data(error: &ErrorData) -> Result<&Value, String> {
+    assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    error
+        .data
+        .as_ref()
+        .ok_or_else(|| format!("refusal lost structured data: {error:?}"))
+}
+
+#[test]
+fn scalar_argument_parsers_refuse_coercion_and_name_the_argument() -> Result<(), String> {
+    let none: Option<serde_json::Map<String, Value>> = None;
+    let empty = argument_map(serde_json::json!({}));
+    for absent in [&none, &empty] {
+        assert_eq!(optional_string_argument(absent, "file"), Ok(None));
+        assert_eq!(optional_nonempty_string_argument(absent, "file"), Ok(None));
+        assert_eq!(optional_bool_argument(absent, "repair_ready"), Ok(None));
+    }
+
+    let text = argument_map(serde_json::json!({"file": "src/lib.rs", "empty": ""}));
+    assert_eq!(
+        optional_string_argument(&text, "file"),
+        Ok(Some("src/lib.rs".to_string()))
+    );
+    // A plain string accepts empty; the non-empty filter variant does not.
+    assert_eq!(
+        optional_string_argument(&text, "empty"),
+        Ok(Some(String::new()))
+    );
+    let error = optional_nonempty_string_argument(&text, "empty")
+        .err()
+        .ok_or("an empty filter string must be refused")?;
+    assert_eq!(error.message, "empty must be a non-empty string");
+    let data = invalid_params_data(&error)?;
+    assert_eq!(data["argument"], serde_json::json!("empty"));
+    assert_eq!(data["expected"], serde_json::json!("non-empty string"));
+
+    for wrong in [
+        serde_json::json!(7),
+        serde_json::json!(true),
+        serde_json::json!(null),
+        serde_json::json!(["a"]),
+    ] {
+        let arguments = argument_map(serde_json::json!({"file": wrong.clone()}));
+        let error = optional_string_argument(&arguments, "file")
+            .err()
+            .ok_or_else(|| format!("{wrong} must not coerce to a string"))?;
+        // Null is the one wrong value whose fix is to send nothing.
+        let expected = if wrong.is_null() {
+            "file must be a string, not null; omit file to use its default"
+        } else {
+            "file must be a string"
+        };
+        assert_eq!(error.message, expected);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("file"));
+        assert_eq!(data["expected"], serde_json::json!("string"));
+    }
+
+    let flags = argument_map(serde_json::json!({"on": true, "off": false}));
+    assert_eq!(optional_bool_argument(&flags, "on"), Ok(Some(true)));
+    assert_eq!(optional_bool_argument(&flags, "off"), Ok(Some(false)));
+    for wrong in [
+        serde_json::json!("true"),
+        serde_json::json!(1),
+        serde_json::json!(0),
+        serde_json::json!(null),
+    ] {
+        let arguments = argument_map(serde_json::json!({"repair_ready": wrong.clone()}));
+        let error = optional_bool_argument(&arguments, "repair_ready")
+            .err()
+            .ok_or_else(|| format!("{wrong} must not coerce to a boolean"))?;
+        let expected = if wrong.is_null() {
+            "repair_ready must be a boolean, not null; omit repair_ready to use its default"
+        } else {
+            "repair_ready must be a boolean"
+        };
+        assert_eq!(error.message, expected);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("repair_ready"));
+        assert_eq!(data["expected"], serde_json::json!("boolean"));
+    }
+    Ok(())
+}
+
+/// A fresh canonical directory for one file-filter test, removed on drop.
+struct FilterRoot(std::path::PathBuf);
+impl FilterRoot {
+    fn new(name: &str) -> Result<Self, String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ripr-mcp-file-filter-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+        std::fs::canonicalize(&path)
+            .map(Self)
+            .map_err(|error| error.to_string())
+    }
+}
+impl Drop for FilterRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// An agent usually holds the absolute path its editor gave it, while items
+/// are keyed by repository-relative paths. An absolute filter under the root
+/// narrows as its relative form; one outside the root is refused instead of
+/// matching nothing, which would read as "no gaps in that file".
+#[test]
+fn absolute_file_filter_is_relativized_under_the_root_and_refused_outside() -> Result<(), String> {
+    let temp = FilterRoot::new("lexical")?;
+    let root = temp.0.clone();
+    let nested = root.join("src").join("lib.rs");
+    let spell = |path: &std::path::Path| -> Result<String, String> {
+        path.to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("fixture path is not UTF-8: {path:?}"))
+    };
+
+    // Relative filters pass through untouched, with or without a root.
+    for relative in ["src/lib.rs", "./src/lib.rs", "lib.rs", "src/"] {
+        assert_eq!(
+            workspace_relative_file_filter(relative.to_string(), Some(&root)),
+            Ok(relative.to_string())
+        );
+        assert_eq!(
+            workspace_relative_file_filter(relative.to_string(), None),
+            Ok(relative.to_string())
+        );
+    }
+
+    // Under the root: the relative form, whether or not the file exists.
+    assert_eq!(
+        workspace_relative_file_filter(spell(&nested)?, Some(&root)),
+        Ok("src/lib.rs".to_string())
+    );
+    assert_eq!(
+        workspace_relative_file_filter(spell(&root.join("src"))?, Some(&root)),
+        Ok("src".to_string())
+    );
+
+    // A literal `%` takes the rendering item paths carry, so the absolute
+    // spelling matches the item the relative spelling does.
+    assert_eq!(
+        workspace_relative_file_filter(spell(&root.join("sale%off").join("lib.rs"))?, Some(&root)),
+        Ok("sale%25off/lib.rs".to_string())
+    );
+
+    // Outside the root, a sibling sharing the root's name as a string prefix,
+    // a `..` escape, the root itself and a rootless server are all refused.
+    let sibling = std::path::PathBuf::from(format!("{}-sibling", spell(&root)?)).join("lib.rs");
+    let escape = root.join("..").join("lib.rs");
+    let outside = "does not resolve below this workspace root";
+    for (path, root, needle) in [
+        (spell(&sibling)?, Some(root.as_path()), outside),
+        (spell(&escape)?, Some(root.as_path()), outside),
+        (spell(&nested)?, None, outside),
+        (
+            spell(&root)?,
+            Some(root.as_path()),
+            "omit file to list every item",
+        ),
+    ] {
+        let error = workspace_relative_file_filter(path.clone(), root)
+            .err()
+            .ok_or_else(|| format!("{path} must be refused"))?;
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(error.message.contains(needle), "{}", error.message);
+        // The refusal never echoes a host path.
+        assert!(!error.message.contains(path.as_str()), "{}", error.message);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("file"));
+    }
+    Ok(())
+}
+
+/// A symlinked spelling of the canonical root still resolves when the file
+/// exists, which is the macOS `/tmp` versus `/private/tmp` case.
+#[cfg(unix)]
+#[test]
+fn absolute_file_filter_resolves_a_symlinked_root_spelling() -> Result<(), String> {
+    let temp = FilterRoot::new("symlink")?;
+    let base = temp.0.clone();
+    let root = base.join("real");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src").join("lib.rs"), "").map_err(|error| error.to_string())?;
+    let alias = base.join("alias");
+    std::os::unix::fs::symlink(&root, &alias).map_err(|error| error.to_string())?;
+    let through_alias = alias.join("src").join("lib.rs");
+    let through_alias = through_alias.to_str().ok_or("fixture path is not UTF-8")?;
+    assert_eq!(
+        workspace_relative_file_filter(through_alias.to_string(), Some(&root)),
+        Ok("src/lib.rs".to_string())
+    );
+    // The same spelling for a file that does not exist cannot be resolved and
+    // is refused rather than matched against nothing.
+    let missing = alias.join("src").join("missing.rs");
+    let missing = missing.to_str().ok_or("fixture path is not UTF-8")?;
+    if let Ok(applied) = workspace_relative_file_filter(missing.to_string(), Some(&root)) {
+        return Err(format!("an unresolvable spelling was applied as {applied}"));
+    }
+    Ok(())
+}
+
+/// A required argument has no default, so a null there is never answered
+/// with the optional parser's "omit it" sentence.
+#[test]
+fn required_string_null_refusal_does_not_say_to_omit() -> Result<(), String> {
+    let arguments = argument_map(serde_json::json!({"canonical_id": null}));
+    let error = required_string_argument(&arguments, "canonical_id")
+        .err()
+        .ok_or("a null required argument must be refused")?;
+    assert_eq!(error.message, "canonical_id must be a string");
+    Ok(())
+}
+
+#[test]
+fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), String> {
+    let present = argument_map(serde_json::json!({"canonical_id": "gap:1"}));
+    assert_eq!(
+        required_string_argument(&present, "canonical_id"),
+        Ok("gap:1".to_string())
+    );
+    let none: Option<serde_json::Map<String, Value>> = None;
+    let empty_map = argument_map(serde_json::json!({}));
+    let other_key = argument_map(serde_json::json!({"unrelated": "value"}));
+    let empty = argument_map(serde_json::json!({"canonical_id": ""}));
+    let numeric = argument_map(serde_json::json!({"canonical_id": 5}));
+    for (arguments, message, expected) in [
+        (
+            &none,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &empty_map,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &other_key,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &empty,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (&numeric, "canonical_id must be a string", "string"),
+    ] {
+        let error = required_string_argument(arguments, "canonical_id")
+            .err()
+            .ok_or("a missing, empty or non-string required argument must be refused")?;
+        assert_eq!(error.message, message);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("canonical_id"));
+        assert_eq!(data["expected"], serde_json::json!(expected));
+    }
+
+    for absent in [&none, &empty_map, &other_key] {
+        assert_eq!(
+            refresh_source_argument(absent),
+            Ok(None),
+            "an omitted source defers to the session default"
+        );
+    }
+    for (value, expected) in [
+        ("committed", workspace::RefreshSource::Committed),
+        ("worktree", workspace::RefreshSource::Worktree),
+    ] {
+        let arguments = argument_map(serde_json::json!({"source": value}));
+        assert_eq!(refresh_source_argument(&arguments), Ok(Some(expected)));
+    }
+    for (wrong, message, expected) in [
+        (
+            serde_json::json!(""),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!("Worktree"),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!("HEAD"),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!(1),
+            "source must be a string",
+            serde_json::json!("string"),
+        ),
+    ] {
+        let arguments = argument_map(serde_json::json!({"source": wrong.clone()}));
+        let error = refresh_source_argument(&arguments)
+            .err()
+            .ok_or_else(|| format!("{wrong} must not select a refresh source"))?;
+        assert_eq!(error.message, message, "{wrong}");
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("source"), "{wrong}");
+        assert_eq!(data["expected"], expected, "{wrong}");
+    }
+    Ok(())
+}
+
+#[test]
+fn list_cursors_are_refused_and_absent_cursors_pass() -> Result<(), String> {
+    assert_eq!(reject_pagination_cursor(None, "tools/list"), Ok(()));
+    let without: PaginatedRequestParams =
+        serde_json::from_value(serde_json::json!({})).map_err(|error| error.to_string())?;
+    assert_eq!(
+        reject_pagination_cursor(Some(without), "tools/list"),
+        Ok(())
+    );
+    let with: PaginatedRequestParams = serde_json::from_value(serde_json::json!({"cursor": "x"}))
+        .map_err(|error| error.to_string())?;
+    let error = reject_pagination_cursor(Some(with), "resources/list")
+        .err()
+        .ok_or("a client-supplied cursor must be refused")?;
+    assert_eq!(
+        error.message,
+        "resources/list does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+    );
+    let data = invalid_params_data(&error)?;
+    assert_eq!(data["argument"], serde_json::json!("cursor"));
+    assert_eq!(
+        data["expected"],
+        serde_json::json!("omit; the complete list fits one page")
+    );
     Ok(())
 }

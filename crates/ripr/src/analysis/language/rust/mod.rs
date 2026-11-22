@@ -16,8 +16,10 @@
 //! diff, dispatches to this adapter, and applies sort + summary on the
 //! returned findings.
 
+mod boundary_input;
 mod dependent_scope;
 pub(crate) mod oracles;
+mod partial_scope_narrow;
 mod probe_shape;
 pub(crate) mod probes;
 mod proof_harness;
@@ -322,7 +324,7 @@ fn drop_unreached_test_files(
         .collect::<BTreeSet<_>>();
     let mut mentioned = None;
     let mut manifests = BTreeMap::new();
-    let mut discovery_off = BTreeMap::new();
+    let mut target_manifests = BTreeMap::new();
     let suspects = loaded_files
         .iter()
         .filter(|(path, bytes)| {
@@ -331,7 +333,7 @@ fn drop_unreached_test_files(
         .filter(|(path, _)| {
             let mentioned = mentioned
                 .get_or_insert_with(|| mentioned_module_names(root, &loaded_files, &mut manifests));
-            may_be_unreached(root, path, mentioned, &mut manifests, &mut discovery_off)
+            may_be_unreached(root, path, mentioned, &mut manifests, &mut target_manifests)
         })
         .map(|(path, _)| path.as_path())
         .collect::<Vec<_>>();
@@ -520,6 +522,15 @@ fn mentioned_module_names(
             if at > 0 && is_ident(code[at - 1]) {
                 continue;
             }
+            // A `mod` behind a `#[cfg]` no build satisfies (`any()`,
+            // `not(all())`) is stripped before rustc loads its file, so it
+            // mentions nothing and the file it names stays a suspect
+            // (#15877).
+            if outer_attributes_before(code, at).iter().any(|attr| {
+                crate::analysis::facts::cfg_predicates::attribute_disables_every_build(attr)
+            }) {
+                continue;
+            }
             let rest = &code[at + 3..];
             let skipped = rest
                 .iter()
@@ -556,21 +567,95 @@ fn mentioned_module_names(
     mentioned
 }
 
+/// The outer attributes written directly before the item keyword at `at`,
+/// read backward over whitespace and an optional visibility (`pub`,
+/// `pub(crate)`). Comments and literals are already masked in `code`, so a
+/// bracket inside them cannot unbalance the scan. Anything else before the
+/// keyword ends the list.
+fn outer_attributes_before(code: &[u8], at: usize) -> Vec<String> {
+    let skip_space = |mut end: usize| {
+        while end > 0 && code[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        end
+    };
+    let mut end = skip_space(at);
+    if end > 0 && code[end - 1] == b')' {
+        let mut depth = 0usize;
+        let mut open = None;
+        for index in (0..end).rev() {
+            match code[index] {
+                b')' => depth += 1,
+                b'(' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        open = Some(index);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(open) = open {
+            let before = skip_space(open);
+            if code[..before].ends_with(b"pub") {
+                end = skip_space(before - 3);
+            }
+        }
+    } else if code[..end].ends_with(b"pub")
+        && (end == 3 || !(code[end - 4].is_ascii_alphanumeric() || code[end - 4] == b'_'))
+    {
+        end = skip_space(end - 3);
+    }
+    let mut attributes = Vec::new();
+    while end > 0 && code[end - 1] == b']' {
+        let mut depth = 0usize;
+        let mut open = None;
+        for index in (0..end).rev() {
+            match code[index] {
+                b']' => depth += 1,
+                b'[' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        open = Some(index);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(open) = open else {
+            break;
+        };
+        let hash = skip_space(open);
+        if hash == 0 || code[hash - 1] != b'#' {
+            break;
+        }
+        let start = hash - 1;
+        attributes.push(String::from_utf8_lossy(&code[start..end]).into_owned());
+        end = skip_space(start);
+    }
+    attributes
+}
+
 /// Whether `path` could be a file no target reaches: a module file whose
-/// name nothing mentions, or a target root (`tests/x.rs`) in a package whose
-/// manifest sets `autotests`, `autobenches` or `autoexamples = false`.
+/// name nothing mentions, a target root (`tests/x.rs`) in a package whose
+/// manifest turns `autotests`, `autobenches` or `autoexamples` discovery
+/// off, or a binary root (`src/main.rs`, `src/bin/x.rs`) in a package whose
+/// manifest turns `autobins` discovery off (#15877).
 ///
-/// One cost cut that changes no verdict: `src/bin/x.rs` is never a suspect,
-/// because the walk always counts it as a production root and could only
-/// pay for a parse it cannot turn into a verdict. A file under a `src/tests/`
-/// module directory is an ordinary module file: no manifest sits beside that
-/// `tests/`, so the module-name check below decides (#6979).
+/// One cost cut that changes no verdict: while bin discovery is on,
+/// `src/main.rs` and `src/bin/x.rs` are never suspects, because the walk
+/// counts them as production roots and could only pay for a parse it cannot
+/// turn into a verdict. A file under a `src/tests/` module directory is an
+/// ordinary module file: no manifest sits beside that `tests/`, so the
+/// module-name check below decides (#6979).
 fn may_be_unreached(
     root: &Path,
     path: &Path,
     mentioned: &MentionedModules,
     manifests: &mut BTreeMap<PathBuf, bool>,
-    discovery_off: &mut BTreeMap<PathBuf, Option<bool>>,
+    target_manifests: &mut BTreeMap<PathBuf, Option<Option<toml::Value>>>,
 ) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -581,6 +666,26 @@ fn may_be_unreached(
         .parent()
         .and_then(Path::file_name)
         .and_then(|name| name.to_str());
+    // `None`: no manifest beside the directory, so it is not a target
+    // directory. `Some(None)`: a manifest that does not parse, which leaves
+    // the walk nothing to prove. Read through the committed-source overlay,
+    // as the walk does, so a committed-history diff sees the committed
+    // manifest.
+    let mut manifest_at = |package_dir: &Path| {
+        target_manifests
+            .entry(package_dir.to_path_buf())
+            .or_insert_with(|| {
+                committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
+                    .ok()
+                    .flatten()
+                    .map(|bytes| {
+                        String::from_utf8(bytes)
+                            .ok()
+                            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
+                    })
+            })
+            .clone()
+    };
     let is_target_dir = |name: Option<&str>| matches!(name, Some("tests" | "benches" | "examples"));
     // A target root: `tests/x.rs`, or `tests/x/main.rs` (and the bench and
     // example twins).
@@ -594,42 +699,50 @@ fn may_be_unreached(
     // `src/tests/x.rs` sits under a module directory named `tests`, not a
     // target directory: with no manifest beside it, it is an ordinary module
     // file and takes the module-name check below (#6979).
-    if let Some(package_dir) = package_dir {
-        // `None`: no manifest beside the directory, so it is not a target
-        // directory. Read through the committed-source overlay, as the walk
-        // does, so a committed-history diff sees the committed manifest.
-        let discovery = *discovery_off
-            .entry(package_dir.to_path_buf())
-            .or_insert_with(|| {
-                // The same reading `evidence_roots` applies: only an explicit
-                // `auto* = false` turns discovery off. An unparsable manifest
-                // leaves the walk nothing to prove.
-                committed_source::read_source_bytes(root, &package_dir.join("Cargo.toml"))
-                    .ok()
-                    .flatten()
-                    .map(|bytes| {
-                        String::from_utf8(bytes)
-                            .ok()
-                            .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
-                            .is_some_and(|manifest| {
-                                let package = manifest.get("package");
-                                ["autotests", "autobenches", "autoexamples"]
-                                    .iter()
-                                    .any(|key| {
-                                        package
-                                            .and_then(|package| package.get(*key))
-                                            .and_then(toml::Value::as_bool)
-                                            == Some(false)
-                                    })
-                            })
-                    })
-            });
-        if let Some(off) = discovery {
-            return off;
-        }
+    if let Some(package_dir) = package_dir
+        && let Some(manifest) = manifest_at(package_dir)
+    {
+        // The same reading `evidence_roots` applies: an explicit
+        // `auto* = false`, or edition 2015 with a declared target of that
+        // kind (#15877), turns discovery off.
+        return manifest.is_some_and(|manifest| {
+            [
+                ("autotests", "test"),
+                ("autobenches", "bench"),
+                ("autoexamples", "example"),
+            ]
+            .iter()
+            .any(|(key, section)| !workspace::discovers_targets(&manifest, key, section))
+        });
     }
-    if parent_name == Some("bin") && grandparent_name == Some("src") {
-        return false;
+    // A binary root: `src/main.rs`, `src/bin/x.rs` or `src/bin/x/main.rs`.
+    let great_grandparent_name = parent
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str());
+    let bin_package_dir = if file_name == "main.rs" && parent_name == Some("src") {
+        parent.parent()
+    } else if parent_name == Some("bin") && grandparent_name == Some("src") {
+        parent.parent().and_then(Path::parent)
+    } else if file_name == "main.rs"
+        && grandparent_name == Some("bin")
+        && great_grandparent_name == Some("src")
+    {
+        parent
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+    } else {
+        None
+    };
+    if let Some(package_dir) = bin_package_dir {
+        // With bin discovery off only declared binaries build; the walk
+        // roots every declared one, so a suspect costs a parse and never
+        // drops a built binary (#15877).
+        return manifest_at(package_dir)
+            .flatten()
+            .is_some_and(|manifest| !workspace::discovers_targets(&manifest, "autobins", "bin"));
     }
     let module_name = match file_name {
         "lib.rs" | "main.rs" | "build.rs" => return false,
@@ -1002,8 +1115,11 @@ impl PartialDiffScope {
     /// selection. Named partition continuation is not available in this
     /// contract revision.
     pub(crate) fn continuation_disclosure(&self) -> String {
+        let narrow = self
+            .narrow_diff_route()
+            .map_or(String::new(), |route| format!(". {route}"));
         format!(
-            "partial result: {}; named partition continuation is not available",
+            "partial result: {}; named partition continuation is not available{narrow}",
             self.widen_instruction()
         )
     }
@@ -1400,7 +1516,9 @@ fn nothing_fits_error(files: &[OverLimitFile]) -> String {
          was not run to protect runner memory before probe expansion. Repair route: reduce the \
          diff scope, split the extraction PR, run a narrower diff, or raise the limit via {}. \
          To analyze a subset, pass `--path <glob>` and/or `--exclude <glob>` to `ripr check` \
-         (repeatable, repository-relative; files left out are reported as not analyzed).",
+         (repeatable, repository-relative; files left out are reported as not analyzed). From \
+         a pre-commit hook, set those flags in the hook's `args:`, or skip this hook for one \
+         commit with `SKIP=ripr git commit ...`.",
         files.len(),
         largest.changed_lines,
         largest.limit_env,
@@ -1750,7 +1868,9 @@ fn enforce_changed_rust_line_limit(
          PR, run a narrower diff, or raise the limit via \
          {DIFF_CHANGED_RUST_LINE_LIMIT_ENV}=<number>. To analyze a subset, pass \
          `--path <glob>` and/or `--exclude <glob>` to `ripr check` (repeatable, \
-         repository-relative; files left out are reported as not analyzed)."
+         repository-relative; files left out are reported as not analyzed). From a \
+         pre-commit hook, set those flags in the hook's `args:`, or skip this hook for one \
+         commit with `SKIP=ripr git commit ...`."
     ))
 }
 
@@ -1827,8 +1947,14 @@ fn apply_probe_and_oracle_limits(
         owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
     oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
-    oracles::apply_wrapper_error_binding_limit(finding, probe);
+    let literal_only_related = finding.class == ExposureClass::ReachableUnrevealed
+        && related_tests_assert_only_dropped_literals(finding, index);
+    oracles::apply_wrapper_error_binding_limit(finding, probe, literal_only_related);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
+    // #14951: after every reach-witness limit (an uncalled owner has none) and
+    // after the RIPR-SPEC-0150 binding disclosure, which keeps its finding
+    // limit-free, whichever related-test roles the finding carries.
+    boundary_input::apply_limit(finding, probe, index);
     oracles::apply_cross_language_limit(finding, probe, index);
     // Existing FFI limits own their detail and guidance before this narrower annotation.
     probes::apply_rust_field_match_selector_limit(finding, probe, index);
@@ -1860,6 +1986,9 @@ fn apply_probe_and_oracle_limits(
     // may run the owner without naming it.
     classify::withhold_destructor_credit(finding, index);
     classify::withhold_implicit_call_gap(finding, index, pre_cap_syntax_only);
+    // RIPR-SPEC-0240 / #14935: an owner compiled only under a cfg that also
+    // gates a doc example ripr refused to read may be checked by that example.
+    classify::withhold_gated_doctest_gap(finding, index);
     // RIPR-SPEC-0240: an owner passed as a function value, generated by an
     // item macro, or called inside an executor helper has no call ripr can
     // pair with the assertion; that is a limit, not a missing assertion.
@@ -1876,6 +2005,9 @@ fn apply_probe_and_oracle_limits(
     classify::withhold_mixed_refusal_gap(finding);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
+    // #15237: after every limit and gap decision, so the rewritten row miss
+    // never feeds one; it only withdraws a false "has no assertion" claim.
+    oracles::name_unread_assertion_macro_rows(finding, index);
 }
 
 /// Whether [`apply_rust_no_static_path_limit`] searches for a witness: a
@@ -1974,17 +2106,12 @@ fn apply_rust_no_static_path_limit(
     } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_macro_reach_limit(finding, &owner_name, &witness);
-    } else if let Some(test) = find_subprocess_binary_test(index, &probe.location.file) {
-        finding.static_limit_kind = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
-        finding.evidence.push(
-            "An integration test invokes a Cargo-built binary, but ripr cannot yet map that binary back to the changed owner; no subprocess reach or receipt claim is made.".to_string(),
-        );
-        finding.evidence.push(format!(
-            "Where to inspect: {}:{} ({})",
-            test.file.display(),
-            test.start_line,
-            test.name
-        ));
+    } else if let Some(limit) = find_subprocess_binary_test(
+        index,
+        &probe.location.file,
+        property_macro_mentions.subprocess_package_filter(&probe.location.file),
+    ) {
+        limit.record(finding);
     } else if oracles::apply_unresolved_property_macro_limit(
         finding,
         &owner_name,
@@ -2124,7 +2251,13 @@ fn apply_rust_proximity_reach_limit(
     // or defining its own function of the owner's name). A test that reaches
     // the owner through a wrapper crate has no helper-transfer chain, so the
     // name-token relation alone must not read as an actionable gap (#10127).
-    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed;
+    // #14968: a finding whose every related test asserts only literals
+    // (`assert!(true)`) read `weakly_exposed` from that literal alone, and
+    // that reading admitted any witness. Dropping the literal's credit
+    // lowers the class, never the limitation it named, so such a finding
+    // keeps the weak reading's admission.
+    let cross_package_only = finding.class == ExposureClass::ReachableUnrevealed
+        && !related_tests_assert_only_dropped_literals(finding, index);
     // The owner as the index spells it, the same form a witness's test file
     // has (the probe's own path may carry the checkout root).
     let owner = probe
@@ -2142,10 +2275,15 @@ fn apply_rust_proximity_reach_limit(
                 )
             })
     };
-    if let Some(witness) = transitive_reach
-        .transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
-    {
+    // With an admission rule, rank only admitted witnesses: filtering the
+    // single best one would let a nearer ineligible witness hide an
+    // eligible one and drop the limit (#14970).
+    let transitive = if cross_package_only {
+        transitive_reach.transitive_witness_admitted(&owner_name, &admits)
+    } else {
+        transitive_reach.transitive_witness(&owner_name)
+    };
+    if let Some(witness) = transitive {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
@@ -2164,10 +2302,11 @@ fn apply_rust_proximity_reach_limit(
             &witness.entry_symbol,
             &owner_name,
         );
-    } else if let Some(witness) = transitive_reach
-        .deep_transitive_witness(&owner_name)
-        .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
-    {
+    } else if let Some(witness) = if cross_package_only {
+        transitive_reach.deep_transitive_witness_admitted(&owner_name, &admits)
+    } else {
+        transitive_reach.deep_transitive_witness(&owner_name)
+    } {
         apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
@@ -2176,6 +2315,29 @@ fn apply_rust_proximity_reach_limit(
             &owner_name,
         );
     }
+}
+
+/// Whether every related test of `finding` supplied no oracle row and is an
+/// indexed test whose assertions are all dropped literal-only assertions
+/// (#14968). A row the index cannot match, an oracle row, or a list at the
+/// render cap (which may hide rows) answers `false`.
+fn related_tests_assert_only_dropped_literals(finding: &Finding, index: &RustIndex) -> bool {
+    !finding.related_tests.is_empty()
+        && finding.related_tests.len() < classify::RELATED_TESTS_RENDER_CAP
+        && finding.related_tests.iter().all(|related| {
+            let mut matching = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.name == related.name
+                        && test.start_line == related.line
+                        && (test.file == related.file || related.file.ends_with(&test.file))
+                })
+                .peekable();
+            related.oracle.is_none()
+                && matching.peek().is_some()
+                && matching.all(classify::asserts_only_dropped_literals)
+        })
 }
 
 /// Shared transitive limitation projection (RIPR-SPEC-0114), for a witness
@@ -2263,23 +2425,45 @@ fn replace_unresolved_reach_advice(finding: &mut Finding, next_step: String) {
     finding.activation.missing_discriminators.clear();
 }
 
+struct SubprocessBinaryLimitation<'a> {
+    inspection_test: Option<&'a crate::analysis::facts::TestFact>,
+}
+
+impl SubprocessBinaryLimitation<'_> {
+    fn record(self, finding: &mut Finding) {
+        finding.static_limit_kind = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
+        finding.evidence.push(
+            "An integration test invokes a Cargo-built binary, but ripr cannot yet map that binary back to the changed owner; no subprocess reach or receipt claim is made.".to_string(),
+        );
+        if let Some(test) = self.inspection_test {
+            finding.evidence.push(format!(
+                "Where to inspect: {}:{} ({})",
+                test.file.display(),
+                test.start_line,
+                test.name
+            ));
+        }
+    }
+}
+
 fn find_subprocess_binary_test<'a>(
     index: &'a RustIndex,
     owner_file: &Path,
-) -> Option<&'a crate::analysis::facts::TestFact> {
+    eligible_package: impl Fn(&Path) -> bool,
+) -> Option<SubprocessBinaryLimitation<'a>> {
     if !is_binary_source_path(owner_file) {
         return None;
     }
     index
         .tests()
         .iter()
-        .filter(|test| rust_index::is_test_file(&test.file))
-        .filter(|test| is_cargo_binary_invocation(&test.body))
-        .min_by(|left, right| {
-            left.file
-                .cmp(&right.file)
-                .then(left.start_line.cmp(&right.start_line))
-                .then(left.name.cmp(&right.name))
+        .filter(|test| {
+            rust_index::is_test_file(&test.file) && is_cargo_binary_invocation(&test.body)
+        })
+        .map(|test| (!eligible_package(&test.file), test))
+        .min_by_key(|(foreign, test)| (*foreign, &test.file, test.start_line, &test.name))
+        .map(|(foreign, test)| SubprocessBinaryLimitation {
+            inspection_test: (!foreign).then_some(test),
         })
 }
 
@@ -3130,6 +3314,7 @@ impl RustAdapter {
             dependency_adjacency
                 .as_ref()
                 .map(|adjacency| classify::DependencyEdgeContext {
+                    test_host_manifests: Default::default(),
                     adjacency,
                     manifest_dir_prefixes: &manifest_dir_prefixes,
                     index: &index,
@@ -3283,9 +3468,7 @@ impl RustAdapter {
                             // outside a declaration has its own lexical
                             // superset, owned beside the scanner.
                             !facts.module_declarations.is_empty()
-                                || facts.source.lines().any(|line| {
-                                    line.contains("mod ") && line.trim_end().ends_with(';')
-                                })
+                                || crate::analysis::diff::may_declare_module(&facts.source)
                                 || crate::analysis::diff::ModuleDeclarations::may_hold_outside_gate(
                                     &facts.source,
                                 )
@@ -3658,6 +3841,9 @@ impl RustAdapter {
                         &probe.expression,
                     );
                 }
+                if let Some(edges) = &dependency_edges {
+                    edges.disclose_dependent_test_host(&mut finding, &changed.path);
+                }
                 push_retained_finding(&mut findings, finding);
             }
         }
@@ -3715,7 +3901,10 @@ impl RustAdapter {
                 .count(),
             limitations: limitations
                 .into_iter()
-                .chain(limitations_for_absent_changed_files(&absent_changed_files)?)
+                .chain(limitations_for_absent_changed_files(
+                    &options.root,
+                    &absent_changed_files,
+                )?)
                 .chain(workspace::limitations_for_unreadable_unchanged_paths(
                     &unreadable_unchanged_paths,
                 )?)
@@ -4507,8 +4696,11 @@ mod tests {
             ).map_err(|error| error.to_string())?;
             let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
             let count = if named && !ignored { 8 } else { 9 };
+            // Each crowd row also calls a foreign `add`, so it ranks as near the
+            // owner by name just like `zz_named` (#15026). The tie keeps name
+            // order, and `zz_named` stays behind the cap.
             for n in 0..count {
-                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        let one = 0i64.add(1);\n        assert_eq!(sum.0, 2);\n        assert_eq!(one, 1);\n    }}\n"));
             }
             if named {
                 source.push_str("    #[test]\n");
@@ -4907,7 +5099,10 @@ mod tests {
                 > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS,
             "fixture must exceed the detail budget when the path is interpolated"
         );
-        let limitations = limitations_for_absent_changed_files(&[std::path::PathBuf::from(&deep)])?;
+        let limitations = limitations_for_absent_changed_files(
+            std::path::Path::new("/nonexistent-ripr-root"),
+            &[std::path::PathBuf::from(&deep)],
+        )?;
         assert_eq!(limitations.len(), 1);
         assert_eq!(limitations[0].path.as_deref(), Some(deep.as_str()));
         let detail = limitations[0].bounded_detail.as_deref().unwrap_or_default();
@@ -9098,7 +9293,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 
     #[test]
-    fn subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests() {
+    fn subprocess_limit_only_applies_to_binary_source_paths_and_integration_tests()
+    -> Result<(), String> {
         let mut index = RustIndex::default();
         index.push_test(TestFact {
             name: "cli_receipt".to_string(),
@@ -9114,11 +9310,68 @@ fn absent_delimiter_boundary_returns_head() {
             let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             generated: None,
         });
+        let root = temp_root("subprocess-package")?;
+        let paths = [
+            "src/main.rs",
+            "tests/cli.rs",
+            "sibling/src/main.rs",
+            "sibling/tests/cli.rs",
+        ]
+        .map(PathBuf::from);
+        for path in &paths {
+            write(&root.join(path), "")?;
+        }
+        for (path, name) in [("Cargo.toml", "worker"), ("sibling/Cargo.toml", "sibling")] {
+            write(
+                &root.join(path),
+                &format!("[package]\nname='{name}'\nversion='0.1.0'\n"),
+            )?;
+        }
+        index.workspace_authority = Some(
+            crate::analysis::facts::WorkspaceRootAuthority::from_sources(
+                &root,
+                paths.iter().map(|p| (p, "")),
+            ),
+        );
+        let report = |index: &RustIndex, path: &str| {
+            let owner = root.join(path);
+            let mentions = super::oracles::PropertyMacroMentionIndex::new(index, &root);
+            let mut finding = no_path_finding_with_infection_summary("", Vec::new());
+            if let Some(limit) = super::find_subprocess_binary_test(
+                index,
+                &owner,
+                mentions.subprocess_package_filter(&owner),
+            ) {
+                limit.record(&mut finding);
+            }
+            (finding.static_limit_kind, finding.evidence)
+        };
+        let limit = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
+        let (kind, local) = report(&index, "src/main.rs");
+        assert_eq!(kind, limit);
+        let pointer = format!(
+            "Where to inspect: {}:12 (cli_receipt)",
+            Path::new("tests/cli.rs").display()
+        );
+        assert_eq!(local.last(), Some(&pointer));
+        let (kind, foreign) = report(&index, "sibling/src/main.rs");
+        assert_eq!(kind, limit);
+        assert_eq!(foreign, local[..local.len() - 1]);
         assert!(is_binary_source_path(Path::new("src/main.rs")));
-        assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_some());
-        assert!(super::find_subprocess_binary_test(&index, Path::new("src/lib.rs")).is_none());
-        index.test_at_mut(0).file = PathBuf::from("src/lib.rs");
-        assert!(super::find_subprocess_binary_test(&index, Path::new("src/main.rs")).is_none());
+        assert_eq!(report(&index, "src/lib.rs").0, None);
+
+        // The sibling's path sorts before tests/cli.rs. A local witness
+        // retains its pointer even in the presence of the earlier foreign test.
+        let mut sibling = index.tests()[0].clone();
+        sibling.file = PathBuf::from("sibling/tests/cli.rs");
+        index.push_test(sibling);
+        assert_eq!(report(&index, "src/main.rs"), (limit, local));
+
+        for i in 0..2 {
+            index.test_at_mut(i).file = PathBuf::from("src/lib.rs");
+        }
+        assert_eq!(report(&index, "src/main.rs").0, None);
+        fs::remove_dir_all(root).map_err(|err| err.to_string())
     }
 
     fn changed_file(path: &str, added: usize, removed: usize) -> ChangedFile {
@@ -10311,7 +10564,7 @@ fn absent_delimiter_boundary_returns_head() {
                 context.production_like_targets.insert(file.clone());
             }
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10337,7 +10590,7 @@ fn absent_delimiter_boundary_returns_head() {
         ] {
             let loaded = vec![(file.clone(), source.to_vec())];
             let remaining = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &[],
@@ -10370,7 +10623,7 @@ fn absent_delimiter_boundary_returns_head() {
                 Vec::new()
             };
             let kept = super::drop_unreached_test_files(
-                Path::new("."),
+                Path::new("/nonexistent-ripr-root"),
                 &context,
                 std::slice::from_ref(&file),
                 &harnesses,

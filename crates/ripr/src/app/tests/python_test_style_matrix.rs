@@ -324,6 +324,89 @@ const WEAK_ONLY: &[WeakOnly] = &[
 ];
 
 #[test]
+fn parenthesized_owner_calls_bind_only_the_whole_result() -> Result<(), String> {
+    for (source, prefix, value, exposed) in [
+        (CALC, "", "(discount(200))", true),
+        (
+            ASYNC_CALC,
+            "@pytest.mark.asyncio\nasync ",
+            "await(discount(200))",
+            true,
+        ),
+        (ASYNC_CALC, "", "(discount(200))", false),
+        (CALC, "", "((discount(200)))", true),
+        (CALC, "", "(discount(200),)", false),
+        (CALC, "", "(discount(200) or 190)", false),
+        (
+            CALC,
+            "@pytest.mark.asyncio\nasync ",
+            "await(discount(200))",
+            false,
+        ),
+    ] {
+        let test = format!(
+            "import pytest\nfrom src.calc import discount\n\n{prefix}def test_discount():\n    result = {value}\n    assert result == 190\n"
+        );
+        let finding = check_style(value, &[("src/calc.py", source)], CALC_EDIT, &test)?;
+        assert_eq!(
+            finding.class == ExposureClass::Exposed,
+            exposed,
+            "{value}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn conditional_fixture_reimport_requires_the_asyncio_provider() -> Result<(), String> {
+    let prefix = "import sys\nimport pytest\nfrom pytest_asyncio import fixture as fx\nfrom src.cart import Cart\n";
+    let test = "\n@fx\nasync def cart():\n    return Cart(200)\n\n@pytest.mark.asyncio\nasync def test_discounted(cart):\n    assert await cart.discounted() == 190\n";
+    let classify = |binding: &str| -> Result<ExposureClass, String> {
+        let finding = check_style(
+            "conditional fixture provider",
+            &[("src/cart.py", ASYNC_CART)],
+            CART_EDIT,
+            &format!("{prefix}{binding}{test}"),
+        )?;
+        assert!(
+            !finding.related_tests.is_empty(),
+            "{binding:?}: {finding:?}"
+        );
+        Ok(finding.class)
+    };
+    let plain = classify("from pytest import fixture as fx\n")?;
+    assert_ne!(plain, ExposureClass::Exposed);
+    for (binding, expected) in [
+        ("", &ExposureClass::Exposed),
+        ("if fx is None:\n    pass\n", &ExposureClass::Exposed),
+        (
+            "if 0:\n    from pytest import fixture as fx\n",
+            &ExposureClass::Exposed,
+        ),
+        ("if True:\n    from pytest import fixture as fx\n", &plain),
+        (
+            "try:\n    from pytest import fixture as fx\nexcept ImportError:\n    pass\n",
+            &plain,
+        ),
+        ("if sys.platform:\n    fx = pytest.fixture\n", &plain),
+        ("for fx in providers:\n    pass\n", &plain),
+        ("with provider() as fx:\n    pass\n", &plain),
+        ("del fx\n", &plain),
+        (
+            "if False:\n    pass\nelse:\n    from pytest import fixture as fx\n",
+            &plain,
+        ),
+        (
+            "if sys.platform == 'win32':\n    from pytest import fixture as fx\n",
+            &plain,
+        ),
+    ] {
+        assert_eq!(&classify(binding)?, expected, "{binding:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn python_test_styles_without_strong_credit_keep_weak_tests_out_of_exposed() -> Result<(), String> {
     // The supported styles' weak rows are held to `weakly_exposed` below.
     let mut failures = Vec::new();
@@ -536,8 +619,20 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n@app.get(\"/price\")\ndef price() -> Price:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
-            "bare dict annotation",
-            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+            "shadowed dict annotation",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass dict(BaseModel):\n    total: int\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "tuple-bound dict annotation",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\ndict, unused = Price, None\n\n\n@app.get(\"/price\")\ndef price() -> (dict):\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "star-imported dict annotation",
+            "from fastapi import FastAPI\nfrom src.models import *\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "bracketed dict target",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n(\n    unused,\n    dict,\n) = None, Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
             "parenthesized route alias",
@@ -550,6 +645,50 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
         (
             "commented schema option",
             "from fastapi import FastAPI\n\napp = FastAPI(  # options\n    **{\"openapi\" \"_url\": \"/price\"}\n)\n\n\n@app.get(\"/price\")\ndef price():\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "assembled globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nglobals()[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "compound-line dict import",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nif True: from src.models import dict\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "frame globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport sys\nsys._getframe().f_globals[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "function globals dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\ndef _h(): pass\n_h.__globals__[\"di\" \"ct\"] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "fullwidth dict name",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nｄｉｃｔ = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "dict import after a bracketed docstring",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\n\"\"\"\nsee (\n\"\"\"\nfrom src.models import dict\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "case pattern dict capture",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nmatch {\"k\": Price}:\n    case {\"k\": dict}:\n        pass\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "f-string dict walrus",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nf\"{(dict := Price)}\"\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "getattr builtins dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport os\nb = getattr(os, \"__built\" \"ins__\")\nb[\"tcid\"[::-1]] = Price\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "patched module dict",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nfrom unittest.mock import patch\n\npatch(\"src.app.dict\", Price, create=True).start()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "dict rebound by code in a string",
+            "from fastapi import FastAPI\nfrom pydantic import BaseModel\n\napp = FastAPI()\n\n\nclass Price(BaseModel):\n    total: int\n\n\nimport timeit\n\ntimeit.timeit(\"import sys; sys.modules['src.app'].dict = sys.modules['src.app'].Price\", number=1)\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
         ),
         (
             "unpacked application options",
@@ -1236,6 +1375,39 @@ fn a_route_response_read_credits_only_the_changed_key_of_the_owners_route() -> R
             "string punctuation change: read {:?}",
             finding.class
         ));
+    }
+    // Control: the builtin `dict` used as a return annotation (on one line or
+    // after a split signature), a parameter annotation or a call is not a
+    // rebinding, so the changed key stays credited.
+    for (name, app) in [
+        (
+            "dict return annotation",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/price\")\ndef price() -> dict:\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+        (
+            "split signature dict annotation",
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n\ndef shape(value: dict) -> dict:\n    return dict(value)\n\n\n@app.get(\"/price\")\nasync def price(\n    vip: bool = True,\n) -> dict :\n    return {\"total\": 200 - 10, \"count\": 3}\n",
+        ),
+    ] {
+        let finding = check_style(name, &[("src/app.py", app)], PRICE_EDIT, &strong)?;
+        if finding.class != ExposureClass::Exposed {
+            failures.push(format!("{name}: read {:?}", finding.class));
+        }
+    }
+    // Control: an f-string and a PATCH route trip the `dict` rebinding scan,
+    // which withdraws only `-> dict` credit; an unannotated handler beside
+    // them stays credited, and the same handler under `-> dict` does not.
+    for (name, annotation, credited) in [
+        ("unannotated handler beside an f-string", "", true),
+        ("dict handler beside an f-string", " -> dict", false),
+    ] {
+        let app = format!(
+            "from fastapi import FastAPI\n\napp = FastAPI()\nGREETING = f\"{{app}}\"\n\n\n@app.patch(\"/other\")\ndef other():\n    return {{\"ok\": 1}}\n\n\n@app.get(\"/price\")\ndef price(){annotation}:\n    return {{\"total\": 200 - 10, \"count\": 3}}\n"
+        );
+        let finding = check_style(name, &[("src/app.py", &app)], PRICE_EDIT, &strong)?;
+        if (finding.class == ExposureClass::Exposed) != credited {
+            failures.push(format!("{name}: read {:?}", finding.class));
+        }
     }
     // A test file that registers its own route on the app.
     let test_route = format!(

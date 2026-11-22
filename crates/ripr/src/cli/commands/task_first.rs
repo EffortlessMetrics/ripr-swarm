@@ -44,9 +44,10 @@ Options:
                    unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
-                   lines from stderr. Refusal prose, the attempt id and the
-                   next command stay. `RIPR_QUIET` (any value except empty,
-                   `0` or `false`) does the same.
+                   lines from stderr. Refusal prose, the attempt id, the
+                   next command and the warning to write output outside the
+                   repo stay. `RIPR_QUIET` (any value except empty, `0` or
+                   `false`) does the same.
 
 Without an item, repair starts only when exactly one repair-eligible gap
 is visible under the selected root. Several eligible gaps print a bounded
@@ -431,6 +432,14 @@ fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
     CommandError::Decision(code.message_with_stderr_line(&message))
 }
 
+/// [`typed_decision`] for a refusal whose prose names one next command the
+/// caller composed from the bound root; the document carries it as `next`
+/// (#15260).
+fn typed_decision_with_next(code: RepairRefusalCode, message: String, next: &str) -> CommandError {
+    crate::cli::usage_refusal::note_typed_refusal_with_next(code, message.trim_end(), next);
+    CommandError::Decision(code.message_with_stderr_line(&message))
+}
+
 /// [`typed_decision`] for a selection refusal: the document also carries the
 /// choice commands the caller composed from the typed ids it just listed on
 /// stderr (#14980).
@@ -457,6 +466,18 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     )
     .map_err(|message| typed_decision(RepairRefusalCode::UnanchoredRoot, message))?;
     ensure_command_root(&options.root, "repair")?;
+    // #15488: a repair attempt starts only at the exact Git top-level, so a
+    // start decided under a subdirectory root would refuse at the before
+    // phase. Refuse here, before the selector reads or writes anything,
+    // with the cage's own reason. (The app-level selector stays usable on
+    // non-attempt roots; this façade is where a start becomes an attempt.)
+    if let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&options.root) {
+        return Err(typed_decision(
+            RepairRefusalCode::SubdirectoryRoot,
+            format!("repair start refused: {refusal}; rerun `ripr repair` from the Git top-level"),
+        ));
+    }
+    let mut unscoped: Option<UnscopedSelection> = None;
     let seam_id = match options.item.as_deref() {
         Some(item) => {
             let item =
@@ -468,76 +489,106 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 }
             }
         }
-        None => match resolve_repair_start(&options.root, options.base.as_deref())
-            .map_err(CommandError::from)?
-        {
-            RepairStartDecision::Start { seam_id } => seam_id,
-            RepairStartDecision::NoEligible {
-                total_seams,
-                change,
-                reasons,
-                reasons_total,
-            } => {
-                // A deliberate named outcome, not a failure: the honest
-                // setup/limitation message on stderr, stdout empty.
-                return Err(typed_decision(
-                    RepairRefusalCode::NoEligibleSeam,
-                    no_eligible_seam_message(
-                        &options.root,
-                        options.base.as_deref(),
-                        change,
-                        total_seams,
-                        &reasons,
-                        reasons_total,
-                    ),
-                ));
-            }
-            RepairStartDecision::Action(action, candidates) => {
-                // A deliberate named outcome, not a failure: stderr, stdout
-                // empty (`cmd:repair` declares an empty-stdout refusal),
-                // decision exit code.
-                let bound =
-                    crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
-                let selection_total = match action.stop() {
-                    Some(crate::domain::NextActionStop::SelectItem { total, .. }) => Some(*total),
-                    _ => None,
-                };
-                if let (Some(total), false) = (selection_total, candidates.is_empty()) {
-                    // #10978 / #11111: a selection is told in plain words:
-                    // where each change is, what a test must check for it,
-                    // and the exact command that starts it. The typed stop
-                    // ids and count are carried by those commands and the
-                    // stated total, so the internal block is not repeated.
+        None => {
+            let resolved = resolve_repair_start(&options.root, options.base.as_deref())
+                .map_err(CommandError::from)?;
+            // #13701: a start or menu chosen with no readable change says it is
+            // not narrowed to the change and names the `--base` rerun.
+            let bound = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
+            unscoped = resolved.unscoped_note.map(|note| UnscopedSelection {
+                note,
+                base_command: crate::app::task_first::unscoped_base_command(&bound),
+            });
+            match resolved.decision {
+                RepairStartDecision::Start { seam_id } => {
+                    if let Some(unscoped) = &unscoped {
+                        eprintln!("{}", unscoped.human_line());
+                    }
+                    seam_id
+                }
+                RepairStartDecision::NoEligible {
+                    total_seams,
+                    change,
+                    reasons,
+                    reasons_total,
+                } => {
+                    // A deliberate named outcome, not a failure: the honest
+                    // setup/limitation message on stderr, stdout empty.
+                    return Err(typed_decision(
+                        RepairRefusalCode::NoEligibleSeam,
+                        no_eligible_seam_message(
+                            &options.root,
+                            options.base.as_deref(),
+                            change,
+                            total_seams,
+                            &reasons,
+                            reasons_total,
+                        ),
+                    ));
+                }
+                RepairStartDecision::Action(action, candidates) => {
+                    // A deliberate named outcome, not a failure: stderr, stdout
+                    // empty (`cmd:repair` declares an empty-stdout refusal),
+                    // decision exit code.
+                    let selection_total = match action.stop() {
+                        Some(crate::domain::NextActionStop::SelectItem { total, .. }) => {
+                            Some(*total)
+                        }
+                        _ => None,
+                    };
+                    // #13701: the human menu leads with the unscoped note; under
+                    // `--json` the `cli_refusal` message carries it instead, the
+                    // way a no-eligible refusal's message carries it, and the
+                    // boundary echoes that message on stderr, so it is said once.
+                    let json_note = match (&unscoped, options.json) {
+                        (Some(unscoped), true) => format!("; {}", unscoped.human_line()),
+                        (Some(unscoped), false) => {
+                            eprintln!("{}", unscoped.human_line());
+                            String::new()
+                        }
+                        (None, _) => String::new(),
+                    };
+                    if let (Some(total), false) = (selection_total, candidates.is_empty()) {
+                        // #10978 / #11111: a selection is told in plain words:
+                        // where each change is, what a test must check for it,
+                        // and the exact command that starts it. The typed stop
+                        // ids and count are carried by those commands and the
+                        // stated total, so the internal block is not repeated.
+                        eprint!(
+                            "{}",
+                            crate::app::task_first::render_repair_choice(
+                                &candidates,
+                                total,
+                                &bound
+                            )
+                        );
+                        return Err(typed_choice_decision(
+                            RepairRefusalCode::SeveralEligibleSeams,
+                            format!("no repair started; run one of the commands above{json_note}"),
+                            crate::app::task_first::repair_choice_items(&candidates, total),
+                        ));
+                    }
                     eprint!(
                         "{}",
-                        crate::app::task_first::render_repair_choice(&candidates, total, &bound)
+                        crate::output::next_action::render_next_action_human_at_root(
+                            &action,
+                            &options.root
+                        )
                     );
-                    return Err(typed_choice_decision(
-                        RepairRefusalCode::SeveralEligibleSeams,
-                        "no repair started; run one of the commands above".to_string(),
-                        crate::app::task_first::repair_choice_items(&candidates, total),
+                    if action.action_class() == crate::domain::NextActionClass::ChooseItem {
+                        print_retry_line(&format!(
+                            "ripr repair {} --root {}",
+                            crate::output::next_action::SELECT_ITEM_RETRY_PLACEHOLDER,
+                            crate::agent::loop_commands::shell_arg(&bound)
+                        ));
+                    }
+                    return Err(typed_decision(
+                        RepairRefusalCode::RepairNeedsItem,
+                        format!("repair selected no seam; rerun with an explicit item{json_note}"),
                     ));
                 }
-                eprint!(
-                    "{}",
-                    crate::output::next_action::render_next_action_human_at_root(
-                        &action,
-                        &options.root
-                    )
-                );
-                if action.action_class() == crate::domain::NextActionClass::ChooseItem {
-                    print_retry_line(&format!(
-                        "ripr repair {} --root {}",
-                        crate::output::next_action::SELECT_ITEM_RETRY_PLACEHOLDER,
-                        crate::agent::loop_commands::shell_arg(&bound)
-                    ));
-                }
-                return Err(typed_decision(
-                    RepairRefusalCode::RepairNeedsItem,
-                    "repair selected no seam; rerun with an explicit item".to_string(),
-                ));
             }
-        },
+        }
     };
     // A repeated start (a retried or context-lost agent re-running the
     // printed command) resumes the attempt already awaiting its edit at
@@ -546,7 +597,13 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     if let Some(existing) =
         crate::app::task_first::reusable_awaiting_attempt(&options.root, &seam_id)
     {
-        return resume_awaiting_attempt(&options.root, &seam_id, &existing, options.json);
+        return resume_awaiting_attempt(
+            &options.root,
+            &seam_id,
+            &existing,
+            options.json,
+            unscoped.as_ref(),
+        );
     }
     // The start's stdout is held until the handoff card renders too: a
     // card failure after publication is an untyped decision that writes no
@@ -559,7 +616,19 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // `--json` (#11584): the packet envelope with `repair_attempt` is the
     // whole document; the human card is not appended to it.
     if options.json {
-        print!("{before_stdout}");
+        let document = with_repair_start_scope(before_stdout, unscoped.as_ref()).map_err(
+            |error| {
+                // The attempt is already published: name it and its recovery,
+                // and leave stdout empty (#7032).
+                CommandError::Decision(format!(
+                    "repair started attempt `{attempt_id}` for gap `{seam_id}`, but its JSON document could not be completed: {error}. The attempt awaits its edit; inspect it with `ripr status --attempt {attempt_id} --root {root} --json`, or continue after editing with `ripr continue --attempt {attempt_id} --root {root}`",
+                    root = crate::agent::loop_commands::shell_arg(
+                        &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy())
+                    ),
+                ))
+            },
+        )?;
+        print!("{document}");
         return Ok(());
     }
     // The compact handoff renders through the same card service the
@@ -594,6 +663,37 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     Ok(())
 }
 
+/// Why a bare `ripr repair` start or menu is not narrowed to the change
+/// (#13701), and the `--base` rerun that would narrow it.
+struct UnscopedSelection {
+    note: String,
+    base_command: String,
+}
+
+impl UnscopedSelection {
+    /// The note, which already says to pass `--base <ref>` (or to check the
+    /// named one), with the rerun given once as its example.
+    fn human_line(&self) -> String {
+        format!("{} (for example `{}`)", self.note, self.base_command)
+    }
+}
+
+/// A `--json` start or resume document, with the additive
+/// `repair_start_scope` block when the selection was not narrowed (#13701).
+fn with_repair_start_scope(
+    document: String,
+    unscoped: Option<&UnscopedSelection>,
+) -> Result<String, String> {
+    match unscoped {
+        Some(unscoped) => crate::output::agent_seam_packets::render_repair_start_scope_stdout(
+            &document,
+            &unscoped.note,
+            &unscoped.base_command,
+        ),
+        None => Ok(document),
+    }
+}
+
 /// Report the attempt a repeated `ripr repair` resumed (#8742): the same
 /// narration the before phase ends with, naming the existing attempt, then
 /// the same handoff card. Nothing is written.
@@ -602,6 +702,7 @@ fn resume_awaiting_attempt(
     seam_id: &str,
     existing: &crate::app::task_first::ReusableAttempt,
     json: bool,
+    unscoped: Option<&UnscopedSelection>,
 ) -> Result<(), CommandError> {
     if json {
         // The existing attempt's typed status document, from the same
@@ -614,6 +715,10 @@ fn resume_awaiting_attempt(
                 .map_err(CommandError::Decision)?;
         let rendered = crate::app::agent_status::render_agent_attempt_status_json(&report)
             .map_err(CommandError::Decision)?;
+        // #13701: the resumed start is the same unscoped selection, so its
+        // document carries the same block the first start's did.
+        let rendered =
+            with_repair_start_scope(rendered, unscoped).map_err(CommandError::Decision)?;
         eprintln!(
             "ripr: repair attempt {} for gap `{seam_id}` is already awaiting the focused test edit at this HEAD; no second attempt was started",
             existing.attempt_id
@@ -729,9 +834,16 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                     .map_err(CommandError::Failure)?;
                 print!("{rendered}");
             } else {
+                // A short summary, not the whole status page (#15282 item 7):
+                // `ripr status --attempt` keeps the full page.
+                let root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+                );
                 print!(
                     "{}",
-                    crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+                    crate::app::agent_status::complete_summary::render_already_complete_summary(
+                        &report, &root
+                    )
                 );
             }
             eprintln!(
@@ -836,13 +948,15 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(typed_decision(
+            let next = format!("ripr status --root {root}");
+            Err(typed_decision_with_next(
                 RepairRefusalCode::NoCurrentAttempt,
                 format!(
-                    "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
+                    "no current attempt to continue under {root}: {}. Next: `{next}`; {}",
                     none_available_detail(prepared, terminal, trust_bound, &root),
                     start_with_repair_clause(&options.root, &root)
                 ),
+                &next,
             ))
         }
         ContinueSelection::Ambiguous { candidates } => {
@@ -917,7 +1031,7 @@ fn start_fresh_clause(
 /// consults the same auto selector `ripr repair` runs, so a start the build
 /// would refuse is not offered.
 fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
-    match resolve_repair_start(root, None) {
+    match resolve_repair_start(root, None).map(|resolved| resolved.decision) {
         Ok(RepairStartDecision::NoEligible {
             total_seams,
             change,

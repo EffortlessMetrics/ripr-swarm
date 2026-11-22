@@ -406,10 +406,13 @@ typed `outcome` block (`kind`, a plain label, and the outcome limitation
 kinds), so a `partial_with_limitations` run never reads as clean; v4 adds the
 independently windowed omission disclosure (`omitted_page`, `omitted_offset`); v5
 adds optional `outcome.analysis_status` (`not_analyzed`) and `outcome.clean`
-(`false`), present only for a committed zero-item `no_scope`, `no_changed_lines`
+(`false`), present only for a zero-item `no_scope`, `no_changed_lines`
 or `no_behavioral_candidates` snapshot, so zero items from an unexamined scope
-never read as a clean result (a complete-clean snapshot and a worktree snapshot never carry them;
-the fields describe the snapshot, so they appear regardless of filter or offset). Strict v1
+never read as a clean result (a complete-clean snapshot never carries them;
+the fields describe the snapshot's outcome, not its capture source, so a
+worktree-source empty-scope snapshot carries them too, while the
+committed-specific `empty_scope_hint` stays committed-only; they appear
+regardless of filter or offset). Strict v1
 readers must rediscover `tools/list`, accept v5 explicitly and validate
 against the `outputSchema` advertised under `RIPR_MCP_TOOLS_LIST=full`
 (see Slim `tools/list`); callers may still omit all filter
@@ -442,7 +445,11 @@ and one small summary per selected item. Each summary carries
 commit-time repair-readiness projection (`repair_packet_ready` with its typed
 `repair_ineligibility` reason, `null` when ready) — the same
 `repair_packet_ready` fact the item's `ripr_get_gap` readiness block reports,
-so actionable items sort without one evidence call per candidate. Selection
+so actionable items sort without one evidence call per candidate. `file` is
+the same bare workspace-relative spelling as `ripr_get_gap`'s
+`location.file` and the path inside `canonical_id` (for example,
+`src/lib.rs`). A location outside the root retains its full stable spelling.
+The `file` filter accepts both `src/lib.rs` and `./src/lib.rs`. Selection
 is the shared CLI/LSP diagnostic-budget authority over the snapshot's
 canonical items; eligibility is the producer's candidate-actionability
 predicate captured at projection time, so non-actionable items appear as
@@ -455,7 +462,11 @@ with `stale_snapshot` and the current identity.
 Optional `file`, `class`, `language`, and `repair_ready` narrow the stored
 selection over already-projected commit-time facts before paging
 (conjunctive): `file` matches exact, prefix, or trailing-segment paths after
-ignoring one leading `./` on both sides, `class` takes an exposure-class wire
+ignoring one leading `./` on both sides. Item paths are relative to the
+repository root; an absolute `file` under the workspace root is rewritten to
+that relative form (the `filters.file` echo shows the path applied), and any
+other absolute path is an `invalid_argument` failure naming the relative form
+instead of an empty page. `class` takes an exposure-class wire
 token (for example `exposed`), `language` takes a language wire string (for
 example `rust`), and `repair_ready: true` (or `false`) selects the
 commit-time readiness projection. `selected` stays the full stored-selection
@@ -468,8 +479,11 @@ default applies under `repair_ready: false` too). An `exposed` item that is
 repair-ready, or unready for any other cause (for example
 `seam_inventory_truncated` or `worktree_source_not_committed`), stays listed:
 missing or limited evidence is never read as "no action needed". `total`, `eligible`,
-`selected` and `outcome` still describe the whole snapshot, and
-`class: "exposed"` lists them. An unknown
+`selected` and the typed outcome `kind` still describe the whole snapshot, and
+`class: "exposed"` lists them. When every selected item is such an
+already-gripped item the list is empty because the gap is closed, and
+`outcome.label` says `no test gap found: every finding is already gripped by
+existing tests` instead of `findings below` (the `kind` is unchanged). An unknown
 `file` value is an empty disclosed page; an unknown `class` or `language` is
 an `invalid_argument` tool failure (`isError: true`, see "Argument errors" below)
 naming the accepted tokens in `failure.data.allowed` (the echoed token is
@@ -500,7 +514,8 @@ Optional tool fields must be omitted to use their defaults: explicit `null`
 is invalid for `snapshot_id`, `offset`, `limit`, `file`, `class`,
 `language`, and `repair_ready` (#7314). The server
 returns an `invalid_argument` tool failure naming the field (`failure.data.argument`);
-correct the argument or omit it and retry on the same connection.
+a null refusal says to omit the field. Correct the argument or omit it and
+retry on the same connection.
 `offset` must be a whole JSON integer (no fraction or exponent
 form) in `0..=M` where `M` is the platform's `usize` width, and `limit` a whole
 integer in `1..=500`, the working-set bound `budget.max_items_per_workspace_response`
@@ -686,9 +701,10 @@ ignored) in the server `env` beside `RIPR_MCP_TEXT_CONTENT`. Any other value,
 including the older explicit `slim`, keeps the slim default. The tool
 descriptions were also cut to purpose, when to call, safety boundary and
 failure codes. Measured over stdio (whole `tools/list` response line):
-45,938 bytes before #13803 with schemas, 11,884 by default now, and
-40,955 with `full`. With the schemas gone by default, each description names
-the failure codes an agent most needs before calling; the complete `code`
+45,938 bytes before #13803 with schemas, 11,884 by default after it, and
+40,955 with `full`. With every tool argument described (#9360) and the later
+full-listing disclosures, they measure 12,075 and 42,266. With the schemas
+gone by default, each description names the failure codes an agent most needs before calling; the complete `code`
 enum stays in the full listing's `outputSchema`. An unrecognized value
 (for example a misspelled `full`) is not diagnosed: it serves the slim
 listing, so a validating host should check that `outputSchema` is present.
@@ -761,7 +777,7 @@ item that carries a typed producer static limit: `static_limit` holds the limit,
 `mcp` names `ripr_get_top_limitation` and there is no edit-and-recheck route. It
 applies only where the route would have been `write_test_by_hand` or
 `await_producer_fact`; `change_policy` (seam budget) and `commit_then_refresh`
-keep their own routes. `isError` is true exactly when no transaction exists. The reasons
+keep their own routes. `isError` is true exactly when no transaction exists. `nothing_to_do` (an `exposed` seam already gripped) is the closed-gap success state: `isError` stays true by this contract because no repair transaction was created, and the `next.detail` says so; read `next.kind`, not `isError`, to tell it from a failure. The limitation recovery for the same item says nothing remains to do. The reasons
 the shared seam-level repair gate behind `ripr repair` contributes are
 `seam_already_gripped` (the seam's existing tests already check it),
 `seam_gate_refused` (route not ready, cross-language limits, policy
@@ -791,6 +807,14 @@ completeness fact and, like `ripr agent card`, fails with the typed
 `incomplete_inventory` code (and no card) while the inventory is truncated or
 its completeness could not be established, so it never reports
 `readiness.repair_ready` true over a truncated inventory (#9231).
+
+The same applies to a seam whose inline test target has uncommitted changes:
+the shared repair gate refuses it (`seam_gate_refused`), `ripr_get_repair_card`
+refuses with `incomplete_inventory` naming the file instead of reporting
+`readiness.repair_ready` true, and `ripr_prepare_repair`'s `next` is
+`commit_then_refresh` (commit or stash that file, then refresh). An item whose
+`probe:` finding id names no seam is resolved once more by its readable gap id,
+the identity `ripr repair` and the card accept (#15307).
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise
@@ -925,7 +949,7 @@ truncated or unverified repo-wide seam inventory). The card uses the CLI-pinned
 `seam_inventory_truncated`. `policy_omitted` is reachable on the same read
 (#10718): the card applies the repository's agent policy to the seam's class
 exactly like `ripr agent card`, so an already-gripped seam the policy omits
-refuses with `policy_omitted`, and an item the repair-subject resolver maps to
+refuses with `policy_omitted` (for a `strongly_gripped` seam the detail and recovery say the change is already pinned and nothing remains to do, not that the policy is misconfigured), and an item the repair-subject resolver maps to
 no seam (for example a Python finding, since the seam inventory covers Rust
 files only) refuses with `seam_not_found` carrying the CLI's own cause text.
 The MCP policy gate uses the configuration captured at `ripr_refresh`, while

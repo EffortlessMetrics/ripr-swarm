@@ -1,0 +1,12 @@
+# #14882: an unfilled expected value earns no credit through a terminal guard or a weak equality.
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::unfilled_expected_tests::a_terminal_guard_on_an_unfilled_expected_value_earns_no_strong_credit",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::unfilled_expected_tests::a_terminal_guard_on_a_real_expected_value_keeps_its_reading",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::unfilled_expected_tests::a_weak_equality_on_an_unfilled_expected_value_is_lowered",
+  "crates/ripr/src/analysis/extract/oracles/scan.rs::unfilled_expected_tests::a_smoke_reading_of_a_placeholder_keeps_its_kind",
+  "crates/ripr/tests/terminal_guard_unfilled_expected.rs::a_guard_on_an_unfilled_expected_value_does_not_close_the_gap",
+  "crates/ripr/tests/terminal_guard_unfilled_expected.rs::a_guard_on_the_literal_value_is_credited",
+  "crates/ripr/tests/terminal_guard_unfilled_expected.rs::an_equality_assert_on_an_unfilled_expected_value_does_not_close_the_gap",
+]

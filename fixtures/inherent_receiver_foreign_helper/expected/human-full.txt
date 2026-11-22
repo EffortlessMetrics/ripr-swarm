@@ -19,7 +19,7 @@ Shared evidence and guidance
   E4 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   E5 [findings 1, 2]: related test src/lib.rs:20 foreign_helper uses strong exact value oracle: assert_eq!(read_as_object(), Some(7)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E6 [findings 1, 2]: source assertion argument value 7 at line 20
-  N1 [findings 1, 2]: Tests cannot close this static-analysis limitation: ripr cannot trace entry `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`
+  N1 [findings 1, 2]: Tests cannot close this static-analysis limitation: ripr cannot trace entry `read_as_object` -> owner `as_object` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test
 
 Finding 1: WARNING ./src/lib.rs:6
   id: probe:src_lib.rs:match_arm:f9032269

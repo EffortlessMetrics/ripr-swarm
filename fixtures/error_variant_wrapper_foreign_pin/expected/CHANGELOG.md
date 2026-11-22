@@ -628,3 +628,47 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (48)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (49)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (50)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (51)
+
+Reason:
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

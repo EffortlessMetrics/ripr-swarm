@@ -1,0 +1,56 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_predicate_appended_char_arm_old_input/input
+
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: follow the Next step below; this is static advisory evidence only
+  File: ./src/lib.rs:2
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:rust:src/lib.rs:is_separator:return_value:return_value:c==lit2c_c==lit3b
+  Changed behavior: c == ',' || c == ';'
+  Missing check: No strong assertion was detected
+  Related test (1 of 2 matched rows): src/lib.rs:9 comma_separates (assertion too weak to tell the old behavior from the new)
+  Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach is_separator: comma_separates, dot_does_not_separate
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/input --diff <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/diff.patch --mode fast probe:src_lib.rs:return_value:6fca459e
+  ripr context --root <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/input --diff <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/diff.patch --mode fast --at probe:src_lib.rs:return_value:6fca459e
+  (spot id, for repair)
+  ripr repair 95a8da35d43a0340 --root <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/input
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/input --at src/lib.rs:2 --kind return_value
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (weak); kind: predicate; reason: Missing check value: c == ';'
+      Choose a test-stub spot for probe:src_lib.rs:predicate:7a595285: src/lib.rs:2 holds more than one predicate_boundary spot, so --at cannot pick one
+        Each command below produces a stub, but ripr could not tell which spot your change touches.
+        They do not establish a repair binding or close a static limitation.
+        ripr agent stub --root <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/input --seam-id f645d28cf0fdd14c
+        ripr agent stub --root <cwd>/fixtures/rust_predicate_appended_char_arm_old_input/input --seam-id f642cc8cf0fb9143
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

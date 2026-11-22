@@ -295,7 +295,7 @@ cargo xtask check-doc-artifacts
 cargo xtask check-doc-index
 cargo xtask check-doc-roles
 cargo xtask check-droid-review-config
-cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>]
+cargo xtask check-evidence-promotion-honesty [--pinned-external] [--clone] [--case <id>] [--checkout-root <path>] [--timeout-secs <n>] | --pre-label <PR> <target-branch>
 cargo xtask check-executable-files
 cargo xtask check-file-policy
 cargo xtask check-covered-by
@@ -356,6 +356,7 @@ cargo xtask lsp-cockpit-report
 cargo xtask lsp-performance-report
 cargo xtask markdown-links
 cargo xtask merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]
+cargo xtask merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]
 cargo xtask metrics
 cargo xtask module-health [--threshold <n>]
 cargo xtask mutation-calibration [root] --mutants-json <path>
@@ -729,6 +730,9 @@ identity as separate facts under `--out` (default
 `target/ripr/reports/merge-queue`). Tests use `--input`; live mode uses GET-only
 `gh api` calls. It never applies settings or enables a queue.
 
+For conflicting queued PR heads, the operator can inspect a frozen
+[main-versus-head report](CI.md#inspect-queued-heads-against-main).
+
 `suggested-fixes` writes `target/ripr/reports/suggested-fixes.patch` and
 `target/ripr/reports/suggested-fixes.md` with safe deterministic repair
 suggestions. The patch covers allowlist ordering under `.ripr/*.txt` and
@@ -775,8 +779,12 @@ outputs without mutating checked-in files. It also writes
 `target/ripr/reports/golden-drift.json` so reviewers can inspect semantic drift
 before any blessing. `goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"` requires both placeholders filled with the fixture name, a governing spec id from `docs/specs/`, and a short reviewed change description; the reason must cite an existing `RIPR-SPEC-NNNN`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
-appends the fixture expected-output changelog. Bless from the Linux arbiter
-platform, never from a Windows host; the sanctioned route is documented in
+appends the fixture expected-output changelog only for surfaces that differ
+under the gate comparison. Gate-equivalent output preserves the original
+expected bytes and leaves the changelog untouched. On Windows, any genuine
+change is refused before writing expected files or the changelog: the Windows
+projection cannot establish canonical Linux golden bytes. Apply changes from
+the Linux arbiter platform; the sanctioned route is documented in
 [Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
 Human goldens (`human.txt`, `human-full.txt`) compare the line
@@ -1375,6 +1383,38 @@ This writes a ripr-managed `.git/hooks/pre-commit` hook that runs
 pre-existing hook is already ripr-managed, the command updates it idempotently.
 If a pre-existing hook is not ripr-managed, the command refuses to overwrite it
 so local user hooks are not clobbered.
+
+## Release milestone fixture comparison
+
+Run `cargo xtask check-release-targets --fixture <path>` to compare a local JSON
+snapshot with `policy/release-targets.toml`. The snapshot uses `schema_version: 2`,
+`repository: "EffortlessMetrics/ripr-swarm"`, and an explicit `complete` boolean.
+It contains three arrays.
+
+- `milestones` records have `number`, `title`, and `description`.
+- `issues` records have `number`, `closed`, `milestone`, and `labels` (strings).
+- `pull_requests` records have `number`, `closed`, `milestone`, and `closes`
+  (issue numbers in the same repository).
+
+Use a milestone number or `null` for each `milestone` field. Include every
+manifest issue with a milestone role, all issues in the observed candidate
+milestones, every PR that closes committed work, and all referenced milestones.
+
+Include a `pagination` object with one page array for each of `milestones`,
+`issues`, and `pull_requests`. Each page records its one-based `page`, an explicit
+`next_page` pointing to the next consecutive page or `null` on the terminal
+page, and the numeric `ids` observed on that page. A single terminal page with
+empty `ids` represents a captured empty list. The comparator checks for gaps,
+broken links, duplicate pages or IDs, and exact agreement between the captured
+IDs and the snapshot rows. Page and row serialization order may vary.
+
+Use `complete: false` when coverage is uncertain. The witness checks the
+internal consistency of the fixture's captured page chain. Its coverage claim
+depends on the capture preserving the observed links and IDs. The command writes
+`target/ripr/reports/release-milestone-fixture.{json,md}` and exits successfully
+only when the local comparison is `in_sync`. The report is evidence about the
+supplied fixture alone. See the [fixture comparison contract](specs/RIPR-SPEC-0452-release-milestone-fixture-parity.md)
+for comparison and refusal rules.
 
 ## CI Reports
 

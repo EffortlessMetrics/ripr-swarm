@@ -62,7 +62,7 @@ use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
-    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root, root_contains_detectable_python,
     source_dir_contains_detectable_python, source_dir_contains_detectable_typescript,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -138,6 +138,7 @@ pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathB
 
 /// A versioned entry directory under an already-resolved cache `base`,
 /// for producers that shard their entries by a schema-version component.
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
     base.join(layer.name()).join(version)
 }
@@ -180,6 +181,10 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
 /// versions, across the Rust, TypeScript and Python fact stores this build
 /// knows. `ripr cache status` reports it; the next store prunes most of it.
 pub(crate) fn file_fact_reclaimable(base: &Path) -> Reclaimable {
+    #[cfg_attr(
+        not(any(feature = "lang-python", feature = "lang-typescript")),
+        expect(unused_mut, reason = "only preview-language stores add to the total")
+    )]
     let mut total = RepoFileFactCache::at_base(base).reclaimable();
     #[cfg(feature = "lang-typescript")]
     total.add(TypeScriptFileFactStore::at_base(base).reclaimable());
@@ -762,7 +767,19 @@ pub(crate) struct CachedSeamLimitInfo {
 /// key's analyzer build identity already keeps entries written by a build
 /// without the field from this one. A bump would only rewrite
 /// `source_subject.corpus.cache_schema_version` in every repo artifact.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.182";
+/// `1.183`: the unresolved boundary-input activation summary leads with the
+/// typed `activation_boundary_input_unresolved` token and the evidence record
+/// no longer derives that category from the sentence (#14951), so a cached
+/// summary without the token would lose its category.
+/// `1.184`: a macro-generated test takes no invocation scopes when its file or
+/// invocation scope rebinds an exempt std macro name (#12852).
+/// `1.185`: an explicit registered harness uses only the selected Cargo target
+/// key under an aliased workspace root (#15846).
+/// `1.187`: a macro-generated test carrying an unrecognised attribute macro takes
+/// no invocation scopes (#12857).
+/// `1.189`: a std- or core-rooted import of an exempt macro name lets a
+/// generated test keep its invocation scopes when the root is not shadowed (#12876).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.189";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -985,7 +1002,12 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.182";
 /// `0.182`: same logical-or field witness as full `1.180` (#14326).
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.184";
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+/// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.191";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1210,7 +1232,12 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.184";
 /// `0.182`: same logical-or field witness as full `1.180` (#14326).
 /// `0.183`: same failure-seam success-only refusal as full `1.181` (#12757).
 /// `0.184`: same module-const reader entry as full `1.182` (#13592).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.184";
+/// `0.185`: same typed boundary-input summary as full `1.183` (#14951).
+/// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
+/// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
+/// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.191";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1432,7 +1459,12 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// and need a re-serialization of every entry to verify, so they are not read.
 /// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.62";
+/// `1.64`: `env` and `option_env` join the trusted macro names, so the
+/// stored binding candidates may name them (#14116); `1.63` candidates
+/// cannot, and would hide a `macro_rules! env` from the binding scan.
+/// `1.63`: a unit owner's tail block of `;`-terminated statements is not
+/// probed as `return_value` (#15459); `1.62` facts still carry that shape.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.64";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1459,8 +1491,10 @@ const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
 mod build_retention;
+pub(crate) use build_retention::Reclaimable;
+#[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) use build_retention::{
-    BuildRetention, Reclaimable, analyzer_version_from_entry_prefix, integer_schema_rank,
+    BuildRetention, analyzer_version_from_entry_prefix, integer_schema_rank,
 };
 mod export;
 pub(crate) mod path_dependencies;
@@ -2096,6 +2130,18 @@ impl WorkspaceKeyContext<'_> {
             "{workspace_manifests_hash}:rust-snapshot-files:{}",
             super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
         ));
+        // #15040 (also before the Cargo identity): a workspace member outside
+        // the root is read by classification (its crate name and the trait
+        // names it declares) but is never walked by discovery, so the corpus
+        // content hash does not see it. Fold what is read into the key. A
+        // workspace with every member below the root keeps its key.
+        let workspace_manifests_hash =
+            match super::classify::out_of_root_member_identity(self.workspace_root) {
+                Some(identity) => hash_str(&format!(
+                    "{workspace_manifests_hash}:out-of-root-members:{identity}"
+                )),
+                None => workspace_manifests_hash,
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -2482,6 +2528,22 @@ impl ModuleTreeScanEnvelope {
             Err("missing or mismatching semantic payload digest".to_owned())
         }
     }
+}
+
+/// Whether a non-empty `RIPR_CACHE_DIR` moves the cache off the default
+/// `target/ripr/cache` base for this process.
+pub(crate) fn cache_base_is_relocated() -> bool {
+    std::env::var(CACHE_DIR_ENV).is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// Repository-relative path of the module-tree scan bundle under the default
+/// cache base (no `RIPR_CACHE_DIR`). The repair edit cage treats this one
+/// fixed-name derived file as unbound attempt state (#15060).
+pub(crate) fn module_tree_scan_bundle_default_relative_path() -> String {
+    format!(
+        "target/ripr/cache/{}/{MODULE_TREE_SCAN_CACHE_SCHEMA_VERSION}/scans.json",
+        CacheLayer::ModuleTreeScans.name()
+    )
 }
 
 /// Persists the module-graph walk's per-file scans between runs so a warm
@@ -4794,8 +4856,8 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// Hash the adapter-owned workspace identities that can change analysis.
 /// Cargo consumes manifest contents recursively. The Python inputs tracked
 /// here are presence-only, exactly as no-config detection consumes them:
-/// root marker files and detectable Python source below root `src`/`tests`
-/// (bounded to two presence booleans — never a per-file enumeration).
+/// root marker files, root source presence, and detectable Python source below
+/// root `src`/`tests` (presence booleans, never a per-file enumeration).
 /// TypeScript no-config detection (`tsconfig.json`/`jsconfig.json` and
 /// detectable TypeScript source below `src`/`tests`) binds the same way.
 /// A package-led JavaScript root (#11336: root `package.json` plus detectable
@@ -4809,6 +4871,7 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// cache entries without any input change.
 fn hash_workspace_manifests(root: &Path) -> String {
     let cargo_identity = hash_named_workspace_files(root, "Cargo.toml");
+    let python_root_source = root_contains_detectable_python(root);
     let present_python_markers: Vec<&str> = PYTHON_PROJECT_MARKERS
         .iter()
         .copied()
@@ -4830,7 +4893,8 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .filter(|dir| source_dir_contains_detectable_typescript(root, dir))
         .collect();
     let javascript_led_root = detect_javascript_led_root(root);
-    if present_python_markers.is_empty()
+    if !python_root_source
+        && present_python_markers.is_empty()
         && detectable_source_dirs.is_empty()
         && present_typescript_markers.is_empty()
         && detectable_typescript_dirs.is_empty()
@@ -4840,6 +4904,9 @@ fn hash_workspace_manifests(root: &Path) -> String {
     }
 
     let mut identity = format!("cargo={cargo_identity}\n");
+    if python_root_source {
+        identity.push_str("python_root_source=1\n");
+    }
     for marker in present_python_markers {
         identity.push_str("python_marker=");
         identity.push_str(marker);
@@ -5499,7 +5566,9 @@ mod tests {
         // 1.58 -> 1.59: file-fact keys carry the normalized path spelling (#13887).
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.62");
+        // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
+        // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.64");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5709,7 +5778,12 @@ mod tests {
         // 1.178 -> 1.180: logical-or is not closure syntax in a propagation witness (#14326).
         // 1.180 -> 1.181: success-only assertions leave the failure seam undiscriminated (#12757).
         // 1.181 -> 1.182: a same-module reader of a module-level const gains a reader entry (#13592).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.182");
+        // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
+        // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
+        // 1.185 -> 1.187: attribute-macro generated tests refuse invocation scopes (#12857).
+        // 1.187 -> 1.189: std-rooted imports keep invocation scopes (#12876).
+        // 1.188 / 0.190 is left for #13041.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.189");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -5872,8 +5946,13 @@ mod tests {
         // 0.180 -> 0.182: same logical-or field witness as full 1.180 (#14326).
         // 0.182 -> 0.183: same failure-seam success-only refusal as full 1.181 (#12757).
         // 0.183 -> 0.184: same module-const reader entry as full 1.182 (#13592).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.184");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.184");
+        // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
+        // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
+        // 0.187 -> 0.189: same attribute-macro scope refusal as full 1.187 (#12857).
+        // 1.186 / 0.188 is left for #13041.
+        // 0.189 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.191");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.191");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
@@ -6338,6 +6417,7 @@ mod tests {
             ("1.71", "0.77"),
             ("1.72", "0.78"),
             ("1.73", "0.79"),
+            ("1.184", "0.186"),
         ] {
             for compact in [false, true] {
                 for sharded in [false, true] {
@@ -8467,6 +8547,29 @@ mod tests {
     }
 
     #[test]
+    fn flat_python_presence_changes_detection_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("flat-python-presence");
+        std::fs::create_dir_all(&root).map_err(|err| format!("mkdir: {err}"))?;
+        let baseline = hash_workspace_manifests(&root);
+        let source = root.join("shop.py");
+        std::fs::write(&source, "first").map_err(|err| format!("write: {err}"))?;
+        let present = hash_workspace_manifests(&root);
+        assert_ne!(baseline, present);
+        std::fs::write(&source, "second").map_err(|err| format!("edit: {err}"))?;
+        assert_eq!(present, hash_workspace_manifests(&root));
+        std::fs::write(root.join("test_shop.py"), "test").map_err(|err| format!("test: {err}"))?;
+        std::fs::remove_file(&source).map_err(|err| format!("remove source: {err}"))?;
+        assert_eq!(present, hash_workspace_manifests(&root));
+        std::fs::remove_file(root.join("test_shop.py"))
+            .map_err(|err| format!("remove test: {err}"))?;
+        std::fs::write(root.join("generated_shop.py"), "ignored")
+            .map_err(|err| format!("generated: {err}"))?;
+        assert_eq!(baseline, hash_workspace_manifests(&root));
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn python_source_dir_presence_changes_cache_identity() -> Result<(), String> {
         let root = isolated_dir("python-source-dir-inputs");
         ignore_remove_dir_all(&root);
@@ -8586,6 +8689,75 @@ mod tests {
         assert_ne!(baseline.lockfile_hash, updated.lockfile_hash);
         assert_ne!(baseline.filename(), updated.filename());
         ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #15040: a workspace member outside the root is read by classification
+    /// but is not in the corpus, so the production key must move when that
+    /// member's trait names or manifest move. An edit there that declares no
+    /// trait is the control: it keeps the key, so the entry is still reused.
+    #[test]
+    fn out_of_root_member_changes_change_cache_identity() -> Result<(), String> {
+        let base = isolated_dir("out-of-root-member");
+        ignore_remove_dir_all(&base);
+        let root = base.join("ws");
+        let shared = base.join("shared");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        std::fs::create_dir_all(shared.join("src"))
+            .map_err(|err| format!("create member: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"../shared\"]\n",
+        )
+        .map_err(|err| format!("write manifest: {err}"))?;
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"shared\"\n")
+            .map_err(|err| format!("write member manifest: {err}"))?;
+        std::fs::write(shared.join("src/lib.rs"), "pub use std::fmt::Display;\n")
+            .map_err(|err| format!("write member source: {err}"))?;
+        let files: [(PathBuf, Vec<u8>); 0] = [];
+        let key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &files,
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = key();
+        assert_eq!(baseline.filename(), key().filename());
+
+        std::fs::write(shared.join("src/helper.rs"), "pub fn helper() {}\n")
+            .map_err(|err| format!("write non-trait edit: {err}"))?;
+        assert_eq!(
+            baseline.filename(),
+            key().filename(),
+            "an edit that declares no trait keeps the key"
+        );
+
+        std::fs::write(
+            shared.join("src/declares.rs"),
+            "pub trait Display {\n    fn fmt(&self);\n}\n",
+        )
+        .map_err(|err| format!("write trait: {err}"))?;
+        let declared = key();
+        assert_ne!(
+            baseline.workspace_manifests_hash,
+            declared.workspace_manifests_hash
+        );
+        assert_ne!(baseline.filename(), declared.filename());
+
+        std::fs::write(shared.join("Cargo.toml"), "[package]\nname = \"renamed\"\n")
+            .map_err(|err| format!("change member manifest: {err}"))?;
+        let renamed = key();
+        assert_ne!(
+            declared.workspace_manifests_hash,
+            renamed.workspace_manifests_hash
+        );
+        assert_ne!(declared.filename(), renamed.filename());
+        ignore_remove_dir_all(&base);
         Ok(())
     }
 

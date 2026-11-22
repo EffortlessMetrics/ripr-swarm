@@ -50,10 +50,12 @@ pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
 pub(crate) use build::SecondaryPassGuard;
 pub(in crate::analysis) use build::manifest_library_name;
+pub(crate) use build::out_of_root_member_dirs;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) use doctests::SYNTHETIC_NAME as DOCTEST_FUNCTION_NAME;
+pub(crate) use doctests::owner_gate_atoms;
 pub(crate) use doctests::test_gate_is_default_enabled;
 pub(crate) use execution_context::ExecutionContext;
 pub(crate) mod cfg_predicates;

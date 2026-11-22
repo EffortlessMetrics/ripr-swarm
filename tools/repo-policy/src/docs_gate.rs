@@ -5,7 +5,7 @@
 //! Classification mirrors the `detect-docs-only` allowlist in
 //! `.github/workflows/routed-rust.yml` and fails closed: an empty or
 //! unavailable diff, a manifest/lockfile/release surface, a capability
-//! registry document, or any unrecognized path widens to full proof
+//! registry document, changed release-note command inputs, or any unrecognized path widens to full proof
 //! (reported as a refusal, never as a pass).
 //!
 //! Retained product obligations NOT covered by this gate (run the full
@@ -14,6 +14,10 @@
 //! `check-identity-registry`, `capability-docs --check`,
 //! `check-capability-producers`, goldens, and the not-yet-ported
 //! product-free gates listed in [`RETAINED_PRODUCT_FREE_GATES`].
+
+/// Pure public-guide contract helpers shared with the portable candidate help harness.
+#[path = "../../../crates/ripr/tests/common/help_contract.rs"]
+pub mod guide_help_contract;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -29,7 +33,6 @@ pub const RETAINED_PRODUCT_FREE_GATES: &[&str] = &[
     "check-output-contracts",
     "check-doc-artifacts",
     "check-doc-index",
-    "check-doc-roles",
     "check-readme-state",
     "check-badge-diff-policy",
     "check-release-targets",
@@ -178,6 +181,7 @@ pub fn plan(changed: &[String]) -> DocsGatePlan {
         has_disposition |= path == "policy/ripr-agent-disposition.toml";
     }
     if result.is_docs_eligible() {
+        result.gates.push("check-doc-roles");
         result.gates.push("check-text-encoding");
         result.gates.push("check-static-language");
         result.gates.push("markdown-links");
@@ -350,9 +354,11 @@ fn check_static_language(rel: &str, text: &str, violations: &mut Vec<String>) {
     }
 }
 
+// Preserve the live outgoing-link contract. Revision fallback compares the
+// separate canonical full-gate anchors offered to unchanged referrers.
 /// GitHub heading slugs for one document, excluding fenced headings, with
 /// `-1`, `-2` suffixes for repeated headings.
-fn heading_slugs(text: &str) -> BTreeSet<String> {
+fn outgoing_heading_slugs(text: &str) -> BTreeSet<String> {
     let mut slugs = BTreeSet::new();
     let mut counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let mut fenced = false;
@@ -392,7 +398,7 @@ fn heading_slugs(text: &str) -> BTreeSet<String> {
 
 fn check_markdown_links(root: &Path, rel: &str, text: &str, violations: &mut Vec<String>) {
     let base = Path::new(rel).parent().map(Path::to_path_buf);
-    let source_slugs = heading_slugs(text);
+    let source_slugs = outgoing_heading_slugs(text);
     let mut fenced = false;
     for (index, line) in text.lines().enumerate() {
         if line.trim_start().starts_with("```") {
@@ -468,7 +474,7 @@ fn check_markdown_links(root: &Path, rel: &str, text: &str, violations: &mut Vec
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
                 && let Ok(target_text) = std::fs::read_to_string(&candidate)
-                && !heading_slugs(&target_text).contains(fragment)
+                && !outgoing_heading_slugs(&target_text).contains(fragment)
             {
                 violations.push(format!(
                     "{rel}:{} link fragment #{fragment} has no heading in {file_part} [markdown-links]",
@@ -792,6 +798,15 @@ fn check_disposition(root: &Path, violations: &mut Vec<String>) -> Result<(), St
 /// Returns `Err` (widen/refusal) before running any gate when the plan
 /// widens, and `Err` listing violations when a scoped gate fails.
 pub fn run_docs_gate(root: &Path, changed: &[String]) -> Result<DocsGateReport, String> {
+    if changed.iter().any(|path| release_notes(&normalize(path))) {
+        return Ok(widen_report(changed, vec![
+            "release-note CLI contract requires committed before/after inputs; use --base and --head or run the protected docs gate including cargo test -p xtask --test ripr_public_guide_contract".into(),
+        ]));
+    }
+    check_scoped_tree(root, changed)
+}
+
+fn check_scoped_tree(root: &Path, changed: &[String]) -> Result<DocsGateReport, String> {
     let plan = plan(changed);
     if !plan.is_docs_eligible() {
         return Ok(DocsGateReport {
@@ -799,7 +814,7 @@ pub fn run_docs_gate(root: &Path, changed: &[String]) -> Result<DocsGateReport, 
             violations: Vec::new(),
         });
     }
-    let mut violations = Vec::new();
+    let mut violations = crate::doc_roles::staged_violations(root)?;
     let inventory = spec_inventory(root);
     for raw in changed {
         let rel = normalize(raw);
@@ -873,16 +888,113 @@ pub fn run_docs_gate_at_revision(
     let base_id = resolve_commit(checkout, base)?;
     let head_id = resolve_commit(checkout, head)?;
     verify_checkout_at(checkout, &head_id, head)?;
-    let changed = git_diff_files(checkout, &base_id, &head_id)?;
-    let tree = materialize_tree(checkout, &head_id)?;
-    let result = run_docs_gate(&tree, &changed);
+    let (changed, risks) = revision_changes(checkout, &base_id, &head_id)?;
+    if !risks.is_empty() {
+        return Ok(widen_report(&changed, risks));
+    }
+    let tree = match materialize_tree(checkout, &head_id) {
+        Ok(tree) => tree,
+        Err(reason) => return Ok(widen_report(&changed, vec![reason])),
+    };
+    let result = verify_archived_roles(checkout, &head_id, &tree).map_or_else(
+        |reason| Ok(widen_report(&changed, vec![reason])),
+        |()| check_scoped_tree(&tree, &changed),
+    );
     let _ = std::fs::remove_dir_all(&tree);
     result
 }
 
+/// Git archive honors export-ignore and export-subst. The whole-tree role check
+/// can discharge its obligation only when the role files have their Git bytes.
+fn verify_archived_roles(checkout: &Path, head: &str, tree: &Path) -> Result<(), String> {
+    let listing = offline_git()
+        .args(["ls-tree", "-rz", head, "--", "docs"])
+        .current_dir(checkout)
+        .output()
+        .map_err(|error| format!("cannot list committed role inputs: {error}"))?;
+    if !listing.status.success() {
+        return Err("cannot establish the committed role inputs".into());
+    }
+    let mut files = Vec::new();
+    let mut expected = Vec::new();
+    for record in listing
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|r| !r.is_empty())
+    {
+        let tab = record
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .ok_or("malformed git ls-tree role record")?;
+        let (header, path) = record.split_at(tab);
+        let path = path
+            .strip_prefix(b"\t")
+            .ok_or("missing git ls-tree role path")?;
+        if !(path == b"docs"
+            || path == b"docs/adr"
+            || path == b"docs/proposals"
+            || path.starts_with(b"docs/adr/")
+            || path.starts_with(b"docs/proposals/"))
+        {
+            continue;
+        }
+        let header = std::str::from_utf8(header).map_err(|error| error.to_string())?;
+        let path = std::str::from_utf8(path).map_err(|error| error.to_string())?;
+        let fields: Vec<_> = header.split_ascii_whitespace().collect();
+        let ["100644" | "100755", "blob", oid] = fields.as_slice() else {
+            return Err(format!(
+                "non-regular document-role input {path} requires full proof"
+            ));
+        };
+        if path.contains(['\\', ':']) {
+            return Err(format!(
+                "ambiguous document-role path {path:?} requires full proof"
+            ));
+        }
+        if crate::doc_roles::required_sections(Path::new(path)).is_none() {
+            continue;
+        }
+        files.push(tree.join(path));
+        expected.push(*oid);
+    }
+    if files.is_empty() {
+        return Ok(());
+    }
+    let hashes = offline_git()
+        .args(["hash-object", "--no-filters", "--"])
+        .args(files)
+        .current_dir(checkout)
+        .output()
+        .map_err(|error| format!("cannot verify archived role bytes: {error}"))?;
+    if !hashes.status.success() || !String::from_utf8_lossy(&hashes.stdout).lines().eq(expected) {
+        return Err("archived role inputs differ from the commit; full proof required".into());
+    }
+    Ok(())
+}
+
+fn widen_report(changed: &[String], reasons: Vec<String>) -> DocsGateReport {
+    let mut plan = plan(changed);
+    plan.gates.clear();
+    plan.widen_reasons.extend(reasons);
+    DocsGateReport {
+        plan,
+        violations: Vec::new(),
+    }
+}
+
+/// Newer Git honors the no-lazy-fetch setting. Older Git may start a fetch
+/// subprocess, so deny every transport as well. Both settings are local to
+/// this child and leave the user's repository and Git configuration untouched.
+fn offline_git() -> std::process::Command {
+    let mut git = std::process::Command::new("git");
+    git.env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_ALLOW_PROTOCOL", "");
+    git
+}
+
 fn materialize_tree(checkout: &Path, head_id: &str) -> Result<PathBuf, String> {
     let tree = create_staging_dir(head_id)?;
-    let mut archive = std::process::Command::new("git")
+    let mut archive = offline_git()
         .args(["archive", "--format=tar", head_id])
         .current_dir(checkout)
         .stdout(std::process::Stdio::piped())
@@ -947,7 +1059,12 @@ fn create_staging_dir(head_id: &str) -> Result<PathBuf, String> {
 /// via repeated flags). Exit via `Err` on widen or violations.
 pub fn command(args: &[String]) -> Result<(), String> {
     let report = match parse_mode(args)? {
-        CommandMode::Changed(changed) => run_docs_gate(Path::new("."), &changed)?,
+        CommandMode::Changed(changed) => {
+            eprintln!(
+                "docs-gate: live paths check outgoing links only; use --base and --head to check for removed Markdown destinations and anchors"
+            );
+            run_docs_gate(Path::new("."), &changed)?
+        }
         CommandMode::Revision { base, head } => {
             run_docs_gate_at_revision(Path::new("."), &base, &head)?
         }
@@ -955,7 +1072,7 @@ pub fn command(args: &[String]) -> Result<(), String> {
     println!("{}", report.render());
     if !report.plan.is_docs_eligible() {
         return Err(format!(
-            "docs-gate: widening to full proof ({} reason(s)); run cargo xtask precommit",
+            "docs-gate: widening to full proof ({} reason(s)); run the protected docs gate, including cargo xtask precommit and its Markdown contract tests",
             report.plan.widen_reasons.len()
         ));
     }
@@ -1027,7 +1144,7 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
         CommandMode::Revision { base, head } => {
             let head_id = resolve_commit(Path::new("."), &head)?;
             verify_checkout_at(Path::new("."), &head_id, &head)?;
-            git_diff_files(Path::new("."), &base, &head)
+            revision_changes(Path::new("."), &base, &head).map(|(paths, _)| paths)
         }
     }
 }
@@ -1036,7 +1153,7 @@ fn changed_files(args: &[String]) -> Result<Vec<String>, String> {
 /// resolved once here and used by ID afterwards, so a symbolic or mutable name
 /// cannot denote different commits at selection time and at read time.
 fn resolve_commit(checkout: &Path, rev: &str) -> Result<String, String> {
-    let output = std::process::Command::new("git")
+    let output = offline_git()
         .args(["rev-parse", &format!("{rev}^{{commit}}")])
         .current_dir(checkout)
         .output()
@@ -1069,13 +1186,49 @@ fn verify_checkout_at(checkout: &Path, head_id: &str, head_label: &str) -> Resul
     Ok(())
 }
 
-fn git_diff_files(checkout: &Path, base: &str, head: &str) -> Result<Vec<String>, String> {
+fn release_notes(path: &str) -> bool {
+    path.starts_with("docs/releases/") && path.ends_with("-release-notes.md")
+}
+
+/// The line number locates a failure in prose. Only command paths and flags
+/// reach the public-guide contract's candidate help lookup.
+fn same_documented_commands(before: &str, after: &str) -> bool {
+    fn commands(text: &str) -> impl Iterator<Item = (Vec<String>, Vec<String>)> {
+        guide_help_contract::doc_invocations(text)
+            .into_iter()
+            .map(|invocation| (invocation.words, invocation.flags))
+    }
+    // Bare commands and bracketed option examples can be absent from the
+    // flag oracle. Retain their source lines (and shell continuations) as
+    // opaque inputs so an unrecognized spelling can only widen the route.
+    fn potential_command_lines(text: &str) -> impl Iterator<Item = &str> {
+        let mut continued = false;
+        text.lines().filter(move |line| {
+            let selected = continued
+                || line.as_bytes().windows(5).any(|span| {
+                    span.eq_ignore_ascii_case(b"ripr ") || span.eq_ignore_ascii_case(b"ripr\t")
+                });
+            continued = selected && line.trim_end().ends_with('\\');
+            selected
+        })
+    }
+    commands(before).eq(commands(after))
+        && potential_command_lines(before).eq(potential_command_lines(after))
+}
+
+/// Read before/after blob identities from the same three-dot diff as the path roster.
+fn revision_changes(
+    checkout: &Path,
+    base: &str,
+    head: &str,
+) -> Result<(Vec<String>, Vec<String>), String> {
     // Fail closed on any git error: an unavailable diff widens, never passes.
-    let output = std::process::Command::new("git")
+    let output = offline_git()
         .args([
             "diff",
             "--no-renames",
-            "--name-only",
+            "--raw",
+            "--no-abbrev",
             "-z",
             &format!("{base}...{head}"),
         ])
@@ -1088,12 +1241,79 @@ fn git_diff_files(checkout: &Path, base: &str, head: &str) -> Result<Vec<String>
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(output
-        .stdout
-        .split(|b| *b == 0)
-        .filter(|chunk| !chunk.is_empty())
-        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
-        .collect())
+    let mut paths = Vec::new();
+    let mut risks = Vec::new();
+    let raw = std::str::from_utf8(&output.stdout)
+        .map_err(|e| format!("docs-gate: unreadable Git diff: {e}"))?;
+    let mut records = raw.split_terminator('\0');
+    while let Some(header) = records.next() {
+        let path = records.next().ok_or("docs-gate: missing Git diff path")?;
+        let fields: Vec<_> = header
+            .trim_start_matches(':')
+            .split_ascii_whitespace()
+            .collect();
+        let [old_mode, new_mode, old_blob, new_blob, status] = fields.as_slice() else {
+            return Err(format!("docs-gate: unexpected Git diff record {header:?}"));
+        };
+        paths.push(path.to_owned());
+        if normalize(path) != path {
+            risks.push(format!(
+                "Git path {path:?} would be normalized to another path; full proof required"
+            ));
+            continue;
+        }
+        // Unchanged referrers may name a removed destination or heading.
+        match (*status, *old_mode, *new_mode) {
+            ("A", "000000", "100644") if release_notes(path) => {
+                match markdown_blob(checkout, new_blob) {
+                    Ok(new) if !same_documented_commands("", &new) => {
+                        risks.push(format!("{path}: new documented CLI example; candidate CLI proof required: cargo test -p xtask --test ripr_public_guide_contract"));
+                    }
+                    Err(reason) => risks.push(format!("{path}: {reason}; full proof required")),
+                    Ok(_) => (),
+                }
+            }
+            ("A", "000000", "100644") => (),
+            ("M", "100644", "100644") if !path.to_ascii_lowercase().ends_with(".md") => (),
+            ("M", "100644", "100644") => {
+                let blobs = markdown_blob(checkout, old_blob)
+                    .and_then(|old| markdown_blob(checkout, new_blob).map(|new| (old, new)));
+                match blobs {
+                    Ok((old, new)) => {
+                        let old_headings = crate::markdown_headings::heading_slugs(&old);
+                        let new_headings = crate::markdown_headings::heading_slugs(&new);
+                        if let Some(missing) = old_headings.difference(&new_headings).next() {
+                            risks.push(format!("{path}: removed Markdown anchor #{missing}; full incoming-link check required"));
+                        }
+                        if release_notes(path) && !same_documented_commands(&old, &new) {
+                            risks.push(format!("{path}: documented CLI example changed; candidate CLI proof required: cargo test -p xtask --test ripr_public_guide_contract"));
+                        }
+                    }
+                    Err(reason) => risks.push(format!("{path}: {reason}; full proof required")),
+                }
+            }
+            _ => risks.push(format!(
+                "{path}: removed destination or changed file mode; full incoming-link check required"
+            )),
+        }
+    }
+    Ok((paths, risks))
+}
+
+fn markdown_blob(checkout: &Path, oid: &str) -> Result<String, String> {
+    let output = offline_git()
+        .args(["cat-file", "blob", oid])
+        .current_dir(checkout)
+        .output()
+        .map_err(|e| format!("docs-gate: cannot read Markdown blob {oid}: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "docs-gate: reading Markdown blob {oid}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|e| format!("docs-gate: Markdown blob {oid} is not UTF-8: {e}"))
 }
 
 #[cfg(test)]

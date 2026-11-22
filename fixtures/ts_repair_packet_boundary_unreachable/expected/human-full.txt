@@ -91,5 +91,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_unreachable/input --diff <cwd>/fixtures/ts_repair_packet_boundary_unreachable/diff.patch --mode fast probe:src_auth.ts:typescript_preview:23e9836b
   ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_unreachable/input --diff <cwd>/fixtures/ts_repair_packet_boundary_unreachable/diff.patch --mode fast --at probe:src_auth.ts:typescript_preview:23e9836b
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

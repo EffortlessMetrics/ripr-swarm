@@ -142,6 +142,131 @@ fn analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_on
     assert_pending_marker(&report["items"])
 }
 
+/// A failed attempt with no snapshot names its recorded failure and fix
+/// instead of the cold-start route: a bare save/refresh fails the same way
+/// (for example outside a Git work tree). A different failure gets a
+/// different result id so the client never holds stale reason text, and a
+/// `failed` state with no recorded failure keeps the start route.
+#[test]
+fn analysis_pending_marker_names_the_recorded_failure_after_a_failed_attempt() -> Result<(), String>
+{
+    let harness = drained_parity_backend()?;
+    select_root(&harness);
+    let uri = parity_uri("pending.rs")?;
+    let not_git = "workspace analysis failed: This root is not inside a Git work tree (the analysis did not run). Run from inside a repository.";
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(AnalysisFailureKind::AnalysisError, not_git);
+    let report = document_report(&harness, &uri, None)?;
+    let failed_id = result_id(&report)?;
+    if !failed_id.starts_with("ripr:analysis-pending:fix_failure_then_refresh:") {
+        return Err(format!(
+            "failed attempt must carry its own result id: {failed_id}"
+        ));
+    }
+    let marker = report["items"]
+        .as_array()
+        .and_then(|items| items.first())
+        .ok_or_else(|| format!("marker missing: {report}"))?;
+    if marker["code"] != DIAGNOSTIC_ANALYSIS_PENDING_CODE
+        || marker["data"]["state"] != "no_snapshot"
+        || marker["data"]["recovery"] != "fix_failure_then_refresh"
+        || marker["data"]["failure_kind"] != "analysis_error"
+    {
+        return Err(format!("failed-attempt marker shape drifted: {marker}"));
+    }
+    let message = marker["message"].as_str().unwrap_or_default();
+    for needle in [
+        "not inside a Git work tree",
+        "Run from inside a repository",
+        "not evidence of a clean workspace",
+        "Fix that cause",
+    ] {
+        if !message.contains(needle) {
+            return Err(format!("marker must contain {needle:?}: {message}"));
+        }
+    }
+    if message.contains("has not analyzed this workspace yet")
+        || message.contains("to start analysis")
+    {
+        return Err(format!(
+            "a failed attempt must not read as cold start: {message}"
+        ));
+    }
+    if result_id(&document_report(&harness, &uri, Some(failed_id.clone()))?)? != failed_id {
+        return Err("the same failure must keep its result id".to_string());
+    }
+    // Same kind, different detail: the result id folds the detail too, so
+    // two distinct analysis errors never share a cached marker.
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(
+            AnalysisFailureKind::AnalysisError,
+            "workspace analysis failed: could not read the Git index.",
+        );
+    let same_kind = document_report(&harness, &uri, Some(failed_id.clone()))?;
+    let same_kind_id = result_id(&same_kind)?;
+    if same_kind_id == failed_id
+        || !same_kind["items"][0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("could not read the Git index")
+    {
+        return Err(format!(
+            "a same-kind failure with new detail must re-render: {same_kind}"
+        ));
+    }
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(
+            AnalysisFailureKind::BaseUnresolvable,
+            "could not resolve a default base. This repository has no commits yet; commit once.",
+        );
+    let other = document_report(&harness, &uri, Some(failed_id.clone()))?;
+    let other_id = result_id(&other)?;
+    if other_id == failed_id || other["items"][0]["data"]["failure_kind"] != "base_unresolvable" {
+        return Err(format!("a different failure must re-render: {other}"));
+    }
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_state_for_test(AnalysisAttemptState::Running);
+    let running = document_report(&harness, &uri, None)?;
+    assert_eq!(
+        result_id(&running)?,
+        "ripr:analysis-pending:analysis_running"
+    );
+    Ok(())
+}
+
+/// #15461 review: a push-client save that starts a retry after a failed
+/// attempt re-sends "running", not the failure's "fix that cause" route,
+/// while a blocked route still wins and nothing changes when no attempt is
+/// starting.
+#[test]
+fn push_marker_recovery_shows_running_when_a_retry_starts_after_a_failure() {
+    let failed = AnalysisPendingRecovery::AnalysisFailed {
+        kind: AnalysisFailureKind::AnalysisError,
+        detail: "workspace analysis failed: not a Git work tree.".to_string(),
+    };
+    assert_eq!(
+        Backend::push_marker_recovery(failed.clone(), true),
+        AnalysisPendingRecovery::AnalysisRunning
+    );
+    assert_eq!(Backend::push_marker_recovery(failed.clone(), false), failed);
+    assert_eq!(
+        Backend::push_marker_recovery(AnalysisPendingRecovery::SaveOrRefresh, true),
+        AnalysisPendingRecovery::AnalysisRunning
+    );
+    assert_eq!(
+        Backend::push_marker_recovery(AnalysisPendingRecovery::FixConfiguration, true),
+        AnalysisPendingRecovery::FixConfiguration
+    );
+}
+
 /// #14447 review: a queued or running attempt never hides a blocked route.
 /// While the root authority or a latched configuration failure blocks the
 /// next refresh, the marker keeps naming that block, not "in progress".
@@ -502,5 +627,146 @@ fn analysis_pending_workspace_pull_withdraws_committed_snapshot_when_configurati
         return Err(format!("expected one unchanged item, got {cached}"));
     }
     assert_eq!(cached_items[0]["kind"], "unchanged");
+    Ok(())
+}
+
+/// #15312: a refresh that fails because the requested base does not resolve
+/// withdraws the retained snapshot on both pull paths. Its findings answer an
+/// earlier base, so serving them unmarked would read as the current answer.
+/// Any other failure keeps the retained snapshot in service. The withdrawal
+/// holds while a retry runs and ends when an attempt publishes or fails for
+/// another reason.
+#[test]
+fn unresolvable_base_failure_withdraws_the_retained_snapshot_and_other_failures_do_not()
+-> Result<(), String> {
+    let harness = drained_parity_backend()?;
+    select_root(&harness);
+    let uri = parity_uri("committed.rs")?;
+    commit(
+        harness.service.inner(),
+        parity_workspace_diagnostics(vec![(
+            uri.clone(),
+            vec![parity_diagnostic("gap:committed", true)],
+        )]),
+    )?;
+    let served = document_report(&harness, &uri, None)?;
+    let served_id = result_id(&served)?;
+
+    // Discriminating negative: a failure that leaves the question unchanged
+    // (same base, older save) keeps the committed payload.
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(
+            AnalysisFailureKind::AnalysisError,
+            "workspace analysis failed: could not read the Git index.",
+        );
+    let retained = document_report(&harness, &uri, None)?;
+    if result_id(&retained)? != served_id || retained["items"] != served["items"] {
+        return Err(format!(
+            "a non-base failure must keep the retained snapshot in service: {retained}"
+        ));
+    }
+
+    let detail = "workspace analysis failed: the base `no-such-ref` does not resolve to a commit (the analysis did not run).";
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(AnalysisFailureKind::BaseUnresolvable, detail);
+    let withdrawn = document_report(&harness, &uri, Some(served_id.clone()))?;
+    assert_eq!(withdrawn["kind"], "full");
+    let withdrawn_id = result_id(&withdrawn)?;
+    if !withdrawn_id.starts_with("ripr:analysis-pending:fix_failure_then_refresh:")
+        || !withdrawn_id.ends_with(":withdrawn")
+    {
+        return Err(format!(
+            "withdrawal must carry its own result id: {withdrawn_id}"
+        ));
+    }
+    let items = withdrawn["items"]
+        .as_array()
+        .ok_or_else(|| format!("items missing: {withdrawn}"))?;
+    let [marker] = items.as_slice() else {
+        return Err(format!("exactly one withdrawal marker expected: {items:?}"));
+    };
+    if marker["code"] != DIAGNOSTIC_ANALYSIS_PENDING_CODE
+        || marker["severity"] != 3
+        || marker["data"]["kind"] != "delivery_limitation"
+        || marker["data"]["state"] != "withdrawn_analysis_failure"
+        || marker["data"]["recovery"] != "fix_failure_then_refresh"
+        || marker["data"]["failure_kind"] != "base_unresolvable"
+        || marker["data"]["diagnostic_id"].is_string()
+    {
+        return Err(format!("withdrawal marker shape drifted: {marker}"));
+    }
+    let message = marker["message"].as_str().unwrap_or_default();
+    for needle in [
+        "previously reported findings are withdrawn",
+        "not evidence of a clean workspace",
+        "the base `no-such-ref` does not resolve",
+        "Fix that cause",
+    ] {
+        if !message.contains(needle) {
+            return Err(format!("marker must contain {needle:?}: {message}"));
+        }
+    }
+    if message.contains("analysis is paused") || message.contains("no findings are reported") {
+        return Err(format!(
+            "the marker must not read as a configuration pause or a cold start: {message}"
+        ));
+    }
+
+    // The workspace pull serves the same marker for the tracked URI.
+    let report = workspace_report(
+        &harness,
+        vec![PreviousResultId {
+            uri: uri.clone(),
+            value: served_id.clone(),
+        }],
+    )?;
+    let workspace_items = report["items"]
+        .as_array()
+        .ok_or_else(|| format!("workspace items missing: {report}"))?;
+    let [item] = workspace_items.as_slice() else {
+        return Err(format!("expected one withdrawal item, got {report}"));
+    };
+    if item["resultId"] != serde_json::json!(withdrawn_id)
+        || item["items"][0]["data"]["state"] != "withdrawn_analysis_failure"
+    {
+        return Err(format!(
+            "workspace pull must serve the withdrawal marker: {report}"
+        ));
+    }
+
+    // A retry in progress keeps the withdrawal latched: the retained
+    // findings must not reappear between two failures, and pull must agree
+    // with a push client that still shows the marker.
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_state_for_test(AnalysisAttemptState::Running);
+    let retrying = document_report(&harness, &uri, Some(withdrawn_id.clone()))?;
+    if retrying["kind"] != "unchanged" || result_id(&retrying)? != withdrawn_id {
+        return Err(format!(
+            "a running retry must keep the withdrawal marker: {retrying}"
+        ));
+    }
+
+    // An attempt that ends with another failure kind releases the latch: the
+    // base resolved, so the retained snapshot is in service again.
+    harness
+        .service
+        .inner()
+        .set_analysis_attempt_failure_for_test(
+            AnalysisFailureKind::AnalysisError,
+            "workspace analysis failed: could not read the Git index.",
+        );
+    let released = document_report(&harness, &uri, Some(withdrawn_id))?;
+    assert_eq!(released["kind"], "full");
+    if result_id(&released)? != served_id {
+        return Err(format!(
+            "a later non-base failure must release the withdrawal: {released}"
+        ));
+    }
     Ok(())
 }

@@ -372,6 +372,25 @@ fn code_spans(line: &str) -> Vec<String> {
         .collect()
 }
 
+/// The form after an inline `(PowerShell)` label. Markdown renderers wrap it
+/// with `code_span`, which widens the fence past any backtick run inside the
+/// command (a hostile root name holds one), so a lone span spanning the whole
+/// rest is read back through its fence. Plain-text surfaces wrap in single
+/// backticks without escaping; those keep the outer-backtick strip.
+fn inline_powershell_form(rest: &str) -> String {
+    let fence = rest.chars().take_while(|ch| *ch == '`').count();
+    if fence > 1 && rest.len() > fence * 2 && rest.ends_with(&"`".repeat(fence)) {
+        let spans = code_spans(rest);
+        if let [only] = spans.as_slice() {
+            return only.clone();
+        }
+    }
+    rest.strip_prefix('`')
+        .and_then(|inner| inner.strip_suffix('`'))
+        .unwrap_or(rest)
+        .to_string()
+}
+
 fn is_powershell_unavailable_disclosure(form: &str) -> bool {
     // Exact match: a translated command may carry this sentence as argument
     // data and must still paste. Substring matching would skip that case.
@@ -545,15 +564,11 @@ fn extract_text(
             // Pair the next line only when this label's rest is empty. An
             // inline form must not consume the following Bash command.
             form_on_next_line = rest.is_empty();
-            let form = Some(
-                rest.strip_prefix('`')
-                    .and_then(|inner| inner.strip_suffix('`'))
-                    .unwrap_or(rest),
-            );
-            if let (Some(form), Some(previous)) = (form, found.last_mut())
+            let form = inline_powershell_form(rest);
+            if let Some(previous) = found.last_mut()
                 && !form.is_empty()
             {
-                if is_powershell_unavailable_disclosure(form) {
+                if is_powershell_unavailable_disclosure(&form) {
                     previous.powershell_unavailable = true;
                 } else {
                     previous.powershell = Some(form.to_string());
@@ -959,6 +974,19 @@ fn collect(fixture: &Fixture, subcommands: &BTreeSet<String>) -> Result<Collecte
                 if pilot_report.exists() {
                     std::fs::remove_file(&pilot_report)
                         .map_err(|err| format!("remove pilot report: {err}"))?;
+                }
+                // `review-comments --root` writes its default guidance under
+                // the root (#15378), so an earlier pass's cards would make the
+                // later cold flow warm; drop them like the pilot report.
+                for cards in [
+                    "target/ripr/review/comments.json",
+                    "target/ripr/review/comments.md",
+                ] {
+                    let cards = fixture.root.join(cards);
+                    if cards.exists() {
+                        std::fs::remove_file(&cards)
+                            .map_err(|err| format!("remove review cards: {err}"))?;
+                    }
                 }
             }
             let (stdout, stderr) = ripr_streams_in(cwd, args)?;
@@ -1517,6 +1545,27 @@ fn extract_text_pairs_empty_rest_powershell_label_with_the_next_line() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].bash, "ripr first-pr --root repo --base HEAD");
     assert_eq!(found[0].powershell.as_deref(), Some("Get-Content foo"));
+}
+
+#[test]
+fn extract_text_reads_a_widened_fence_after_an_inline_powershell_label() {
+    // Review cards render the form with `code_span`, which widens the fence
+    // past a backtick inside the root name (#15378). The single-backtick strip
+    // would keep one fence backtick on each side of the form.
+    let found = extracted(
+        "  - command: ``ripr check --root 'a `b` c' --diff HEAD``\n\
+           - command (PowerShell): ``ripr check --root 'a `b` c' --diff HEAD; $x``\n",
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(
+        found[0].powershell.as_deref(),
+        Some("ripr check --root 'a `b` c' --diff HEAD; $x")
+    );
+    // Plain-text surfaces keep their unescaped single-backtick wrapping.
+    assert_eq!(
+        inline_powershell_form("`Get-Content `x` foo`"),
+        "Get-Content `x` foo"
+    );
 }
 
 #[test]

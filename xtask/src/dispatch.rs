@@ -40,6 +40,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::GhPrStatus(args) => super::reports::gh_pr_status(&args),
         XtaskCommand::CiBudget(args) => super::reports::ci_budget(&args),
         XtaskCommand::MergeQueue(args) => super::reports::merge_queue(&args),
+        XtaskCommand::ReleaseAuthority(args) => super::release_authority::run(&args),
         XtaskCommand::PerlMigrationRefresh(args) => super::reports::perl_migration_refresh(&args),
         XtaskCommand::FirstRun(args) => super::first_run::run(&args),
         XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
@@ -151,6 +152,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::OperatorCockpitReport => super::reports::operator_cockpit_report(),
         XtaskCommand::ReleaseReadiness(args) => super::reports::release_readiness(&args),
         XtaskCommand::ReadinessSnapshot(args) => super::readiness_snapshot::run(&args),
+        XtaskCommand::FreezeReadiness(args) => super::policy::freeze_readiness::run(&args),
         XtaskCommand::ReleaseNegativeCorpus(args) => super::reports::release_negative_corpus(&args),
         XtaskCommand::ReleaseManifestProposal(args) => {
             super::reports::release_manifest_proposal(&args)
@@ -298,9 +300,16 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckProductCopy => super::check_product_copy(),
         XtaskCommand::CheckUserText(args) => super::policy::check_user_text_with_args(&args),
         XtaskCommand::CheckPackagedReadme => super::check_packaged_readme(),
+        XtaskCommand::CheckPackageContent => super::check_package_content(),
         XtaskCommand::CheckPositioningLanguage => super::check_positioning_language(),
         XtaskCommand::CheckDocRoles => super::check_doc_roles(),
-        XtaskCommand::CheckReleaseTargets => super::check_release_targets(),
+        XtaskCommand::CheckReleaseTargets(args) => match args.as_slice() {
+            [] => super::check_release_targets(),
+            [flag, path] if flag == "--fixture" => {
+                crate::policy::check_release_milestone_fixture(path)
+            }
+            _ => Err("usage: cargo xtask check-release-targets [--fixture <path>]".to_string()),
+        },
         XtaskCommand::PackageQualificationGate(args) => super::package_qualification::run(&args),
         XtaskCommand::SizeScaling(args) => super::size_scaling::run(&args),
         XtaskCommand::WarmAb(args) => super::warm_ab::run(&args),
@@ -320,6 +329,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::run("cargo", &["package", "-p", "ripr", "--list"]).map(|_| ())
         }
         XtaskCommand::PublishDryRun => super::publish_rehearsal::run(),
+        XtaskCommand::PublishPrecheck => super::publish_rehearsal::precheck(),
         XtaskCommand::IssueIntake(args) => super::reports::issue_intake(&args),
         XtaskCommand::WorkPortfolio(args) => super::work_portfolio::work_portfolio_command(&args),
         XtaskCommand::WorkCandidates(args) => super::work_portfolio::work_candidates_command(&args),

@@ -794,3 +794,26 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tsx_preview (38)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_tsx_preview --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — typescript_tsx_preview (39)
+
+Reason:
+RIPR-SPEC-0243: component owners with only a heuristic test link advise rendering the component (#15295)
+
+Command:
+`cargo xtask goldens bless typescript_tsx_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

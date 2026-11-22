@@ -14,7 +14,8 @@ Several functions whose body is one returned expression change in one diff
 - `enabled(flag)` changes the named tail `flag` to `false`.
 - `gate(flag)` and `pick(x)` drop an early return and keep a constant tail,
   so the paired removed line is a constant but the base body is not.
-- `off()` changes `false` to `!true`, which folds to the same value.
+- `off()` changes `false` to `!true`, which folds to the same value, so
+  (since #14938) the line seeds no probe at all.
 - `neg`, `both` and `px` change to tails that name a parameter or field
   (`-delta`, `a & b`, `p.x`).
 
@@ -30,15 +31,13 @@ Tests pin `ready`, `items`, `bytes` and every counterexample with an exact
 - `ready`, `items` and `bytes` read `exposed`; `idle` reads
   `reachable_unrevealed`.
 - The `bytes` sink names the raw tail `vec![b'x', b'y']`.
-- Every counterexample (`enabled`, `gate`, `pick`, `off`, `neg`, `both`,
-  `px`) reads a class other than `exposed`.
+- Every counterexample (`enabled`, `gate`, `pick`, `neg`, `both`, `px`)
+  reads a class other than `exposed`; `off` has no finding (#14938).
 
-Known pre-existing reading, outside this fixture's claim: the deleted
-`if x == 0 { return Vec::new(); }` line of `pick` is its own base-side
-`return_value` probe and reads `exposed` on the base revision too, although
-`pick(0)` returns an empty vector on both sides. The constant-tail rule does
-not produce that sink or witness; this fixture records the reading so a fix
-for it shows as intended drift.
+The deleted `if x == 0 { return Vec::new(); }` line of `pick` is its own
+base-side `return_value` probe. Since #14936 it reads `weakly_exposed`, not
+`exposed`: `pick(0)` returns an empty vector on both sides. The
+constant-tail rule does not produce that reading.
 
 ## Must Not
 
