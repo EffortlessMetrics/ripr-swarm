@@ -2830,6 +2830,16 @@ fn expected_fill_in_names_what_the_changed_code_returns() -> Result<(), String> 
             boundary("qty == 10"),
             None,
         ),
+        // An attribute on a tuple field may remove it from the test build.
+        (
+            format!(
+                "pub fn f(qty: u32) -> (u32, u32) {{\n    if qty > 10 {{ return (#[cfg(not(test))] qty, #[cfg(test)] qty); }}\n    (0, 0)\n}}\n{module}"
+            ),
+            "qty > 10",
+            SeamKind::PredicateBoundary,
+            boundary("qty == 10"),
+            None,
+        ),
         // A redeclared or imported prelude name (`Ok`) refuses for the file.
         (
             format!(

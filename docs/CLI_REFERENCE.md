@@ -731,9 +731,10 @@ or `default`, else a derived `Default`), and stops at a labelled `todo!()` for t
 the behavior should produce. It compiles and
 fails until that value is written. When the written inputs decide a plain
 `if`/`match` path to a constant, the `todo!()` label names what the changed
-code returns there and, for a changed `>`/`<` comparison, what it returns
-with `>=`/`<=` instead, so you keep the intended one; ripr never writes the
-expected value itself.
+code returns there and, for a changed `>`, `>=`, `<` or `<=`
+comparison, what it returns with the other bound (`>` and `>=` swap, as do
+`<` and `<=`), so you keep the intended one; ripr never writes the expected
+value itself.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a

@@ -33,7 +33,7 @@
 use super::super::seams::RepoSeam;
 use super::super::syntax::fn_signature::OwnerSignature;
 use super::super::syntax::parse_clean_source_file;
-use super::match_inputs::{mentions, parse_integer, unit_variants, unraw};
+use super::match_inputs::{full_use_path, mentions, parse_integer, unit_variants, unraw};
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasName};
 use ra_ap_syntax::{AstNode, SourceFile, SyntaxKind, TextRange, TextSize};
 
@@ -121,11 +121,14 @@ pub(super) fn expected_value(
     }
     let body = owner.body()?;
     // A binding, assignment, closure or macro anywhere in the body could
-    // change what a parameter or path names on the evaluated path.
+    // change what a parameter or path names on the evaluated path, and an
+    // attribute anywhere (`#[cfg]` on a statement, arm or tuple field) can
+    // remove code the evaluator would otherwise count.
     let disturbs = body.syntax().descendants().any(|node| {
         matches!(
             node.kind(),
-            SyntaxKind::LET_STMT
+            SyntaxKind::ATTR
+                | SyntaxKind::LET_STMT
                 | SyntaxKind::MACRO_CALL
                 | SyntaxKind::CLOSURE_EXPR
                 | SyntaxKind::FN
@@ -154,7 +157,22 @@ pub(super) fn expected_value(
                         .is_some_and(|n| unraw(n.text()) == *name)
         })
     });
-    if prelude_shadowed {
+    // A glob import from elsewhere could bring in a `None` or `Some` the
+    // file does not declare; only `super::*` / `self::*` stay in view.
+    let foreign_glob = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::UseTree::cast)
+        .any(|tree| {
+            tree.star_token().is_some() && {
+                let full = full_use_path(&tree);
+                !(full.len() == 2
+                    && full
+                        .first()
+                        .is_some_and(|first| first == "super" || first == "self"))
+            }
+        });
+    if prelude_shadowed || foreign_glob {
         return None;
     }
     let mut context = Context {
@@ -312,7 +330,7 @@ impl Context<'_> {
             ast::Pat::WildcardPat(_) => Some(true),
             ast::Pat::LiteralPat(_) | ast::Pat::PathPat(_) => {
                 let theirs = pattern_value(pat, self.file)?;
-                same(&theirs, value)
+                pattern_same(&theirs, value)
             }
             _ => None,
         }
@@ -570,16 +588,26 @@ fn has_attrs(expr: &ast::Expr) -> bool {
         .any(|child| child.kind() == SyntaxKind::ATTR)
 }
 
-/// Whether two values are equal, when that is decided.
+/// Whether a pattern's value matches, which compares variants
+/// structurally (unlike `==`, which may be a hand-written `PartialEq`).
+fn pattern_same(pattern: &Val, value: &Val) -> Option<bool> {
+    match (pattern, value) {
+        (Val::Variant(a), Val::Variant(b)) => {
+            let enum_of = |text: &str| text.split("::").next().map(str::to_string);
+            (enum_of(a) == enum_of(b)).then_some(a == b)
+        }
+        _ => same(pattern, value),
+    }
+}
+
+/// Whether two values are equal under `==`, when that is decided.
 fn same(a: &Val, b: &Val) -> Option<bool> {
     match (a, b) {
         (Val::Int(a), Val::Int(b)) => Some(a == b),
         (Val::Bool(a), Val::Bool(b)) => Some(a == b),
         (Val::Text(a), Val::Text(b)) => Some(a == b),
-        (Val::Variant(a), Val::Variant(b)) => {
-            let enum_of = |text: &str| text.split("::").next().map(str::to_string);
-            (enum_of(a) == enum_of(b)).then_some(a == b)
-        }
+        // A variant's `==` may be a hand-written `PartialEq`; only a match
+        // pattern compares variants structurally.
         _ => None,
     }
 }

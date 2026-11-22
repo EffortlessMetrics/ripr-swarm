@@ -469,7 +469,7 @@ pub(super) fn unit_variants(file: &SourceFile, name: &str) -> Option<Vec<String>
 
 /// The segments of a leaf use tree's full path, outermost first, with `*`
 /// for a glob.
-fn full_use_path(tree: &ast::UseTree) -> Vec<String> {
+pub(super) fn full_use_path(tree: &ast::UseTree) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = Some(tree.clone());
     while let Some(tree) = current {
