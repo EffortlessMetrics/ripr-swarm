@@ -262,10 +262,11 @@ REFUTES_NEGATION = re.compile(
 # prose that merely contains a cue word ("Nothing is wrong", "The wrong file")
 # does not.
 REFUTATION_AFTER = re.compile(
-    # #15980 review: a leading run of Markdown emphasis or quote markers is
-    # formatting, not content. `normalize_body` strips `**`/`__` but not single
-    # `*`/`_`, so "*That is false.*" must refute exactly like "That is false.".
-    r"^[ \t]*[.!;]?[ \t]*[*_>~]*[ \t]*"
+    # #15980 review: a leading run of Markdown emphasis, quote or bullet markers
+    # is formatting, not content. `normalize_body` strips `**`/`__` but not
+    # single `*`/`_`, so "*That is false.*" must refute exactly like "That is
+    # false."; the same holds for a `>` quote, `~~` strike and `-` bullet.
+    r"^[ \t]*[.!;]?[ \t]*[*_>~-]*[ \t]*"
     r"(?:"
     r"(?:that|this|it|i)\b[ \t]*(?:is|'s|\u2019s|am|was|are)?[ \t]*"
     r"(?:not[ \t]+(?:true|correct|so|the[ \t]+case|accurate|right)|false|incorrect|wrong|a[ \t]+lie|untrue|denied|deny)"

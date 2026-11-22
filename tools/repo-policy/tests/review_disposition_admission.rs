@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 14] = [
+    let cases: [(&str, bool); 19] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -784,6 +784,25 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             "SOURCE_REVIEW_READY\nNo source blocker found. **That is false.**",
             false,
         ),
+        // #15980 review: the same tolerance covers a `>` quote, `~~` strike and
+        // `-` bullet before the cue. A bulleted continuation that is not a cue
+        // still fails the match, so this does not make bullets refutations.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. > That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. ~~That is false.~~",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. - That is false.",
+            false,
+        ),
+        // Reverse-risk controls: the tolerance must not hide a real blocker
+        // behind the same markers. NEGATION still catches the phrase itself.
+        ("SOURCE_REVIEW_READY\n*Blocker found.*", false),
+        ("SOURCE_REVIEW_READY\n> Blocker found.", false),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
