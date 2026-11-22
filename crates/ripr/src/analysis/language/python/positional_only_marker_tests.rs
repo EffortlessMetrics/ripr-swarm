@@ -60,6 +60,19 @@ fn a_keyword_call_on_a_moved_parameter_keeps_exposed() -> Result<(), String> {
 }
 
 #[test]
+fn an_aliased_keyword_call_keeps_exposed() -> Result<(), String> {
+    let finding = classify_key(
+        "from src.keys import key as lookup\n\n\ndef test_lookup_by_keyword():\n    assert lookup(self=None) == ()\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    let positional = classify_key(
+        "from src.keys import key as lookup\n\n\ndef test_lookup_by_position():\n    assert lookup(None, 1) == (1,)\n",
+    )?;
+    assert_eq!(positional.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
 fn marker_only_edits_name_the_moved_parameters() {
     assert_eq!(
         positional_only_marker_params(

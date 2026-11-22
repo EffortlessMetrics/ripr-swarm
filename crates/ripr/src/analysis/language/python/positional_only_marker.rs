@@ -9,7 +9,7 @@
 use super::PythonOwner;
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::no_behavior::{analyze_call_args, call_arglists_with_offsets, def_signature_skeleton};
-use super::related_tests::PythonRelatedCandidate;
+use super::related_tests::{PythonRelatedCandidate, owner_module_callees};
 use crate::domain::OracleStrength;
 
 /// The parameters whose positional-only status differs between two one-line
@@ -61,12 +61,30 @@ pub(super) fn positional_only_marker_gap(
                 .is_some_and(|assertion| {
                     assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
                 })
-            && [false, true].into_iter().any(|method_call| {
-                call_arglists_with_offsets(&candidate.test.body_text, &owner.name, method_call)
-                    .into_iter()
-                    .filter_map(|(_, arglist)| analyze_call_args(arglist))
-                    .any(|shape| shape.keywords.iter().any(|name| moved.contains(name)))
-            })
+            && owner_call_spellings(candidate, owner)
+                .iter()
+                .any(|(callee, method_call)| {
+                    call_arglists_with_offsets(&candidate.test.body_text, callee, *method_call)
+                        .into_iter()
+                        .filter_map(|(_, arglist)| analyze_call_args(arglist))
+                        .any(|shape| shape.keywords.iter().any(|name| moved.contains(name)))
+                })
     });
     (!binds_by_keyword).then_some(moved)
+}
+
+/// How a related test may spell a call of the owner: its own name as a free
+/// or attribute call, and every import alias or module receiver the related
+/// test matcher resolves to it (`from m import key as lookup`, `m.key`).
+fn owner_call_spellings(
+    candidate: &PythonRelatedCandidate<'_>,
+    owner: &PythonOwner,
+) -> Vec<(String, bool)> {
+    let mut spellings = vec![(owner.name.clone(), false), (owner.name.clone(), true)];
+    spellings.extend(
+        owner_module_callees(candidate.test, owner)
+            .into_iter()
+            .map(|callee| (callee, false)),
+    );
+    spellings
 }

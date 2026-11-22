@@ -3,5 +3,6 @@ id = "RIPR-SPEC-0028"
 tests = [
   "crates/ripr/src/analysis/language/python/positional_only_marker_tests.rs::positional_calls_do_not_expose_a_marker_only_edit",
   "crates/ripr/src/analysis/language/python/positional_only_marker_tests.rs::a_keyword_call_on_a_moved_parameter_keeps_exposed",
+  "crates/ripr/src/analysis/language/python/positional_only_marker_tests.rs::an_aliased_keyword_call_keeps_exposed",
   "crates/ripr/src/analysis/language/python/positional_only_marker_tests.rs::marker_only_edits_name_the_moved_parameters",
 ]
