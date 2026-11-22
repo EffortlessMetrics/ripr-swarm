@@ -3554,8 +3554,10 @@ fn running_refresh_answers_status_and_orders_snapshot_reads() -> Result<(), Stri
         .ok_or("git executable cannot be quoted in the shim")?;
     // Only the first `git diff` after `armed` exists is held, so discovery,
     // startup status and the default-source probe are never the held call.
+    // The loop also ends when the control directory is removed, so a failed
+    // run leaves no polling shim behind.
     let shim = format!(
-        "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ] && [ -e \"$RIPR_REFRESH_HOLD/armed\" ] && mkdir \"$RIPR_REFRESH_HOLD/held\" 2>/dev/null; then\n    while [ ! -e \"$RIPR_REFRESH_HOLD/release\" ]; do sleep 0.05; done\n  fi\ndone\nexec '{git}' \"$@\"\n"
+        "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ] && [ -e \"$RIPR_REFRESH_HOLD/armed\" ] && mkdir \"$RIPR_REFRESH_HOLD/held\" 2>/dev/null; then\n    while [ -d \"$RIPR_REFRESH_HOLD\" ] && [ ! -e \"$RIPR_REFRESH_HOLD/release\" ]; do sleep 0.05; done\n  fi\ndone\nexec '{git}' \"$@\"\n"
     );
     std::fs::write(control.join("git"), shim).map_err(|error| error.to_string())?;
     std::fs::set_permissions(control.join("git"), std::fs::Permissions::from_mode(0o700))
@@ -3567,7 +3569,12 @@ fn running_refresh_answers_status_and_orders_snapshot_reads() -> Result<(), Stri
     let control_text = control.to_str().ok_or("control path is not UTF-8")?;
     let mut session = SequentialStdio::spawn_with_env(
         &root,
-        &[("PATH", shimmed_path), ("RIPR_REFRESH_HOLD", control_text)],
+        &[
+            ("PATH", shimmed_path),
+            ("RIPR_REFRESH_HOLD", control_text),
+            // A known git deadline longer than the hold, whatever is ambient.
+            ("RIPR_GIT_TIMEOUT", "300"),
+        ],
     )?;
     let discovery = session.call("discover-hold", "server/discover", json!({}), timeout)?;
     if discovery.get("result").is_none() {
@@ -3609,6 +3616,18 @@ fn running_refresh_answers_status_and_orders_snapshot_reads() -> Result<(), Stri
     if resource.pointer("/result/contents/0/uri") != Some(&json!("ripr://workspace/status")) {
         return Err(format!(
             "status resource was not answered during a refresh: {resource}"
+        ));
+    }
+    // The one-trailing-slash spelling the server also serves is an observer.
+    let slashed = session.call(
+        "resource-slash-during",
+        "resources/read",
+        json!({ "uri": "ripr://workspace/status/" }),
+        timeout,
+    )?;
+    if slashed.pointer("/result/contents/0/uri").is_none() {
+        return Err(format!(
+            "the trailing-slash status resource was not answered during a refresh: {slashed}"
         ));
     }
     let catalog = session.call("catalog-during", "tools/list", json!({}), timeout)?;

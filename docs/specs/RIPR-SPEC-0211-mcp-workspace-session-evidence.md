@@ -616,7 +616,9 @@ official SDK transport:
   written during a refresh is instead held until the refresh reply is
   flushed, while workspace status, `ping`, the catalog listings and a
   repeated `ripr_refresh`, which is refused `analysis_in_flight`, are
-  answered beside the running refresh, one at a time; #15983); unknown item ids fail closed with
+  answered beside the running refresh, one at a time; after a typed
+  `notifications/cancelled` for that refresh nothing is held and such a read
+  reports `analysis_in_flight` until the attempt ends; #15983); unknown item ids fail closed with
   `item_not_found`; a document whose complete tool envelope cannot fit the
   128-KiB response bound fails closed with `result_too_large` — for tool
   and resource responses the envelope is measured in its final form
@@ -964,7 +966,9 @@ strings and are not URI-decoded. RIPR-SPEC-0283 owns the decoding contract.
   `ripr_list_gaps` plus the status written behind it are answered after the
   refresh, in order, bound to its snapshot. Slot accounting, cancellation
   release and end of input are in
-  `crates/ripr/src/mcp/transport_backpressure_tests.rs`.
+  `crates/ripr/src/mcp/transport_backpressure_tests.rs`; the refusal of a
+  repeat whose first attempt has already committed is
+  `crates/ripr/src/mcp/server_tests.rs::refresh_admitted_beside_a_running_one_is_refused_after_it_commits`.
 - `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
   (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
   early-primary pipe holders, typed failure, last-good retention, same-session

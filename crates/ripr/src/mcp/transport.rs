@@ -7,8 +7,8 @@ use crate::workspace_status::{WorkspaceState, WorkspaceStatus};
 use rmcp::{
     RoleServer, ServiceExt,
     model::{
-        ClientJsonRpcMessage, ClientRequest, CustomRequest, GetExtensions, RequestId,
-        ServerJsonRpcMessage,
+        ClientJsonRpcMessage, ClientNotification, ClientRequest, CustomRequest, GetExtensions,
+        RequestId, ServerJsonRpcMessage,
     },
     transport::{Transport, async_rw::JsonRpcMessageCodec},
 };
@@ -129,7 +129,10 @@ fn request_lane(request: &ClientRequest) -> Lane {
         ClientRequest::CallToolRequest(call) if call.params.name == STATUS_TOOL_NAME => {
             Lane::Observer
         }
-        ClientRequest::ReadResourceRequest(read) if read.params.uri == STATUS_RESOURCE_URI => {
+        // The same one-trailing-slash normalization `read_resource` applies.
+        ClientRequest::ReadResourceRequest(read)
+            if super::gaps::trim_one_trailing_slash(&read.params.uri) == STATUS_RESOURCE_URI =>
+        {
             Lane::Observer
         }
         ClientRequest::PingRequest(_)
@@ -139,18 +142,30 @@ fn request_lane(request: &ClientRequest) -> Lane {
         _ => Lane::Ordered,
     }
 }
-/// The request a `notifications/cancelled` frame names.
+/// The request a typed `notifications/cancelled` names.
 ///
 /// The SDK drops the reply of a request it cancelled, so no reply frame would
-/// ever release that request's slot. Only reachable while a refresh runs:
-/// input is not read while the serial slot is occupied.
-fn cancelled_request_id(frame: &[u8]) -> Option<RequestId> {
-    let value: serde_json::Value = serde_json::from_slice(frame).ok()?;
-    if value.get("method")?.as_str()? != "notifications/cancelled" {
-        return None;
+/// ever release that request's slot. Only the SDK-typed notification counts:
+/// one whose params do not type (and which the SDK therefore does not act on)
+/// releases nothing. Only reachable while a refresh runs: input is not read
+/// while the serial slot is occupied.
+fn cancelled_request_id(notification: &ClientNotification) -> Option<RequestId> {
+    match notification {
+        ClientNotification::CancelledNotification(cancelled) => cancelled.params.request_id.clone(),
+        _ => None,
     }
-    serde_json::from_value(value.pointer("/params/requestId")?.clone()).ok()
 }
+/// Marks a `ripr_refresh` that was admitted while an attempt was running
+/// (#15983).
+///
+/// The handler refuses it `analysis_in_flight` from this mark, not from the
+/// session flag alone: the running attempt can commit between this request's
+/// admission and its handler, and the repeat must not then start an analysis.
+/// The mark follows the server's attempt flag, not the refresh slot: the slot
+/// stays occupied until the reply frame is flushed, and a client that has
+/// read that reply may already have written its next, legitimate refresh.
+#[derive(Clone, Copy)]
+pub(super) struct BesideRunningRefresh;
 fn record_failure(failure: &Failure, reason: &'static str) {
     if let Ok(mut stored) = failure.reason.lock()
         && stored.is_none()
@@ -202,6 +217,8 @@ struct BoundedTransport<R, W> {
     writer_needs_drain: bool,
     /// A request read while a refresh runs whose answer waits for it.
     held: Option<ClientJsonRpcMessage>,
+    /// The serving session's attempt flag (see [`BesideRunningRefresh`]).
+    attempt_running: Arc<AtomicBool>,
     /// Input reached EOF while a request was still admitted. Shared across
     /// handshake attempts like the reader it describes.
     input_closed: Arc<AtomicBool>,
@@ -559,13 +576,27 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                                 self.held = Some(message);
                                 continue;
                             }
-                            Ok(_) => self.admission.admit(id, lane),
+                            Ok(beside_running) => {
+                                if beside_running
+                                    && lane == Lane::Refresh
+                                    && self.attempt_running.load(Ordering::SeqCst)
+                                    && let ClientJsonRpcMessage::Request(request) = &mut message
+                                {
+                                    request
+                                        .request
+                                        .extensions_mut()
+                                        .insert(BesideRunningRefresh);
+                                }
+                                self.admission.admit(id, lane)
+                            }
                             Err(error) => Err(error),
                         },
-                        None if matches!(message, ClientJsonRpcMessage::Notification(_)) => {
-                            self.admission.complete(cancelled_request_id(&frame))
-                        }
-                        None => Ok(()),
+                        None => match &message {
+                            ClientJsonRpcMessage::Notification(notification) => self
+                                .admission
+                                .complete(cancelled_request_id(&notification.notification)),
+                            _ => Ok(()),
+                        },
                     };
                     if admitted.is_err() {
                         record_failure(&self.failure, "MCP admission unavailable");
@@ -757,6 +788,7 @@ where
     loop {
         let server = InitializeSessionService::new(status.clone(), analysis_root.clone())
             .map_err(|_error| "MCP status projection failed; restart `ripr mcp --stdio`, or report this as a ripr bug with the MCP client and ripr version".to_owned())?;
+        let attempt_running = server.attempt_running();
         let transport = BoundedTransport {
             reader: reader.clone(),
             writer: writer.clone(),
@@ -765,6 +797,7 @@ where
             pending_protocol_error: None,
             writer_needs_drain: false,
             held: None,
+            attempt_running,
             input_closed: input_closed.clone(),
             idle_interrupt: idle_interrupt.clone(),
         };
