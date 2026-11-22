@@ -89,8 +89,8 @@ pub(super) fn exception_variant_credits<'a>(
 /// that no other production source names it. Here the owner module names it
 /// only in that import and on the changed line, so before the edit nothing
 /// the owner runs can raise `New`: a `with pytest.raises(New): owner(...)`
-/// whose `New` is the same import cannot pass against the old raise, whatever
-/// input it calls with. A context naming the old class is not read, because
+/// whose `New` is the same import and whose arguments are constants cannot
+/// pass against the old raise, whatever constants it calls with. A context naming the old class is not read, because
 /// `New` may derive from it.
 fn imported_class_credits<'a>(
     edit: &ModuleEdit<'_>,
@@ -136,7 +136,7 @@ fn imported_class_credits<'a>(
     let old_facts = ModuleBindingFacts::of(&old_source, &old_module.body);
     let names = [old_type.as_str(), new_type.as_str(), owner.name.as_str()];
     if !module_bindings_intact(edit, owner, module_owner, &names, &new_facts, &old_facts)
-        || builtin_exception_parent(&old_type).is_none()
+        || builtin_exception_ancestors(&old_type).is_none()
         || !new_facts.unbound(&old_type)
         || !old_facts.unbound(&old_type)
         || !new_facts.bound_once(&new_type)
@@ -167,8 +167,9 @@ fn imported_class_credits<'a>(
         owner,
         &old_type,
         &new_type,
-        |test, expected, _| {
+        |test, expected, call| {
             (expected == new_type
+                && constant_arguments(call)
                 && test_bindings_intact(
                     test,
                     owner,
@@ -180,6 +181,17 @@ fn imported_class_credits<'a>(
             .then_some(false)
         },
     ))
+}
+
+/// Whether a call passes only constants. Any other argument (a callback, an
+/// object with a hook such as `__bool__`, an iterator) can run test-side code
+/// inside the owner and raise the expected class before the changed line.
+fn constant_arguments(call: &ast::ExprCall) -> bool {
+    call.args
+        .iter()
+        .chain(call.keywords.iter().map(|keyword| &keyword.value))
+        .all(|argument| matches!(argument, Expr::Constant(_)))
+        && call.keywords.iter().all(|keyword| keyword.arg.is_some())
 }
 
 /// The one import that binds `name` in a module, when it is a plain
@@ -1289,6 +1301,11 @@ fn test_bindings_intact(
                         !rebinding.module_opaque
                             && plain_class_import(&test.imports, expected).is_some_and(|theirs| {
                                 theirs.source_module == owner_import.source_module
+                                    && same_import_root(
+                                        &owner_modules,
+                                        &import.source_module,
+                                        &theirs.source_module,
+                                    )
                                     && module_name_identifies_owner_for(
                                         owner,
                                         &theirs.source_module,
@@ -1300,6 +1317,19 @@ fn test_bindings_intact(
                     }
                 }
         })
+}
+
+/// Whether a test that imports the owner as `owner_spelling` can be naming
+/// the same module object when it imports a class from `class_spelling`.
+/// When the owner is imported under a layout root (`verlib.core` for
+/// `src/verlib/core.py`), a class module spelled with that root
+/// (`src.verlib.errors`) is loaded a second time under another name, and its
+/// class is not the one the owner raises.
+fn same_import_root(owner_modules: &[String], owner_spelling: &str, class_spelling: &str) -> bool {
+    !owner_modules.iter().any(|full| {
+        full.strip_suffix(owner_spelling)
+            .is_some_and(|root| root.ends_with('.') && class_spelling.starts_with(root))
+    })
 }
 
 #[derive(Clone, Copy)]

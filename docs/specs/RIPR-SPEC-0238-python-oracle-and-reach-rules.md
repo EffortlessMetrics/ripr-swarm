@@ -442,7 +442,10 @@ one changed raise only (#12952); the general class-only table row stays weak.
    changed line, and no other production source or `conftest.py` names it.
    The old class is a listed builtin. The test imports the class by the same
    plain import, names it once, in `with pytest.raises(NewError):`, and that
-   context runs the owner. A passing context then saw an instance only the
+   context runs the owner with constant arguments only (a callback or an
+   object with a hook could raise the class itself). A class module spelled
+   with a layout root the owner import omits (`src.verlib.errors` beside
+   `verlib.core`) is a second module object and is not read. A passing context then saw an instance only the
    changed line can construct, and the old raise never produces one, so the
    base class may be an ancestor of the old class (`ValueError` to an
    imported `ValueError` subclass). A context naming the old or a base class

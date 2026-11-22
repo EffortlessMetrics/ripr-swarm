@@ -37,6 +37,14 @@ impl Drop for Repo {
 impl Repo {
     /// `extra` are further production files committed in the base.
     fn create(test: &str, extra: &[(&str, &str)]) -> Result<Self, String> {
+        Self::create_with_owner(OWNER_OLD, test, extra)
+    }
+
+    fn create_with_owner(
+        owner_old: &str,
+        test: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-python-raise-sole-site-{}-{}",
@@ -52,7 +60,7 @@ impl Repo {
         )?;
         repo.write("src/verlib/__init__.py", "")?;
         repo.write("src/verlib/errors.py", ERRORS)?;
-        repo.write("src/verlib/core.py", OWNER_OLD)?;
+        repo.write("src/verlib/core.py", owner_old)?;
         for (name, text) in extra {
             repo.write(name, text)?;
         }
@@ -65,12 +73,12 @@ impl Repo {
         fixture_git_ok(root, &["config", "user.email", "fixture@example.invalid"])?;
         fixture_git_ok(root, &["add", "-A"])?;
         fixture_git_ok(root, &["commit", "-q", "-m", "base"])?;
-        if !OWNER_OLD.contains(OLD_RAISE) {
+        if !owner_old.contains(OLD_RAISE) {
             return Err("the owner fixture must carry the old raise".to_string());
         }
         repo.write(
             "src/verlib/core.py",
-            &OWNER_OLD.replace(OLD_RAISE, NEW_RAISE),
+            &owner_old.replace(OLD_RAISE, NEW_RAISE),
         )?;
         fixture_git_ok(root, &["commit", "-q", "-am", "change"])?;
         Ok(repo)
@@ -160,6 +168,67 @@ fn a_second_production_use_of_the_class_stays_a_gap() -> Result<(), String> {
     if class != "weakly_exposed" {
         return Err(format!(
             "another module also constructs InvalidVersion, so the changed line is not its sole site; got {class}"
+        ));
+    }
+    Ok(())
+}
+
+/// A different class of the same spelling defined beside the tests: the
+/// production tree still names `InvalidVersion` on one line only, so this
+/// reaches the import comparison and is refused there.
+#[test]
+fn same_spelling_from_a_test_side_module_stays_a_gap() -> Result<(), String> {
+    let helper: [(&str, &str); 1] = [(
+        "tests/test_helpers.py",
+        "class InvalidVersion(Exception):\n    pass\n",
+    )];
+    let test = "import pytest\n\nfrom test_helpers import InvalidVersion\nfrom verlib.core import parse\n\n\ndef test_empty():\n    with pytest.raises(InvalidVersion):\n        parse(\"\")\n";
+    let class = Repo::create(test, &helper)?.classification()?;
+    if class != "weakly_exposed" {
+        return Err(format!(
+            "test_helpers.InvalidVersion is not the raised class; got {class}"
+        ));
+    }
+    Ok(())
+}
+
+/// The owner calls its argument before the changed line. A test-side helper
+/// that raises the expected class makes the context pass against both
+/// versions of the raise, so a non-constant argument earns nothing.
+#[test]
+fn an_argument_that_can_raise_the_class_itself_stays_a_gap() -> Result<(), String> {
+    let owner = OWNER_OLD.replace(
+        "def parse(text):\n",
+        "def parse(read):\n    text = read()\n",
+    );
+    if !owner.contains("text = read()") {
+        return Err("the callback owner fixture must call its argument".to_string());
+    }
+    let helper: [(&str, &str); 1] = [(
+        "tests/test_helpers.py",
+        "from verlib.errors import InvalidVersion\n\n\ndef fail():\n    raise InvalidVersion(\"boom\")\n",
+    )];
+    let test = "import pytest\n\nfrom test_helpers import fail\nfrom verlib.core import parse\nfrom verlib.errors import InvalidVersion\n\n\ndef test_empty():\n    with pytest.raises(InvalidVersion):\n        parse(fail)\n";
+    let class = Repo::create_with_owner(&owner, test, &helper)?.classification()?;
+    if class != "weakly_exposed" {
+        return Err(format!(
+            "parse(fail) raises InvalidVersion before the changed line; got {class}"
+        ));
+    }
+    Ok(())
+}
+
+/// The owner imports the class relatively and the test reaches the owner as
+/// `verlib.core`: `src.verlib.errors` is then a second module object whose
+/// class the owner never raises.
+#[test]
+fn a_class_module_spelled_with_the_layout_root_stays_a_gap() -> Result<(), String> {
+    let owner = OWNER_OLD.replace("from verlib.errors import", "from .errors import");
+    let test = "import pytest\n\nfrom src.verlib.errors import InvalidVersion\nfrom verlib.core import parse\n\n\ndef test_empty():\n    with pytest.raises(InvalidVersion):\n        parse(\"\")\n";
+    let class = Repo::create_with_owner(&owner, test, &[])?.classification()?;
+    if class != "weakly_exposed" {
+        return Err(format!(
+            "src.verlib.errors.InvalidVersion is not verlib.errors.InvalidVersion; got {class}"
         ));
     }
     Ok(())
