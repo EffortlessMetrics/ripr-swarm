@@ -1121,8 +1121,8 @@ mod tests {
     }
 
     /// Release tooling asks this owner which tree paths block a release:
-    /// every `changelog.d/` path except the directory's README, sorted, and
-    /// nothing outside the directory (#6341).
+    /// every `changelog.d/` path except the directory's README, whatever its
+    /// extension or depth, sorted, and nothing outside the directory (#6341).
     #[test]
     fn unfolded_fragment_paths_keeps_only_fragments_in_sorted_order() {
         assert_eq!(
@@ -1132,10 +1132,14 @@ mod tests {
                 "changelog.d/README.md",
                 "docs/changelog.d/x.md",
                 "changelog.d/a-fix.md",
+                "changelog.d/notes.txt",
+                "changelog.d/nested/c-fix.md",
             ]),
             vec![
                 "changelog.d/a-fix.md".to_string(),
                 "changelog.d/b-fix.md".to_string(),
+                "changelog.d/nested/c-fix.md".to_string(),
+                "changelog.d/notes.txt".to_string(),
             ]
         );
         assert_eq!(
@@ -1154,6 +1158,17 @@ mod tests {
             vec!["- Fixed a thing (#1).".to_string()]
         );
         assert_eq!(
+            bullet_entries(
+                [
+                    "- Fixed a thing (#1).",
+                    "  <!-- folded from 1-a.md -->",
+                    "  continued line.",
+                ]
+                .into_iter()
+            ),
+            vec!["- Fixed a thing (#1). continued line.".to_string()]
+        );
+        assert_eq!(
             bullet_entries(["- Fixed a thing (#1).", "   ", "  continued line."].into_iter()),
             vec!["- Fixed a thing (#1). continued line.".to_string()]
         );
@@ -1170,7 +1185,7 @@ mod tests {
         ] {
             assert_eq!(
                 check_changelog_fragments_with_args(&args),
-                Err(USAGE.to_string()),
+                Err("usage: cargo xtask check-changelog-fragments [--release-cut]".to_string()),
                 "{args:?}"
             );
         }
