@@ -51,6 +51,7 @@ mod helper_arguments;
 pub(in crate::analysis::classify) mod path_value;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
+mod scalar_exits;
 mod shared_macro_scan;
 pub(super) mod short_circuit;
 mod unseen_member;
@@ -4268,7 +4269,7 @@ impl AssertionRefusal {
         // Evidence text is host-independent: use the stable slash spelling
         // so Windows and Unix emit identical bytes (#2337 family).
         let at = |path: &Path, line: usize| {
-            let text = crate::analysis::stable_path_text(path);
+            let text = crate::analysis::stable_display_path_text(path);
             if line == 0 {
                 text
             } else {
@@ -4372,7 +4373,7 @@ impl AssertionRefusal {
                     match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
-                            crate::analysis::stable_path_text(path)
+                            crate::analysis::stable_display_path_text(path)
                         ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
@@ -10072,35 +10073,16 @@ fn scalar_early_return_gate(
     {
         return None;
     }
-    let mut changed_returns = 0usize;
-    for offset in whole_word_offsets(inner, "return") {
-        let value_start = offset + "return".len();
-        let value_end = value_start + inner[value_start..].find(';')?;
-        let value = collapse_whitespace(&inner_text[value_start..value_end]);
-        let value = value.trim();
-        if !super::boundary_pairing::is_whole_decimal_literal(value) {
-            // A parameter, const or computed exit may alias the changed
-            // literal under an input this static read does not evaluate.
-            return None;
-        }
-        if super::boundary_pairing::same_scalar_literal(value, changed) {
-            // Only the changed line may produce this literal; a second
-            // `return` of it elsewhere is a second source.
-            if !spans_changed_line(offset, value_end) {
-                return None;
-            }
-            changed_returns += 1;
-        }
-    }
-    let (after_semicolon, after_brace) = top_level_tail_starts(inner);
-    let tail = collapse_whitespace(&inner_text[after_semicolon.max(after_brace)..]);
-    let tail = tail.trim();
-    (changed_returns == 1
-        && super::boundary_pairing::is_whole_decimal_literal(tail)
-        && !super::boundary_pairing::same_scalar_literal(tail, changed))
-    .then(|| ReturnPathGate::EarlyScalar {
-        literal: changed.to_string(),
-    })
+    // #11738: the exits are a pure function of the owner text, read once per
+    // scope; only which of them build the changed literal is asked here.
+    let exits = scalar_exits::scalar_exits(inner, inner_text);
+    exits
+        .as_ref()
+        .as_ref()?
+        .changed_is_only_source(changed, spans_changed_line)
+        .then(|| ReturnPathGate::EarlyScalar {
+            literal: changed.to_string(),
+        })
 }
 
 /// #13037 Defect A, tail direction: whether every early `return` in `inner`

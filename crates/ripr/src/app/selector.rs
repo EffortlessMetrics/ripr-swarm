@@ -528,6 +528,7 @@ mod tests {
                 normalized_discriminator: "x".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation::new("src/lib.rs", line, 1),
                 owner: Some(SymbolId("crate::add".to_string())),

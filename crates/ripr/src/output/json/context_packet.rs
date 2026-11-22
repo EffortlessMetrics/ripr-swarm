@@ -348,6 +348,7 @@ mod tests {
             probe_family: "predicate".to_string(),
             changed_expression: "x >= 0".to_string(),
             before: None,
+            before_condition: None,
             after: Some("x >= 0".to_string()),
             expected_sink: None,
             missing_discriminators: Vec::new(),
@@ -445,6 +446,7 @@ mod tests {
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:9:error_path".to_string()),
                 location: SourceLocation::new("src/lib.rs", 9, 1),
                 owner: Some(SymbolId("crate::sample".to_string())),

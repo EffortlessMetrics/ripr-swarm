@@ -712,8 +712,19 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
 /// it at that site, so the glob is not a foreign one. Only the top level of
 /// a file qualifies, read with 2018 path semantics; the scan has no edition, so
 /// a 2015-edition non-root file, where the same spelling names a crate-root
-/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`), grouped globs and the
-/// standard roots keep their dedicated rules.
+/// item, is an accepted residual (#14031). Longer paths (`vstd::prelude::*`) and grouped globs keep
+/// their dedicated rules.
+///
+/// A module the file declares under a standard crate's name qualifies like
+/// any other (`mod core; use core::*;`, #14116): an item declared in the
+/// module shadows the extern prelude, so the glob reads the local module and
+/// never the standard crate. The standard-root rule already declines such a
+/// file because the module takes the root's name, which left this glob
+/// foreign under both rules. Every other standard-root spelling (a longer
+/// path, a group, a leading `::`, a file that declares no such module) keeps
+/// the standard-root rule, and so does a declaration under `cfg` or
+/// `cfg_attr`: with the module compiled out the glob reads the standard
+/// crate's name, which a renamed dependency can hold.
 fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &str) -> bool {
     let whole_glob = import
         .use_tree()
@@ -727,9 +738,15 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
         return false;
     }
     let root = root.trim_start_matches("r#");
-    if root.is_empty() || matches!(root, "std" | "core" | "alloc") {
+    if root.is_empty() {
         return false;
     }
+    // A standard name always has a fallback: with the declaration compiled
+    // out, `core::*` reads the extern prelude's `core`, which Cargo can bind
+    // to a renamed dependency. Any other name fails to resolve there unless a
+    // dependency carries it. So a standard name needs a declaration no
+    // attribute can remove.
+    let standard = matches!(root, "std" | "core" | "alloc");
     let Some(parent) = import
         .syntax()
         .parent()
@@ -754,9 +771,10 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
             // tests. An out-of-line module's public imports are reported
             // workspace-wide at their own file.
             if module.item_list().is_some()
-                || module
-                    .attrs()
-                    .any(|attr| attr.syntax().text().to_string().contains("path"))
+                || module.attrs().any(|attr| {
+                    let text = attr.syntax().text().to_string();
+                    text.contains("path") || standard && text.contains("cfg")
+                })
             {
                 return false;
             }
@@ -2151,7 +2169,8 @@ const INERT_PASS_THROUGH_ATTRIBUTES: &[&str] = &[
 
 #[derive(Clone, Copy, Debug)]
 enum PassThroughCall {
-    /// `proptest::proptest!` or `serde_json::json!`, with or without `::`.
+    /// `proptest::proptest!`, `serde_json::json!` or `tokio::select!`, with
+    /// or without `::`.
     Qualified { krate: &'static str, external: bool },
     /// A bare `proptest!`, which must name the audited prelude's macro.
     BareProptest,
@@ -2209,6 +2228,13 @@ fn audited_pass_through_call(
     let wrapper = match unrooted.split_once("::") {
         Some(("proptest", name)) if proptest_wrapper(name) => PassThroughCall::Qualified {
             krate: "proptest",
+            external,
+        },
+        // tokio's `select!` places branch patterns, futures, preconditions
+        // and handlers in pattern, expression and block fragments; its
+        // locked version must be the audited one.
+        Some(("tokio", "select")) => PassThroughCall::Qualified {
+            krate: "tokio",
             external,
         },
         Some(("serde_json", "json")) => PassThroughCall::Qualified {
@@ -3887,7 +3913,37 @@ fn empty_macros_defined_in(
 /// function: the text parses cleanly and no `return` sits inside a closure,
 /// an `async` or `const` block, or a nested `fn` item, where it would end
 /// only that inner body.
+///
+/// A pure function of `item`, so it is read once per run scope (#11738): one
+/// long owner with many changed lines asked it, with a fresh parse of the
+/// whole owner, once per changed line.
 pub(crate) fn returns_leave_the_function(item: &str) -> bool {
+    super::run_memo::memoize(
+        super::run_memo::Product::ReturnsLeaveTheFunction,
+        0,
+        item,
+        || returns_leave_the_function_uncached(item),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many owner texts this thread has parsed for
+    /// [`returns_leave_the_function`].
+    static RETURNS_LEAVE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many owner texts this thread has parsed for
+/// [`returns_leave_the_function`] (#11738 read-count proof).
+#[cfg(test)]
+pub(crate) fn returns_leave_reads() -> usize {
+    RETURNS_LEAVE_READS.with(std::cell::Cell::get)
+}
+
+/// [`returns_leave_the_function`] without the run memo.
+pub(crate) fn returns_leave_the_function_uncached(item: &str) -> bool {
+    #[cfg(test)]
+    RETURNS_LEAVE_READS.with(|reads| reads.set(reads.get() + 1));
     parse_clean_source_file(item).is_some_and(|parse| {
         parse
             .tree()

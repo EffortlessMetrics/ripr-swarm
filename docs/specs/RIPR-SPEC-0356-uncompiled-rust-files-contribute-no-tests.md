@@ -229,7 +229,9 @@ test --benches` are other commands. An `[[bench]] test = true` (with its
 a holder or root under `benches/` spends rule 3's probe, and a skipped bench
 root, like a skipped example root, stays under rule 5's name-or-stem test, so
 `mod load { include!("../benches/load.rs"); }` in `tests/it.rs` keeps the
-bench's tests.
+bench's tests. If Cargo explicitly rejects the analyzed package as a nonmember
+of its enclosing workspace, a test reached only from that package’s bench
+roots supplies no discriminator (#15620).
 
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.

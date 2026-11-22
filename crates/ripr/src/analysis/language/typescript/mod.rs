@@ -76,6 +76,7 @@ mod capability_disposition_tests;
 mod catch_arm_guard;
 mod changed_return;
 mod class_entries;
+mod class_heritage;
 mod classifier;
 mod committed_snapshot;
 mod commonjs_default_class;
@@ -137,6 +138,7 @@ mod local_constant_tests;
 mod lookup_table_guard;
 mod loop_bound_guard;
 mod match_object_guard;
+mod method_replacement_guard;
 mod mock_payload_guard;
 mod module_entries;
 mod module_value_reads;
@@ -185,6 +187,7 @@ mod row_miss;
 mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
+mod setup_file_mocks;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
@@ -1130,6 +1133,15 @@ impl TypeScriptAdapter {
             &export_facts_by_file,
         );
 
+        // A mock a runner setup file registers applies to every test the
+        // config governs, exactly like a mock in the test's own file.
+        setup_file_mocks::apply_setup_file_mocks(
+            &options.root,
+            &workspace_files,
+            &source_cache,
+            &mut all_tests,
+        );
+
         // A named import of `export * as ns from` reads as the namespace import
         // it binds (RIPR-SPEC-0095).
         reexport_index.rewrite_namespace_reexport_imports(
@@ -1143,6 +1155,14 @@ impl TypeScriptAdapter {
         reexport_index.rewrite_class_barrel_imports(
             &mut all_tests,
             &related_tests::ExportedClasses::from_owners(&all_owners),
+            alias_map_ref,
+            Some(&options.root),
+        );
+
+        // A member called on an ES namespace import of a barrel resolves
+        // through the same chain a named import follows (#15923).
+        reexport_index.record_barrel_namespace_members(
+            &mut all_tests,
             alias_map_ref,
             Some(&options.root),
         );
@@ -1170,6 +1190,20 @@ impl TypeScriptAdapter {
                 }
                 if !cross.entries.is_empty() {
                     owner.module_entries.extend(cross.entries);
+                    owner.module_entries.sort();
+                }
+            }
+        }
+
+        // #15924: a changed ordinary method or getter is also reached on an
+        // instance of a class that inherits it unchanged. Resolved only for
+        // changed files, through the re-export index's import identity.
+        for owner in &mut all_owners {
+            if owner.class_name.is_some() && changed_paths.contains(&normalized_path(&owner.file)) {
+                let subclasses =
+                    reexport_index.inheriting_subclasses(owner, alias_map_ref, Some(&options.root));
+                if !subclasses.is_empty() {
+                    owner.module_entries.extend(subclasses);
                     owner.module_entries.sort();
                 }
             }
@@ -2144,7 +2178,7 @@ pub(in crate::analysis::language::typescript) fn typescript_adapter_excludes_pat
     is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(excluded_file_patterns, path)
         || ((is_detectable_excluded_typescript_path(path)
-            || crate::config::is_typescript_docs_site_path(path))
+            || crate::config::is_typescript_non_product_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 

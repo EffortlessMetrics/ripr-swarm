@@ -1188,6 +1188,7 @@ mod tests {
 
     fn probe() -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:fmt".to_string()),
             location: SourceLocation::new("src/error.rs", 2, 1),
             owner: Some(SymbolId("src/error.rs::fmt".to_string())),

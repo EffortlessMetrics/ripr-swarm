@@ -1474,6 +1474,7 @@ mod tests {
             id: "probe:gap-admission".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:gap-admission".to_string()),
                 location: SourceLocation::new("src/lib.rs", 10, 1),
                 owner: None,

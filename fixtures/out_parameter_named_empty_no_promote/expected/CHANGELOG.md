@@ -154,3 +154,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — out_parameter_named_empty_no_promote (14)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless out_parameter_named_empty_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

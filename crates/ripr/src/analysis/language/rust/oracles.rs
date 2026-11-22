@@ -1504,6 +1504,7 @@ mod tests {
 
     fn probe_for_owner(file: &str, name: &str, family: ProbeFamily) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:{file}::{name}")),
             location: SourceLocation::new(file, 2, 1),
             owner: Some(SymbolId(format!("{file}::{name}"))),
@@ -1532,6 +1533,7 @@ mod tests {
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:predicate:test".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(SymbolId("src/lib.rs::inner".to_string())),

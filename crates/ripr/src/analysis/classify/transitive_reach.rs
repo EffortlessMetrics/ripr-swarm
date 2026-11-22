@@ -29,7 +29,7 @@ use crate::analysis::facts::{
 use crate::domain::StaticLimitKind;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 /// Maximum call-hop depth for the transitive walk.
 pub(in crate::analysis) const MAX_TRANSITIVE_DEPTH: usize = 5;
@@ -150,7 +150,16 @@ pub(in crate::analysis) struct TransitiveReachIndex<'a> {
     /// changes within a run, but every probe of one changed function asks
     /// again, and the walk dominated a warm diff check on ripr-swarm.
     witnesses: WitnessMemo,
+    /// [`ReachGraph::names_reaching`] by owner name (#15952 follow-up). The
+    /// walk reads only the immutable graph, so an owner's set never changes
+    /// within a run, but every seam of one owner asked again: on a repo-wide
+    /// walk the repeated reverse walk was the largest single cost.
+    reaching: Mutex<HashMap<String, ReachingSlot<'a>>>,
 }
+
+/// One owner name's memoized reverse walk: filled once, shared by every seam
+/// of that owner.
+type ReachingSlot<'a> = Arc<OnceLock<Arc<HashSet<&'a str>>>>;
 
 /// Per-owner-name answers of the two transitive witness searches.
 #[derive(Default)]
@@ -1215,7 +1224,7 @@ pub(super) const IMPLICIT_DISPATCH_METHODS: &[&str] = &[
 /// The owner and the names the bounded reverse walk says reach it (#15026).
 pub(in crate::analysis) struct OwnerCallers<'a> {
     owner_name: String,
-    reaching: HashSet<&'a str>,
+    reaching: Arc<HashSet<&'a str>>,
 }
 
 impl OwnerCallers<'_> {
@@ -1244,7 +1253,7 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
     index: &'a RustIndex,
     graph: &'g ReachGraph<'a>,
     owner_name: String,
-    reaching: HashSet<&'a str>,
+    reaching: Arc<HashSet<&'a str>>,
     /// The owner is, or is reached from, a trait method the language calls
     /// without naming it, so any test may run it.
     implicit_dispatch: bool,
@@ -1838,6 +1847,7 @@ impl<'a> TransitiveReachIndex<'a> {
             graph: OnceLock::new(),
             effect_method_names: super::effect_carrier::EffectMethodNames::new(index),
             witnesses: WitnessMemo::default(),
+            reaching: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1855,7 +1865,7 @@ impl<'a> TransitiveReachIndex<'a> {
         }
         self.witnesses
             .get_or_compute(&self.witnesses.bounded, owner_name, || {
-                let reaching = self.graph().names_reaching(owner_name);
+                let reaching = self.names_reaching(owner_name);
                 if reaching.is_empty() {
                     return None;
                 }
@@ -1885,9 +1895,9 @@ impl<'a> TransitiveReachIndex<'a> {
             .is_some_and(|functions| functions.len() > 1)
             && shared_owner_call_identity(self.index, owner).is_some()
         {
-            self.names_reaching_owner(owner)
+            Arc::new(self.names_reaching_owner(owner))
         } else {
-            graph.names_reaching(owner_name)
+            self.names_reaching(owner_name)
         };
         if reaching.is_empty() {
             return None;
@@ -1992,7 +2002,7 @@ impl<'a> TransitiveReachIndex<'a> {
         if owner_name.is_empty() {
             return None;
         }
-        let reaching = self.graph().names_reaching(owner_name);
+        let reaching = self.names_reaching(owner_name);
         if reaching.is_empty() {
             return None;
         }
@@ -2371,13 +2381,42 @@ impl<'a> TransitiveReachIndex<'a> {
             .collect()
     }
 
+    /// The memoized [`ReachGraph::names_reaching`] set of `owner_name`. The
+    /// map lock covers only the slot lookup; the walk runs under the slot's
+    /// own `OnceLock`, so workers that miss the same owner together wait for
+    /// one walk instead of each running it, and other owners are not blocked.
+    fn names_reaching(&self, owner_name: &str) -> Arc<HashSet<&'a str>> {
+        let slot = {
+            let mut memo = self.reaching.lock().unwrap_or_else(PoisonError::into_inner);
+            match memo.get(owner_name) {
+                Some(slot) => Arc::clone(slot),
+                None => Arc::clone(memo.entry(owner_name.to_string()).or_default()),
+            }
+        };
+        Arc::clone(slot.get_or_init(|| {
+            let mut reaching = self.graph().names_reaching(owner_name);
+            // Kept for the whole run, so drop the growth slack.
+            reaching.shrink_to_fit();
+            Arc::new(reaching)
+        }))
+    }
+
+    /// Drop the memoized reverse walks. They are recomputable, so a windowed
+    /// pass releases them at its window boundary with its other owner detail.
+    pub(in crate::analysis) fn clear_reaching_memo(&self) {
+        self.reaching
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+    }
+
     /// Only the bounded reverse name walk to `owner_name`, without the
     /// implicit-dispatch and untraced-path work of [`Self::owner_reach`]:
     /// enough to order related tests by owner nearness (#15026).
     pub(in crate::analysis) fn owner_callers(&self, owner_name: &str) -> OwnerCallers<'a> {
         OwnerCallers {
             owner_name: owner_name.to_string(),
-            reaching: self.graph().names_reaching(owner_name),
+            reaching: self.names_reaching(owner_name),
         }
     }
 
@@ -2385,7 +2424,7 @@ impl<'a> TransitiveReachIndex<'a> {
     /// same-file test of one probe reuses the reverse walk (#6297).
     pub(in crate::analysis) fn owner_reach(&self, owner_name: &str) -> OwnerReach<'_, 'a> {
         let graph = self.graph();
-        let reaching = graph.names_reaching(owner_name);
+        let reaching = self.names_reaching(owner_name);
         // A trait method the language calls without naming it (`format!`
         // calls `fmt`, `==` calls `eq`, `+` calls `add`, `for` calls `next`)
         // leaves no call fact, so an owner that is one, or is reached from
@@ -4978,6 +5017,70 @@ mod tests {
             workspace_authority: None,
             ..Default::default()
         })
+    }
+
+    /// #16022: the per-owner memo must hand back exactly the set the graph
+    /// walk computes, share one allocation across repeat and concurrent
+    /// lookups, keep owners apart, and recompute after a window clear.
+    #[test]
+    fn memoized_names_reaching_matches_the_graph_walk() {
+        let index = index_with(
+            vec![
+                make_fn("leaf", vec![]),
+                make_fn("mid", vec!["leaf"]),
+                make_fn("top", vec!["mid"]),
+                make_fn("side", vec!["leaf"]),
+                make_fn("lonely", vec![]),
+            ],
+            vec![make_test("covers_top", vec!["top"])],
+        );
+        let reach = TransitiveReachIndex::new(&index);
+        fn sorted<'s>(names: &HashSet<&'s str>) -> BTreeSet<&'s str> {
+            names.iter().copied().collect()
+        }
+
+        let leaf = reach.names_reaching("leaf");
+        assert_eq!(sorted(&leaf), sorted(&reach.graph().names_reaching("leaf")));
+        assert!(
+            leaf.contains("mid") && leaf.contains("top") && leaf.contains("side"),
+            "fixture must give `leaf` transitive callers, found {leaf:?}"
+        );
+        assert!(!leaf.contains("lonely"), "{leaf:?}");
+
+        // A repeat lookup is the stored set, not a second walk.
+        assert!(Arc::ptr_eq(&leaf, &reach.names_reaching("leaf")));
+        assert!(Arc::ptr_eq(&leaf, &reach.owner_callers("leaf").reaching));
+
+        // Owners do not share an entry.
+        let mid = reach.names_reaching("mid");
+        assert_eq!(sorted(&mid), sorted(&reach.graph().names_reaching("mid")));
+        assert_ne!(sorted(&mid), sorted(&leaf));
+        assert!(!mid.contains("side"), "{mid:?}");
+
+        // Racing workers all get the one stored set, equal to the walk.
+        let racing: Vec<Arc<HashSet<&str>>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..4)
+                .map(|_| scope.spawn(|| reach.names_reaching("top")))
+                .collect();
+            workers
+                .into_iter()
+                .filter_map(|worker| worker.join().ok())
+                .collect()
+        });
+        assert_eq!(racing.len(), 4);
+        let stored = reach.names_reaching("top");
+        assert_eq!(
+            sorted(&stored),
+            sorted(&reach.graph().names_reaching("top"))
+        );
+        assert!(racing.iter().all(|set| Arc::ptr_eq(set, &stored)));
+
+        // A window clear drops the entries; the next lookup recomputes an
+        // equal set in a new allocation.
+        reach.clear_reaching_memo();
+        let again = reach.names_reaching("leaf");
+        assert!(!Arc::ptr_eq(&leaf, &again));
+        assert_eq!(sorted(&again), sorted(&leaf));
     }
 
     #[test]

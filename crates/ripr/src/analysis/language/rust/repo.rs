@@ -86,10 +86,7 @@ impl RustAdapter {
         };
         let production_files = analyzable_rust_files
             .iter()
-            .filter(|path| {
-                workspace::classify_with(path, &repo_source_role_context)
-                    .seeds_production_findings()
-            })
+            .filter(|path| workspace::seeds_repo_seams(path, &repo_source_role_context))
             .cloned()
             .collect::<Vec<_>>();
 
