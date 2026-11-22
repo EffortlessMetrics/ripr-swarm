@@ -1829,7 +1829,17 @@ suite('Extension Smoke', () => {
         diagnostic.source = 'ripr';
         diagnostic.code = 'weakly_exposed';
         (diagnostic as vscode.Diagnostic & { data?: unknown }).data = { finding_id: 'probe:near:1:predicate' };
-        collection.set(uri, [diagnostic]);
+        // An overlapping exposed finding listed first must neither be chosen
+        // nor sent along: the server answers for the first finding it gets.
+        const exposed = new vscode.Diagnostic(
+          new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+          'exposed',
+          vscode.DiagnosticSeverity.Information
+        );
+        exposed.source = 'ripr';
+        exposed.code = 'exposed';
+        (exposed as vscode.Diagnostic & { data?: unknown }).data = { finding_id: 'probe:near:1:exposed' };
+        collection.set(uri, [exposed, diagnostic]);
 
         await context.controller.start();
         await context.controller.startCurrentRepair();
@@ -1837,8 +1847,9 @@ suite('Extension Smoke', () => {
         const request = context.client.requests.find((entry) => entry.method === 'textDocument/codeAction');
         assert.ok(request, `the controller must ask the server about the finding: ${JSON.stringify(context.client.requests)}`);
         const sent = request.params as { context: { diagnostics: Array<{ data?: unknown }> } };
-        assert.ok(
-          sent.context.diagnostics.some((wire) => (wire.data as { finding_id?: string } | undefined)?.finding_id === 'probe:near:1:predicate'),
+        assert.deepStrictEqual(
+          sent.context.diagnostics.map((wire) => (wire.data as { finding_id?: string } | undefined)?.finding_id),
+          ['probe:near:1:predicate'],
           JSON.stringify(sent.context.diagnostics)
         );
         assert.ok(!context.runRiprCalls.some((call) => call.args[0] === 'agent' && call.args[1] === 'repair'));

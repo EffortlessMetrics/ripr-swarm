@@ -560,13 +560,17 @@ function nearestFindingDiagnostic(editor: vscode.TextEditor): vscode.Diagnostic 
   return nearestDiagnostic(editor, isRiprFindingDiagnostic);
 }
 
+/** Finding codes the server's repair start exists for (`is_actionable_gap_class`). */
+const REPAIR_GAP_FINDING_CODES = new Set(['weakly_exposed', 'reachable_unrevealed', 'no_static_path']);
+
 function isRiprFindingDiagnostic(diagnostic: vscode.Diagnostic): boolean {
-  // An `exposed` finding has no gap to start a repair on.
+  // Only the gap classes can carry a repair start; an `exposed` or
+  // `*_unknown` finding has none for the server to explain.
   if (
     diagnostic.source !== 'ripr'
     || isRiprGapDiagnostic(diagnostic)
     || isRiprSeamDiagnostic(diagnostic)
-    || diagnosticCodeText(diagnostic) === 'exposed'
+    || !REPAIR_GAP_FINDING_CODES.has(diagnosticCodeText(diagnostic))
   ) {
     return false;
   }

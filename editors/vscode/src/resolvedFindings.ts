@@ -65,5 +65,5 @@ export function resolvedFindingsMessage(note: ResolvedFindingsNote): string {
     ? 'ripr: 1 changed behavior is now exposed since the last analysis: a test appears to observe it (static evidence).'
     : `ripr: ${note.count} changed behaviors are now exposed since the last analysis: tests appear to observe them (static evidence).`;
   const first = note.lines[0];
-  return first && note.count === 1 && !first.startsWith('+') ? `${head} ${first}` : head;
+  return first && note.count === 1 ? `${head} ${first}` : head;
 }
