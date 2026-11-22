@@ -134,7 +134,9 @@ fn outside_parent_escape_and_unrooted_paths_keep_their_spelling() -> std::io::Re
     output.root = root;
     let rendered = render(&output);
     assert!(
-        rendered.contains("State: no gap selected for repair"),
+        rendered.contains(
+            "State: every finding left is on removed code, which is never an edit target"
+        ),
         "{rendered}"
     );
     for file in files {

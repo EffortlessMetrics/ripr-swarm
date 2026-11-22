@@ -139,12 +139,20 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             old_side.source,
             &paired,
         );
-        let site = ChangeSite {
-            file: &changed.path,
-            line: removed.new_side_line,
-            owner,
-            old_guard,
-        };
+        let site =
+            ChangeSite {
+                file: &changed.path,
+                line: removed.new_side_line,
+                owner,
+                old_guard,
+                deleted_membership: old_side.source.zip(new_source).map(
+                    |(old_source, new_source)| super::classify::DeletedMembershipView {
+                        old_source,
+                        old_line: removed.line,
+                        new_source,
+                    },
+                ),
+            };
         let mut finding_origins = crate::value_origins::ValueOrigins::default();
         let Some(mut finding) = classify_change_for_owner_with_value_origins(
             site,

@@ -317,6 +317,18 @@ fn windows_overlong_working_directory(is_windows: bool, dir: &Path) -> Option<us
 /// archive or a planted nested repository can.
 pub(crate) const UNTRUSTED_REPOSITORY_CONFIG: [&str; 2] = ["-c", "core.fsmonitor=false"];
 
+/// Submodule inclusion for every diff and status call (#8209, #15101).
+///
+/// An explicit option overrides ambient `diff.ignoreSubmodules` and
+/// `submodule.<name>.ignore`, so a changed or moved gitlink stays visible to
+/// the skipped-pointer disclosure. `dirty` (not `none`) keeps Git from
+/// examining a populated submodule's working tree: that check runs a
+/// `git status` child inside the submodule, which reads the submodule's own
+/// configuration (filter drivers and other helpers) that the pins below are
+/// never computed from. Uncommitted edits inside a submodule are therefore
+/// not reported; a moved submodule commit still is.
+pub(crate) const SUBMODULE_POINTERS_ONLY: &str = "--ignore-submodules=dirty";
+
 /// Git's null device spelling for `-c` overrides (`NUL` on Windows, `/dev/null` elsewhere).
 fn git_null_device_path() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
@@ -631,8 +643,46 @@ fn git_command_with_filter_pins(
             command.arg(REFUSED_FILTER_CONFIG_FLAG);
         }
     }
-    command.args(args);
+    command.args(with_submodule_pointers_only(args));
     command
+}
+
+/// Git subcommands that examine a populated submodule's working tree unless
+/// told otherwise (#15101).
+const SUBMODULE_EXAMINING_SUBCOMMANDS: [&str; 4] = ["status", "diff", "diff-index", "diff-files"];
+
+/// `args` with [`SUBMODULE_POINTERS_ONLY`] after the subcommand when it is one
+/// that would examine a submodule's working tree and the caller chose no
+/// `--ignore-submodules` value before `--` (#15101). A call that forgets the
+/// option must not start a `git status` child inside a submodule.
+fn with_submodule_pointers_only<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if *arg == "-c" || *arg == "-C" {
+            index += 2;
+        } else if arg.starts_with('-') {
+            index += 1;
+        } else {
+            break;
+        }
+    }
+    let examines = args
+        .get(index)
+        .is_some_and(|subcommand| SUBMODULE_EXAMINING_SUBCOMMANDS.contains(subcommand));
+    let options = args.get(index..).unwrap_or_default();
+    let chosen = options
+        .iter()
+        .take_while(|arg| **arg != "--")
+        .any(|arg| arg.starts_with("--ignore-submodules"));
+    match args.split_at_checked(index + 1) {
+        Some((head, tail)) if examines && !chosen => head
+            .iter()
+            .copied()
+            .chain(std::iter::once(SUBMODULE_POINTERS_ONLY))
+            .chain(tail.iter().copied())
+            .collect(),
+        _ => args.to_vec(),
+    }
 }
 
 /// The work-tree top level Git discovers from `dir` itself, canonicalized.
@@ -658,6 +708,32 @@ pub(crate) fn discovered_work_tree_toplevel(dir: &Path, timeout: Duration) -> Op
         .filter(|output| output.status.success())?;
     let top = String::from_utf8(output.stdout).ok()?;
     std::fs::canonicalize(top.trim_end_matches(['\r', '\n'])).ok()
+}
+
+/// Whether Git ignores `path` (relative to the work tree `top`), as
+/// `git check-ignore` answers for an untracked directory such as a build
+/// output tree. `Some(true)` only on Git's positive answer (exit 0) and
+/// `Some(false)` only on its negative one (exit 1); every other outcome
+/// (no Git, a refusal, a deadline) is `None`. Inherited repository selectors
+/// are removed, as in [`discovered_work_tree_toplevel`].
+pub(crate) fn work_tree_path_ignored(top: &Path, path: &Path, timeout: Duration) -> Option<bool> {
+    let path = path.to_str()?;
+    let args = ["check-ignore", "-q", "--", path];
+    let (mut command, timeout) = git_command_within(top, &args, Some(timeout));
+    let timeout = timeout.unwrap_or(Duration::ZERO);
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE");
+    let describe = format!("git ignore probe in {}", top.display());
+    let output =
+        collect_output_with_deadline_and_limit(command, timeout, 4 * 1024, &describe).ok()?;
+    match output.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
 }
 
 /// What Git established about a directory that contains a `.git` entry.

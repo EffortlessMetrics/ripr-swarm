@@ -1,0 +1,8 @@
+# Registers the ambient hunk, rename-limit, big-file and abbreviation pins
+# on the shared git diff argv (#15954) beside the #14193 rename pin.
+[[extend]]
+id = "RIPR-SPEC-0170"
+tests = [
+  "crates/ripr/src/analysis/diff/load/contract_tests.rs::ambient_hunk_and_index_config_does_not_change_the_source_patch",
+  "crates/ripr/tests/cli_smoke/diff_ambient_settings.rs::ambient_git_diff_settings_do_not_change_the_analyzed_input",
+]

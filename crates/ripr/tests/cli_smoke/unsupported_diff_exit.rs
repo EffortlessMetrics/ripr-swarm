@@ -100,6 +100,8 @@ fn diff_json_outcomes_preserve_report_and_exit_contract() -> TestResult {
                 "diff",
                 "--relative",
                 "--unified=0",
+                // The analyzed patch carries full blob ids (#15954).
+                "--full-index",
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-color",
@@ -298,6 +300,8 @@ fn edited_binary_rename_is_unsupported_for_check_and_diff() -> TestResult {
                 "diff",
                 "--relative",
                 "--find-renames",
+                // The analyzed patch carries full blob ids (#15954).
+                "--full-index",
                 "--no-ext-diff",
                 "--no-textconv",
                 "--no-color",

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `docs/RELEASE_TRANSACTION.md` section 6 now follows `ripr#1632` and `ripr#1470`: it stops for the public RC and the `ripr#1637` `stable_ready_same_candidate` decision before stable authorization, publishes and clean-installs from crates.io before pushing the `v<VERSION>` tag, and reads the #1470 record from the release owner's comment with an independent `authorized`/`not_authorized` check per channel in place of the `CHANNEL_ORDER` grep (#15901).
