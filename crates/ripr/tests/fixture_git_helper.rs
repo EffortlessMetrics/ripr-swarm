@@ -68,6 +68,31 @@ mod tests {
                 ));
             }
         }
+        // The commit is the step that detaches maintenance. Every fixture
+        // subcommand is built by one function, so the commit command itself
+        // must carry the same pairs and no inherited `-c` channel.
+        let commit = fixture_git_command(&root, &["commit", "-qm", "fixture"]);
+        let env = |name: &str| {
+            commit
+                .get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new(name))
+                .map(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+        };
+        let pairs = [
+            ("GIT_CONFIG_COUNT", "2"),
+            ("GIT_CONFIG_KEY_0", "maintenance.auto"),
+            ("GIT_CONFIG_VALUE_0", "false"),
+            ("GIT_CONFIG_KEY_1", "gc.auto"),
+            ("GIT_CONFIG_VALUE_1", "0"),
+        ];
+        for (name, want) in pairs {
+            if env(name) != Some(Some(want.to_string())) {
+                return Err(format!(
+                    "commit command carries {name}={:?}, want {want:?}",
+                    env(name)
+                ));
+            }
+        }
         Ok(())
     }
 

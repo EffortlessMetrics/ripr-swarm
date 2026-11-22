@@ -1082,7 +1082,11 @@ pub(crate) fn run_git_output_with_deadline_and_limit_isolated(
         .env("GIT_CONFIG_SYSTEM", null_config)
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE");
+        .env_remove("GIT_INDEX_FILE")
+        // An inherited `-c` pair outranks the counted pairs below, so it
+        // could turn background maintenance back on. Arguments of this
+        // command still carry their own `-c` pairs.
+        .env_remove("GIT_CONFIG_PARAMETERS");
     for (index, (key, value)) in FIXTURE_GIT_NO_BACKGROUND_CONFIG.iter().enumerate() {
         command
             .env(format!("GIT_CONFIG_KEY_{index}"), key)
