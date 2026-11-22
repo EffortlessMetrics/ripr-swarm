@@ -332,7 +332,16 @@ kind = "github_settings_contract"
 owner = "repo-process"
 surface = "ci"
 classification = "config"
-reason = "Repository Settings App contract for merge policy, branch protection, and CI labels."
+reason = "Settings App contract for the source repository EffortlessMetrics/ripr (one tree serves both repositories; policy/source-only-workflows.toml)."
+covered_by = []
+
+[[allow]]
+glob = ".github/swarm-settings.yml"
+kind = "github_settings_contract"
+owner = "repo-process"
+surface = "ci"
+classification = "config"
+reason = "ripr-swarm desired settings contract (merge policy, branch protection, CI labels); not read by the Settings app."
 covered_by = []
 
 [[allow]]

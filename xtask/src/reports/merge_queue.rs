@@ -233,7 +233,7 @@ fn parse_input_snapshot(value: &Value, expected_repo: &str) -> Result<CaptureSna
         endpoints,
         workspace: WorkspaceFacts {
             settings_path: string_field(workspace, "settings_yml_path")
-                .unwrap_or_else(|| ".github/settings.yml".to_string()),
+                .unwrap_or_else(|| ".github/swarm-settings.yml".to_string()),
             settings_text,
             settings_ref: string_field(workspace, "settings_ref")
                 .or_else(|| string_field(workspace, "head_sha"))
@@ -303,11 +303,11 @@ fn workflow_files_from_value(value: Option<&Value>) -> Vec<WorkflowFile> {
 
 fn collect_live_snapshot(repo: &str) -> Result<CaptureSnapshot, String> {
     let workspace_head_sha = git_rev_parse("HEAD")?;
-    let settings_path = Path::new(".github/settings.yml");
+    let settings_path = Path::new(".github/swarm-settings.yml");
     let settings_text = std::fs::read_to_string(settings_path)
         .map_err(|err| format!("failed to read {}: {err}", settings_path.display()))?;
     let settings_ref =
-        git_rev_parse("HEAD:.github/settings.yml").unwrap_or_else(|_| workspace_head_sha.clone());
+        git_rev_parse("HEAD:.github/swarm-settings.yml").unwrap_or_else(|_| workspace_head_sha.clone());
     let workflow_files = read_workspace_workflows()?;
     let repo_path = format!("repos/{repo}");
     let mut endpoints = BTreeMap::new();
@@ -363,7 +363,7 @@ fn collect_live_snapshot(repo: &str) -> Result<CaptureSnapshot, String> {
         repo: repo.to_string(),
         endpoints,
         workspace: WorkspaceFacts {
-            settings_path: ".github/settings.yml".to_string(),
+            settings_path: ".github/swarm-settings.yml".to_string(),
             settings_text,
             settings_ref,
             workspace_head_sha,
@@ -1506,7 +1506,7 @@ fn apply_payload(snapshot: &CaptureSnapshot, observation: &Value) -> Value {
             "settings_app": {
                 "can_represent_classic": true,
                 "can_represent_rulesets": false,
-                "reason": "The Settings app / .github/settings.yml source can represent classic protection and repository metadata, not repository rulesets or merge_queue rules."
+                "reason": "The checked-in .github/swarm-settings.yml contract can represent classic protection and repository metadata, not repository rulesets or merge_queue rules; the Settings app path .github/settings.yml carries the source repository contract."
             },
             "github_app": github_app,
             "api": {
@@ -1742,7 +1742,7 @@ fn render_markdown(packet: &Value) -> Result<String, String> {
         ));
     }
     body.push_str("## Separate facts\n\n");
-    body.push_str("- Desired source: checked-in `.github/settings.yml` (not live read-back)\n");
+    body.push_str("- Desired source: checked-in `.github/swarm-settings.yml` (not live read-back)\n");
     body.push_str(&format!("- Live observation complete: `{}`\n", complete));
     body.push_str(&format!(
         "- Apply write probed: `{}`\n",
@@ -2147,7 +2147,7 @@ branches:
                 "repo": repo,
                 "endpoints": endpoints,
                 "workspace": {
-                    "settings_yml_path": ".github/settings.yml",
+                    "settings_yml_path": ".github/swarm-settings.yml",
                     "settings_yml_text": settings,
                     "settings_ref": head_sha,
                     "head_sha": head_sha,
@@ -2543,7 +2543,7 @@ branches:
             "repo": DEFAULT_REPO,
             "endpoints": complete_endpoints(DEFAULT_REPO, &[tag_ruleset()], 200),
             "workspace": {
-                "settings_yml_path": ".github/settings.yml",
+                "settings_yml_path": ".github/swarm-settings.yml",
                 "settings_yml_text": settings_text(),
                 "settings_ref": "abc123def456",
                 "head_sha": "abc123def456",
@@ -2598,7 +2598,7 @@ branches:
 
     #[test]
     fn merge_queue_capture_extracts_real_settings_desired_source() {
-        let text = include_str!("../../../.github/settings.yml");
+        let text = include_str!("../../../.github/swarm-settings.yml");
         let desired = extract_settings_desired(text);
         assert_eq!(
             desired.required_contexts,

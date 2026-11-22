@@ -1,0 +1,59 @@
+# Source-only workflow and settings ledger.
+#
+# One tree serves two repositories. A fast-forward promotion makes the frozen
+# swarm head S the public `EffortlessMetrics/ripr` main tree byte for byte
+# (preview K must have S's tree), so every file public ripr needs in order to
+# run its own pull requests has to live in swarm too. The files listed here
+# belong to the source repository: they produce public ripr's required checks
+# and must never run in ripr-swarm.
+#
+# Three layers keep them out of swarm (enforced by `cargo xtask check-workflows`
+# through tools/repo-policy/src/source_only_workflows.rs):
+#
+# 1. Path. Source-only files live at paths swarm's own workflows do not use.
+# 2. Repository guard. Every job's `if:` is exactly `guard` or starts with
+#    `guard && (`, so a run in ripr-swarm skips every job unless someone
+#    dispatches it with `rehearse_in_swarm: true`.
+# 3. Disabled workflow. A job-level `if:` cannot make a subscribed event
+#    Actions-free (#4842), so a source-only file may declare its automatic
+#    source events only in phase `source_triggers`, and only after the
+#    workflow is disabled in ripr-swarm (Actions > workflow > Disable, an owner
+#    settings action). `swarm_disable_observation` records that read-back. It
+#    is a recorded observation for review, not a live proof.
+#
+# Public ripr's `.github/settings.yml` contexts must each have a producer here.
+# Swarm's own desired settings live in `.github/swarm-settings.yml`, which no
+# Settings app reads.
+
+schema_version = "1.0"
+source_repository = "EffortlessMetrics/ripr"
+swarm_repository = "EffortlessMetrics/ripr-swarm"
+source_origin = "4bfb2ea14d1d01d94f138a97ba43d81009b3b2e3"
+guard = "(github.repository == 'EffortlessMetrics/ripr' || (github.event_name == 'workflow_dispatch' && inputs.rehearse_in_swarm))"
+source_settings = ".github/settings.yml"
+source_settings_origin_blob = "84fc3cddfc2f74cd34632bb02a518f9e80a68218"
+swarm_settings = ".github/swarm-settings.yml"
+
+[[workflow]]
+path = ".github/workflows/source-only-ci.yml"
+source_path = ".github/workflows/ci.yml"
+source_blob = "f32c6933345920d1ff6257bb3813e05cbad5bbbb"
+required_contexts = ["rust", "msrv", "vscode"]
+phase = "dispatch_only"
+swarm_disable_observation = ""
+
+[workflow.source_events]
+pull_request = ["types: [opened, synchronize, reopened, labeled, unlabeled]"]
+push = ["branches: [main, master]"]
+
+[[workflow]]
+path = ".github/workflows/source-only-security.yml"
+source_path = ".github/workflows/security.yml"
+source_blob = "f3930d06d25ec25dacc1e5b2a0d7952bd036155b"
+required_contexts = ["cargo-deny", "dependency-review"]
+phase = "dispatch_only"
+swarm_disable_observation = ""
+
+[workflow.source_events]
+pull_request = []
+push = ["branches: [main, master]"]

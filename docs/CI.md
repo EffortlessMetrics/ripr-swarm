@@ -284,6 +284,27 @@ inventory. Inspect current source, exact head, review findings and native state
 before any consequential request. Do not infer readiness from a missing or
 skipped check, a quiet PR, or an earlier green result.
 
+### Source-only workflows
+
+`policy/source-only-workflows.toml` lists workflows that belong to the public
+source repository `EffortlessMetrics/ripr` and must never run here. A
+fast-forward promotion gives public ripr this tree byte for byte, so public's
+required-check producers live in swarm under `.github/workflows/source-only-*`.
+Today: `source-only-ci.yml` (`rust`, `msrv`, `vscode`) and
+`source-only-security.yml` (`cargo-deny`, `dependency-review`).
+
+`cargo xtask check-workflows` enforces three layers. Every job's `if:` opens
+with the source repository guard, so a swarm run skips every job unless it is
+dispatched with `rehearse_in_swarm: true` (a pre-promotion rehearsal of the
+source jobs on swarm's tree). A file stays dispatch-only (phase
+`dispatch_only`) until the workflow is disabled in ripr-swarm, because a
+job-level `if:` cannot make a subscribed event Actions-free. Only then may its
+ledger row move to `source_triggers` with the read-back recorded in
+`swarm_disable_observation`, and the file declare exactly the ledgered source
+events. Every context the source settings file `.github/settings.yml`
+requires must have a ledgered producer, and no swarm workflow or
+`policy/ci-*.toml` ledger may name a source-only file.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it

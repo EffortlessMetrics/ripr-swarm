@@ -14,6 +14,7 @@ pub mod executable_files;
 mod identity;
 pub mod markdown_headings;
 pub mod python_wheel;
+pub mod source_only_workflows;
 // Keep the shared matcher at its historical path for trusted-base compatibility.
 // Its bytes are included in source_identity.rs and the build-script watch set.
 #[path = "../../../xtask/src/policy/user_text.rs"]
@@ -423,6 +424,9 @@ pub fn check_workflows_impl() -> Result<(), String> {
 
     // Share only this invocation's YAML inputs; unbudgeted files still reach
     // scratch validation. Preflight identity reads remain independent.
+    let source_only = optional_policy_text(source_only_workflows::LEDGER)?
+        .map(|text| source_only_workflows::parse_ledger(&text))
+        .transpose()?;
     let mut workflows = Vec::new();
     for path in collect_files(Path::new(".github/workflows"))? {
         let normalized = normalize_path(&path);
@@ -431,7 +435,21 @@ pub fn check_workflows_impl() -> Result<(), String> {
         }
         let text = read_text_lossy(&path)?;
         workflows.push((normalized.clone(), text.clone()));
-        violations.extend(workflow_lifecycle::violations(&normalized, &text));
+        let admitted = source_only
+            .as_ref()
+            .and_then(|ledger| {
+                ledger
+                    .workflow
+                    .iter()
+                    .find(|entry| entry.path == normalized)
+            })
+            .map(source_only_workflows::admitted_source_events)
+            .unwrap_or_default();
+        violations.extend(workflow_lifecycle::violations_admitting(
+            &normalized,
+            &text,
+            &admitted,
+        ));
         let Some(budget) = budgets.get(&normalized) else {
             violations.push(format!(
                 "missing workflow budget for {normalized} in policy/workflow_allowlist.txt"
@@ -483,6 +501,37 @@ pub fn check_workflows_impl() -> Result<(), String> {
                 ));
             }
         }
+    }
+    if source_only.is_none() {
+        violations.push(format!(
+            "{} is missing; public ripr's required-check producers would have no ledger",
+            source_only_workflows::LEDGER
+        ));
+    }
+    if let Some(ledger) = &source_only {
+        let by_path: BTreeMap<String, String> = workflows.iter().cloned().collect();
+        let source_settings = optional_policy_text(&ledger.source_settings)?;
+        let mut ci_ledgers = Vec::new();
+        for ci_path in [
+            "policy/ci-lane-whitelist.toml",
+            "policy/ci-budget.toml",
+            "policy/ci-risk-packs.toml",
+            "policy/ci-whitelist-exceptions.toml",
+        ] {
+            if let Some(text) = optional_policy_text(ci_path)? {
+                ci_ledgers.push((ci_path, text));
+            }
+        }
+        let ci_refs: Vec<(&str, &str)> = ci_ledgers
+            .iter()
+            .map(|(path, text)| (*path, text.as_str()))
+            .collect();
+        violations.extend(source_only_workflows::violations(
+            ledger,
+            &by_path,
+            source_settings.as_deref(),
+            &ci_refs,
+        ));
     }
     let workflow_paths: BTreeSet<String> = workflows.iter().map(|(path, _)| path.clone()).collect();
     violations.extend(unpinned_allowlist_missing_file_violations(
@@ -1019,7 +1068,7 @@ pub fn routed_rust_workflow_contract_violations_for_repo() -> Result<Vec<String>
     } else {
         None
     };
-    let settings = optional_policy_text(".github/settings.yml")?;
+    let settings = optional_policy_text(".github/swarm-settings.yml")?;
     let lane_whitelist = optional_policy_text("policy/ci-lane-whitelist.toml")?;
 
     Ok(routed_rust_workflow_contract_violations_with_reusable(
@@ -1855,7 +1904,7 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
     {
         if !settings.contains("Ripr Rust Small Result") {
             violations.push(
-                ".github/settings.yml must require the normalized `Ripr Rust Small Result` check for ripr-swarm".to_string(),
+                ".github/swarm-settings.yml must require the normalized `Ripr Rust Small Result` check for ripr-swarm".to_string(),
             );
         }
         for forbidden in [
@@ -1867,7 +1916,7 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
         ] {
             if settings.contains(forbidden) {
                 violations.push(format!(
-                    ".github/settings.yml must not require conditional implementation job `{forbidden}`"
+                    ".github/swarm-settings.yml must not require conditional implementation job `{forbidden}`"
                 ));
             }
         }
