@@ -68,7 +68,9 @@ CI job that cannot edit argv had no way to turn it on.
    suffix of its verbatim stored path; for the UNC form, the locator matcher
    also treats `//?/UNC/server/share/..` and `//server/share/..` as the same
    path when they are equal after the shared verbatim fold, on either operand
-   (#15921). That equivalence is exact and is checked only after the
+   (#15921), and only when the folded root is a complete `//server/share`
+   (nonempty server and share, server not a `?` or `.` device marker). That
+   equivalence is exact and is checked only after the
    unchanged equality and suffix rules miss. Other `//?/` forms keep their
    spelling and match byte for byte.
 

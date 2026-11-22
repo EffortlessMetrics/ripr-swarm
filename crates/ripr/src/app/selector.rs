@@ -275,7 +275,7 @@ pub(in crate::app) fn locator_paths_match(stored_file: &str, selector_file: &str
 fn unc_spellings_match(stored: &str, wanted: &str) -> bool {
     let fold_unc = |path: &str| {
         crate::output::path::strip_windows_verbatim_prefix(path)
-            .filter(|plain| plain.starts_with("//"))
+            .filter(|plain| is_complete_unc_root(plain))
     };
     match (fold_unc(stored), fold_unc(wanted)) {
         (None, None) => false,
@@ -283,6 +283,21 @@ fn unc_spellings_match(stored: &str, wanted: &str) -> bool {
             stored_plain.as_deref().unwrap_or(stored) == wanted_plain.as_deref().unwrap_or(wanted)
         }
     }
+}
+
+/// Whether a folded path starts with a complete UNC root: `//server/share`
+/// with a nonempty server and share, and a server that is not a device
+/// marker (`?` or `.`). The renderer's fold is lexical, so a malformed
+/// `//?/UNC/tmp` folds to `//tmp` and `//?/UNC/?/Volume{..}` folds to a
+/// device spelling; neither may enter the UNC equivalence.
+fn is_complete_unc_root(plain: &str) -> bool {
+    let Some(rest) = plain.strip_prefix("//") else {
+        return false;
+    };
+    let mut segments = rest.splitn(3, '/');
+    let server = segments.next().unwrap_or_default();
+    let share = segments.next().unwrap_or_default();
+    !server.is_empty() && !share.is_empty() && server != "?" && server != "."
 }
 
 /// [`locator_paths_match`] ignoring ASCII case (#14416). Resolution stays
@@ -1303,6 +1318,25 @@ mod tests {
         assert!(!locator_paths_match(
             "//?/UNC/server/share/repo/src/lib.rs",
             "/share/repo/src/lib.rs"
+        ));
+        // The equivalence needs a complete UNC root: a verbatim UNC path with
+        // no share, or whose "server" is a device marker, does not fold.
+        assert!(!locator_paths_match("//?/UNC/tmp", "//tmp"));
+        assert!(!locator_paths_match("//?/UNC/server/", "//server/"));
+        assert!(!locator_paths_match("//?/UNC//share/a.rs", "///share/a.rs"));
+        assert!(!locator_paths_match(
+            "//?/UNC/?/Volume{1234}/a.rs",
+            "//?/Volume{1234}/a.rs"
+        ));
+        assert!(!locator_paths_match("//?/UNC/./pipe/name", "//./pipe/name"));
+        // A complete root folds; a different share on it does not match.
+        assert!(locator_paths_match(
+            "//?/UNC/server/share",
+            "//server/share"
+        ));
+        assert!(!locator_paths_match(
+            "//?/UNC/server/share/a.rs",
+            "//server/other/a.rs"
         ));
         // Other verbatim forms keep their spelling and match byte for byte.
         assert!(locator_paths_match(
