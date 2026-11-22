@@ -2427,6 +2427,9 @@ mod tests {
                 ("src/reached.rs", ""),
                 ("src/platform/unix_impl.rs", "mod inner;\n"),
                 ("src/platform/inner.rs", ""),
+                // A `#[path]` file is a directory owner: `mod inner;` never
+                // loads its stem-directory twin (#15877).
+                ("src/platform/unix_impl/inner.rs", ""),
                 // Default resolution when the `cfg_attr` does not apply.
                 ("src/sys.rs", ""),
                 // A plain `#[path]` always applies, so `mod dynamic;` never
@@ -2443,6 +2446,7 @@ mod tests {
             &[
                 "src/platform/unix_impl.rs",
                 "src/platform/inner.rs",
+                "src/platform/unix_impl/inner.rs",
                 "src/sys.rs",
                 "src/reached.rs",
                 "src/dynamic.rs",
