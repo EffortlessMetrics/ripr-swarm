@@ -146,6 +146,41 @@ fn ambient_git_diff_settings_do_not_change_the_analyzed_input() -> TestResult {
     Ok(())
 }
 
+/// A per-path diff driver names its own algorithm, and git lets that win over
+/// the `diff.algorithm` config pin; only the `--diff-algorithm` flag outranks
+/// it. A `*.rs diff=<driver>` attribute line is ordinary, so a user whose
+/// config sets that driver's algorithm would otherwise analyze a different
+/// patch. The driver here is not a built-in one: git's built-in `rust` driver
+/// also rewrites hunk-header function names, which is a separate input.
+#[test]
+fn a_diff_driver_algorithm_does_not_change_the_analyzed_input() -> TestResult {
+    let (_cleanup, root, base) = ambient_fixture("diff-driver-algorithm")?;
+    let range = format!("{base}...HEAD");
+    let raw_default = fixture_git_output(&root, &["diff", &range])?;
+    let expected = analyzed(&root, &base)?;
+    assert!(expected.1 > 0, "the fixture analyzed no changed lines");
+    fs::write(root.join(".git/info/attributes"), "*.rs diff=plain\n")?;
+    fixture_git_ok(&root, &["config", "diff.plain.algorithm", "histogram"])?;
+    // Pin the stimulus twice: the driver changes plain git's patch, and it
+    // still does under the config pin that holds for `diff.algorithm`.
+    let raw = fixture_git_output(&root, &["diff", &range])?;
+    assert_ne!(
+        raw, raw_default,
+        "the driver algorithm does not discriminate"
+    );
+    let config_pinned = fixture_git_output(&root, &["-c", "diff.algorithm=myers", "diff", &range])?;
+    assert_eq!(
+        config_pinned, raw,
+        "the config pin now outranks a driver algorithm; this case no longer needs the flag"
+    );
+    assert_eq!(
+        analyzed(&root, &base)?,
+        expected,
+        "a diff driver algorithm changed the analyzed input"
+    );
+    Ok(())
+}
+
 /// The packet a pull-request workflow records (`reports ci-packet`, step
 /// "Capture pull request diff") is captured through the same pinned argv as
 /// analysis (#9365), so no ambient setting changes the recorded bytes.

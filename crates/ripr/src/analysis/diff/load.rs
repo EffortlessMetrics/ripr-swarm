@@ -3113,11 +3113,10 @@ fn run_git_diff_bytes(
     // as a copy section that carries only its difference from another file.
     // It is a config pin, not a flag, so a caller extra such as
     // `--no-renames` still decides for its own invocation.
-    // The next four pins restore git's own defaults so the analyzed patch
+    // The next three pins restore git's own defaults so the analyzed patch
     // and its identities do not depend on the machine (#15954):
-    // `diff.algorithm` (histogram or patience give different hunks, so
-    // different changed lines, for an ambiguous edit), `diff.indentHeuristic`
-    // (off, a sliding insertion is reported one line later),
+    // `diff.indentHeuristic` (off, a sliding insertion is reported one line
+    // later),
     // `diff.renameLimit` (below the rename count, each rename becomes a
     // deletion plus a whole new file) and `core.bigFileThreshold` (below a
     // source file's size, the file arrives as `Binary files differ`).
@@ -3128,8 +3127,6 @@ fn run_git_diff_bytes(
         "diff.orderFile=/dev/null",
         "-c",
         "diff.renames=true",
-        "-c",
-        "diff.algorithm=myers",
         "-c",
         "diff.indentHeuristic=true",
         "-c",
@@ -3160,10 +3157,17 @@ fn run_git_diff_bytes(
     // The abbreviated form follows `core.abbrev` and, unset, an automatic
     // length that grows with the object count, so a shallow CI clone and a
     // full local clone produced different patch bytes for one range.
+    // `--diff-algorithm=myers` restores git's default hunk algorithm
+    // (#15954): histogram or patience give different hunks, so different
+    // changed lines, for an ambiguous edit. It is a flag, not a
+    // `diff.algorithm` config pin, because a path's diff driver
+    // (`*.rs diff=rust` with `diff.rust.algorithm` set) outranks the config
+    // key and only the flag outranks the driver.
     let unified_arg = format!("--unified={unified}");
     args.extend_from_slice(&[
         "--no-ext-diff",
         "--full-index",
+        "--diff-algorithm=myers",
         "--no-textconv",
         "--no-color",
         crate::git::SUBMODULE_POINTERS_ONLY,
