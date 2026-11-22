@@ -2377,6 +2377,10 @@ pub(crate) struct RepairStartGate {
     state: std::cell::OnceCell<GateState>,
     /// Build the inventory without mutating the seam cache (#13945).
     cache_read_only: bool,
+    /// Apply the exact-Git-top-level attempt-root gate (#15488). Test gates
+    /// over a fixed inventory (`preloaded`) skip it: their roots are fixture
+    /// directories, not attempt roots.
+    apply_root_gate: bool,
     /// Unit-test builds only: seam ids admitted regardless of the inventory.
     #[cfg(test)]
     admitted: Vec<String>,
@@ -2405,6 +2409,7 @@ impl RepairStartGate {
             root: root.to_path_buf(),
             state: std::cell::OnceCell::new(),
             cache_read_only: false,
+            apply_root_gate: true,
             #[cfg(test)]
             admitted: Vec::new(),
         }
@@ -2442,7 +2447,8 @@ impl RepairStartGate {
     /// real verdict.
     #[cfg(test)]
     pub(crate) fn preloaded(root: &Path, classified: Vec<crate::analysis::ClassifiedSeam>) -> Self {
-        let gate = Self::real(root);
+        let mut gate = Self::real(root);
+        gate.apply_root_gate = false;
         let _ = gate.state.set(GateState::Loaded {
             config: Box::default(),
             classified,
@@ -2466,6 +2472,20 @@ impl RepairStartGate {
 
     /// `None` when the gate admits a start for `seam_id`.
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
+        // #15488: the root gate applies to gap-bound subjects too; a start
+        // under a subdirectory root refuses at the before phase regardless
+        // of subject namespace. Seam subjects reach the same gate in
+        // check_state below.
+        if super::gap_bound_repair::is_gap_bound_subject(seam_id)
+            && self.apply_root_gate
+            && let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&self.root)
+        {
+            return Some(RepairStartRefusal {
+                reason: format!("{refusal}; rerun the start from the Git top-level"),
+                related_test: None,
+                kind: RefusalKind::Other,
+            });
+        }
         // #9103 (RIPR-SPEC-0311): a gap-bound attempt's subject is a
         // canonical TypeScript gap id, not a Rust seam, so this seam-inventory
         // gate has no verdict to give. Its admission is decided where the
@@ -2481,7 +2501,7 @@ impl RepairStartGate {
         let state = self
             .state
             .get_or_init(|| load_gate_state(&self.root, self.cache_read_only));
-        check_state(&self.root, state, seam_id)
+        check_state(&self.root, state, seam_id, self.apply_root_gate)
     }
 
     /// Like [`Self::check`] for a recorded start that names no seam id: it
@@ -2556,7 +2576,12 @@ fn load_gate_state(root: &Path, cache_read_only: bool) -> GateState {
     }
 }
 
-fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairStartRefusal> {
+fn check_state(
+    root: &Path,
+    state: &GateState,
+    seam_id: &str,
+    apply_root_gate: bool,
+) -> Option<RepairStartRefusal> {
     let (config, classified, truncated) = match state {
         GateState::Loaded {
             config,
@@ -2567,6 +2592,18 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
         #[cfg(test)]
         GateState::Open => return None,
     };
+    // #15488: a start under a subdirectory root refuses at the before
+    // phase (the attempt exists only at the exact Git top-level), so the
+    // gate refuses it here instead of admitting a start that cannot run.
+    if apply_root_gate
+        && let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(root)
+    {
+        return Some(RepairStartRefusal {
+            reason: format!("{refusal}; rerun the start from the Git top-level"),
+            related_test: None,
+            kind: RefusalKind::Other,
+        });
+    }
     // The explicit-subject resolver refuses every start from a truncated
     // inventory, so no seam in one can be verified as startable.
     if truncated {
@@ -3048,6 +3085,19 @@ pub(crate) fn check_repair_route(
     if finding.class == crate::domain::ExposureClass::Exposed && !static_limited {
         return CheckRepairRoute::Refused(RepairRouteRefusal::FindingAlreadyExposed);
     }
+    // #15488: a repair attempt starts only at the exact Git top-level, so a
+    // start this route is about to print (gap-bound or seam-bound) under a
+    // subdirectory root would refuse at the before phase. Gate only the
+    // printed start, after every finding-specific refusal: a not-ready or
+    // otherwise ineligible finding keeps its own reason instead of being
+    // rewritten as a root problem.
+    let subdirectory_refusal = || {
+        crate::edit_cage::enclosing_git_top_level_above(root).map(|top| {
+            CheckRepairRoute::Refused(RepairRouteRefusal::SubdirectoryRoot {
+                top_level: crate::agent::loop_commands::root_path_display(&top),
+            })
+        })
+    };
     // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
     // canonical gap, but its GapRecord validates through the shared
     // agent-packet validator and starts a gap-bound attempt. The canonical
@@ -3057,7 +3107,12 @@ pub(crate) fn check_repair_route(
     // (#10373); the other routed languages are unchanged.
     if !static_limited {
         match gap_bound_route(output, check_config, finding) {
-            Ok(Some(route)) => return CheckRepairRoute::GapRoute(route),
+            Ok(Some(route)) => {
+                if let Some(refusal) = subdirectory_refusal() {
+                    return refusal;
+                }
+                return CheckRepairRoute::GapRoute(route);
+            }
             Err(refusal) => return CheckRepairRoute::Refused(refusal),
             Ok(None) => {}
         }
@@ -3237,6 +3292,9 @@ pub(crate) fn check_repair_route(
     };
     if let Some(reason) = seam_commit_step_refusal(output, &uncommitted_files) {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable { reason });
+    }
+    if let Some(refusal) = subdirectory_refusal() {
+        return refusal;
     }
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
@@ -3953,6 +4011,8 @@ pub(crate) enum RepairRefusalCode {
     AttemptStale,
     /// `continue`: the cage could not compare the files; the attempt is terminal.
     AttemptIncomparable,
+    /// The root is below the Git top-level, so a repair attempt cannot start there (#15488).
+    SubdirectoryRoot,
 }
 
 /// What the caller can do about a refusal, so retryable and terminal states
@@ -3983,7 +4043,7 @@ impl RepairRefusalDisposition {
 impl RepairRefusalCode {
     /// Every code, for the docs/help parity test.
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 20] = [
+    pub(crate) const ALL: [Self; 21] = [
         Self::ItemNamesNoSeam,
         Self::ItemNamesSeveralSeams,
         Self::SeamNotRepairEligible,
@@ -4004,6 +4064,7 @@ impl RepairRefusalCode {
         Self::EditCageViolation,
         Self::AttemptStale,
         Self::AttemptIncomparable,
+        Self::SubdirectoryRoot,
     ];
 
     pub(crate) const fn as_str(self) -> &'static str {
@@ -4028,6 +4089,7 @@ impl RepairRefusalCode {
             Self::EditCageViolation => "edit_cage_violation",
             Self::AttemptStale => "attempt_stale",
             Self::AttemptIncomparable => "attempt_incomparable",
+            Self::SubdirectoryRoot => "subdirectory_root",
         }
     }
 
@@ -4052,7 +4114,8 @@ impl RepairRefusalCode {
             | Self::NoTestRoute
             | Self::NoCurrentAttempt
             | Self::AttemptBaselineBlocked
-            | Self::UnanchoredRoot => RepairRefusalDisposition::NotStarted,
+            | Self::UnanchoredRoot
+            | Self::SubdirectoryRoot => RepairRefusalDisposition::NotStarted,
         }
     }
 
@@ -4119,6 +4182,7 @@ impl RepairRefusalCode {
             "edit_cage_violation" => Self::EditCageViolation,
             "attempt_stale" => Self::AttemptStale,
             "attempt_incomparable" => Self::AttemptIncomparable,
+            "subdirectory_root" => Self::SubdirectoryRoot,
             _ => return None,
         })
     }
@@ -6041,7 +6105,7 @@ pub(crate) mod tests {
         use crate::analysis::seams::SeamGripClass;
         let root = Path::new("/repo");
         let unverified = |state: &GateState, seam: &str| {
-            check_state(root, state, seam)
+            check_state(root, state, seam, false)
                 .filter(|refusal| refusal.kind == RefusalKind::Unverified)
                 .ok_or_else(|| format!("seam `{seam}` must be unverified, not admitted"))
         };
@@ -6096,7 +6160,8 @@ pub(crate) mod tests {
         );
         // A seam the inventory does name gets the gate's own verdict, not
         // the unverified one.
-        let refused = check_state(root, &loaded, &known).ok_or("known seam must be refused")?;
+        let refused =
+            check_state(root, &loaded, &known, false).ok_or("known seam must be refused")?;
         assert_eq!(refused.kind, RefusalKind::RouteNotReady);
         assert!(
             refused
@@ -7986,6 +8051,49 @@ pub(crate) mod tests {
             load_repair_attempt_manifest_from(&root, None, id)?,
             limited_bound.manifest
         );
+        Ok(())
+    }
+
+    /// #15488: the gap-bound branch of `RepairStartGate::check` applies the
+    /// exact-top-level gate before it returns the seam-inventory `None`, so a
+    /// gap-bound start under a subdirectory root refuses with the cage's own
+    /// reason instead of being admitted by the namespace shortcut.
+    #[test]
+    fn gap_bound_start_refuses_a_subdirectory_root() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-gap-bound-subdir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).map_err(|error| error.to_string())?;
+        run_git(&root, &["init", "-q"])?;
+        let gate = RepairStartGate::real(&root.join("sub"));
+        let refusal = gate
+            .check("gap:typescript:typescript_preview:abc123")
+            .ok_or("a gap-bound start under a subdirectory root must refuse")?;
+        if !refusal.reason.contains("not the exact Git top-level") {
+            return Err(format!(
+                "the refusal must name the exact-top-level rule: {}",
+                refusal.reason
+            ));
+        }
+        // Control: the same subject at the top-level is not refused by the
+        // root gate (the seam-inventory shortcut still admits it).
+        let top = RepairStartGate::real(&root);
+        if top
+            .check("gap:typescript:typescript_preview:abc123")
+            .is_some()
+        {
+            return Err(
+                "a gap-bound start at the top-level must not hit the root gate".to_string(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 }
