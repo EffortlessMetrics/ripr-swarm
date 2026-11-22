@@ -527,6 +527,19 @@ Such a test does not hide the rows of tests that reach the owner through a
 same-module or cross-module caller; a test both reach keeps one row. Because a
 value-helper test reaches the owner from its own file, its row also keeps the
 reading weak where cross-module callers alone would read the edit as unresolved.
+A top-level helper function that no test calls itself is related, with the
+weak `route_helper_call` relation, to a test that requests a route whose
+handler directly calls the helper (#14150). The handler must be a top-level
+function whose every decorator is a static route decorator, the only binding
+of its name in its file, and the route must be unambiguous: another route that
+can answer the same request (same verb and a matching path, or a framework
+default path) makes no edge, because registration order is not read. The
+handler must call the helper directly, under the name its own module binds the
+helper to: the bare name in the helper's file, or an exact
+`from <helper module> import <name>` elsewhere. A call in a parameter default
+does not count, because Python evaluates it when the module is defined, not
+per request. The relation is uncertain, carries no oracle, and never reaches
+`exposed`.
 A top-level `click.command` or `click.group` function that no test calls is
 related, with the weak `cli_runner_invoke` relation, to a test that passes it
 as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),

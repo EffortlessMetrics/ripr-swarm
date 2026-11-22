@@ -623,7 +623,23 @@ fn owner_from_function(
     // reached through the handler (#14150), like a click command through its
     // invocation. Any other decorator may wrap or replace the call.
     let module_callees = if transparent_decorators || click_command || routed_handler {
-        super::module_callees::bare_callees(&text_for_range(context.source, range), &parameters)
+        // A routed handler runs its body per request. A call in a parameter
+        // default runs when the module is defined, not per request, so the
+        // route-helper relation reads the body only (#14150).
+        let callee_text = if routed_handler {
+            body.first().zip(body.last()).map_or_else(
+                || text_for_range(context.source, range),
+                |(first, last)| {
+                    text_for_range(
+                        context.source,
+                        TextRange::new(first.range().start(), last.range().end()),
+                    )
+                },
+            )
+        } else {
+            text_for_range(context.source, range)
+        };
+        super::module_callees::bare_callees(&callee_text, &parameters)
     } else {
         Vec::new()
     };
@@ -676,6 +692,7 @@ fn owner_from_function(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     }
 }
@@ -810,6 +827,7 @@ fn owner_from_class(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     }
 }
@@ -855,6 +873,7 @@ pub(super) fn module_owner(
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
         route_returns_body: false,
+        route_dispatch_ambiguous: false,
         route_dict_annotation: false,
     }
 }

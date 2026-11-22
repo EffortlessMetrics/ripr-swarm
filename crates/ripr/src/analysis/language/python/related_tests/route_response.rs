@@ -48,12 +48,15 @@ pub(in super::super) fn apply_route_overlaps(
     // [`workspace_reshapes_responses`]).
     const FRAMEWORK_ROUTES: [&str; 4] =
         ["/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"];
-    let shared: Vec<bool> = owners
+    // Dispatch ambiguity is independent of response-body eligibility: a
+    // shadowed handler may return no body and still not be the one that runs
+    // (#14150). The overlap scan therefore does not require
+    // `route_returns_body`; that flag only decides the response-read credit.
+    let overlaps: Vec<bool> = owners
         .iter()
         .enumerate()
         .map(|(index, owner)| {
-            owner.route_returns_body
-                && !opaque
+            !opaque
                 && routes(owner).iter().any(|(path, verbs)| {
                     FRAMEWORK_ROUTES
                         .iter()
@@ -68,8 +71,9 @@ pub(in super::super) fn apply_route_overlaps(
                 })
         })
         .collect();
-    for (owner, shared) in owners.iter_mut().zip(shared) {
-        if opaque || shared {
+    for (owner, overlaps) in owners.iter_mut().zip(overlaps) {
+        owner.route_dispatch_ambiguous = opaque || overlaps;
+        if opaque || (overlaps && owner.route_returns_body) {
             owner.route_returns_body = false;
         }
     }

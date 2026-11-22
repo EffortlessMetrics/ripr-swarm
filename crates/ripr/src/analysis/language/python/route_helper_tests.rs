@@ -15,7 +15,14 @@ const ROUTE_TEST: &str =
     "def test_age_route(client):\n    assert client.get(\"/age/30\").json() == {\"adult\": True}\n";
 
 fn classify_files(files: &[(&str, &str)]) -> Result<Finding, String> {
-    let (owners, tests) = super::fixtures_tests::workspace(files);
+    let (mut owners, tests) = super::fixtures_tests::workspace(files);
+    // The production workspace pass withdraws route credit from overlapping
+    // routes; the fixture helper does not run it, so do it here.
+    let declared = files
+        .iter()
+        .map(|(_, source)| super::related_tests::route_decorator_lines(source))
+        .sum();
+    super::related_tests::apply_route_overlaps(&mut owners, false, declared);
     classify_change_with_old(
         Path::new("routepkg/rules.py"),
         2,
@@ -273,5 +280,85 @@ fn given_a_handler_module_that_rebinds_the_imported_helper_then_no_route_reach()
             finding.evidence
         );
     }
+    Ok(())
+}
+
+#[test]
+fn given_overlapping_routes_on_one_app_then_the_shadowed_handler_earns_no_route_reach()
+-> Result<(), String> {
+    // The first route answers GET /age/30; only the second handler calls the
+    // helper. Registration order is not read, so neither handler is
+    // established as the one that runs.
+    let handler = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/{age}\")\ndef age_param(age):\n    return {\"adult\": False}\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": is_adult(30)}\n";
+    let files = [
+        ("routepkg/rules.py", RULES),
+        ("routepkg/ages.py", handler),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", ROUTE_TEST),
+    ];
+    let finding = classify_files(&files)?;
+    // The generic cross-module caller relation may remain, but the route
+    // relation must not: neither handler is established as the one that runs.
+    assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("route_helper_call")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn given_the_owner_module_rebinds_the_helper_after_its_definition_then_no_route_reach()
+-> Result<(), String> {
+    // The helper's own module replaces the name after the definition, so a
+    // route that calls the name runs the replacement, not the changed def.
+    let rules = "def is_adult(age):\n    return age >= 18\n\nis_adult = lambda age: age > 99\n";
+    let files = [
+        ("routepkg/rules.py", rules),
+        ("routepkg/ages.py", AGES),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", ROUTE_TEST),
+    ];
+    let finding = classify_files(&files)?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(finding.related_tests.is_empty(), "{finding:?}");
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("route_helper_call")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_handler_default_that_calls_the_helper_then_no_route_reach() -> Result<(), String> {
+    // The default runs when the module is defined, not per request, so the
+    // route does not reach the helper.
+    let handler = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age(adult: bool = is_adult(30)):\n    return {\"adult\": adult}\n";
+    let files = [
+        ("routepkg/rules.py", RULES),
+        ("routepkg/ages.py", handler),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", ROUTE_TEST),
+    ];
+    let finding = classify_files(&files)?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(finding.related_tests.is_empty(), "{finding:?}");
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("route_helper_call")),
+        "{:?}",
+        finding.evidence
+    );
     Ok(())
 }

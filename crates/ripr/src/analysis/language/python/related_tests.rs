@@ -588,14 +588,17 @@ fn helper_candidates_from_callers<'a>(
         } else {
             all_tests.iter().filter(|test| related(test)).collect()
         };
+        // An identified route request reaches a helper only when the routed
+        // handler calls it directly (#14150): one hop, resolved through the
+        // handler module's own binding of the owner. A handler further away
+        // keeps the generic caller reading. The caller-side facts are
+        // loop-invariant, so they are read once per caller.
+        let route_caller = !caller.route_paths.is_empty()
+            && !caller.route_dispatch_ambiguous
+            && caller_directly_calls_owner(caller, owner, owners);
         for test in reached {
             if seen.insert((test.file.as_path(), test.qualified_name.as_str())) {
-                // An identified route request reaches a helper only when the
-                // routed handler calls it directly (#14150): one hop, resolved
-                // through the handler module's own binding of the owner. A
-                // handler further away keeps the generic caller reading.
-                let via_route = !caller.route_paths.is_empty()
-                    && caller_directly_calls_owner(caller, owner, owners)
+                let via_route = route_caller
                     && related_test_relation(test, caller)
                         == Some(PythonRelationKind::ApiClientRouteCall);
                 found.push(HelperOwnerCallCandidate {
@@ -644,10 +647,7 @@ fn caller_directly_calls_owner(
     owners: &[PythonOwner],
 ) -> bool {
     if caller.file == owner.file {
-        return caller
-            .module_callees
-            .iter()
-            .any(|callee| callee == &owner.name);
+        return caller.module_callees.contains(&owner.name);
     }
     cross_module_owner_binding(caller, owner, owners)
         .is_some_and(|local| caller.module_callees.iter().any(|callee| callee == local))
@@ -659,9 +659,18 @@ fn top_level_function(candidate: &PythonOwner) -> bool {
         && candidate.qualified_name == candidate.name
 }
 
-/// The owner is a top-level function and the only one of its name in its file.
+/// The owner is a top-level function, the only one of its name in its file,
+/// and still the binding that name resolves to there.
 fn helper_owner_is_unique_top_level_function(owner: &PythonOwner, owners: &[PythonOwner]) -> bool {
     top_level_function(owner)
+        // A later module-level binding (`is_adult = lambda ...`) replaces the
+        // definition, so a route that calls the name runs the replacement,
+        // not this function (#14150).
+        && !owner
+            .class_facts
+            .module_rebound_names
+            .iter()
+            .any(|name| name == "*" || name == &owner.name)
         && owners
             .iter()
             .filter(|other| {

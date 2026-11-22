@@ -742,6 +742,12 @@ struct PythonOwner {
     /// `false` by default, which grants no response-read credit.
     #[serde(default)]
     route_returns_body: bool,
+    /// Whether another route can answer the same request, so the registered
+    /// handler is not established (#14150). Separate from
+    /// `route_returns_body`: a shadowed handler may return no body and still
+    /// not be the one that runs.
+    #[serde(default)]
+    route_dispatch_ambiguous: bool,
     /// The route handler's return annotation is a bare `dict` (#13869). The
     /// workspace post-pass withdraws `route_returns_body` from such an owner
     /// when any source may rebind `dict`, which would make the annotation a
