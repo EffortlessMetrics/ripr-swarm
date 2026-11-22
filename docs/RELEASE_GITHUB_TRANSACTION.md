@@ -1,7 +1,7 @@
 # GitHub release transaction
 
 Owner: [ripr#1644](https://github.com/EffortlessMetrics/ripr/issues/1644).
-Status: decision core only. Nothing in this slice reads GitHub or writes to it.
+Status: decision core and read-only observer. Nothing here writes to GitHub.
 
 The transaction publishes one tag, one release and one exact set of assets for
 one release candidate. It never replaces, moves or deletes a public object, and
@@ -9,24 +9,57 @@ it resumes only when everything already present is exact.
 
 ## What exists
 
-`xtask/src/release_github_transaction/` holds three parts:
+`xtask/src/release_github_transaction/` holds four parts:
 
 | Part | Role |
 | --- | --- |
 | `model.rs` | The typed request and the reasons it can be refused |
 | `inventory.rs` | Classification of observed tag, release, asset and provenance state |
 | `plan.rs` | `decide`: the single next step, completion, or a terminal stop |
+| `observe.rs` | The read-only GitHub observer that produces an inventory |
 
-`cargo xtask release-github-transaction-plan --request <request.json>
---authorization <authorization.json> --inventory <inventory.json>` evaluates
-supplied files and prints the decision as JSON with
+`cargo xtask release-github-transaction-observe --request <request.json>`
+reads GitHub and prints the inventory. `cargo xtask
+release-github-transaction-plan --request <request.json> --authorization
+<authorization.json> --inventory <inventory.json>` evaluates supplied files
+and prints the decision as JSON with
 `schema: ripr.release.github_transaction.decision.v1`. It exits nonzero for a
 stop.
 
-Not built yet: the transport that observes GitHub and performs a step, the
-loop that drives steps to completion with a receipt, and the retirement of
+Not built yet: provenance verification, the transport that performs a step,
+the loop that drives steps to completion with a receipt, and the retirement of
 `release-upload-assets`, which still creates a release on any failed view and
 uploads with `--clobber`. Do not use that command for a release.
+
+## Observation
+
+The observer runs `gh api --hostname github.com --method GET` and nothing
+else. It refuses a request with violations before any read.
+
+| Read | Reported as |
+| --- | --- |
+| `repos/<repo>` does not answer this repository with `permissions.push = true` | tag and releases `unavailable`; nothing else is read |
+| Tag ref answers 404 | `absent` |
+| Tag ref points at a tag object whose target is a commit | `present`, annotated, with that tag object's id and that commit |
+| Tag ref points straight at a commit, or at a tag of a tag | `present`, not annotated |
+
+The plan compares the reported tag object id with the authorization's
+`expected_tag_object`, so another annotated tag at the candidate is a conflict.
+| Every release whose tag name matches ignoring case, drafts included | listed, with every asset from the paged asset endpoint |
+| An expected asset, fully uploaded, downloaded with the listed length | SHA-256 of the downloaded bytes |
+| An expected asset that is still uploading, fails to download, or downloads with another length | bytes `unavailable` |
+| An asset the request does not expect | listed by name, not downloaded |
+| Any other status, no answer, unparseable JSON, a missing field, or a listing that does not end within 50 pages | `unavailable` |
+
+The write-permission check exists because GitHub answers 404 for a repository
+a token cannot read and omits draft releases for a token that cannot write.
+Without it a weak token would read an existing draft as absent.
+
+Provenance is not checked in this slice. The observer reports every subject's
+provenance as `unavailable`, so a plan built on its output can propose the
+tag, the draft and uploads but stops at `attestation_not_verified` before
+finalization or completion. The request does not yet carry the signer
+workflow and source ref a verification would need.
 
 ## Request
 
@@ -137,7 +170,7 @@ nothing is uploaded to a finalized release.
 
 ## Proof
 
-`cargo test -p xtask release_github_transaction` runs 15 tests. One sweeps all
+`cargo test -p xtask release_github_transaction` runs 22 tests. One sweeps all
 1,000 combinations of tag, release, asset and provenance state the model can
 observe and checks, against the classification alone, that a mutation is
 proposed only when the object it writes is absent and everything present is
@@ -145,6 +178,16 @@ exact. Because the sweep trusts the classification, classification errors are
 caught by the named conflict cases instead: removing the tag-object comparison
 fails the "foreign annotated tag object at the candidate" case.
 
-These tests exercise the decision against stand-in inventories. They do not
-show that a real GitHub read produces a correct inventory; that belongs to the
-transport slice.
+The decision tests use stand-in inventories. The observer tests use scripted
+HTTP answers and check each row of the observation table, including that a
+failed or partial read is never reported as absent or as a shorter list.
+
+Observed against GitHub on 2026-11-22 with gh 2.89.0, read-only: the
+`--include` output shape the parser expects, a 404 for a missing tag ref, and
+an asset download whose SHA-256 matched the digest GitHub lists for it. The
+command was also run end to end against an existing draft release with no
+tag: it reported the tag absent, listed the one draft with its 13 assets, and
+downloaded and hashed only the two the request expected. Not observed: an
+annotated tag, since the repository read had none, and whether
+GitHub returns a release body byte-for-byte as submitted, which `body_sha256`
+depends on.

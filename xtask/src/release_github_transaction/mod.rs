@@ -3,11 +3,15 @@
 //! This slice is the decision core: a typed request, classification of
 //! observed remote state, and the single next step. It performs no network
 //! read and no mutation. The read-only `release-github-transaction-plan`
-//! command evaluates supplied files; the transport that observes GitHub and
-//! performs a step is a later slice.
+//! command evaluates supplied files. `release-github-transaction-observe`
+//! reads GitHub with GET requests only and prints the inventory that command
+//! consumes. Nothing here mutates remote state; the write side is a later slice.
 
 mod inventory;
 pub(crate) mod model;
+mod observe;
+#[cfg(test)]
+mod observe_tests;
 mod plan;
 #[cfg(test)]
 mod tests;
@@ -62,4 +66,26 @@ pub(crate) fn plan_command(args: &[String]) -> Result<(), String> {
             stop.kind, stop.detail
         )),
     }
+}
+
+/// `release-github-transaction-observe`: read the request's tag and release
+/// state from GitHub and print the inventory. GET requests only.
+pub(crate) fn observe_command(args: &[String]) -> Result<(), String> {
+    let [flag, path] = args else {
+        return Err("usage: release-github-transaction-observe --request <request.json>".into());
+    };
+    if flag != "--request" {
+        return Err(format!("unexpected argument `{flag}`"));
+    }
+    let request: model::GitHubReleaseTransactionRequest = read_json(path, "request")?;
+    let violations = request.violations();
+    if !violations.is_empty() {
+        // A rejected request is never turned into remote reads.
+        return Err(format!("request rejected: {}", violations.join("; ")));
+    }
+    let inventory = observe::observe(&mut observe::GhCli, &request);
+    let rendered = serde_json::to_string_pretty(&inventory)
+        .map_err(|error| format!("render inventory: {error}"))?;
+    println!("{rendered}");
+    Ok(())
 }

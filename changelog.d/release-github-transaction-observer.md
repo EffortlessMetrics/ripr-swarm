@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Add the read-only observer of the exact GitHub release transaction: `cargo xtask release-github-transaction-observe` reads the request's tag, releases and expected asset bytes with GET requests only and prints the inventory the plan command consumes. A failed or partial read is reported as unavailable, never as absent. It writes nothing and does not check provenance ([ripr#1644](https://github.com/EffortlessMetrics/ripr/issues/1644)).

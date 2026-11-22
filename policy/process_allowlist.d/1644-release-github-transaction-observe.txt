@@ -1,0 +1,2 @@
+xtask/src/release_github_transaction/observe.rs|Command::new|1|release-github-transaction|ripr#1644: cargo xtask release-github-transaction-observe runs `gh api --hostname github.com --method GET --include` to read one request's tag, releases and expected asset bytes. GET only, fixed host, direct argv spawn with no shell, output captured via .output().
+xtask/src/release_github_transaction/observe.rs|use std::process::Command|1|release-github-transaction|ripr#1644: import for the bounded read-only gh invocation above.
