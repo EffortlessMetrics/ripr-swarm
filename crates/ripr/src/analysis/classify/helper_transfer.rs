@@ -3541,27 +3541,46 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     "file",
     "line",
     "module_path",
+    // `env!` and `option_env!` expand to a literal read at compile time and
+    // evaluate no code. Both are trusted names, so the binding scan sees a
+    // local `macro_rules! env` or a foreign import of either (#10357).
+    "env",
+    "option_env",
 ];
+
+/// The [`TRANSPARENT_STD_MACROS`] names the binding scan reads only for a
+/// caller whose body mentions them, so that a rebinding of `env` elsewhere
+/// does not withhold credit from a wrapper that never reads it (#10357).
+const BODY_SCOPED_TRANSPARENT_MACROS: &[&str] = &["env", "option_env"];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
 /// something other than the standard macro, by the parser-backed binding
 /// scan the trusted-assertion reading uses. An out-of-line module counts as
 /// unresolved, which only withholds forwarding credit. A caller with no
-/// `!` invokes no macro, so the index scan is skipped for it.
+/// `!` invokes no macro, so the index scan is skipped for it. The
+/// [`BODY_SCOPED_TRANSPARENT_MACROS`] join the scan only when the caller's
+/// body mentions `env`; any rebinding found still refuses every bare macro.
 fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool {
+    let names: Vec<&str> = TRANSPARENT_STD_MACROS
+        .iter()
+        .copied()
+        .filter(|name| {
+            !BODY_SCOPED_TRANSPARENT_MACROS.contains(name) || caller_body.contains("env")
+        })
+        .collect();
     caller_body.contains('!')
         && index.files().iter().any(|(path, file)| {
-            if file.macro_candidates.as_deref().is_some_and(|candidates| {
-                TRANSPARENT_STD_MACROS
-                    .iter()
-                    .all(|name| !candidates.may_bind(name))
-            }) {
+            if file
+                .macro_candidates
+                .as_deref()
+                .is_some_and(|candidates| names.iter().all(|name| !candidates.may_bind(name)))
+            {
                 return false;
             }
             !crate::analysis::syntax::trusted_macro_binding_sites(
                 &file.source,
                 index.macro_scope_crates(),
-                TRANSPARENT_STD_MACROS,
+                &names,
                 &|_, _| false,
                 &|krate| index.drop_in_manifests.verified_root(path, krate),
             )
@@ -5567,6 +5586,8 @@ mod tests {
             "let _d = cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
             "let _here = line!(); if is_bulk(qty) { 5 } else { 0 }",
             "file!(); column!(); module_path!(); if is_bulk(qty) { 5 } else { 0 }",
+            "let _n = env!(\"CARGO_PKG_NAME\"); if is_bulk(qty) { 5 } else { 0 }",
+            "let _x = option_env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
         ] {
             assert!(
                 !caller_invokes_opaque_macro(body, false),
@@ -5574,7 +5595,7 @@ mod tests {
             );
         }
         for body in [
-            "env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
+            "std::env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
             "core::cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
             "std::line!(); if is_bulk(qty) { 5 } else { 0 }",
         ] {
