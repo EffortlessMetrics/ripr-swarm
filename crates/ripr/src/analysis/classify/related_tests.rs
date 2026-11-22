@@ -890,6 +890,11 @@ fn call_qualifier_conflicts(text: &str, name: &str, wrapper_qualifier: Option<&s
         .rsplit("::")
         .next()
         .unwrap_or(wrapper_qualifier);
+    // A relative path keyword does not name a specific module, so it cannot
+    // distinguish the wrapper from a concrete-qualified call (#5335).
+    if matches!(wrapper_qualifier, "Self" | "self" | "super" | "crate") {
+        return false;
+    }
     for (index, _) in text.match_indices(name) {
         let before = text[..index].chars().next_back();
         let after = text[index + name.len()..].trim_start();
@@ -17405,6 +17410,75 @@ let r = try_parse_summary();",
         });
         let probe =
             wrapper_error_probe("src/lib.rs", "crate::strict::decode(raw).map_err(Into::into)");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1, "{related:?}");
+        assert_ne!(related[0].1, RelationReason::SeamCalleeCall, "{related:?}");
+    }
+
+    #[test]
+    fn given_a_relative_path_wrapper_and_a_concrete_call_when_wrapper_probe_then_seam_callee_call() {
+        // A relative path keyword does not name a specific module, so it
+        // cannot distinguish the wrapper from a concrete-qualified call
+        // (#5335).
+        for (wrapper, call) in [
+            ("Self::decode(raw).map_err(Into::into)", "Foo::decode(raw)"),
+            (
+                "crate::decode(raw).map_err(Into::into)",
+                "mymod::decode(raw)",
+            ),
+            (
+                "self::decode(raw).map_err(Into::into)",
+                "mymod::decode(raw)",
+            ),
+        ] {
+            let owner = function("src/lib.rs", "parse_summary");
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![
+                    function("src/lib.rs", "parse_summary"),
+                    function("src/lib.rs", "decode"),
+                ],
+                tests: vec![test_with_call(
+                    "src/lib.rs",
+                    "parse_summary_rejects_bad_input",
+                    &format!("let result = {call};"),
+                    "decode",
+                )],
+                ..Default::default()
+            });
+            let probe = wrapper_error_probe("src/lib.rs", wrapper);
+
+            let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+            assert_eq!(related.len(), 1, "{wrapper}: {related:?}");
+            assert_eq!(
+                related[0].1,
+                RelationReason::SeamCalleeCall,
+                "{wrapper}: {related:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn given_a_concrete_wrapper_and_a_different_concrete_call_when_wrapper_probe_then_no_seam_callee_call()
+     {
+        // A concrete qualifier that really differs still conflicts.
+        let owner = function("src/lib.rs", "parse_summary");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/lib.rs", "parse_summary"),
+                function("src/lib.rs", "strict::decode"),
+            ],
+            tests: vec![test_with_call(
+                "src/lib.rs",
+                "parse_summary_rejects_bad_input",
+                "let result = other::decode(raw);",
+                "decode",
+            )],
+            ..Default::default()
+        });
+        let probe = wrapper_error_probe("src/lib.rs", "strict::decode(raw).map_err(Into::into)");
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
