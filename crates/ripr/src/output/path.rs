@@ -7,6 +7,47 @@ pub(crate) use ripr_contract::path_identity::{
     host_paths_case_insensitive, path_identity_key, path_identity_key_on,
 };
 
+/// The location text a human report shows for a finding file (#15473).
+///
+/// [`crate::analysis::finding_location_text`] spells a root-relative file
+/// `./<path>`, which JSON, MCP, LSP and selectors keep as the identity.
+/// A reader who ran `ripr` from a directory below the analysis root (the
+/// implicit root walk moved up from `py/` to the repository root) cannot paste
+/// that `./` form: it names nothing under the invocation directory. When the
+/// invocation directory is strictly inside the root, the human spelling is
+/// relative to the invocation directory (`../crates/core/src/lib.rs`). At the
+/// root, with a relative root, or for a file outside the root, the text is the
+/// shared location text byte for byte.
+pub(crate) fn human_location_text(root: &Path, file: &Path) -> String {
+    let shared = crate::analysis::finding_location_text(root, file);
+    match invocation_depth_below(root) {
+        Some(depth) => relative_to_invocation_dir(&shared, depth),
+        None => shared,
+    }
+}
+
+/// Pure core of [`human_location_text`]: `depth` is how many directories the
+/// invocation directory sits below the root.
+fn relative_to_invocation_dir(shared: &str, depth: usize) -> String {
+    match shared.strip_prefix("./") {
+        Some(rest) if depth > 0 => format!("{}{rest}", "../".repeat(depth)),
+        _ => shared.to_string(),
+    }
+}
+
+/// Components between the root and the process working directory, or `None`
+/// unless the working directory is strictly below an absolute root.
+fn invocation_depth_below(root: &Path) -> Option<usize> {
+    if !root.is_absolute() {
+        return None;
+    }
+    let cwd = std::fs::canonicalize(std::env::current_dir().ok()?).ok()?;
+    let root = std::fs::canonicalize(root).ok()?;
+    let below = cwd.strip_prefix(root).ok()?;
+    let depth = below.components().count();
+    (depth > 0).then_some(depth)
+}
+
 /// Render a path with stable slash separators for JSON and Markdown output.
 pub(crate) fn display_path(path: &Path) -> String {
     display_path_for_host(&crate::analysis::stable_path_text(path), cfg!(windows))
@@ -1101,5 +1142,18 @@ mod tests {
             with(root, Path::new("/srv/dev/repo"), false, true),
             "/srv/dev/repo"
         );
+    }
+
+    #[test]
+    fn invocation_directory_below_root_rewrites_only_the_dot_slash_form() {
+        use super::relative_to_invocation_dir as rel;
+        assert_eq!(
+            rel("./crates/core/src/lib.rs", 1),
+            "../crates/core/src/lib.rs"
+        );
+        assert_eq!(rel("./a.rs", 2), "../../a.rs");
+        // At the root, and for files outside the root, the text is unchanged.
+        assert_eq!(rel("./a.rs", 0), "./a.rs");
+        assert_eq!(rel("/elsewhere/a.rs", 1), "/elsewhere/a.rs");
     }
 }

@@ -1298,3 +1298,142 @@ fn deleted_slash_inside_a_string_does_not_open_a_regex() -> Result<(), String> {
     assert!(!finding.is_candidate_actionable());
     Ok(())
 }
+
+/// Code replaced by a comment was deleted. The diff pairs the comment with
+/// the removed guard, a comment is never a probe, and the guard used to
+/// leave no record at all. It is base-side evidence, as it is when nothing
+/// is added in its place.
+#[test]
+fn code_replaced_by_a_comment_is_base_side_evidence() -> Result<(), String> {
+    let block = |replacement: &[&'static str]| {
+        let mut lines = vec![
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  if (total > 100) {",
+            "-    total = 100;",
+            "-  }",
+        ];
+        lines.extend_from_slice(replacement);
+        lines.extend_from_slice(&["   return total;", " }"]);
+        lines
+    };
+    let texts = |findings: &[Finding]| {
+        let mut texts: Vec<String> = findings
+            .iter()
+            .map(|finding| {
+                format!(
+                    "{} => {:?} {:?}",
+                    finding.probe.expression.trim(),
+                    finding.source_currentness,
+                    finding.class
+                )
+            })
+            .collect();
+        texts.sort();
+        texts
+    };
+    let commented = analyze(
+        "comment-for-code",
+        &block(&["+  // The cap moved to the caller."]),
+    )?;
+    let mut recorded: Vec<String> = commented
+        .iter()
+        .filter(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+        .map(|finding| finding.probe.expression.trim().to_string())
+        .collect();
+    recorded.sort();
+    assert_eq!(
+        recorded,
+        vec!["if (total > 100) {".to_string(), "total = 100;".to_string()],
+        "{commented:?}"
+    );
+    assert!(
+        commented
+            .iter()
+            .all(|finding| finding.source_currentness.is_base_side()),
+        "a comment is no candidate finding: {commented:?}"
+    );
+    // The same deletion with nothing added reads the same.
+    let pure = analyze("comment-for-code-pure", &block(&[]))?;
+    assert_eq!(texts(&commented), texts(&pure));
+    Ok(())
+}
+
+/// A comment added beside replacement code is not a deletion: the removed
+/// line is read through the code that replaced it.
+#[test]
+fn comment_beside_replacement_code_leaves_no_base_side_record() -> Result<(), String> {
+    let findings = analyze(
+        "comment-beside-code",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, 100);",
+            "-  total = Math.max(total, 0);",
+            "+  // one clamp",
+            "+  total = Math.min(Math.max(total, 0), 100);",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A block comment in front of a statement is not a comment-only line: the
+/// statement still runs, so the removed line it replaced was not deleted.
+#[test]
+fn block_comment_before_a_statement_keeps_its_pairing() -> Result<(), String> {
+    let findings = analyze(
+        "block-comment-before-code",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, 100);",
+            "+  /* already positive */ total = Math.min(total, 100);",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// The body rows of a block comment are comment text whatever they start
+/// with, so a multi-line comment that replaces code holds no code.
+#[test]
+fn code_replaced_by_a_multi_line_block_comment_is_base_side_evidence() -> Result<(), String> {
+    let findings = analyze(
+        "block-comment-for-code",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  if (total > 100) {",
+            "-    total = 100;",
+            "-  }",
+            "+  /*",
+            "+   The cap moved to the caller.",
+            "+   */",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    let mut recorded: Vec<String> = findings
+        .iter()
+        .filter(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+        .map(|finding| finding.probe.expression.trim().to_string())
+        .collect();
+    recorded.sort();
+    assert_eq!(
+        recorded,
+        vec!["if (total > 100) {".to_string(), "total = 100;".to_string()],
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.source_currentness.is_base_side()),
+        "a comment body row is no candidate finding: {findings:?}"
+    );
+    Ok(())
+}

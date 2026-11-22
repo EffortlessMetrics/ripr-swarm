@@ -56,6 +56,9 @@ mod common;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/diff_absolute_root.rs"]
 mod diff_absolute_root;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/diff_ambient_settings.rs"]
+mod diff_ambient_settings;
 #[path = "cli_smoke/diff_nothing_analyzed.rs"]
 mod diff_nothing_analyzed;
 #[cfg(feature = "lang-rust")]
@@ -161,6 +164,9 @@ mod python_unittest_selectors;
 mod qualified_owner_observation;
 #[path = "cli_smoke/recall_tradeoff.rs"]
 mod recall_tradeoff;
+#[cfg(unix)]
+#[path = "cli_smoke/receipt_legacy_nested.rs"]
+mod receipt_legacy_nested;
 #[cfg(unix)]
 #[path = "cli_smoke/receipt_recovery_root.rs"]
 mod receipt_recovery_root;
@@ -38080,7 +38086,8 @@ fn init_warns_when_the_root_has_no_source_ripr_reads() -> Result<(), String> {
 /// root, the shallow doctor marker scan finds nothing at the root. With the
 /// `ripr.toml` that `init` writes there, doctor names the languages the config
 /// enables instead of "none detected"; without a config the ordinary line
-/// stays.
+/// stays. `init` only enables TypeScript when its adapter is compiled in.
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn doctor_names_config_enabled_languages_when_the_root_scan_finds_none() -> Result<(), String> {
     let repo = unique_temp_workspace("doctor-monorepo-languages");

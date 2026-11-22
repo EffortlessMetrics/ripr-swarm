@@ -108,7 +108,9 @@ fn try_admit_new_integration_test(
 /// `owner_file`, so an integration test can `use` crate-root items of that
 /// file. `None` when the file is not a package's library root. When
 /// `target_file` is given it must be exactly `<package_dir>/tests/<stem>.rs` of that same package, so
-/// `use <crate>::*` and `cargo test --test <stem>` both resolve.
+/// `use <crate>::*` and `cargo test --test <stem>` both resolve, or a `[[test]]`
+/// target that same package's manifest declares elsewhere (#15910), which
+/// links the library the same way and runs under its declared name.
 pub(crate) fn library_crate_name_for_root_file(
     root: &Path,
     owner_file: &Path,
@@ -123,7 +125,12 @@ pub(crate) fn library_crate_name_for_root_file(
         let tests_dir = package.package_dir.join("tests");
         let in_tests_dir = target.parent() == Some(tests_dir.as_path());
         let is_rs = target.extension().and_then(|ext| ext.to_str()) == Some("rs");
-        if !(in_tests_dir && is_rs) {
+        let declared_by_this_package = || {
+            crate::analysis::is_declared_cargo_test_surface(root, &target.to_string_lossy())
+                && owning_package(root, &target)
+                    .is_ok_and(|owner| owner.package_dir == package.package_dir)
+        };
+        if !(is_rs && (in_tests_dir || declared_by_this_package())) {
             return None;
         }
     }
