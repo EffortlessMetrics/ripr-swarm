@@ -57,12 +57,36 @@ fn every_other_binding_of_a_core_prelude_name_keeps_its_site() {
         "#[macro_use]\nextern crate other;\n",
         "#![no_implicit_prelude]\nuse other::*;\n",
         "#[no_implicit_prelude]\nmod inner {\n    use other::*;\n}\n",
+        // An included file may hold `macro_rules! assert_eq`, which shadows
+        // the prelude macro for the code after it.
+        "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+        "mod inner {\n    std::include!(\"generated.rs\");\n}\n",
     ] {
         assert!(
             site_names(source).contains("assert_eq"),
             "{source:?} must keep an assert_eq site"
         );
     }
+}
+
+#[test]
+fn only_an_item_position_include_binds_every_name() {
+    let item = "include!(\"generated.rs\");\n";
+    let sites = sites_in_widest_context(item, &assertion_context_macros());
+    assert!(
+        sites
+            .iter()
+            .any(|(name, site)| name == "assert_eq" && site.kind == MacroBindingKind::Included),
+        "{sites:?}"
+    );
+    // An expression-position `include!` is a block inside its function.
+    let expression = "fn read() -> u8 {\n    include!(\"value.rs\")\n}\n";
+    assert!(!site_names(expression).contains("assert_eq"));
+    let parsed = ra_ap_syntax::SourceFile::parse(item, ra_ap_syntax::Edition::CURRENT);
+    assert_eq!(
+        crate::analysis::syntax::macro_binding_candidates(&parsed.tree()),
+        crate::analysis::syntax::MacroBindingCandidates::Any
+    );
 }
 
 #[test]

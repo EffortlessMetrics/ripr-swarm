@@ -4385,6 +4385,9 @@ impl AssertionRefusal {
                             "{} did not parse cleanly, so it may redefine `{name}!`",
                             crate::analysis::stable_path_text(path)
                         ),
+                        MacroBindingKind::Included => format!(
+                            "`include!` at {place} splices in a file ripr does not read here, which may define `{name}!`"
+                        ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
                         ),

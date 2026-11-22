@@ -414,6 +414,10 @@ pub(crate) struct MacroBindingSite {
 pub(crate) enum MacroBindingKind {
     /// The file is not parser-clean, so any binding may hide in it.
     Unparsed,
+    /// An item-position `include!` splices in a file the scan does not read
+    /// as part of this module (often a build-script output), which may
+    /// define any macro by `macro_rules!` textual scope (#16060).
+    Included,
     /// `#![no_implicit_prelude]` removes the standard macros.
     NoImplicitPrelude,
     /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
@@ -469,6 +473,7 @@ impl MacroBindingKind {
         matches!(
             self,
             Self::Unparsed
+                | Self::Included
                 | Self::NoImplicitPrelude
                 | Self::MacroUse(_)
                 | Self::ExternMacroUse { .. }
@@ -659,6 +664,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         if ast::Attr::can_cast(node.kind()) && tokens().any(|token| binds_any(token.text())) {
             return MacroBindingCandidates::Any;
         }
+        if ast::MacroCall::cast(node.clone()).is_some_and(|call| item_position_include(&call)) {
+            return MacroBindingCandidates::Any;
+        }
         if let Some(tree) = ast::MacroCall::cast(node.clone()).and_then(|call| call.token_tree()) {
             for token in tree
                 .syntax()
@@ -709,6 +717,27 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         }
     }
     MacroBindingCandidates::Names(names)
+}
+
+/// Whether `call` is an `include!` at item position (a file's top level or
+/// an inline module), whose spliced file may define any macro for the code
+/// after it. The glob rule (#16060) no longer hides this: a glob cannot
+/// rebind a core prelude macro, but an included `macro_rules! assert_eq`
+/// can. Every spelling counts, `std::include!` and a raw `r#include!` too;
+/// an expression-position `include!` stays a block the caller reads.
+fn item_position_include(call: &ast::MacroCall) -> bool {
+    let item_position = call.syntax().parent().is_some_and(|parent| {
+        matches!(
+            parent.kind(),
+            ra_ap_syntax::SyntaxKind::SOURCE_FILE | ra_ap_syntax::SyntaxKind::ITEM_LIST
+        )
+    });
+    item_position
+        && call
+            .path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .is_some_and(|name| name.text().trim_start_matches("r#") == "include")
 }
 
 /// Whether `item` is the whole `root::*` glob of a top-level `use` whose
@@ -1478,6 +1507,11 @@ fn macro_binding_sites_in_tree(
                     continue;
                 }
             }
+        }
+        if let Some(call) = ast::MacroCall::cast(node.clone())
+            && item_position_include(&call)
+        {
+            return all(line_of(node), MacroBindingKind::Included, false);
         }
         if let Some(call) = ast::MacroCall::cast(node.clone())
             && let Some(path) = call.path()

@@ -263,6 +263,17 @@ every trusted name. An explicit import, a `macro_rules!` definition, a
 `#[macro_use]` crate and an item-position macro keep their sites. `#![no_core]`
 crates (unstable, rustc-internal) are not modeled.
 
+An item-position `include!` (at a file's top level or in an inline module,
+any spelling: `std::include!`, `r#include!`) reports a site for every trusted
+name. The included file, often a build-script output read through
+`concat!(env!("OUT_DIR"), ..)`, may hold `macro_rules! assert_eq`, which
+shadows the prelude macro for the code after it without any ambiguity
+error. Before this rule a foreign glob in the same crate hid that gap (serde's
+`serde_core/src/lib.rs`, verdict corpus case `serde-format-u8-hundreds`). An
+expression-position `include!` is a block inside its function and is read
+there. The stored per-file binding candidates read such a file as `Any`, so
+the file-fact cache moves to 1.66.
+
 A workspace with a foreign glob no longer saturates the binding-site scan from
 the glob alone, so the scan reads the rest of the index when no other site
 binds the core names.
