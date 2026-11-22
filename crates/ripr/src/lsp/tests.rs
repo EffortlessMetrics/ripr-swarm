@@ -12441,7 +12441,7 @@ fn framed_lsp_push_client_gets_withdrawal_marker_for_unresolvable_base_and_findi
                 let mut last = serde_json::Value::Null;
                 loop {
                     let message = tokio::time::timeout(
-                        std::time::Duration::from_secs(60),
+                        std::time::Duration::from_mins(1),
                         read_lsp_message(client_read),
                     )
                     .await
