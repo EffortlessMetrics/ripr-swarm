@@ -2170,8 +2170,9 @@ fn run_pipeline_for_diff_text_with_language_config(
                 AnalysisRecoveryKind::DeclareHandwrittenFiles,
                 format!(
                     "Not analyzed by the {name} preview adapter: {listed}. It skips \
-                     generated files and vendored, dependency, build-output and cache \
-                     directories; if one of these is hand-written, declare its exact \
+                     generated files, vendored, dependency, build-output and cache \
+                     directories, docs sites and tool configuration scripts; if one of \
+                     these is hand-written, declare its exact \
                      repository-relative path in `[{config_section}] handwritten_files` \
                      and re-run the analysis."
                 ),
@@ -3426,7 +3427,7 @@ fn is_excluded_from_typescript_preview_analysis(
             path,
         )
         || ((crate::config::is_detectable_excluded_typescript_path(path)
-            || crate::config::is_typescript_docs_site_path(path))
+            || crate::config::is_typescript_non_product_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(
                 &language_config.typescript.handwritten_files,
                 path,
@@ -10378,6 +10379,39 @@ index 0000000..1111111 100644
         if declared_count != 2_008 {
             return Err(format!(
                 "expected the declared handwritten docs path to count again, got {declared_count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_typescript_line_count_excludes_tool_configs_unless_declared_handwritten()
+    -> Result<(), String> {
+        // #15947: the pipeline's admitted-diff measure refuses a runner
+        // config like the adapter does; `app.config.ts` is a near miss.
+        let files = vec![
+            changed_line_file("web/app.ts", 2, 1),
+            changed_line_file("jest.config.ts", 2_001, 0),
+            changed_line_file("web/app.config.ts", 4, 0),
+        ];
+
+        let default_count = changed_language_line_count(
+            &files,
+            LanguageId::TypeScript,
+            &crate::config::LanguagesConfig::default(),
+        );
+        if default_count != 7 {
+            return Err(format!(
+                "expected tool-config lines excluded and the near miss counted, got {default_count}"
+            ));
+        }
+
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.typescript.handwritten_files = vec!["jest.config.ts".to_string()];
+        let declared_count = changed_language_line_count(&files, LanguageId::TypeScript, &declared);
+        if declared_count != 2_008 {
+            return Err(format!(
+                "expected the declared handwritten config to count again, got {declared_count}"
             ));
         }
         Ok(())

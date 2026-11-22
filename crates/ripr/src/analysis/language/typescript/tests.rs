@@ -22682,6 +22682,7 @@ mod string_write_scan_tests;
 mod suite_factory_tests;
 mod table_case_tests;
 mod table_loop_tests;
+mod tool_config_tests;
 mod typed_loose_equality_tests;
 mod unemitted_stage_unknown_tests;
 mod unused_default_tests;
