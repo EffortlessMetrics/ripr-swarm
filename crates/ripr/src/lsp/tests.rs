@@ -1,7 +1,4 @@
-use super::actions::{
-    SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
-    resolve_action,
-};
+use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
 use super::backend::{
     Backend, RefreshLogSummary, WatchedFileChanges, deadline_exceeded_log_message,
     refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
@@ -597,7 +594,7 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
             serde_json::json!({
                 "globPattern": {
                     "baseUri": root_uri.as_str(),
-                    "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                    "pattern": "**/*.{rs,py,pm,pl,t,psgi,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
                 },
                 "kind": 2,
             }),
@@ -8243,7 +8240,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
 
         for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
             let mut retained = actions.clone();
-            disable_retained_analysis_actions(
+            super::actions::disable_retained_analysis_actions(
                 &mut retained,
                 &AnalysisHealth {
                     state,
@@ -8296,7 +8293,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
         .to_string();
     for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
         let mut retained = stale.clone();
-        disable_retained_analysis_actions(
+        super::actions::disable_retained_analysis_actions(
             &mut retained,
             &AnalysisHealth {
                 state,
@@ -12363,6 +12360,166 @@ fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
         // requested settings.
         assert_eq!(authority["configuration_pull"]["state"], "pending");
         Ok(())
+    })
+}
+
+/// #15312 through the framed server and real Git inputs: a push client that
+/// holds findings gets the withdrawal marker when the base stops resolving,
+/// and gets the findings back when the base resolves again. The marker and
+/// its retraction are delivered, not only computable.
+#[test]
+#[serial]
+fn framed_lsp_push_client_gets_withdrawal_marker_for_unresolvable_base_and_findings_back()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = untested_rust_edit_fixture("framed-base-withdrawal")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let lib_path = root.path().join("src/lib.rs");
+        let lib_uri = file_uri_for_path(&lib_path)?;
+        let lib_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read lib.rs failed: {err}"))?;
+        let (client_io, server_io) = tokio::io::duplex(1024 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let outcome = async {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": root_uri.as_str(),
+                        "capabilities": {},
+                        "initializationOptions": {"baseRef": "HEAD", "checkMode": "instant"}
+                    }
+                }),
+            )
+            .await?;
+            read_lsp_response(&mut client_read, 1).await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {"textDocument": {
+                        "uri": lib_uri.as_str(),
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": lib_text
+                    }}
+                }),
+            )
+            .await?;
+            // The next publish for lib.rs whose payload matches `wanted`.
+            async fn publish_matching(
+                client_read: &mut (impl tokio::io::AsyncRead + Unpin),
+                lib_uri: &str,
+                what: &str,
+                wanted: impl Fn(&serde_json::Value) -> bool,
+            ) -> Result<serde_json::Value, String> {
+                let mut last = serde_json::Value::Null;
+                loop {
+                    let message = tokio::time::timeout(
+                        std::time::Duration::from_mins(1),
+                        read_lsp_message(client_read),
+                    )
+                    .await
+                    .map_err(|elapsed| {
+                        format!("no publish with {what} arrived ({elapsed}); last: {last}")
+                    })??;
+                    if message["method"] != "textDocument/publishDiagnostics"
+                        || message["params"]["uri"] != lib_uri
+                    {
+                        continue;
+                    }
+                    let items = message["params"]["diagnostics"].clone();
+                    if wanted(&items) {
+                        return Ok(items);
+                    }
+                    last = items;
+                }
+            }
+            // Committed rows: a non-empty payload with no pending, withdrawal
+            // or other delivery-limitation marker in it.
+            let has_finding = |items: &serde_json::Value| {
+                items.as_array().is_some_and(|items| {
+                    !items.is_empty()
+                        && items
+                            .iter()
+                            .all(|item| item["data"]["kind"] != "delivery_limitation")
+                })
+            };
+            let is_withdrawal = |items: &serde_json::Value| {
+                items.as_array().is_some_and(|items| {
+                    items.len() == 1
+                        && items[0]["data"]["state"] == "withdrawn_analysis_failure"
+                        && items[0]["data"]["failure_kind"] == "base_unresolvable"
+                })
+            };
+            let findings =
+                publish_matching(&mut client_read, lib_uri.as_str(), "a finding", has_finding)
+                    .await?;
+
+            let set_base = |base: &str| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeConfiguration",
+                    "params": {"settings": {"ripr": {"baseRef": base}}}
+                })
+            };
+            write_lsp_message(&mut client_write, set_base("no-such-ref")).await?;
+            let marker = publish_matching(
+                &mut client_read,
+                lib_uri.as_str(),
+                "the withdrawal marker",
+                is_withdrawal,
+            )
+            .await?;
+            let message = marker[0]["message"].as_str().unwrap_or_default();
+            if !message.contains("previously reported findings are withdrawn")
+                || !message.contains("no-such-ref")
+            {
+                return Err(format!(
+                    "the marker must name the withdrawal and the base: {message}"
+                ));
+            }
+
+            write_lsp_message(&mut client_write, set_base("HEAD")).await?;
+            let restored = publish_matching(
+                &mut client_read,
+                lib_uri.as_str(),
+                "the restored finding",
+                has_finding,
+            )
+            .await?;
+            if restored != findings {
+                return Err(format!(
+                    "the restored payload must equal the original: {restored} vs {findings}"
+                ));
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        server_task.abort();
+        outcome
     })
 }
 
@@ -35774,6 +35931,79 @@ fn untested_rust_edit_discloses_withheld_findings_and_reconciles_status() -> Res
     }
     if !full.snapshot.is_consistent() {
         return Err("full: snapshot must be consistent".to_string());
+    }
+    Ok(())
+}
+
+/// #15951: the empty-scope marker names the base the user requested, not the
+/// branch the run resolved. With no base requested the default base resolves
+/// to a branch name; the marker must say no base was passed, as hover and
+/// status do, instead of calling that branch the requested base.
+#[test]
+fn empty_scope_marker_names_the_requested_base_not_the_resolved_default() -> Result<(), String> {
+    let root = untested_rust_edit_fixture("empty-scope-marker-base")?;
+    run_lsp_scope_git(root.path(), &["branch", "-M", "main"])?;
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let uri = file_uri_for_path(&root.path().join("src/lib.rs"))
+        .map_err(|err| format!("uri for lib.rs failed: {err}"))?;
+    let marker_for = |base_ref: Option<&str>| -> Result<(Option<String>, String), String> {
+        let config = LspAnalysisConfig {
+            base_ref: base_ref.map(str::to_string),
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        let mut result = workspace_diagnostics_with_config(root.path(), &config, true)?;
+        if !result
+            .snapshot
+            .analysis_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+        {
+            return Err(format!(
+                "fixture must be an empty scope for base {base_ref:?}: {:?}",
+                result.snapshot.analysis_outcome
+            ));
+        }
+        // The production refresh binds the input identity before commit; the
+        // analysis entry point leaves it unset.
+        result.snapshot.input_identity = Some(LspAnalysisInputIdentity::from_refresh_inputs(
+            result.snapshot.root.clone(),
+            1,
+            &config,
+        ));
+        let items = super::diagnostics::delivered_diagnostics_for_uri(
+            &result.snapshot,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        );
+        let [marker] = items.as_slice() else {
+            return Err(format!("exactly one marker expected: {items:?}"));
+        };
+        Ok((result.snapshot.base.clone(), marker.message.clone()))
+    };
+
+    // No base requested: the run still resolves one, and the marker must not
+    // present it as requested.
+    let (resolved, message) = marker_for(None)?;
+    if resolved.as_deref() != Some("main") {
+        return Err(format!(
+            "fixture must resolve the default base to a branch name: {resolved:?}"
+        ));
+    }
+    if !message.contains("no base was passed, so the default base was used")
+        || message.contains("requested base")
+    {
+        return Err(format!(
+            "an unrequested base must not be named as requested: {message}"
+        ));
+    }
+
+    // A requested base is named verbatim.
+    let (_, message) = marker_for(Some("HEAD"))?;
+    if !message.contains("the saved diff against requested base `HEAD`")
+        || message.contains("no base was passed")
+    {
+        return Err(format!("a requested base must be named: {message}"));
     }
     Ok(())
 }

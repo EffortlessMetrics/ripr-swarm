@@ -536,6 +536,38 @@ fn evidence_promotion_semantic_assertions_reject_bare_empty_false_clean() {
     assert!(report.contains("no non-clean signal"), "{report}");
 }
 
+#[test]
+fn evidence_promotion_outcome_limitation_is_not_a_clean_result() {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
+        super::EvidencePromotionSemanticAssertion::MustReportClean,
+    ];
+    let partial = serde_json::json!({
+        "summary": {"findings": 0},
+        "findings": [],
+        "analysis_outcome": {
+            "analysis_complete": false,
+            "outcome": {
+                "kind": "partial_with_limitations",
+                "limitations": [{"kind": "language_scope_unsupported", "path": "src/inner.rs"}]
+            }
+        }
+    });
+
+    let report = super::evidence_promotion_semantic_violations(
+        "partial_outcome",
+        Some("fixtures/module_reach_cfg_comment_hidden"),
+        &assertions,
+        &partial,
+        None,
+        false,
+    )
+    .join("\n");
+
+    assert!(!report.contains("no non-clean signal"), "{report}");
+    assert!(report.contains("`must_report_clean` requires"), "{report}");
+}
+
 fn semver_external_case_for_test() -> super::EvidencePromotionExternalCase {
     super::EvidencePromotionExternalCase {
             id: "rust_semver_matches_greater_external_limitation".to_string(),
@@ -12305,6 +12337,27 @@ fn golden_drift_semantics_summarize_json_changes() {
             .iter()
             .any(|value| value.contains("Assert the exact variant"))
     );
+}
+
+#[test]
+fn golden_drift_human_evidence_classification() {
+    let before = include_str!("../../fixtures/manual_let_else_pairing/expected/human.txt");
+    let classify =
+        |after: &str| super::golden_drift_type(&golden_drift_semantics("human.txt", before, after));
+    let window = before.replace("    - propagation yes: Complete propagation witness reaches returned value: let Some(rhs) = rhs.next() else {", "    - infection unknown: No reachable tests were found, so infection cannot be established");
+    assert_eq!(classify(&window), "detail_window_changed");
+    let semantic = window.replace(" · infection unknown ·", " · infection yes ·");
+    assert_eq!(
+        classify(&semantic),
+        "stage_states_changed [infection: unknown -> yes]"
+    );
+    for malformed in [" · infection nonsense ·", " · reach weak ·", " · "] {
+        assert_eq!(
+            classify(&before.replace(" · infection unknown ·", malformed)),
+            "stage_states_unavailable"
+        );
+    }
+    assert!(classify(&before.replace("Summary:", "Overview:")).starts_with("formatting_only"));
 }
 
 #[test]

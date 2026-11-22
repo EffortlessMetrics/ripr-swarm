@@ -1,0 +1,135 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/predicate_constant_of_other_function/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:bc2b4511bd7551208403e5fe8cc24b1a9785e6f7ff2fbf5ad6555852f8f1bf3b","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:10ff91b7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==200",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==200",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discount",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "total==200"
+
+      },
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.71,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:10ff91b7",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "total > 200"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach discount: smoke"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: total - 10"},
+        "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach discount: smoke", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: total - 10", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches returned value: total - 10 (line 3)", "related test src/lib.rs:18 smoke uses no oracle", "source function argument value total = 50 at line 19", "source assertion argument value \"zero\" at line 20", "source assertion argument value 0 at line 20", "missing discriminator total == 200: No related test call uses total equal to 200; observed total values: 50; target 200 value: 200"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"total - 10","line":3}
+      ],
+      "evidence": ["Changed behavior appears to influence returned value: total - 10", "No assertion found on related tests", "Related tests appear to reach discount: smoke", "Related tests contain input values, but the equality-boundary check is missing", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
+      "missing": ["Missing check value: total == 200", "No detected assertion observes the changed value, error, field, or effect", "No relevant oracle was detected", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "19": "let _ = discount(50);",
+        "20": "assert_eq!(label(0), \"zero\");"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 19,
+            "value": "total = 50",
+            "context": "function_argument"
+          },
+          {
+            "line": 20,
+            "value": "\"zero\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 20,
+            "value": "0",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "total == 200",
+            "reason": "No related test call uses total equal to 200; observed total values: 50; target 200 value: 200",
+            "flow_sink": {"kind":"return_value","text":"total - 10","line":3}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 19,
+          "value": "total = 50",
+          "context": "function_argument"
+        },
+        {
+          "line": 20,
+          "value": "\"zero\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 20,
+          "value": "0",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "total == 200",
+          "reason": "No related test call uses total equal to 200; observed total values: 50; target 200 value: 200",
+          "flow_sink": {"kind":"return_value","text":"total - 10","line":3}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "smoke",
+          "file": "src/lib.rs",
+          "line": 18,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
+      "suggested_next_action": "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

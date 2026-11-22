@@ -595,3 +595,28 @@ fn opposite_kind_value_dependencies_keep_owner_uncertainty() -> Result<(), Strin
     }
     Ok(())
 }
+
+/// #15476: an `if` over the method's primitive parameters is inside the
+/// closed grammar, so its result pins the other function as a `match` does.
+/// A condition or branch that reads anything else, and an `if let`, keep
+/// the owner uncertainty.
+#[test]
+fn opposite_kind_if_over_primitive_parameters_is_closed() -> Result<(), String> {
+    let assertion = "assert_eq!(widget.consume(1), 3)";
+    let index = parsed_index(&source("value + 1", "if value > 1 { 2 } else { 3 }", ""))?;
+    assert!(pins_other_in_test(&index, owner(&index, true)?, assertion)?);
+    for (method_body, extra) in [
+        ("if value > LIMIT { 2 } else { 3 }", "const LIMIT: u32 = 1;"),
+        ("if value > 1 { LIMIT } else { 3 }", "const LIMIT: u32 = 1;"),
+        ("if let 1 = value { 2 } else { 3 }", ""),
+        ("if value > 1 { let x = 2; x } else { 3 }", ""),
+        ("if consume(value) > 1 { 2 } else { 3 }", ""),
+    ] {
+        let index = parsed_index(&source("value + 1", method_body, extra))?;
+        assert!(
+            !pins_other_in_test(&index, owner(&index, true)?, assertion)?,
+            "{method_body}"
+        );
+    }
+    Ok(())
+}

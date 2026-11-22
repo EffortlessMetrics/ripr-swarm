@@ -281,7 +281,7 @@ impl DoctorEnvironment {
         language_detection_elapsed: std::time::Duration,
     ) -> Self {
         let loaded = config.as_ref().ok();
-        let preview_enablement = preview_languages_to_enable(detected, config);
+        let preview_enablement = preview_languages_to_enable(root, detected, config);
         // #8540 follow-up: each expensive computation is timed where it runs
         // and named after itself, so the segment list can explain the run
         // total alongside the timed checks and probes.
@@ -717,6 +717,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         }
     }
     if let Some(check) = check_named(report, "git_default_base") {
+        let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+        lines.push(compact_tilde_line(evidence));
+    }
+    if let Some(check) = check_named(report, "git_operation") {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
         lines.push(compact_tilde_line(evidence));
     }
@@ -1763,6 +1767,7 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
 /// are not enabled. `None` when there is nothing to suggest or the config
 /// cannot be loaded (fail closed: no tip).
 fn preview_languages_to_enable(
+    root: &Path,
     detected: &[LanguageId],
     config: &Result<RiprConfig, String>,
 ) -> Option<PreviewEnablement> {
@@ -1825,8 +1830,11 @@ fn preview_languages_to_enable(
     // #15304 review: only the built-in default `rust` is dropped when no Rust
     // marker is found (#7648). A `rust` the user wrote into
     // `[languages].enabled` is their selection, and the replacement list must
-    // keep it.
-    let keep_rust = detected.contains(&LanguageId::Rust) || languages_enabled_is_explicit(config);
+    // keep it. So must a root whose crate is nested (`backend/Cargo.toml`):
+    // `ripr check` analyzes that Rust, and a list without `rust` stops it.
+    let keep_rust = detected.contains(&LanguageId::Rust)
+        || crate::domain::enablement_tip_keeps_rust(root)
+        || languages_enabled_is_explicit(config);
     let suggestion = crate::domain::enablement_tip_languages(
         &enabled,
         keep_rust,
@@ -8889,7 +8897,11 @@ mod tests {
     /// computes them, so a test exercises the shared probe rather than a
     /// second derivation.
     fn test_preview_enablement(root: &Path) -> Option<PreviewEnablement> {
-        preview_languages_to_enable(&detect_languages(root), &crate::config::load_for_root(root))
+        preview_languages_to_enable(
+            root,
+            &detect_languages(root),
+            &crate::config::load_for_root(root),
+        )
     }
 
     fn test_enablement_suggestions(root: &Path) -> Vec<String> {
@@ -8932,6 +8944,42 @@ mod tests {
         assert!(
             !after.iter().any(|line| line.contains("typescript")),
             "{after:?}"
+        );
+        Ok(())
+    }
+
+    /// A mixed repository keeps its crate under `backend/`: the root has no
+    /// Rust marker, `ripr check` analyzes the Rust all the same, and the list
+    /// the tip prints must keep `rust`. The control drops the crate.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn doctor_tip_keeps_rust_for_a_crate_nested_below_the_root() -> Result<(), String> {
+        let dir = unique_command_test_dir("suggest-keeps-nested-rust");
+        std::fs::create_dir_all(dir.join("backend/src"))
+            .map_err(|err| format!("create dir: {err}"))?;
+        std::fs::create_dir_all(dir.join("scripts")).map_err(|err| format!("create dir: {err}"))?;
+        for (path, text) in [
+            ("backend/Cargo.toml", "[package]\nname = \"backend\"\n"),
+            ("backend/src/lib.rs", "pub fn f() {}\n"),
+            ("scripts/pyproject.toml", "[project]\nname = \"tools\"\n"),
+        ] {
+            std::fs::write(dir.join(path), text).map_err(|err| format!("write {path}: {err}"))?;
+        }
+        let nested = test_enablement_suggestions(&dir);
+        std::fs::remove_dir_all(dir.join("backend")).map_err(|err| format!("remove: {err}"))?;
+        let control = test_enablement_suggestions(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            nested
+                .iter()
+                .any(|line| line.contains("`enabled = [\"rust\", \"python\"]`")),
+            "{nested:?}"
+        );
+        assert!(
+            control
+                .iter()
+                .any(|line| line.contains("`enabled = [\"python\"]`")),
+            "{control:?}"
         );
         Ok(())
     }

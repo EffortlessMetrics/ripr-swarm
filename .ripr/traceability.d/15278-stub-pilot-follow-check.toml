@@ -1,0 +1,12 @@
+# Registers the #15278 item 1 screens under RIPR-SPEC-0217: `ripr repair
+# <finding id>`, `ripr agent stub` and `ripr pilot` follow the default
+# `ripr check` reading of the changed code on a seam the inventory reads as
+# strongly gripped.
+[[extend]]
+id = "RIPR-SPEC-0217"
+tests = [
+  "crates/ripr/tests/check_repair_agree.rs::repair_by_finding_id_never_says_already_checked_while_check_reports_a_weak_gap",
+  "crates/ripr/tests/check_repair_agree.rs::stub_never_says_tests_already_discriminate_while_check_reports_a_weak_gap",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_never_says_no_test_to_add_while_check_reports_a_weak_gap",
+  "crates/ripr/tests/check_repair_agree.rs::an_exposed_change_keeps_the_already_checked_wording_on_every_surface",
+]

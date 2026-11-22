@@ -127,7 +127,27 @@ Every dispatch requires `version`, `source_sha` (the 40-hex head the release
 tag peels to; dispatch with `--ref` at that commit) and `manifest_sha256` (raw
 bytes of the published `ripr-server-manifest-v<version>.json`). The workflow
 normalizes tag names like `v0.8.0` to the package version `0.8.0` for the VSIX
-filename and duplicate-version checks.
+filename.
+
+A version already on a channel is not treated as success by its number. Before
+the step that holds the channel token, each publish job fetches what the channel
+serves for that version and compares its SHA-256 with this release's VSIX:
+
+| Channel answer | Result |
+| --- | --- |
+| 404 | publish; a duplicate version is refused by the channel and fails the job |
+| 200, same bytes | nothing to publish; the job passes without using the token |
+| 200, other bytes | the job fails |
+| any other status, or a failed fetch | the job fails |
+
+The job does not pass `--skip-duplicate`. This comparison assumes each channel
+serves the uploaded VSIX byte for byte. That has not been observed against a
+live publish, so a rerun after a successful publish may fail on the comparison;
+it cannot report a different package as published.
+
+The attach job checks its own subject before it writes to the Release: the VSIX
+must match the digest the package job recorded and must embed `manifest_sha256`.
+It attaches that one file, never a glob.
 
 The exact commands for both channels, including the Open VSX dispatch with
 `--ref`, `source_sha`, `manifest_sha256` and `vsix_sha256`, are in
