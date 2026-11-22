@@ -15,14 +15,21 @@ pub const FEEDBACK_NOTE_MAX_BYTES: usize = 1024;
 /// no-action remain distinguishable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeedbackJudgment {
+    /// `useful`: the result helped.
     Useful,
+    /// `incorrect`: the result was wrong.
     Incorrect,
+    /// `unclear`: the result was hard to act on.
     Unclear,
+    /// `expensive`: the result cost too much to use.
     Expensive,
+    /// `intentional_no_action`: the result was right, and no action was taken
+    /// on purpose.
     IntentionalNoAction,
 }
 
 impl FeedbackJudgment {
+    /// The snake_case wire name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Useful => "useful",
@@ -33,6 +40,7 @@ impl FeedbackJudgment {
         }
     }
 
+    /// Parse a wire name, or return an error naming the accepted values.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "useful" => Ok(Self::Useful),
@@ -50,34 +58,60 @@ impl FeedbackJudgment {
 /// Closed reason taxonomy. `other` is the escape hatch and requires a note.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeedbackReason {
+    /// `useful_actionable`: led to a useful action.
     UsefulActionable,
+    /// `useful_limitation`: usefully named a limitation.
     UsefulLimitation,
+    /// `correct_target`: named the right target.
     CorrectTarget,
+    /// `correct_discriminator`: named the right missing discriminator.
     CorrectDiscriminator,
+    /// `clear_explanation`: explained the result clearly.
     ClearExplanation,
+    /// `wrong_target`: named the wrong target.
     WrongTarget,
+    /// `wrong_discriminator`: named the wrong discriminator.
     WrongDiscriminator,
+    /// `false_actionable`: was marked actionable but was not.
     FalseActionable,
+    /// `duplicate_item`: repeated another item.
     DuplicateItem,
+    /// `already_covered`: the result was already addressed.
     AlreadyCovered,
+    /// `incorrect_causal_attribution`: tied the result to the wrong cause.
     IncorrectCausalAttribution,
+    /// `stale_result`: no longer matched the code.
     StaleResult,
+    /// `missing_context`: lacked context needed to act.
     MissingContext,
+    /// `ambiguous_target`: the target could be read more than one way.
     AmbiguousTarget,
+    /// `unclear_explanation`: the explanation was hard to follow.
     UnclearExplanation,
+    /// `verify_command_failed`: the suggested verify command failed.
     VerifyCommandFailed,
+    /// `receipt_command_failed`: the suggested receipt command failed.
     ReceiptCommandFailed,
+    /// `route_too_broad`: the suggested route did more than needed.
     RouteTooBroad,
+    /// `too_slow`.
     TooSlow,
+    /// `too_noisy`.
     TooNoisy,
+    /// `unsupported_workflow`: did not fit the user's workflow.
     UnsupportedWorkflow,
+    /// `intentional_defensive_code`: the code is defensive on purpose.
     IntentionalDefensiveCode,
+    /// `intentional_low_grip`: low test grip is accepted on purpose.
     IntentionalLowGrip,
+    /// `manual_review_preferred`: a person reviews this instead.
     ManualReviewPreferred,
+    /// `other`: none of the above; needs a note and an explicit judgment.
     Other,
 }
 
 impl FeedbackReason {
+    /// The snake_case wire name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::UsefulActionable => "useful_actionable",
@@ -108,6 +142,8 @@ impl FeedbackReason {
         }
     }
 
+    /// Parse a wire name, or return an error that points at `ripr feedback
+    /// --help`.
     pub fn parse(value: &str) -> Result<Self, String> {
         for reason in Self::all() {
             if reason.as_str() == value {
@@ -119,6 +155,8 @@ impl FeedbackReason {
         ))
     }
 
+    /// The judgment this reason implies. `other` returns `unclear` here, but a
+    /// payload with `other` must carry its own judgment.
     pub const fn judgment(self) -> FeedbackJudgment {
         match self {
             Self::UsefulActionable
@@ -152,10 +190,12 @@ impl FeedbackReason {
         }
     }
 
+    /// Whether the reason needs a note: only `other` does.
     pub const fn requires_note(self) -> bool {
         matches!(self, Self::Other)
     }
 
+    /// Every reason, in declaration order.
     pub const fn all() -> [Self; 25] {
         [
             Self::UsefulActionable,
@@ -190,12 +230,16 @@ impl FeedbackReason {
 /// Who recorded the receipt. Distinct from review status.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ActorKind {
+    /// `human`.
     Human,
+    /// `agent`.
     Agent,
+    /// `unknown`.
     Unknown,
 }
 
 impl ActorKind {
+    /// The snake_case wire name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Human => "human",
@@ -204,6 +248,7 @@ impl ActorKind {
         }
     }
 
+    /// Parse a wire name, or return an error naming the accepted values.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "human" => Ok(Self::Human),
@@ -219,12 +264,16 @@ impl ActorKind {
 /// Review disposition, independent of [`ActorKind`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReviewStatus {
+    /// `unreviewed`.
     Unreviewed,
+    /// `reviewed_accepted`: a reviewer accepted the feedback.
     ReviewedAccepted,
+    /// `reviewed_rejected`: a reviewer rejected the feedback.
     ReviewedRejected,
 }
 
 impl ReviewStatus {
+    /// The snake_case wire name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Unreviewed => "unreviewed",
@@ -233,6 +282,7 @@ impl ReviewStatus {
         }
     }
 
+    /// Parse a wire name, or return an error naming the accepted values.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "unreviewed" => Ok(Self::Unreviewed),
@@ -244,6 +294,7 @@ impl ReviewStatus {
         }
     }
 
+    /// Whether the feedback has been reviewed, accepted or rejected.
     pub const fn is_reviewed(self) -> bool {
         !matches!(self, Self::Unreviewed)
     }
@@ -252,12 +303,16 @@ impl ReviewStatus {
 /// Whether a stored identity still names the live result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReferenceState {
+    /// `current`: names the live result, or there is no live result to compare.
     Current,
+    /// `historical`: the same result, with a later attempt or receipt.
     Historical,
+    /// `mismatched`: a different snapshot, item or route.
     Mismatched,
 }
 
 impl ReferenceState {
+    /// The snake_case wire name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Current => "current",
@@ -270,14 +325,21 @@ impl ReferenceState {
 /// Immutable analysis/result identity. File/line is not part of this type.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResultIdentity {
+    /// The analysis snapshot id; required.
     pub snapshot_id: String,
+    /// The canonical item id, when known.
     pub canonical_item: Option<String>,
+    /// The route digest, when known.
     pub route_digest: Option<String>,
+    /// The repair attempt id, when known.
     pub attempt_id: Option<String>,
+    /// The receipt id, when known.
     pub receipt_id: Option<String>,
 }
 
 impl ResultIdentity {
+    /// Check that the snapshot id is present and every given id is non-blank
+    /// with no control characters.
     pub fn validate(&self) -> Result<(), String> {
         if self.snapshot_id.trim().is_empty() {
             return Err(
@@ -308,21 +370,33 @@ impl ResultIdentity {
 /// In-memory usefulness-feedback receipt. Timestamp is outside payload identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeedbackReceipt {
+    /// The receipt id.
     pub feedback_id: String,
+    /// The key that makes repeat recording of the same payload idempotent.
     pub idempotency_key: String,
+    /// The result the feedback is about.
     pub identity: ResultIdentity,
+    /// Who recorded the feedback.
     pub actor_kind: ActorKind,
+    /// Whether the feedback was reviewed.
     pub review_status: ReviewStatus,
+    /// Who reviewed it; present exactly when `review_status` is reviewed.
     pub review_actor_kind: Option<ActorKind>,
+    /// Why the feedback was given.
     pub reason: FeedbackReason,
     /// Required when `reason` is `other`; otherwise derived from the reason.
     pub judgment_override: Option<FeedbackJudgment>,
+    /// An optional note of at most [`FEEDBACK_NOTE_MAX_BYTES`] bytes; required
+    /// for `other`.
     pub note: Option<String>,
+    /// Whether `identity` still names the live result.
     pub reference_state: ReferenceState,
+    /// When the feedback was recorded; not part of the payload identity.
     pub recorded_at: String,
 }
 
 impl FeedbackReceipt {
+    /// The judgment: the override when set, else the one the reason implies.
     pub fn judgment(&self) -> FeedbackJudgment {
         self.judgment_override
             .unwrap_or_else(|| self.reason.judgment())
@@ -332,16 +406,26 @@ impl FeedbackReceipt {
 /// Semantic payload used for idempotency comparison. Timestamp is excluded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FeedbackPayload {
+    /// The result the feedback is about.
     pub identity: ResultIdentity,
+    /// Who recorded the feedback.
     pub actor_kind: ActorKind,
+    /// Whether the feedback was reviewed.
     pub review_status: ReviewStatus,
+    /// Who reviewed it; present exactly when `review_status` is reviewed.
     pub review_actor_kind: Option<ActorKind>,
+    /// Why the feedback was given.
     pub reason: FeedbackReason,
+    /// An explicit judgment; required for `other` and otherwise must match the
+    /// reason's.
     pub judgment_override: Option<FeedbackJudgment>,
+    /// An optional note; required for `other`.
     pub note: Option<String>,
 }
 
 impl FeedbackPayload {
+    /// The payload of a receipt, without its id, key, reference state or
+    /// timestamp.
     pub fn from_receipt(receipt: &FeedbackReceipt) -> Self {
         Self {
             identity: receipt.identity.clone(),
@@ -354,6 +438,7 @@ impl FeedbackPayload {
         }
     }
 
+    /// The judgment: the override when set, else the one the reason implies.
     pub fn judgment(&self) -> FeedbackJudgment {
         self.judgment_override
             .unwrap_or_else(|| self.reason.judgment())
@@ -370,6 +455,9 @@ impl FeedbackPayload {
         self
     }
 
+    /// Check the identity, the note and judgment rules for `other`, the note
+    /// limits, and that a review actor is present exactly when the feedback is
+    /// reviewed.
     pub fn validate(&self) -> Result<(), String> {
         self.identity.validate()?;
         if self.reason.requires_note()
@@ -420,6 +508,7 @@ impl FeedbackPayload {
         Ok(())
     }
 
+    /// The canonical text form of the payload, used for idempotency comparison.
     pub fn canonical_bytes(&self) -> String {
         format!(
             "v1\nsnapshot={}\nitem={}\nroute={}\nattempt={}\nreceipt={}\nactor={}\nreview={}\nreview_actor={}\nreason={}\njudgment={}\nnote={}\n",
