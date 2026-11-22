@@ -224,3 +224,117 @@ fn helper_owner_call_scope_resolves_only_pool_tests() -> Result<(), String> {
         RelationReason::HelperOwnerCall,
     )
 }
+
+/// A workspace where the crowded assertion ranking truncates only while
+/// other tests' owner calls are unresolved. `alphaqty` and `betalimit` are
+/// the seam's assertion tokens. Forty tests call the owner and assert
+/// `alphaqty`, forty assert `betalimit` without calling it, and the last
+/// test asserts `alphaqty` without calling it.
+fn crowded_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
+    let callers = (0..40)
+        .map(|n| {
+            format!(
+                "#[test] fn caller_{n:02}() {{ let alphaqty = graded(1, 1); \
+                 assert_eq!(alphaqty, 1); }}\n"
+            )
+        })
+        .collect::<String>();
+    let others = (0..40)
+        .map(|n| {
+            format!(
+                "#[test] fn other_{n:02}() {{ let betalimit = 3; assert_eq!(betalimit, 3); }}\n"
+            )
+        })
+        .collect::<String>();
+    let files = [
+        (
+            PathBuf::from("src/grade.rs"),
+            "pub fn graded(alphaqty: i32, betalimit: i32) -> i32 \
+             { if alphaqty >= betalimit { 1 } else { 0 } }\n",
+        ),
+        (PathBuf::from("tests/a_callers.rs"), callers.as_str()),
+        (PathBuf::from("tests/b_others.rs"), others.as_str()),
+        (
+            PathBuf::from("tests/zz_pool.rs"),
+            "#[test] fn last_reader() { let alphaqty = 1; assert_eq!(alphaqty, 1); }\n",
+        ),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/grade.rs")], &index);
+    Ok((index, seams))
+}
+
+/// The exactness argument's other half: when leaving other tests' owner
+/// calls unresolved makes the ranking truncate, the pool-first pass is not
+/// the answer and the complete relation decides. Here the complete relation
+/// admits the pool test (the forty callers take no ranking slot, so 41
+/// tests fit the limit of 64), while the pool-first pass ranks 81 and cuts it.
+#[test]
+fn pool_check_falls_back_to_the_complete_relation_when_the_ranking_truncates() -> Result<(), String>
+{
+    let (index, seams) = crowded_fixture()?;
+    let context = CompactGripContext::new(&index);
+    let limit = crowded_relation_limit(context.tests.len());
+    if context.tests.len() != 81 || limit != 64 {
+        return Err(format!(
+            "fixture should index 81 tests under a limit of 64, got {} and {limit}",
+            context.tests.len()
+        ));
+    }
+    let last = context
+        .tests
+        .iter()
+        .position(|indexed| indexed.test.name == "last_reader")
+        .ok_or("fixture lost last_reader")?;
+    let pool = BTreeSet::from([last]);
+    let seam = seams
+        .iter()
+        .find(|seam| {
+            let tokens = assertion_target_tokens(seam);
+            tokens.contains("alphaqty") && tokens.contains("betalimit")
+        })
+        .ok_or_else(|| {
+            format!(
+                "no seam targets both tokens: {:?}",
+                seams
+                    .iter()
+                    .map(assertion_target_tokens)
+                    .collect::<Vec<_>>()
+            )
+        })?;
+
+    // Complete relation: the pool test is related, by the ranked reason.
+    let complete = find_related_tests_in(seam, &context, RelationScope::Pool(&pool, counted));
+    match complete.as_slice() {
+        [(indexed, RelationReason::AssertionTargetAffinity)]
+            if indexed.test.name == "last_reader" => {}
+        _ => {
+            return Err(format!(
+                "complete relation should admit last_reader by assertion affinity, got {:?}",
+                complete
+                    .iter()
+                    .map(|(indexed, reason)| (indexed.test.name.as_str(), reason.as_str()))
+                    .collect::<Vec<_>>()
+            ));
+        }
+    }
+
+    // Pool-first pass alone: truncated, and it cut the pool test.
+    let direct_calls = PoolDirectCalls::default();
+    let (first, exact) = related_tests_in(
+        seam,
+        &context,
+        RelationScope::PoolFirst(&pool, counted, &direct_calls),
+    );
+    if exact || !first.is_empty() {
+        return Err(format!(
+            "the pool-first pass should truncate and drop last_reader: exact {exact}, {} related",
+            first.len()
+        ));
+    }
+
+    if !relates_to_pool_test(seam, &context, &pool, counted, &direct_calls) {
+        return Err("the pool check must answer from the complete relation".to_string());
+    }
+    Ok(())
+}

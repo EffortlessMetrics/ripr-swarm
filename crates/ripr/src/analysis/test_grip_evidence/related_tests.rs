@@ -146,7 +146,7 @@ pub(super) fn find_related_tests_in<'context, 'index>(
 /// The tests `scope` relates to `seam`, and whether that list is exactly
 /// what the complete rules give for the scope. Only
 /// [`RelationScope::PoolFirst`] can be inexact.
-fn related_tests_in<'context, 'index>(
+pub(super) fn related_tests_in<'context, 'index>(
     seam: &RepoSeam,
     context: &'context CompactGripContext<'index>,
     scope: RelationScope<'_>,
