@@ -26,6 +26,7 @@ pub(crate) enum XtaskCommand {
     WindowsAdvisoryFilePolicyEvidence(Vec<String>),
     VerifyTestShards(Vec<String>),
     WindowsAdvisoryIsolatedSummary(Vec<String>),
+    WindowsAdvisoryFeatureRows(Vec<String>),
     SuggestedFixes,
     Precommit,
     CiPolicy,
@@ -266,6 +267,7 @@ impl XtaskCommand {
             }
             "verify-test-shards" => Self::VerifyTestShards(rest),
             "windows-advisory-isolated-summary" => Self::WindowsAdvisoryIsolatedSummary(rest),
+            "windows-advisory-feature-rows" => Self::WindowsAdvisoryFeatureRows(rest),
             "eval-sweep" => Self::EvalSweep(rest),
             "suggested-fixes" => Self::SuggestedFixes,
             "precommit" => Self::Precommit,
@@ -614,6 +616,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "windows-advisory-file-policy-evidence --report <path> --subject <path> --log <path> --status <path> --head <sha>",
         "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path> [--all-features]",
         "windows-advisory-isolated-summary --dir <path>",
+        "windows-advisory-feature-rows --join <label> [--row <label> <status>]... --part <label> <status> [--part <label> <status>]...",
         "suggested-fixes",
         "precommit",
         "check-fast",
@@ -1084,6 +1087,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Reads three numbered native Windows nested-alias test logs and captured Cargo statuses from the directory, prints every exact named-test observation, and exits non-zero for a failed test or missing/malformed evidence. Used only by the manual #4377 isolation route; reads files and writes none.",
+        ),
+        command_entry(
+            "windows-advisory-feature-rows --join <label> [--row <label> <status>]... --part <label> <status> [--part <label> <status>]...",
+            "report_only",
+            "stdout only",
+            false,
+            true,
+            "Prints the Windows Advisory feature-combination rows (#2400, #16036) from captured step status files: PASS for 0, FAIL for another exit code, INCOMPLETE for 124 (cut at its deadline), 127 (did not start), an unparsable status or no status file. The `--part` rows are the parts of one split step; the `--join` row after them is FAIL when any part failed, PASS only when every part passed, and INCOMPLETE otherwise. Outcomes are advisory: exits non-zero only for a malformed invocation or a status file that exists but cannot be read. Reads only the supplied files and writes none.",
         ),
         command_entry(
             "suggested-fixes",
