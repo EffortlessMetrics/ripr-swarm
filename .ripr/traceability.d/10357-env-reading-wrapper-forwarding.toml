@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0186"
+tests = [
+  "crates/ripr/tests/helper_wrapper_reach.rs::env_reading_wrapper_forwards_unless_env_is_rebound",
+]
+code = [
+  "crates/ripr/src/analysis/classify/helper_transfer.rs",
+]

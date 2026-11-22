@@ -357,6 +357,62 @@ fn shadowed_or_macro_guarded_wrappers_confirm_neither_twin() -> Result<(), Strin
     Ok(())
 }
 
+// #10357: `env!` and `option_env!` expand to a literal, so a wrapper that
+// reads one still forwards the helper's result. A local `macro_rules! env`
+// may return before the helper runs, so it keeps the wrapper opaque.
+#[test]
+fn env_reading_wrapper_forwards_unless_env_is_rebound() -> Result<(), String> {
+    for call in [
+        "let _name = env!(\"CARGO_PKG_NAME\");",
+        "let _flag = option_env!(\"RIPR_FLAG\");",
+    ] {
+        let source = bulk_source(
+            &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+            BOUNDARY_TESTS,
+        );
+        for finding in [
+            predicate_finding(&source, BULK_DIFF)?,
+            family_finding(&source, BULK_DIFF, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], 2, "{call}\n{finding}");
+            assert_eq!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    for (prelude, call) in [
+        (
+            "macro_rules! env { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "env!(qty);",
+        ),
+        (
+            "macro_rules! option_env { ($q:expr) => { if $q == 10 { return 5; } }; }",
+            "option_env!(qty);",
+        ),
+        // A qualified path may name any crate's macro.
+        ("", "std::env!(\"CARGO_PKG_NAME\");"),
+    ] {
+        let source = format!(
+            "{prelude}\n{}",
+            bulk_source(
+                &format!("    {call}\n    if is_bulk(qty) {{ 5 }} else {{ 0 }}"),
+                BOUNDARY_TESTS,
+            )
+        );
+        let first = source
+            .lines()
+            .position(|line| line.contains("10 <= qty"))
+            .ok_or("probe")?;
+        let diff = BULK_DIFF.replace("@@ -1,3 +1,3 @@", &format!("@@ -{0},3 +{0},3 @@", first));
+        for finding in [
+            predicate_finding(&source, &diff)?,
+            family_finding(&source, &diff, "return_value")?,
+        ] {
+            assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
+            assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn boolean_return_twin_does_not_borrow_other_calls_or_short_circuit_gates() -> Result<(), String> {
     let split = bulk_source(FORWARDING, "        let _ = order_discount(10);");

@@ -3527,6 +3527,11 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     "file",
     "line",
     "module_path",
+    // `env!` and `option_env!` expand to a literal read at compile time and
+    // evaluate no code. Both are trusted names, so the binding scan sees a
+    // local `macro_rules! env` or a foreign import of either (#10357).
+    "env",
+    "option_env",
 ];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
@@ -5553,6 +5558,8 @@ mod tests {
             "let _d = cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
             "let _here = line!(); if is_bulk(qty) { 5 } else { 0 }",
             "file!(); column!(); module_path!(); if is_bulk(qty) { 5 } else { 0 }",
+            "let _n = env!(\"CARGO_PKG_NAME\"); if is_bulk(qty) { 5 } else { 0 }",
+            "let _x = option_env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
         ] {
             assert!(
                 !caller_invokes_opaque_macro(body, false),
@@ -5560,7 +5567,7 @@ mod tests {
             );
         }
         for body in [
-            "env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
+            "std::env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
             "core::cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
             "std::line!(); if is_bulk(qty) { 5 } else { 0 }",
         ] {
