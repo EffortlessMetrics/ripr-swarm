@@ -2151,7 +2151,8 @@ const INERT_PASS_THROUGH_ATTRIBUTES: &[&str] = &[
 
 #[derive(Clone, Copy, Debug)]
 enum PassThroughCall {
-    /// `proptest::proptest!` or `serde_json::json!`, with or without `::`.
+    /// `proptest::proptest!`, `serde_json::json!` or `tokio::select!`, with
+    /// or without `::`.
     Qualified { krate: &'static str, external: bool },
     /// A bare `proptest!`, which must name the audited prelude's macro.
     BareProptest,
@@ -2209,6 +2210,13 @@ fn audited_pass_through_call(
     let wrapper = match unrooted.split_once("::") {
         Some(("proptest", name)) if proptest_wrapper(name) => PassThroughCall::Qualified {
             krate: "proptest",
+            external,
+        },
+        // tokio's `select!` places branch patterns, futures, preconditions
+        // and handlers in pattern, expression and block fragments; its
+        // locked version must be the audited one.
+        Some(("tokio", "select")) => PassThroughCall::Qualified {
+            krate: "tokio",
             external,
         },
         Some(("serde_json", "json")) => PassThroughCall::Qualified {
