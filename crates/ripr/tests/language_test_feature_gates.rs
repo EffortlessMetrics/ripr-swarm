@@ -32,31 +32,51 @@ fn tests_dir() -> PathBuf {
 }
 
 /// The file-level `#![cfg(...)]` attributes, read until the first line that
-/// is not a comment, blank, or inner attribute.
+/// is not a comment, blank, or inner attribute. An attribute that spans lines
+/// is joined with single spaces until its brackets balance.
 fn file_level_cfgs(source: &str) -> Vec<String> {
     let mut cfgs = Vec::new();
+    let mut attribute = String::new();
     for line in source.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with("//") {
-            continue;
-        }
-        if trimmed.starts_with("#![") {
-            if trimmed.starts_with("#![cfg(") {
-                cfgs.push(trimmed.to_string());
+        if attribute.is_empty() {
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                continue;
             }
-            continue;
+            if !trimmed.starts_with("#![") {
+                break;
+            }
+        } else {
+            attribute.push(' ');
         }
-        break;
+        attribute.push_str(trimmed);
+        if brackets_balanced(&attribute) {
+            if attribute.starts_with("#![cfg(") {
+                cfgs.push(attribute.clone());
+            }
+            attribute.clear();
+        }
     }
     cfgs
 }
 
+fn brackets_balanced(text: &str) -> bool {
+    let opened = text.matches(['(', '[']).count();
+    let closed = text.matches([')', ']']).count();
+    opened == closed
+}
+
 fn requires_feature(cfgs: &[String], feature: &str) -> bool {
     let needle = format!("feature = \"{feature}\"");
-    // `any(...)` would let another feature enable the file, so it does not
-    // count as a gate for this language.
-    cfgs.iter()
-        .any(|cfg| cfg.contains(&needle) && !cfg.contains("any("))
+    let negated = format!("not({needle}");
+    // `any(...)` would let another feature enable the file, and
+    // `not(feature = ...)` enables it exactly when the adapter is absent, so
+    // neither counts as a gate for this language.
+    cfgs.iter().any(|cfg| {
+        let cfg = cfg.split_whitespace().collect::<Vec<_>>().join(" ");
+        let cfg = cfg.replace("( ", "(");
+        cfg.contains(&needle) && !cfg.contains("any(") && !cfg.contains(&negated)
+    })
 }
 
 #[test]
@@ -116,17 +136,21 @@ fn language_named_tests_carry_their_feature_gate() -> Result<(), String> {
 }
 
 #[test]
-fn gate_reader_rejects_ungated_and_borrowed_gates() -> Result<(), String> {
+fn gate_reader_rejects_ungated_borrowed_and_inverted_gates() -> Result<(), String> {
     let gated = "//! doc\n\n#![cfg(feature = \"lang-typescript\")]\n\nuse std::path::Path;\n";
     let ungated = "//! doc\n\nuse std::path::Path;\n#![cfg(feature = \"lang-typescript\")]\n";
     let combined = "#![cfg(all(feature = \"lang-perl\", unix))]\nfn f() {}\n";
     let either = "#![cfg(any(feature = \"lang-python\", feature = \"lang-typescript\"))]\n";
+    let inverted = "#![cfg(not(feature = \"lang-typescript\"))]\nuse std::path::Path;\n";
+    let multiline = "//! doc\n#![cfg(all(\n    feature = \"lang-python\",\n    unix\n))]\n\nuse std::path::Path;\n";
     let cases = [
         (gated, "lang-typescript", true),
         (gated, "lang-python", false),
         (ungated, "lang-typescript", false),
         (combined, "lang-perl", true),
         (either, "lang-python", false),
+        (inverted, "lang-typescript", false),
+        (multiline, "lang-python", true),
     ];
     for (source, feature, expected) in cases {
         let actual = requires_feature(&file_level_cfgs(source), feature);
