@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,6 +10,6 @@
+ impl Add for Celsius {
+     type Output = Celsius;
+     fn add(self, other: Celsius) -> Celsius {
+-        Celsius { d: self.d - other.d }
++        Celsius { d: self.d + other.d }
+     }
+ }

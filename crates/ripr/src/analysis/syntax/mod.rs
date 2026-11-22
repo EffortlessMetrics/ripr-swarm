@@ -98,5 +98,5 @@ pub(crate) use ra::{
 };
 pub(crate) use ra::{parser_oracles_for_function, parser_oracles_for_functions_many};
 pub(crate) use source_snapshot::{
-    ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,
+    ItemNesting, PatternBinders, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,
 };

@@ -1,0 +1,121 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_operator_tuple_let_shadows_braced_struct/input
+
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 2 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+NOTE ./src/lib.rs:13
+  id: probe:src_lib.rs:field_construction:3d854b26
+
+Changed
+  before: d: self.d - other.d
+  after:  d: self.d + other.d
+
+Change type
+  a constructed field changed
+  family: field_construction
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::impl Add for Celsius::add
+
+Static exposure
+  static_unknown (note, confidence 0.66)
+
+Evidence
+  - reach weak: No test is seen calling add; tests share only its file or a name token: adds
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches constructed field: d: self.d + other.d
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
+  - local flow reaches constructed field: d: self.d + other.d (line 13)
+  - related test src/lib.rs:30 adds uses strong exact value oracle: assert_eq!(Celsius(1) + Celsius(2), Celsius(3)); misses: no assertion pins `d: self.d + other.d`
+  - source assertion argument value 1 at line 32
+  - source assertion argument value 2 at line 32
+  - source assertion argument value 3 at line 32
+
+Weakness
+  - A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim
+
+Stop reasons:
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
+
+Static limitation
+  rust_implicit_call_unresolved — A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Call the changed method explicitly by its fully qualified path in the test, instead of relying on an operator, `Drop`, `Deref` or other implicit trait call, and assert on its result.
+
+Limitation detail
+  last established edge: reach weak: No test is seen calling add; tests share only its file or a name token: adds
+  first unresolved edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method
+  analyzer route: analysis/classify/gap-admission
+  non-claim: no missing test, no weak oracle, and no test adequacy is established
+
+Next step
+  `adds` (src/lib.rs:30) names `Celsius` and uses it, and the language may call `add` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `add`, so it does not report a gap. Check that an assertion in that test would fail if `add` returned the wrong value; add a test only if none does
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_operator_tuple_let_shadows_braced_struct/input --diff <cwd>/fixtures/rust_operator_tuple_let_shadows_braced_struct/diff.patch --mode fast probe:src_lib.rs:field_construction:3d854b26
+  ripr context --root <cwd>/fixtures/rust_operator_tuple_let_shadows_braced_struct/input --diff <cwd>/fixtures/rust_operator_tuple_let_shadows_braced_struct/diff.patch --mode fast --at probe:src_lib.rs:field_construction:3d854b26
+
+NOTE ./src/lib.rs:13
+  id: probe:src_lib.rs:return_value:51659dca
+
+Changed
+  before: Celsius { d: self.d - other.d }
+  after:  Celsius { d: self.d + other.d }
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::impl Add for Celsius::add
+
+Static exposure
+  static_unknown (note, confidence 0.66)
+
+Evidence
+  - reach weak: No test is seen calling add; tests share only its file or a name token: adds
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: Celsius { d: self.d + other.d }
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator not established (static_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: Celsius { d: self.d + other.d } (line 13)
+  - related test src/lib.rs:30 adds uses strong exact value oracle: assert_eq!(Celsius(1) + Celsius(2), Celsius(3));
+  - source assertion argument value 1 at line 32
+  - source assertion argument value 2 at line 32
+  - source assertion argument value 3 at line 32
+
+Weakness
+  - A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim
+
+Stop reasons:
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
+
+Static limitation
+  rust_implicit_call_unresolved — A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Call the changed method explicitly by its fully qualified path in the test, instead of relying on an operator, `Drop`, `Deref` or other implicit trait call, and assert on its result.
+
+Limitation detail
+  last established edge: reach weak: No test is seen calling add; tests share only its file or a name token: adds
+  first unresolved edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method
+  analyzer route: analysis/classify/gap-admission
+  non-claim: no missing test, no weak oracle, and no test adequacy is established
+
+Next step
+  `adds` (src/lib.rs:30) names `Celsius` and uses it, and the language may call `add` from an operator, a scope exit, a loop or an index, and ripr does not follow that call to `add`, so it does not report a gap. Check that an assertion in that test would fail if `add` returned the wrong value; add a test only if none does
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_operator_tuple_let_shadows_braced_struct/input --diff <cwd>/fixtures/rust_operator_tuple_let_shadows_braced_struct/diff.patch --mode fast probe:src_lib.rs:return_value:51659dca
+  ripr context --root <cwd>/fixtures/rust_operator_tuple_let_shadows_braced_struct/input --diff <cwd>/fixtures/rust_operator_tuple_let_shadows_braced_struct/diff.patch --mode fast --at probe:src_lib.rs:return_value:51659dca
+
+Note: ripr could not classify any of the 2 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 2 changed expression(s), and
+  1 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.

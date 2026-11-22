@@ -1,0 +1,4 @@
+[package]
+name = "rust_operator_closure_param_shadows_braced_struct_fixture"
+version = "0.0.0"
+edition = "2024"
