@@ -6,6 +6,8 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/standard_pin_pass_through.rs::a_pin_that_may_name_another_macro_stays_workspace_wide",
   "crates/ripr/src/analysis/classify/owner_pin/tests/standard_pin_pass_through.rs::a_pin_whose_standard_root_a_manifest_may_rebind_stays_workspace_wide",
   "crates/ripr/src/analysis/classify/owner_pin/tests/standard_pin_pass_through.rs::a_local_pin_that_pastes_its_tokens_reports_a_redefinition",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/standard_pin_pass_through.rs::an_unfinished_pin_arm_with_a_non_ascii_token_reads_as_opaque",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/standard_pin_pass_through.rs::a_local_pin_that_pastes_only_node_fragments_reports_no_redefinition",
 ]
 code = [
   "crates/ripr/src/analysis/syntax/owner_pin.rs",

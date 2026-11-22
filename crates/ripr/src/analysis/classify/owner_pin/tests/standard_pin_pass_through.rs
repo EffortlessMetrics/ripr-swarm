@@ -185,3 +185,70 @@ fn a_local_pin_that_pastes_its_tokens_reports_a_redefinition() {
         "{sites:?}"
     );
 }
+
+#[test]
+fn a_local_pin_that_pastes_only_node_fragments_reports_no_redefinition() {
+    let redefines = |source: &str| {
+        trusted_macro_binding_sites(
+            source,
+            &BTreeSet::new(),
+            &["assert_eq"],
+            &|_, _| false,
+            &|_| false,
+        )
+        .iter()
+        .any(|(_, site)| {
+            matches!(
+                &site.kind,
+                MacroBindingKind::WrapperRedefinition(name) if name == "pin"
+            )
+        })
+    };
+    // An expression, type, pattern, literal, lifetime or block fragment is
+    // pasted as one node: a definition inside it stays inside it. The first
+    // row is the polling-helper fixture's counterfeit `pin!`.
+    for source in [
+        "macro_rules! pin { ($f:expr) => {{ drop($f); Box::pin(async { 110u32 }) }} }\n",
+        "macro_rules! pin { ($($f:expr),*) => { ($($f,)*) } }\n",
+        "macro_rules! pin { ($t:ty, $b:block) => { let _: $t = $b; } }\n",
+        "macro_rules! pin { ($f:expr) => { $crate::wrap($f) } }\n",
+    ] {
+        assert!(!redefines(source), "{source}");
+    }
+    // Fragments that can carry an item or statement, or a name the scan
+    // cannot tie to its matcher, still report the redefinition.
+    for source in [
+        "macro_rules! pin { ($i:item) => { $i } }\n",
+        "macro_rules! pin { ($s:stmt) => { $s } }\n",
+        "macro_rules! pin { ($n:ident) => { macro_rules! $n { () => {} } } }\n",
+        "macro_rules! pin { ($f:expr) => { $f }; ($t:tt) => { $t } }\n",
+        "macro_rules! pin { ($f:expr) => { $g } }\n",
+    ] {
+        assert!(redefines(source), "{source}");
+    }
+}
+
+#[test]
+fn an_unfinished_pin_arm_with_a_non_ascii_token_reads_as_opaque() {
+    // A balanced body whose transcriber is not yet a group: the scan keeps
+    // the last two characters of `=>値` and must not split `値`.
+    for source in [
+        "macro_rules! pin { ($x:expr) => 値 }\n",
+        "macro_rules! pin { ($x:expr) => 値値 ($($y:tt)*) => { $($y)* } }\n",
+    ] {
+        let sites = trusted_macro_binding_sites(
+            source,
+            &BTreeSet::new(),
+            &["assert_eq"],
+            &|_, _| false,
+            &|_| false,
+        );
+        assert!(
+            sites.iter().any(|(_, site)| matches!(
+                &site.kind,
+                MacroBindingKind::WrapperRedefinition(name) if name == "pin"
+            )),
+            "{source}: {sites:?}"
+        );
+    }
+}

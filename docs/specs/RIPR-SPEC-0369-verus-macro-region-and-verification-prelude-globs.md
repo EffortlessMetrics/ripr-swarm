@@ -326,12 +326,19 @@ every one of its calls, inside the confined call too, a workspace-wide site
 for what its arguments mention.
 
 A `macro_rules!` or `macro` definition that takes one of the wrapper names
-and whose transcriber pastes caller tokens (any `$`) is itself a binding site
+and whose transcriber pastes caller tokens that may carry an item or
+statement is itself a binding site
 for every trusted name in its crate
 (`WrapperRedefinition`): through textual scope it may replace the audited
 macro for calls below it, including in child modules declared in other files,
-which the calling file cannot see. A definition whose transcribers paste
-nothing adds nothing a call's arguments can bind and reports no such site.
+which the calling file cannot see. A transcriber pastes such tokens when it
+names a metavariable that its arm's matcher does not declare as `expr`,
+`expr_2021`, `ty`, `pat`, `pat_param`, `literal`, `lifetime` or `block`
+(`$crate` and a repetition's `$(` excepted); rustc pastes those fragments as
+one node, so a definition inside one stays scoped to it. A definition whose
+transcribers paste nothing, or only those fragments, adds nothing a call's
+arguments can bind and reports no such site. A `macro` item's body is read
+whole, so any `$` in it counts.
 
 Any other spelling, version, source, argument shape or local redefinition
 keeps the workspace-wide argument site. A test inside the call keeps the

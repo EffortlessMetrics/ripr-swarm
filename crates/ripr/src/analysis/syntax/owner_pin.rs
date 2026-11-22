@@ -2716,32 +2716,32 @@ fn redefines_pass_through_wrapper(node: &SyntaxNode) -> bool {
     let Some(body) = body else {
         return true;
     };
-    let has_dollar = |tree: &SyntaxNode| {
-        tree.descendants_with_tokens()
-            .filter_map(|element| element.into_token())
-            .any(|token| token.text() == "$")
-    };
     if ast::MacroDef::can_cast(node.kind()) {
-        return has_dollar(&body);
+        return code_tokens(&body).iter().any(|token| token.text() == "$");
     }
     // `macro_rules! name { (matcher) => { transcriber }; .. }`: the group
-    // after each `=>` is a transcriber.
+    // after each `=>` is a transcriber, and the group before it its matcher.
     let mut previous = String::new();
+    let mut matcher = None;
     let mut transcribers = 0;
     for element in body.children_with_tokens() {
         match element {
             ra_ap_syntax::NodeOrToken::Token(token) if !token.kind().is_trivia() => {
                 previous.push_str(token.text());
-                if previous.len() > 2 {
-                    previous.drain(..previous.len() - 2);
+                // Keep the last two characters, not bytes: a non-ASCII token
+                // (`=> 値` in an unfinished arm) must not split a character.
+                if let Some((keep, _)) = previous.char_indices().rev().nth(1) {
+                    previous.drain(..keep);
                 }
             }
             ra_ap_syntax::NodeOrToken::Node(group) => {
                 if previous.ends_with("=>") {
                     transcribers += 1;
-                    if has_dollar(&group) {
+                    if pastes_a_binding_fragment(matcher.take().as_ref(), &group) {
                         return true;
                     }
+                } else {
+                    matcher = Some(group);
                 }
                 previous.clear();
             }
@@ -2749,6 +2749,54 @@ fn redefines_pass_through_wrapper(node: &SyntaxNode) -> bool {
         }
     }
     transcribers == 0
+}
+
+/// Fragments that rustc pastes as one opaque expression, type, pattern,
+/// literal, lifetime or block node. A `macro_rules!` or `use` inside such a
+/// node is scoped to it, so pasting one binds no name outside the node.
+const NODE_FRAGMENTS: &[&str] = &[
+    "block",
+    "expr",
+    "expr_2021",
+    "lifetime",
+    "literal",
+    "pat",
+    "pat_param",
+    "ty",
+];
+
+fn code_tokens(tree: &SyntaxNode) -> Vec<ra_ap_syntax::SyntaxToken> {
+    tree.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect()
+}
+
+/// Whether `transcriber` pastes a metavariable that may carry items or
+/// statements: one `matcher` does not declare with a [`NODE_FRAGMENTS`]
+/// kind (`tt`, `item`, `stmt`, `ident`, ..), or any `$` the scan cannot
+/// read. `$crate` and a repetition's `$(` paste nothing themselves.
+fn pastes_a_binding_fragment(matcher: Option<&SyntaxNode>, transcriber: &SyntaxNode) -> bool {
+    let mut node_variables = BTreeSet::new();
+    if let Some(matcher) = matcher {
+        let tokens = code_tokens(matcher);
+        for window in tokens.windows(4) {
+            if window[0].text() == "$"
+                && window[2].text() == ":"
+                && NODE_FRAGMENTS.contains(&window[3].text())
+            {
+                node_variables.insert(window[1].text().to_string());
+            }
+        }
+    }
+    let tokens = code_tokens(transcriber);
+    tokens.iter().enumerate().any(|(index, token)| {
+        token.text() == "$"
+            && tokens.get(index + 1).is_none_or(|next| {
+                let next = next.text();
+                next != "(" && next != "crate" && !node_variables.contains(next)
+            })
+    })
 }
 
 fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
