@@ -22714,6 +22714,7 @@ mod issue10925_alias_resolution_tests;
 mod issue10925_shadow_index_tests;
 mod issue10925_shadow_scan_tests;
 mod issue7507_shadow_tests;
+mod literal_arm_return_tests;
 mod literal_container_tests;
 mod literal_matcher_tests;
 mod lookup_table_tests;

@@ -1994,3 +1994,11 @@ path = "docs/specs/RIPR-SPEC-0450-owner-opt-out-enclosing-scopes.md"
 status = "accepted"
 owner = "product-swarm"
 standalone_reason = "Pins which enclosing #[mutants::skip] scopes (fn, impl, trait, inline module, file) withhold a finding the way cargo-mutants skips it, the fail-closed parser rules, and the scope disclosure and explain line (#14135, #14133)."
+
+[[artifact]]
+id = "RIPR-SPEC-0451"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0451-managed-download-proxy.md"
+status = "accepted"
+owner = "product-swarm"
+standalone_reason = "Pins that the VS Code managed server download relies on VS Code proxy support (http.proxy, http.noProxy) instead of its own proxy client, and that the failure hint names those settings (#15317)."

@@ -359,3 +359,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (28)
+
+Reason:
+RIPR-SPEC-0122: removed-code-only runs name the static evidence on the removed code in Safe next action (#15335)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
