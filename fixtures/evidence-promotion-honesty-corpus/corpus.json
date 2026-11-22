@@ -157,6 +157,7 @@
   ],
   "report_digest_exemptions": [],
   "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-manifest-rebound-assertion-root.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-rebound-let.json",
@@ -21994,6 +21995,39 @@
           "line": 10,
           "kind": "exact_value",
           "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_manifest_rebound_assertion_root",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-manifest-rebound-assertion-root.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/manifest-rebound-assertion-root",
+      "vector": "repo_exposure_constructor_inside_a_manifest_rebound_std_assertion_is_not_credited",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "a/src/lib.rs::impl Widget::new",
+          "expression": "Widget { size: 4 }",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "a/src/lib.rs::impl Widget::new",
+          "expression": "size: 4",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "a/src/lib.rs::impl Widget::new",
+          "expression": "Widget { size: 4 }",
+          "test": "reads",
+          "file": "a/src/lib.rs",
+          "oracle_strength": "unknown",
           "relation_reason": "direct_owner_call"
         }
       ]

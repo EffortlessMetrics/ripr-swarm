@@ -12,43 +12,53 @@
 //! the operand, for one) read the parsed oracle as a real assertion.
 //!
 //! This pass marks those oracles `unknown` after the index is built, and only
-//! on positive manifest evidence of the rebinding. It does not drop them:
+//! when the manifest of the test's compilation unit declares a dependency
+//! under the root name. It does not drop them:
 //! the substituted package may still assert (a facade over the real `std`),
 //! so "no assertion here" would be as unsupported as "exact value". An
 //! unread or unusual manifest keeps the parsed oracle, because withdrawing a
 //! genuine assertion turns a gripped seam into an actionable gap, which is
 //! the worse error.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use super::drop_in::{dependency_tables, normalized, patches};
+use super::drop_in::normalized;
 use super::model::RustIndex;
 use crate::domain::{OracleKind, OracleStrength};
 
 /// Marks `unknown` each test assertion written through a crate-qualified
-/// root that the test file's manifest chain binds to another package.
+/// root that the manifest of the test's compilation unit binds to a package.
+/// A test file mounted by a resolved literal `include!` is judged by the
+/// including file's manifest, because the including crate compiles it.
 pub(super) fn mark_rebound_root_assertions_unknown(index: &mut RustIndex) {
     let Some(root) = index.drop_in_manifests.root().map(Path::to_path_buf) else {
         return;
     };
-    let mut verdicts = std::collections::BTreeMap::new();
-    index.for_each_test_mut(|test| {
-        if !test
-            .assertions
-            .iter()
-            .any(|oracle| qualified_root(&oracle.text).is_some())
-        {
-            return;
-        }
-        let file = test.file.clone();
-        for oracle in &mut test.assertions {
+    let mut verdicts = BTreeMap::new();
+    for test in index.tests().iter() {
+        for oracle in &test.assertions {
             let Some(krate) = qualified_root(&oracle.text) else {
                 continue;
             };
-            if *verdicts
-                .entry((file.clone(), krate))
-                .or_insert_with(|| manifest_rebinds_root(&root, &file, krate))
-            {
+            let unit =
+                super::compilation_unit_path_from_parents(&index.include_parents, &test.file);
+            verdicts
+                .entry((test.file.clone(), krate))
+                .or_insert_with(|| manifest_rebinds_root(&root, &unit, krate));
+        }
+    }
+    if !verdicts.values().any(|rebound| *rebound) {
+        return;
+    }
+    index.for_each_test_mut(|test| {
+        let file = test.file.clone();
+        for oracle in &mut test.assertions {
+            let rebound = qualified_root(&oracle.text)
+                .and_then(|krate| verdicts.get(&(file.clone(), krate)))
+                .copied()
+                .unwrap_or(false);
+            if rebound {
                 oracle.kind = OracleKind::Unknown;
                 oracle.strength = OracleStrength::Unknown;
                 oracle.observed_tokens.clear();
@@ -72,36 +82,50 @@ fn qualified_root(text: &str) -> Option<&'static str> {
     ["std", "core"].into_iter().find(|known| *known == root)
 }
 
-/// Whether the manifests from `file`'s directory up to `root` bind the
-/// standard crate name `krate` to a package: a dependency key of that name in
-/// the file's own manifest (any dependency table, target-specific included),
-/// or a `[patch]` entry for it anywhere on the chain. The real `std` and
-/// `core` are never Cargo dependencies, so either declaration means the name
-/// is some other package.
+/// Dependency tables whose crates a library, binary or test target can name.
+/// `build-dependencies` reach only the build script, so they are left out.
+const TARGET_DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "dev_dependencies"];
+
+/// Whether the nearest `Cargo.toml` at or above `file` (within `root`) declares
+/// a dependency keyed by the standard crate name `krate`, in a table the
+/// file's targets can see: `[dependencies]`, `[dev-dependencies]`, or their
+/// `[target.'cfg(..)'.*]` forms. The real `std` and `core` are never Cargo
+/// dependencies, so the key alone means the name may be some other package. A
+/// platform or optional dependency may be inactive for a given build; the
+/// assertion then reads `unknown`, which states that uncertainty without
+/// making the seam actionable. An unparsable nearest manifest decides nothing.
 fn manifest_rebinds_root(root: &Path, file: &Path, krate: &str) -> bool {
     let Some(directory) = root.join(file).parent().map(Path::to_path_buf) else {
         return false;
     };
-    let mut manifests = Vec::new();
-    for dir in directory
+    let Some(text) = directory
         .ancestors()
         .take_while(|dir| dir.starts_with(root))
-    {
-        let Ok(text) = std::fs::read_to_string(dir.join("Cargo.toml")) else {
-            continue;
-        };
-        let Ok(manifest) = text.parse::<toml::Table>() else {
-            continue;
-        };
-        manifests.push(manifest);
-    }
-    let Some(own) = manifests.first() else {
+        .find_map(|dir| std::fs::read_to_string(dir.join("Cargo.toml")).ok())
+    else {
         return false;
     };
-    dependency_tables(own)
-        .iter()
-        .any(|table| table.keys().any(|key| normalized(key) == krate))
-        || manifests.iter().any(|manifest| patches(manifest, krate))
+    let Ok(manifest) = text.parse::<toml::Table>() else {
+        return false;
+    };
+    let declares = |table: &toml::Table| {
+        TARGET_DEPENDENCY_TABLES.iter().any(|name| {
+            table
+                .get(*name)
+                .and_then(toml::Value::as_table)
+                .is_some_and(|deps| deps.keys().any(|key| normalized(key) == krate))
+        })
+    };
+    declares(&manifest)
+        || manifest
+            .get("target")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|targets| {
+                targets
+                    .values()
+                    .filter_map(toml::Value::as_table)
+                    .any(declares)
+            })
 }
 
 #[cfg(test)]
@@ -152,6 +176,18 @@ mod tests {
             ),
             ("std-plain", "[dependencies]\nserde = \"1\"\n", "std", false),
             (
+                "core-build-only",
+                "[build-dependencies]\ncore = { package = \"fakecore\", path = \"../f\" }\n",
+                "core",
+                false,
+            ),
+            (
+                "core-target-build-only",
+                "[target.'cfg(unix)'.build-dependencies]\ncore = { path = \"../f\" }\n",
+                "core",
+                false,
+            ),
+            (
                 "other-key-renamed",
                 "[dependencies]\nother = { package = \"fakestd\", path = \"../f\" }\n",
                 "std",
@@ -173,22 +209,40 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_patch_rebinds_the_root_for_every_member() -> Result<(), String> {
+    fn only_the_nearest_manifest_declares_the_root() -> Result<(), String> {
         let member = "[package]\nname = \"a\"\nversion = \"0.1.0\"\n";
-        let cases: &[(&str, &str, bool)] = &[
+        let cases: &[(&str, &str, &str, bool)] = &[
             (
-                "patched-std",
+                "patch-only",
                 "[workspace]\nmembers = [\"a\"]\n[patch.crates-io]\nstd = { path = \"f\" }\n",
+                member,
+                false,
+            ),
+            (
+                "workspace-dependency-unused",
+                "[workspace]\nmembers = [\"a\"]\n[workspace.dependencies]\nstd = { package = \"f\", path = \"f\" }\n",
+                member,
+                false,
+            ),
+            (
+                "member-declares",
+                "[workspace]\nmembers = [\"a\"]\n",
+                "[package]\nname = \"a\"\nversion = \"0.1.0\"\n[dev-dependencies]\nstd = { package = \"f\", path = \"../f\" }\n",
                 true,
             ),
-            ("unpatched", "[workspace]\nmembers = [\"a\"]\n", false),
+            (
+                "member-unparsable",
+                "[workspace]\nmembers = [\"a\"]\n[dependencies]\nstd = { path = \"f\" }\n",
+                "[package\n",
+                false,
+            ),
         ];
-        for (label, workspace_manifest, expected) in cases {
+        for (label, workspace_manifest, member_manifest, expected) in cases {
             let root = workspace(
                 label,
                 &[
                     ("Cargo.toml", workspace_manifest),
-                    ("a/Cargo.toml", member),
+                    ("a/Cargo.toml", member_manifest),
                     ("a/tests/t.rs", ""),
                 ],
             )?;

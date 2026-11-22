@@ -2800,13 +2800,20 @@ the parsed oracle directly, so a constructor called inside
 even where the test's `Cargo.toml` binds `std` to a token-discarding package
 (`std = { package = "fakestd" }` in a `#![no_std]` crate) or declares a `core`
 dependency. After the index is built, an assertion written through a `std::` or
-`core::` root becomes an `unknown` oracle when the test file's own manifest
-declares a dependency under that name, in any dependency table, or any manifest
-up to the analysis root patches it. The real standard crates are never Cargo
-dependencies, so the declaration alone shows the root is another package. The
-oracle is kept as `unknown` rather than dropped, because that package may still
-assert. A manifest that cannot be read or parsed keeps the parsed oracle, and a
-renamed package under a different key leaves the standard root alone.
+`core::` root becomes an `unknown` oracle when the nearest manifest of the
+test's compilation unit declares a dependency under that name in a table the
+test can see: `[dependencies]`, `[dev-dependencies]` or their
+`[target.'cfg(..)'.*]` forms. A test file mounted by a resolved literal
+`include!` is judged by the including file's manifest. The real standard crates
+are never Cargo dependencies, so the declaration alone shows the root may be
+another package; a platform or optional declaration that may be inactive still
+reads `unknown`, which states the uncertainty without making the seam
+actionable. The oracle is kept as `unknown` rather than dropped, because that
+package may still assert. These leave the parsed oracle alone: a
+`[build-dependencies]` entry (visible only to the build script), a `[patch]` or
+`[workspace.dependencies]` entry alone (neither adds a dependency to the
+crate), an unparsable nearest manifest, and a renamed package under a
+different key.
 
 ## Required Evidence
 
