@@ -191,7 +191,14 @@ fn normalize_rust_gap_discriminator(probe_family: &ProbeFamily, expression: &str
         ProbeFamily::MatchArm => strip_match_arm_arrow(text),
         _ => text.to_string(),
     };
-    rust_gap_key_text(&encode_rust_string_literals(&stripped))
+    const MAX_DISCRIMINATOR_BYTES: usize = 256;
+    let key = rust_gap_key_text(&encode_rust_string_literals(&stripped));
+    if key.len() <= MAX_DISCRIMINATOR_BYTES {
+        return key;
+    }
+    // Hash the complete historical key to preserve its equivalence rules.
+    // A readable key cannot contain '~', so it cannot impersonate a digest.
+    format!("sha256~{}", super::sha256_hex(key.as_bytes()))
 }
 
 /// Encode Rust string and char literals into collision-free key tokens
@@ -519,6 +526,55 @@ mod tests {
         assert_eq!(underscored.normalized_discriminator, "s==lit615f62");
         assert_ne!(spaced.id, underscored.id);
         assert_ne!(spaced.normalized_discriminator, "s==a_b");
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_discriminators_preserve_short_ids_and_name_the_exact_seam() -> Result<(), String> {
+        let prefix = "gap:rust:src/lib.rs:calc:return_value:return_value:";
+        let exact = "a".repeat(256);
+        let spaced = r#"return "a b";"#;
+        let cases = [
+            (spaced.to_string(), "lit612062".to_string()),
+            (exact.clone(), exact),
+            (
+                "a".repeat(257),
+                "sha256~e8d95cc2b4bc198c54b40bd214df958afb65f5e73d2c2eafe0593cf5c635c1f0"
+                    .to_string(),
+            ),
+            (
+                format!(r#"x * 2 + "{}".len()"#, "a".repeat(2000)),
+                "sha256~25578d0848c47891e227e09c7560bc6ffcdc741ade0c824fe93583118aed94ce"
+                    .to_string(),
+            ),
+            (
+                format!(r#"x * 2 + "{}b".len()"#, "a".repeat(1999)),
+                "sha256~fc896d466b15d52f35cb4f5ced854e6c88c037607c36f367dac8e1ee098e9c07"
+                    .to_string(),
+            ),
+            (
+                format!(r#"x * 2 + "{}".len()"#, "é🚀".repeat(5000)),
+                "sha256~6f805134fdc47fd0d1fabc2aa902146f112317923eb18e9f20cf63e12b5a687d"
+                    .to_string(),
+            ),
+        ];
+        for (expression, expected) in cases {
+            let gap = gap_for(
+                Path::new("src/lib.rs"),
+                Some(owner("src/lib.rs", "calc")),
+                &ProbeFamily::ReturnValue,
+                &expression,
+            )?;
+            assert_eq!(gap.normalized_discriminator, expected);
+            assert_eq!(gap.id, format!("{prefix}{expected}"));
+            assert!(producer_gap_names_seam_shape(
+                &gap.id,
+                "src/lib.rs",
+                "calc",
+                SeamKind::ReturnValue,
+                &expression
+            ));
+        }
         Ok(())
     }
 

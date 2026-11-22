@@ -246,4 +246,37 @@ mod tests {
             TestCandidateNextRoute::InspectWeakCandidates
         );
     }
+
+    #[test]
+    fn next_routes_use_their_wire_tokens() {
+        let cases = [
+            (
+                TestCandidateNextRoute::RunTargetedPreflight,
+                "run_targeted_preflight",
+            ),
+            (
+                TestCandidateNextRoute::InspectWeakCandidates,
+                "inspect_weak_candidates",
+            ),
+            (
+                TestCandidateNextRoute::AddNewFocusedTest,
+                "add_new_focused_test",
+            ),
+            (
+                TestCandidateNextRoute::ResolveSeamOrOwner,
+                "resolve_seam_or_owner",
+            ),
+            (
+                TestCandidateNextRoute::RefreshStaleAnalysis,
+                "refresh_stale_analysis",
+            ),
+            (
+                TestCandidateNextRoute::ManualOrUnsupported,
+                "manual_or_unsupported",
+            ),
+        ];
+        for (route, token) in cases {
+            assert_eq!(route.as_str(), token);
+        }
+    }
 }

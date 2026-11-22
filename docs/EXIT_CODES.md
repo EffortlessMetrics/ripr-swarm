@@ -192,6 +192,21 @@ reached the caller.
   `config_error` readiness report is still written first, so it replaces an
   earlier report at `--out` instead of leaving a stale one for a later step
   to read (#14311).
+  The same holds for any input file named explicitly on `reports
+  ts-limitations|ts-false-actionable`, `coverage-grip frontier`, `policy
+  operations|promote|preview-promote|waiver-aging|suppression-health`,
+  `annotations --comments`, `pr-summary --baseline`, `baseline diff`,
+  `zero status --baseline|--delta`, `first-action --pr-guidance` and
+  `assistant-loop proof --pr-guidance|--agent-packet|--before` that is
+  missing, unreadable or (for the baseline and zero-status JSON inputs and an
+  explicit `--manifest` with suppression-health `config_error` findings) not
+  usable: stderr names the flag, the path and what to pass, and the command
+  exits `2`. Where a usable report can still be produced it is written
+  first; a missing or unreadable `reports ts-*` input refuses before any
+  write. Other optional inputs of `zero status` and `first-action` stay
+  tolerant. An absent default path stays a quiet skip, and `gate
+  evaluate|check` echoes unavailable optional inputs on stderr without
+  changing its exit code (#15254).
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
@@ -357,8 +372,10 @@ reached the caller.
   | `attempt_stale` | 2 | `terminal` | the cage rejected the edit and HEAD had moved after the repair started |
   | `attempt_incomparable` | 2 | `terminal` | the cage could not compare the files |
 
-  A repeated `ripr continue` after a confirmed-complete attempt reports
-  that attempt's already-complete status and exits `0`: with `--attempt`,
+  A repeated `ripr continue` after a confirmed-complete attempt prints a
+  short already-complete summary (the receipt, the next `ripr repair`, and
+  the `ripr status --attempt` command for the full page; `--json` prints
+  the attempt's status document) and exits `0`: with `--attempt`,
   or without it when the newest attempt (the only one with the latest
   creation time) is the confirmed-complete one and no prepared or
   trust-bound attempt remains. A cage violation is exit `2` and terminal;

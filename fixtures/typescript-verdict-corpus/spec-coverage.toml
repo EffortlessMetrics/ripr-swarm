@@ -855,6 +855,24 @@ id = "RIPR-SPEC-0411"
 scope = "out"
 reason = "documents which producers may emit each stop_reason wire value and reserves three unemitted tokens; no verdict a corpus case can label"
 
+# #12922: emitted-class runtime corpus floors. A zero floor is a waiver,
+# not coverage; named static_unknown controls in unemitted_stage_unknown_tests
+# and the corpus class-authority test guard the waived classes.
+[[axis]]
+id = "reachable_unrevealed"
+description = "Runtime-labeled cases whose pinned analyzer class is reachable_unrevealed."
+floor = 2
+
+[[axis]]
+id = "infection_unknown"
+description = "Runtime-labeled cases whose pinned analyzer class is infection_unknown."
+floor = 2
+
+[[axis]]
+id = "propagation_unknown"
+description = "Waived: the typescript adapter has no producer for propagation_unknown; retain static_unknown rather than inventing stage evidence. See unemitted_stage_unknown_tests and SPEC.md."
+floor = 0
+
 # DX scoreboard workload identity pairing
 [[spec]]
 id = "RIPR-SPEC-0436"
@@ -882,3 +900,8 @@ reason = "CLI output-path safety rule (an --out naming a command input is refuse
 id = "RIPR-SPEC-0450"
 scope = "out"
 reason = "owner opt-out withholding rule (a cargo-mutants skip attribute withholds and discloses findings); not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0451"
+scope = "out"
+reason = "VS Code managed-server download proxy routing and failure hint; not an exposure-verdict example a corpus case labels"

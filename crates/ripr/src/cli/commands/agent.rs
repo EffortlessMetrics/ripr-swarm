@@ -597,14 +597,12 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
     route_preview_only_empty_brief(&input.root, &config, &working_set, &mut selection);
     add_agent_brief_provenance_warning(&input.root, &mut selection);
     crate::app::agent_brief::attach_agent_brief_arm_results(&input.root, &mut selection);
-    output::agent_brief::render_agent_brief_json(
-        &input.root,
-        &input.mode,
-        &config,
-        &working_set,
-        &selection,
-    )
-    .map_err(CoreError::from)
+    let render = if options.line_ranges {
+        output::agent_brief::render_agent_brief_line_ranges_json
+    } else {
+        output::agent_brief::render_agent_brief_json
+    };
+    render(&input.root, &input.mode, &config, &working_set, &selection).map_err(CoreError::from)
 }
 
 /// #13791: an empty brief over a scope whose changed code is TypeScript or
@@ -827,11 +825,15 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
     root: &Path,
     seam_id: &str,
 ) -> Result<String, crate::cli::CommandError> {
+    // A stale id is the same typed unknown-seam refusal (exit 3) that a plain
+    // unknown seam id, `agent card`, `agent stub`, `agent start` and
+    // `agent packet` give (docs/EXIT_CODES.md); only an operational failure
+    // of the resolver exits 2.
     translate_seam_id_for(SeamIdSurface::Repair, root, seam_id).map_err(|error| match error {
-        SeamIdTranslateError::Refused(message) => crate::cli::CommandError::Decision(message),
-        SeamIdTranslateError::Stale(message) | SeamIdTranslateError::Operational(message) => {
-            crate::cli::CommandError::Failure(message)
+        SeamIdTranslateError::Refused(message) | SeamIdTranslateError::Stale(message) => {
+            crate::cli::CommandError::Decision(message)
         }
+        SeamIdTranslateError::Operational(message) => crate::cli::CommandError::Failure(message),
     })
 }
 
@@ -975,6 +977,13 @@ pub(in crate::cli) fn translate_seam_id_for(
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
             );
+            if matches!(surface, SeamIdSurface::Repair)
+                && let Some(hint) = crate::app::task_first::static_unknown_repair_hint(seam_id)
+            {
+                return Err(SeamIdTranslateError::Refused(format!(
+                    "{label} --seam-id `{seam_id}` cannot start a repair: {hint}"
+                )));
+            }
             let list = format!("`ripr pilot --root {root_arg}` to list current repair IDs");
             // The shared resolver just ran and returned `Unknown`, so the
             // packet surface's `ripr repair <finding-id>` recovery route
@@ -2656,8 +2665,9 @@ fn run_agent_repair_phase(
         facade_start,
     } = options;
     // #11598: `--quiet` / `RIPR_QUIET` drop this phase's progress narration
-    // and `wrote <path>` lines. Refusal prose, the attempt id and the next
-    // command are results and always print.
+    // and `wrote <path>` lines. Refusal prose, the attempt id, the next
+    // command and the output-location warning (#15282: a redirect into the
+    // worktree fails the attempt) always print.
     // `--json` here does not imply quiet: the phase narration is the
     // protocol-bearing stderr (attempt command, refusal prose) that agents
     // read, so only `--quiet` / `RIPR_QUIET` drop the progress and `wrote`

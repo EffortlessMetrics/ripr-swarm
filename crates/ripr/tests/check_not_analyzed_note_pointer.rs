@@ -152,7 +152,7 @@ fn a_preview_language_keeps_the_pointer_and_its_note() -> Result<(), String> {
     let screen = repo.check_change()?;
     require(
         &screen,
-        "  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).\n",
+        "  Not analyzed: 1 changed Python file, a language ripr is not set up to analyze (see the note below).\n",
         true,
     )?;
     require(&screen, PYTHON_NOTE, true)?;
@@ -175,4 +175,43 @@ fn a_mixed_diff_points_only_the_preview_language_at_the_note() -> Result<(), Str
         ));
     }
     require_no_dangling_pointer(&screen)
+}
+
+const OLD_TS: &str = "export function over(qty: number) { return qty > 10; }\n";
+const NEW_TS: &str = "export function over(qty: number) { return qty >= 10; }\n";
+
+/// #15288: two preview languages off print one line naming both and one
+/// snippet that enables both, not one anonymous line and one conflicting
+/// snippet per language.
+#[test]
+fn two_preview_languages_off_get_named_lines_and_one_combined_snippet() -> Result<(), String> {
+    let repo = Repo::create()?;
+    // A root-level Python file now auto-enables Python (#13342); an explicit
+    // Rust-only opt-in keeps Python a preview language that is not enabled.
+    repo.write("ripr.toml", "[languages]\nenabled = [\"rust\"]\n")?;
+    repo.write("web.ts", OLD_TS)?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "ts"])?;
+    repo.write("over.py", NEW_PYTHON)?;
+    repo.write("web.ts", NEW_TS)?;
+    repo.write("src/lib.rs", NEW_RUST)?;
+    let screen = repo.check_change()?;
+    require(
+        &screen,
+        "  Not analyzed: 1 changed TypeScript file and 1 changed Python file, languages ripr is not set up to analyze (see the notes below).\n",
+        true,
+    )?;
+    if screen.matches("Not analyzed:").count() != 1 {
+        return Err(format!("one Not analyzed line expected:\n{screen}"));
+    }
+    require(
+        &screen,
+        "[languages]\nenabled = [\"rust\", \"typescript\", \"python\"]\n",
+        true,
+    )?;
+    if screen.matches("To enable, add to ripr.toml").count() != 1 {
+        return Err(format!("one combined snippet expected:\n{screen}"));
+    }
+    require(&screen, "enabled = [\"rust\", \"typescript\"]", false)?;
+    require(&screen, "enabled = [\"rust\", \"python\"]", false)
 }

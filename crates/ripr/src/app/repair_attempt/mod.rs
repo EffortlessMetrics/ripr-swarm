@@ -3252,6 +3252,7 @@ pub(crate) fn edit_cage_policy_from_packet(
             "repair packet seam does not match requested seam `{seam_id}`"
         ));
     }
+    let ledger_envelope = is_gap_ledger_packet(&value);
     // `agent packet` emits a repo packet containing a `packets` list, while
     // language adapters may emit a single packet. Select the only actionable
     // packet without treating the report envelope as edit-cage authority.
@@ -3308,6 +3309,14 @@ pub(crate) fn edit_cage_policy_from_packet(
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?,
     };
+    // Seam packets spell paths as stable path text. A gap-ledger packet
+    // keeps its record's spelling: native for TypeScript and Python (read as
+    // written), stable path text for a Rust record (decoded).
+    let stable_paths = !(ledger_envelope || is_gap_ledger_packet(value))
+        || value.get("language").and_then(serde_json::Value::as_str) == Some("rust");
+    let packet_path = |text: &str| packet_path_text(text, stable_paths);
+    let selected_target_text = packet_path(selected_target_text)?;
+    let selected_target_text = selected_target_text.as_str();
     // The one exception (#5210): a production Rust file may be the selected
     // target only as its one governed inline `#[cfg(test)]` module. The
     // policy then confines the edit to that module; the baseline capture
@@ -3333,6 +3342,7 @@ pub(crate) fn edit_cage_policy_from_packet(
             .map(|path| {
                 path.as_str()
                     .ok_or_else(|| format!("repair packet {name} contains a non-string path"))
+                    .and_then(packet_path)
                     .and_then(crate::edit_cage::CagePathRule::exact)
             })
             .collect()
@@ -3344,9 +3354,10 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .ok_or_else(|| "repair packet allowed_edit_surface must be an array".to_string())?;
             let mut allowed = Vec::new();
             for (index, entry) in entries.iter().enumerate() {
-                let path = entry.as_str().ok_or_else(|| {
+                let path = packet_path(entry.as_str().ok_or_else(|| {
                     "repair packet allowed_edit_surface contains a non-string path".to_string()
-                })?;
+                })?)?;
+                let path = path.as_str();
                 // Only the selected target itself may be the confined inline
                 // module file; every other allowed path is a test surface.
                 let confined_selected_target = index == 0 && inline_test_module_target;
@@ -3365,6 +3376,8 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .and_then(|test| test.get("file"))
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
+            let file = packet_path(file)?;
+            let file = file.as_str();
             if !is_test_surface_path(file) && !inline_test_module_target {
                 return Err(format!(
                     "repair packet recommended test `{file}` is not a test surface"
@@ -3425,8 +3438,10 @@ pub(crate) fn edit_cage_policy_from_packet(
             let proposed_file = value
                 .get("recommended_test")
                 .and_then(|test| test.get("file"))
-                .and_then(serde_json::Value::as_str);
-            if proposed_file != Some(selected_target.path()) {
+                .and_then(serde_json::Value::as_str)
+                .map(packet_path)
+                .transpose()?;
+            if proposed_file.as_deref() != Some(selected_target.path()) {
                 return Err(format!(
                     "repair packet new-test proposal file {proposed_file:?} does not match the selected edit target `{}`",
                     selected_target.path()
@@ -3453,6 +3468,44 @@ pub(crate) fn edit_cage_policy_from_packet(
         external_test_file_target,
         new_test_proposal,
     })
+}
+
+/// A packet's path text in its native spelling. Seam packets render every
+/// file through the shared stable-path encoder, which escapes a literal `%` as
+/// `%25` so the text stays lossless; the edit cage compares rules with the
+/// paths Git reports and the baseline capture opens the file, so both need
+/// the decoded name. Without this, `src/a%b.rs` became the rule
+/// `src/a%25b.rs`, a file that does not exist.
+///
+/// A decoded backslash refuses: on Unix it is a literal file-name byte
+/// (`%5C`), and the cage normalizer would read it as a separator, so
+/// `tests/a%5Cb.rs` would become the rule for a different file,
+/// `tests/a/b.rs`.
+fn packet_path_text(text: &str, stable_path_text: bool) -> Result<String, String> {
+    if !stable_path_text {
+        return Ok(text.to_string());
+    }
+    let decoded = crate::analysis::decode_stable_path_text(text);
+    let decoded = decoded
+        .to_str()
+        .ok_or_else(|| {
+            format!(
+                "repair packet path `{text}` does not name a UTF-8 path; rename the file to a UTF-8 name, then regenerate the packet"
+            )
+        })?;
+    if decoded.contains('\\') && !text.contains('\\') {
+        return Err(format!(
+            "repair packet path `{text}` names a file with a backslash in its name, which the edit cage cannot confine; rename the file to remove the backslash, then regenerate the packet"
+        ));
+    }
+    Ok(decoded.to_string())
+}
+
+/// A packet the gap decision ledger rendered. Its paths come from the
+/// record's own spelling: the TypeScript and Python adapters write native
+/// paths, while Rust records carry stable path text from their evidence.
+fn is_gap_ledger_packet(value: &serde_json::Value) -> bool {
+    value.get("source").and_then(serde_json::Value::as_str) == Some("gap_decision_ledger")
 }
 
 /// A non-test-surface selected target that may still be routed as its inline
@@ -6444,6 +6497,122 @@ mod tests {
         let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
         if edit_cage_policy_from_packet(&rendered, "seam:sample").is_ok() {
             return Err("a production recommended test constructed a cage policy".to_string());
+        }
+        Ok(())
+    }
+
+    /// A packet spells paths in stable path text, so a literal `%` in a file
+    /// name arrives as `%25`. The cage rules and the baseline capture need
+    /// the native name: `src/a%25b.rs` names no file on disk.
+    #[test]
+    fn cage_policy_decodes_a_percent_escaped_packet_path() -> Result<(), String> {
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["src/a%25b.rs"],
+            "forbidden_files": ["src/c%25d.rs"],
+            "recommended_test": { "file": "src/a%25b.rs", "target_kind": "new_inline_test_module" }
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "src/a%b.rs"
+            || !policy.inline_test_module_target
+            || policy.allowed_edit_surface.first().map(|rule| rule.path()) != Some("src/a%b.rs")
+            || policy.forbidden_paths.first().map(|rule| rule.path()) != Some("src/c%d.rs")
+            || policy
+                .new_test_proposal
+                .as_ref()
+                .map(|proposal| proposal.file.as_str())
+                != Some("src/a%b.rs")
+        {
+            return Err(format!("packet path was not decoded: {policy:?}"));
+        }
+        // An escaped backslash is a literal file-name byte, not a separator:
+        // it refuses instead of naming `tests/a/b.rs`.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/a%5Cb.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+            Err(error)
+                if error.contains("backslash")
+                    && error.contains(
+                        "rename the file to remove the backslash, then regenerate the packet",
+                    ) => {}
+            other => return Err(format!("escaped backslash was not refused: {other:?}")),
+        }
+        // A name that is not UTF-8 (only Unix can spell one) refuses with the
+        // same recovery: rename, then regenerate the packet.
+        #[cfg(unix)]
+        {
+            let packet = serde_json::json!({
+                "seam_id": "seam:sample",
+                "allowed_edit_surface": ["tests/a%FFb.rs"],
+                "forbidden_files": []
+            });
+            let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+            match edit_cage_policy_from_packet(&rendered, "seam:sample") {
+                Err(error)
+                    if error.contains("does not name a UTF-8 path")
+                        && error.contains(
+                            "rename the file to a UTF-8 name, then regenerate the packet",
+                        ) => {}
+                other => return Err(format!("non-UTF-8 packet path was not refused: {other:?}")),
+            }
+        }
+        // A gap-ledger packet (TypeScript, Python) carries native spellings:
+        // a literal `%25` in its test file name stays as written.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "source": "gap_decision_ledger",
+            "allowed_edit_surface": ["tests/a%25.test.ts"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/a%25.test.ts" {
+            return Err(format!("gap-ledger packet path was decoded: {policy:?}"));
+        }
+        // The envelope's marker alone keeps the inner packet's spelling.
+        let inner = serde_json::json!({
+            "seam_id": "seam:sample",
+            "allowed_edit_surface": ["tests/a%25.test.ts"],
+            "forbidden_files": []
+        });
+        let envelope = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "packets": [inner],
+        });
+        let rendered = serde_json::to_string(&envelope).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/a%25.test.ts" {
+            return Err(format!("gap-ledger envelope path was decoded: {policy:?}"));
+        }
+        // A Rust gap-ledger record carries stable path text, so it decodes.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "source": "gap_decision_ledger",
+            "language": "rust",
+            "allowed_edit_surface": ["tests/100%25.rs"],
+            "forbidden_files": []
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/100%.rs" {
+            return Err(format!(
+                "Rust gap-ledger packet path was not decoded: {policy:?}"
+            ));
+        }
+        // A test-surface path in the recommended-test form decodes too.
+        let packet = serde_json::json!({
+            "seam_id": "seam:sample",
+            "recommended_test": { "file": "tests/100%25.rs" }
+        });
+        let rendered = serde_json::to_string(&packet).map_err(|error| error.to_string())?;
+        let policy = edit_cage_policy_from_packet(&rendered, "seam:sample")?;
+        if policy.selected_target.path() != "tests/100%.rs" || policy.inline_test_module_target {
+            return Err(format!("recommended test path was not decoded: {policy:?}"));
         }
         Ok(())
     }

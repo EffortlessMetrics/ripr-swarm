@@ -101,14 +101,27 @@ constructor that is the single source of truth for that family:
   (`data.kind` `preview_finding_withheld`, message `... not an actionable
   gap`) that names the static class and the owner or changed expression.
   Rows are one per distinct line (findings on the same line aggregate into
-  one row naming their count and classes), and markers plus rows together never
+  one row naming their count and classes). The marker is anchored on the
+  file's first withheld finding, so the row for that line would share its
+  range; it is folded into the marker instead (#15315): one Hint per range,
+  whose text appends `This line: ...` and whose `data.line` carries the row's
+  class, classes and count, and the folded row spends no cap slot. Markers plus rows together never
   exceed the 50 cap (markers are reserved first; rows beyond the remaining cap
   are silent apart from the marker count), are absent in the `full` profile, never use Warning severity, and carry no
   finding id, repair, witness, or `preview_actionability` data.
   These are not analyzer findings or actionable repairs.
 
 The quarantine-withdrawn marker names its cause through `data.reason`, the
-hover and log text, and the workspace-status `staleness_reason`. When a
+hover and log text, and the workspace-status `staleness_reason`. A buffer
+that equals the recorded saved content which the committed snapshot did not
+analyze (the file was saved, or rewritten on disk and reloaded into the
+buffer, after the last analysis) is `saved_content_not_yet_analyzed`
+(#15316), not `buffer_diverges_from_analyzed_saved_content`: its text says
+the saved file changed since ripr last analyzed it and its recovery
+(`data.recovery` `await_analysis_or_refresh`) is the next analysis or
+`ripr.refresh`, never "save the file". A reloaded external rewrite registers
+its buffer change and the implied save as one step, so a push client
+receives one withdrawal marker for that document version. When a
 `didOpen` is refused because the store-wide open-document or retained-text
 limit was reached (#11666), the document is held as an unknown-authority
 placeholder with empty text and the reason is `document_store_limit_reached`,

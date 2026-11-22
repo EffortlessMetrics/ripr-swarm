@@ -23,6 +23,8 @@ mod agent_policy_guidance;
 #[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
 #[path = "cli_smoke/agent_seam_preview_route.rs"]
 mod agent_seam_preview_route;
+#[path = "cli_smoke/argument_value_validation.rs"]
+mod argument_value_validation;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/artifact_mode_precedence.rs"]
 mod artifact_mode_precedence;
@@ -72,6 +74,8 @@ mod discarded_matches;
 mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
+#[path = "cli_smoke/explicit_input_refusals.rs"]
+mod explicit_input_refusals;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
 #[cfg(unix)]
@@ -102,6 +106,8 @@ mod leftover_status;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/legend_first_run.rs"]
 mod legend_first_run;
+#[path = "cli_smoke/missing_root_refusal.rs"]
+mod missing_root_refusal;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;
@@ -2800,6 +2806,54 @@ fn config_validate_hints_follow_the_parser_reason_not_source_text() -> Result<()
     })();
     std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     result
+}
+
+#[test]
+fn config_validate_rejects_an_override_for_an_excluded_package()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_external_workspace("config-override-exclude")?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    for (dir, name) in [("one", "alpha"), ("two", "beta")] {
+        let package = root.join("members").join(dir);
+        std::fs::create_dir_all(package.join("src"))?;
+        std::fs::write(package.join("src/lib.rs"), "")?;
+        std::fs::write(
+            package.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )?;
+    }
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[[overrides]]\ncrate = \"beta\"\nseverity.findings.weakly_exposed = \"note\"\n",
+    )?;
+    let manifest = root.join("Cargo.toml");
+    let members = "[workspace]\nresolver = \"3\"\nmembers = [\"members/*\"]\n";
+    let validate = || {
+        run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["config", "validate"],
+        )
+    };
+
+    std::fs::write(&manifest, members)?;
+    let included = validate()?;
+    assert_success(&included);
+    let stdout = String::from_utf8(included.stdout)?;
+    assert!(stdout.contains("ripr.toml valid"), "{stdout}");
+    assert!(included.stderr.is_empty(), "{:?}", included.stderr);
+
+    std::fs::write(manifest, format!("{members}exclude = [\"members/two\"]\n"))?;
+    let excluded = validate()?;
+    assert_eq!(excluded.status.code(), Some(2), "{excluded:?}");
+    assert!(excluded.stdout.is_empty(), "{excluded:?}");
+    let stderr = String::from_utf8(excluded.stderr)?;
+    assert!(
+        stderr.contains("[[overrides]] crate = \"beta\" does not match a Cargo package"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("(known: alpha)"), "{stderr}");
+    Ok(())
 }
 
 #[test]
@@ -19352,7 +19406,8 @@ fn baseline_diff_writes_debt_delta_json_and_markdown() -> Result<(), String> {
         "--out-md",
         &missing_md.display().to_string(),
     ]);
-    assert_success(&missing);
+    // An unreadable required input writes the report, then refuses (#15254).
+    assert_eq!(missing.status.code(), Some(2));
     let missing_json =
         std::fs::read_to_string(&missing_out).map_err(|e| format!("read missing delta: {e}"))?;
     assert!(missing_json.contains("\"missing_current_input\": 1"));
@@ -25850,7 +25905,7 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
         assert_success(&check);
         let artifact_text = std::fs::read_to_string(&artifact)
             .map_err(|err| format!("artifact was not written: {err}"))?;
-        assert!(artifact_text.contains("\"ripr-check-artifact-v1\""));
+        assert!(artifact_text.contains("\"ripr-check-artifact-v2\""));
         assert!(artifact_text.contains("\"identity\""));
         assert!(artifact_text.contains("\"diff_bytes_hash\""));
         assert_sample_diff_artifact(&artifact_text, &fixture.0, "draft")?;
@@ -26085,7 +26140,7 @@ fn explain_from_fails_closed_on_tampered_identity() -> sample_output::TestResult
         );
 
         // Unsupported schema version.
-        let stale = original.replace("ripr-check-artifact-v1", "ripr-check-artifact-v0");
+        let stale = original.replace("ripr-check-artifact-v2", "ripr-check-artifact-v1");
         assert_ne!(stale, original, "schema mutation must change the artifact");
         std::fs::write(&artifact, &stale).map_err(|err| format!("write: {err}"))?;
         let output = run_ripr_copy(
@@ -31677,7 +31732,8 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
 
 /// #11598: `RIPR_QUIET` reaches the direct `ripr agent repair` phases: the
 /// narration and `wrote` lines drop, while the result (the attempt command)
-/// still prints. The control run without it narrates.
+/// and the output-location warning still print. The control run without it
+/// narrates.
 #[test]
 fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -31721,6 +31777,13 @@ fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
     assert!(
         quiet.contains("ripr: attempt next command: "),
         "the result must survive quiet: {quiet}"
+    );
+    // #15282 item 8: the output-location warning is not narration. A
+    // redirect into the worktree fails the attempt, and quiet runs are the
+    // agent runs that redirect, so it stays (the help says so).
+    assert!(
+        quiet.contains("ripr: write this command's output outside the repo"),
+        "the output-location warning must survive quiet: {quiet}"
     );
     Ok(())
 }
@@ -36875,13 +36938,19 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
         ("reports index", &["reports", "index"]),
         ("reports ci-summary", &["reports", "ci-summary"]),
     ];
+    // Each command runs from its own working directory, so a write under the
+    // CWD names the command that made it, and a refused command must print
+    // nothing to stdout: `reports ci-summary` writes only to stdout, so its
+    // root check placement is visible only there (#14626).
     let mut failures = Vec::new();
-    for (name, argv) in commands {
+    for (index, (name, argv)) in commands.into_iter().enumerate() {
+        let cwd = scratch.join(format!("cwd-{index}"));
+        std::fs::create_dir_all(&cwd)?;
         for root in [&missing, &file] {
             let root_text = root.display().to_string();
             let mut args = argv.to_vec();
             args.extend(["--root", root_text.as_str()]);
-            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&scratch), &args)?;
+            let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&cwd), &args)?;
             let stderr = String::from_utf8_lossy(&output.stderr);
             let expected = format!("{name} root {root_text} is not a directory");
             if output.status.code() != Some(2) || !stderr.contains(&expected) {
@@ -36890,17 +36959,27 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
                     output.status.code()
                 ));
             }
+            if !output.stdout.is_empty() {
+                failures.push(format!(
+                    "{name} --root {root_text}: printed {} bytes to stdout before refusing",
+                    output.stdout.len()
+                ));
+            }
+        }
+        if cwd.join("target").exists() {
+            failures.push(format!(
+                "{name}: a refused command wrote under the CWD (target/ripr)"
+            ));
+        }
+        // Checked per command, and removed so the next command starts from a
+        // missing root again, so a red names the command that created it.
+        if scratch.join("nope").exists() {
+            failures.push(format!("{name}: the mistyped --root was created"));
+            let _ = std::fs::remove_dir_all(scratch.join("nope"));
         }
     }
-    let created = scratch.join("nope").exists();
-    let wrote_target = scratch.join("target").exists();
     let file_kept = std::fs::read_to_string(&file)?;
     let _ = std::fs::remove_dir_all(&scratch);
-    assert!(!created, "the mistyped --root was created");
-    assert!(
-        !wrote_target,
-        "a refused command wrote under the CWD (target/ripr)"
-    );
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(file_kept, "not a directory\n");
     Ok(())
@@ -37004,9 +37083,10 @@ fn pr_comments_raw_stdin_from_endless_stream_is_refused_at_input_limit()
     Ok(())
 }
 
-/// These two flags fold an unreadable artifact into their established
-/// "missing" state rather than reporting the read error, so the limit never
-/// reaches stderr. What the bounded reader changes for them is that the
+/// These two flags fold an unreadable artifact into a "missing" state rather
+/// than reporting the read error, so the limit never reaches stderr; both now
+/// refuse with exit 2 (`pr-summary --baseline` since #15254, as an explicitly
+/// named unusable input). What the bounded reader changes for them is that the
 /// command finishes with its ordinary exit code instead of being ended for lack of
 /// memory (no exit code) or outliving the deadline.
 #[cfg(unix)]
@@ -37016,7 +37096,7 @@ fn artifact_flags_that_degrade_to_missing_finish_on_an_endless_device() -> Resul
     let cwd = unique_temp_workspace("endless-artifact-degrade");
     std::fs::create_dir_all(&cwd)?;
     let cases: [(&[&str], i32); 2] = [
-        (&["pr-summary", "--baseline", "/dev/zero"], 0),
+        (&["pr-summary", "--baseline", "/dev/zero"], 2),
         (&["impacted-evidence", "--pr-evidence", "/dev/zero"], 2),
     ];
     let result = (|| {
@@ -37432,6 +37512,97 @@ fn check_json_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Erro
     assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
     assert!(
         !stderr.contains("stdout failed") && !stderr.contains("Broken pipe"),
+        "a closed reader must not produce an error report: {stderr}"
+    );
+    Ok(())
+}
+
+/// docs/EXIT_CODES.md: an unknown `--seam-id` is one typed refusal with one
+/// exit, `3`, on `agent repair --phase before` too. A stale cross-namespace
+/// id (`probe:`, `gap:`, `file:line`) used to exit `2` there while a plain
+/// unknown seam id and every sibling surface exited `3` (#15311).
+#[test]
+fn agent_repair_stale_cross_namespace_seam_id_is_a_typed_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (root, _diff) = agent_brief_sample_workspace("agent-repair-stale-seam-id")?;
+    // The workspace sits under this checkout's `target/`. A repair start
+    // refuses a root below a Git top-level (#15363) or without a concrete
+    // HEAD with exit 2 before it reads the seam id, so the fixture must be
+    // its own committed repository for the plain unknown id to reach the
+    // seam refusal.
+    init_git_fixture_repo(&root)?;
+    let root_path = root.display().to_string();
+    for seam_id in [
+        "probe:src_lib.rs:predicate:566edf6b",
+        "gap:0123456789abcdef",
+        "src/lib.rs:999",
+        "f3c9e4d21a0b7c88",
+    ] {
+        for json in [false, true] {
+            let mut args = vec![
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--root",
+                &root_path,
+                "--seam-id",
+                seam_id,
+            ];
+            if json {
+                args.push("--json");
+            }
+            let output = run_ripr(&args);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(3),
+                "{seam_id} (json={json}) must take the refusal exit: {stderr}"
+            );
+            assert!(
+                output.stdout.is_empty(),
+                "agent repair --phase before refusals keep stdout empty: {:?}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
+    // The attempts directory may hold only its dot-named lock files.
+    let attempts = root.join("target/ripr/repair-attempts");
+    if attempts.exists() {
+        for entry in std::fs::read_dir(&attempts)? {
+            let name = entry?.file_name();
+            assert!(
+                name.to_string_lossy().starts_with('.'),
+                "a refused seam id starts no attempt: {name:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `ripr reports ci-summary` writes its Markdown bytes through its own
+/// writer; a closed reader must still get the shared quiet exit 2, not a
+/// "could not write the summary ... summary path" report.
+#[test]
+fn ci_summary_into_closed_stdout_exits_two_quietly() -> Result<(), std::io::Error> {
+    let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/sample");
+    // Close the reader before spawning: dropping `Child::stdout` after spawn
+    // races with the child's write, and a summary that fits the pipe buffer
+    // would then exit 0.
+    let (reader, writer) = std::io::pipe()?;
+    drop(reader);
+    let output = probe_command(env!("CARGO_BIN_EXE_ripr"))
+        .args(["reports", "ci-summary", "--root"])
+        .arg(&sample)
+        .args(["--base-ref", "main"])
+        .stdin(Stdio::null())
+        .stdout(writer)
+        .stderr(Stdio::piped())
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "stderr: {stderr}");
+    assert!(
+        stderr.trim().is_empty(),
         "a closed reader must not produce an error report: {stderr}"
     );
     Ok(())
@@ -38062,8 +38233,9 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
 }
 
 /// #8652: through the public `check` path, an unqualified base that only
-/// exists as a remote-tracking ref names that full ref, and the suggested
-/// ref then loads instead of failing again.
+/// exists as a remote-tracking ref names that ref (#15484: as `origin/topic`,
+/// since that short name resolves to it), and the suggested ref then loads
+/// instead of failing again.
 #[test]
 fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -38100,7 +38272,8 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("--base refs/remotes/origin/topic"),
+        stderr.contains("The fetched branch is `origin/topic`")
+            && stderr.contains("--base origin/topic`"),
         "the public failure must name the resolvable tracking ref: {stderr}"
     );
     let suggested = run_ripr(&[
@@ -38108,7 +38281,7 @@ fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
         "--root",
         &root.display().to_string(),
         "--base",
-        "refs/remotes/origin/topic",
+        "origin/topic",
     ]);
     assert!(
         suggested.status.success(),
@@ -38164,7 +38337,7 @@ fn check_and_diff_answer_a_revision_range_as_a_range_not_a_missing_branch()
                 && stderr.contains(&format!("Pass the range's start: `--base {start}`")),
             "{range}: the refusal must name the range and the base to pass: {stderr}"
         );
-        for wrong in ["git fetch", "Check the spelling", "the fetched branch"] {
+        for wrong in ["git fetch", "Check the spelling", "fetched branch"] {
             assert!(
                 !stderr.contains(wrong),
                 "{range}: a range must get no `{wrong}` advice: {stderr}"

@@ -1,0 +1,193 @@
+{
+  "issue": 12922,
+  "basis": "7c1087709bdecb88f1fd25b0e813e86ffc2213dc",
+  "scope": "Authored source, original/edited baselines and independent mutants; assertion failures only. TypeScript alternates are supplementary, not corpus truth for behavior_change cases. No population or static adequacy claim.",
+  "inputs": {
+    "ts-stage-coupon": {
+      "case_sha256": "bc9f6bec72f99fb1a103178967290b1f8915808bc84f34683a01701024550271",
+      "diff_sha256": "4ab494270d1d01eccd20a255189f359871fd0ad594072dbef00c65e6a0b97511",
+      "retained_files": [
+        {
+          "path": "package.json",
+          "sha256": "a3127935623c2fad496ff42d1439f6ad25776f140381fec8b641eb53e881e527"
+        },
+        {
+          "path": "ripr.toml",
+          "sha256": "fd4bef0be0af8666a5f559a03d235c19c6ab225d5eb26a1c6ea5cf022bf00043"
+        },
+        {
+          "path": "src/price.ts",
+          "sha256": "8a2f2bf0ce65254628396efaee38ffe29eed6fe0f4718572b32ab24827703f84"
+        },
+        {
+          "path": "test/price.test.ts",
+          "sha256": "6c4a0e629a478efde1d0cddfd215e97cf07e6dc08b738145310ddc97e3e7b25c"
+        }
+      ]
+    },
+    "ts-stage-fallback": {
+      "case_sha256": "6b4c4c806713837d76cb5569f1540de698dc5f60f5cf585a82f289f7686392e9",
+      "diff_sha256": "1f62b935759a82eb5f27bcb20fc15497d38000fb1ea71cb89cbe0ec8bda72e62",
+      "retained_files": [
+        {
+          "path": "package.json",
+          "sha256": "b7c3a58a89895ed3ae2d3e729331168e1b3b66f52440c87ecf39a400335f8f51"
+        },
+        {
+          "path": "ripr.toml",
+          "sha256": "fd4bef0be0af8666a5f559a03d235c19c6ab225d5eb26a1c6ea5cf022bf00043"
+        },
+        {
+          "path": "src/price.ts",
+          "sha256": "902e10e83f149f21ed77dadcdad46b0c6ce8d1040f8276e39a78845a626be3fa"
+        },
+        {
+          "path": "test/price.test.ts",
+          "sha256": "c77418e56b75b0116e9696327291495d875acb63fac5a4d459f673a0db7f3967"
+        }
+      ]
+    },
+    "ts-stage-literal": {
+      "case_sha256": "8d513e2f5270af5c7040ac1922208ea7b9f11d9a1c3c741cf897c18d71cd323c",
+      "diff_sha256": "667c0b0d63e5074daf2489604631ee444f3d186ae438f5201486fd331fd9840b",
+      "retained_files": [
+        {
+          "path": "package.json",
+          "sha256": "879f825a9d4b6e2b1f26d7c3adca471220b2987d0f1e142ff43fcc1e6432b6c7"
+        },
+        {
+          "path": "ripr.toml",
+          "sha256": "fd4bef0be0af8666a5f559a03d235c19c6ab225d5eb26a1c6ea5cf022bf00043"
+        },
+        {
+          "path": "src/price.ts",
+          "sha256": "18b0bff9a74c9a71830770be58fecd414318547e0b72016046b159a4d06ed706"
+        },
+        {
+          "path": "test/price.test.ts",
+          "sha256": "6c4a0e629a478efde1d0cddfd215e97cf07e6dc08b738145310ddc97e3e7b25c"
+        }
+      ]
+    },
+    "ts-stage-zero": {
+      "case_sha256": "85d9a5e8883cacc37b829a2b8268bc773e64dde53a2335d90cb337c1dc91d0d5",
+      "diff_sha256": "0844b9e50eea0882c8b994c59337f03e5a3cfc121092a463a3516e0c3dbc5069",
+      "retained_files": [
+        {
+          "path": "package.json",
+          "sha256": "b4292255acc4c9a1d026417e4e54f258439d592ea8112f2a2cbb73082725e9c0"
+        },
+        {
+          "path": "ripr.toml",
+          "sha256": "fd4bef0be0af8666a5f559a03d235c19c6ab225d5eb26a1c6ea5cf022bf00043"
+        },
+        {
+          "path": "src/price.ts",
+          "sha256": "18f6bbf7120272825f445309e8d15e1abf4252fa67687181d022341a74496d31"
+        },
+        {
+          "path": "test/price.test.ts",
+          "sha256": "3cd62e92635da521ee9bdf75d22b932005544cb22c9138a3573cde75a21bcb56"
+        }
+      ]
+    }
+  },
+  "runs": [
+    {
+      "case": "ts-stage-literal",
+      "variant": "base",
+      "exit": 0,
+      "output": "\u2714 positive price (0.541287ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 75.271189\n"
+    },
+    {
+      "case": "ts-stage-literal",
+      "variant": "edit",
+      "exit": 0,
+      "output": "\u2714 positive price (0.448028ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 55.421411\n"
+    },
+    {
+      "case": "ts-stage-literal",
+      "variant": "alternate",
+      "exit": 1,
+      "output": "\u2716 positive price (3.35329ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 0\n\u2139 fail 1\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 61.873321\n\n\u2716 failing tests:\n\ntest at test/price.test.ts:5:1\n\u2716 positive price (3.35329ms)\n  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n  \n    assert.ok(price(2))\n  \n      at TestContext.<anonymous> (file:///tmp/12922-ts-qbsnotke/test/price.test.ts:6:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 0,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n"
+    },
+    {
+      "case": "ts-stage-literal",
+      "variant": "survivor",
+      "exit": 0,
+      "output": "\u2714 positive price (0.462139ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 57.197629\n"
+    },
+    {
+      "case": "ts-stage-fallback",
+      "variant": "base",
+      "exit": 0,
+      "output": "\u2714 positive price (0.448128ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 58.093774\n"
+    },
+    {
+      "case": "ts-stage-fallback",
+      "variant": "edit",
+      "exit": 0,
+      "output": "\u2714 positive price (0.39531ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 54.329713\n"
+    },
+    {
+      "case": "ts-stage-fallback",
+      "variant": "alternate",
+      "exit": 1,
+      "output": "\u2716 positive price (2.580037ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 0\n\u2139 fail 1\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 60.846188\n\n\u2716 failing tests:\n\ntest at test/price.test.ts:5:1\n\u2716 positive price (2.580037ms)\n  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n  \n    assert.ok(price())\n  \n      at TestContext.<anonymous> (file:///tmp/12922-ts-i8c_hk3j/test/price.test.ts:6:10)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1382:25)\n      at Test.start (node:internal/test_runner/test:1242:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 0,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n"
+    },
+    {
+      "case": "ts-stage-fallback",
+      "variant": "survivor",
+      "exit": 0,
+      "output": "\u2714 positive price (0.507136ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 56.622672\n"
+    },
+    {
+      "case": "ts-stage-coupon",
+      "variant": "base",
+      "exit": 0,
+      "output": "\u2714 positive price (0.408649ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 59.838616\n"
+    },
+    {
+      "case": "ts-stage-coupon",
+      "variant": "edit",
+      "exit": 0,
+      "output": "\u2714 positive price (0.481378ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 57.816782\n"
+    },
+    {
+      "case": "ts-stage-coupon",
+      "variant": "alternate",
+      "exit": 0,
+      "output": "\u2714 positive price (0.404613ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 57.945674\n"
+    },
+    {
+      "case": "ts-stage-coupon",
+      "variant": "survivor",
+      "exit": 0,
+      "output": "\u2714 positive price (0.486345ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 61.394797\n"
+    },
+    {
+      "case": "ts-stage-zero",
+      "variant": "base",
+      "exit": 0,
+      "output": "\u2714 positive price (0.434908ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 56.003318\n"
+    },
+    {
+      "case": "ts-stage-zero",
+      "variant": "edit",
+      "exit": 0,
+      "output": "\u2714 positive price (0.455118ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 56.11077\n"
+    },
+    {
+      "case": "ts-stage-zero",
+      "variant": "alternate",
+      "exit": 0,
+      "output": "\u2714 positive price (0.418914ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 58.753299\n"
+    },
+    {
+      "case": "ts-stage-zero",
+      "variant": "survivor",
+      "exit": 0,
+      "output": "\u2714 positive price (0.4762ms)\n\u2139 tests 1\n\u2139 suites 0\n\u2139 pass 1\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 58.230659\n"
+    }
+  ]
+}

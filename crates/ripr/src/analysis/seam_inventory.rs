@@ -528,6 +528,7 @@ fn inventory_classified_seams_report_collect(
     // Stat-only fast path (issue #2108): when the corpus fingerprint store
     // holds a mapping for the current (path, mtime, size, ctime, device, inode on unix)
     // signature, the cache key is rebuilt without reading any file contents.
+    let mut fingerprint_miss_key: Option<RepoSeamCacheKey> = None;
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         trace_latency_phase(
             "collect_workspace_state",
@@ -568,9 +569,11 @@ fn inventory_classified_seams_report_collect(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
-                // The stat-only key is rebuilt from the same inputs; the
-                // post-collect load below is the one authoritative miss, so
-                // disclose there and print once per run (#12505).
+                // The stat-only key is byte-identical to the key the
+                // single-pass build below derives, so a load under that
+                // same key cannot hit; record it and disclose the miss
+                // once at the authoritative load point (#12505).
+                fingerprint_miss_key = Some(key);
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
@@ -579,24 +582,64 @@ fn inventory_classified_seams_report_collect(
                 if claim_base_untrusted_reason_emission(&reason) {
                     eprintln!("ripr: repo seam cache entry ignored ({reason})");
                 }
+                fingerprint_miss_key = Some(key);
             }
         }
     }
 
-    let state = match collect_workspace_state_from_files(root, config, rust_files) {
-        Ok(state) => {
-            trace_latency_phase("collect_workspace_state", "ok", collect_started.elapsed());
-            state
-        }
-        Err(err) => {
-            trace_latency_phase(
-                "collect_workspace_state",
-                "error",
-                collect_started.elapsed(),
-            );
-            trace_latency_phase("total", "error", total_started.elapsed());
-            return Err(err);
-        }
+    // Single-pass build (#8643, #6758) only on the fingerprint-miss
+    // path: the fingerprint fast path above already attempted a cache
+    // load under a byte-identical key and missed, so no cache load can
+    // hit before the build and the streaming build may fold the
+    // aggregate `files_content_hash` from the same bytes it parses. The
+    // folded hash is byte-identical to the legacy two-pass key (pinned
+    // by `streaming_collect_matches_legacy_hash_key_and_order`), and the
+    // result is stored under the hash of exactly the bytes parsed, so
+    // a corpus that moves mid-build can never be served as a later
+    // run's stable state.
+    //
+    // With no fingerprint-derived key (always the case on Windows,
+    // where `corpus_fingerprint` refuses to sign, #3848) a warm
+    // classified-cache hit would otherwise pay a full index build
+    // instead of only the hashing read, so keep the legacy order
+    // there: hash collect -> cache load below -> build only on miss.
+    let fingerprint_miss_gated = fingerprint_miss_key.is_some();
+    let (state, prebuilt_index) = if fingerprint_miss_gated {
+        let mut state = workspace_state_from_paths(root, config, rust_files);
+        let build_started = Instant::now();
+        let cached_index = match state.build_index_single_pass(config) {
+            Ok(cached) => {
+                trace_latency_phase("collect_workspace_state", "ok", collect_started.elapsed());
+                (cached, build_started.elapsed())
+            }
+            Err(err) => {
+                trace_latency_phase(
+                    "collect_workspace_state",
+                    "error",
+                    collect_started.elapsed(),
+                );
+                trace_latency_phase("total", "error", total_started.elapsed());
+                return Err(err);
+            }
+        };
+        (state, Some(cached_index))
+    } else {
+        let state = match collect_workspace_state_from_files(root, config, rust_files) {
+            Ok(state) => {
+                trace_latency_phase("collect_workspace_state", "ok", collect_started.elapsed());
+                state
+            }
+            Err(err) => {
+                trace_latency_phase(
+                    "collect_workspace_state",
+                    "error",
+                    collect_started.elapsed(),
+                );
+                trace_latency_phase("total", "error", total_started.elapsed());
+                return Err(err);
+            }
+        };
+        (state, None)
     };
     let key = state.cache_key();
     store_corpus_fingerprint_mapping(&state, fingerprint, &key, family_store_failures);
@@ -609,54 +652,80 @@ fn inventory_classified_seams_report_collect(
         Duration::ZERO,
     );
     // Cooperative cancellation (#1972): a superseded or deadline-expired
-    // refresh stops before the post-collect cache load.
+    // refresh stops before the post-build cache load.
     cancellation::checkpoint()?;
-    match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
-        CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
-            trace_latency_phase("cache_load", "hit", cache_started.elapsed());
-            trace_latency_phase("total", "cache_hit", total_started.elapsed());
-            if let Some(disclosure) =
-                rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
-            {
-                eprintln!("{disclosure}");
+    // The fingerprint fast path already missed under this exact key, so
+    // reloading cannot hit; disclose that known miss once (#12505). Any
+    // other key (no mapping, or the corpus moved during the build) still
+    // gets its authoritative load.
+    if fingerprint_miss_key.as_ref() == Some(&key) {
+        trace_latency_phase("cache_load", "miss", cache_started.elapsed());
+        disclose_seam_facts_cache_miss(false);
+    } else {
+        match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
+            CacheLoad::Hit((cached, cached_limit_info, lexical_fallback_files)) => {
+                trace_latency_phase("cache_load", "hit", cache_started.elapsed());
+                trace_latency_phase("total", "cache_hit", total_started.elapsed());
+                if let Some(disclosure) =
+                    rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
+                {
+                    eprintln!("{disclosure}");
+                }
+                // Preserve the run_status from the original run: a capped run stored
+                // its SeamLimitInfo in the envelope; a complete run stored None.
+                return Ok(ClassifiedSeamsReport {
+                    classified: cached,
+                    corpus_key: Some(key),
+                    analyzed_production_files,
+                    diff_bound_corpus,
+                    limit_info: cached_limit_info.map(SeamLimitInfo::from),
+                    skipped_generated,
+                    naming_only_skips,
+                    declined_rust_files: rust_index::declined_rust_files_at(
+                        root,
+                        &lexical_fallback_files,
+                    ),
+                    evidence_limitations: unreadable_limitations,
+                });
             }
-            // Preserve the run_status from the original run: a capped run stored
-            // its SeamLimitInfo in the envelope; a complete run stored None.
-            return Ok(ClassifiedSeamsReport {
-                classified: cached,
-                corpus_key: Some(key),
-                analyzed_production_files,
-                diff_bound_corpus,
-                limit_info: cached_limit_info.map(SeamLimitInfo::from),
-                skipped_generated,
-                naming_only_skips,
-                declined_rust_files: rust_index::declined_rust_files_at(
-                    root,
-                    &lexical_fallback_files,
-                ),
-                evidence_limitations: unreadable_limitations,
-            });
-        }
-        CacheLoad::Miss => {
-            trace_latency_phase("cache_load", "miss", cache_started.elapsed());
-            disclose_seam_facts_cache_miss(false);
-        }
-        CacheLoad::CorruptIgnored { reason } => {
-            trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
-            // Advisory: surface the reason so operators can see why a
-            // warm path degraded to cold. Never fail analysis.
-            // #12432: a run-stable base-class reason reports once per base
-            // per process; ordinary per-entry reasons always print.
-            if claim_base_untrusted_reason_emission(&reason) {
-                eprintln!("ripr: repo seam cache entry ignored ({reason})");
+            CacheLoad::Miss => {
+                trace_latency_phase("cache_load", "miss", cache_started.elapsed());
+                disclose_seam_facts_cache_miss(false);
+            }
+            CacheLoad::CorruptIgnored { reason } => {
+                trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
+                // Advisory: surface the reason so operators can see why a
+                // warm path degraded to cold. Never fail analysis.
+                // #12432: a run-stable base-class reason reports once per base
+                // per process; ordinary per-entry reasons always print.
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: repo seam cache entry ignored ({reason})");
+                }
             }
         }
     }
+    // Legacy (non-gated) path: the cache load above missed, so only
+    // now pay the index build; `build_index` refuses a corpus that
+    // moved after the hashing read, as before #8643.
+    // The measured index build travels with the index so the
+    // `file_fact_cache` phase reports it (`inventory.parse_index`).
+    let (cached_index, index_build) = match prebuilt_index {
+        Some(built) => built,
+        None => match build_index_timed(&state, config) {
+            Ok(built) => built,
+            Err(err) => {
+                trace_latency_phase("total", "error", total_started.elapsed());
+                return Err(err);
+            }
+        },
+    };
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
     let (classified, limit_info, lexical_fallback_files, compact_classified, evidence_limitations) =
         match inventory_classified_seams_from_state_with_config(
             &state,
+            cached_index,
+            index_build,
             config,
             &analyzed_production_files,
         ) {
@@ -1111,11 +1180,16 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     rust_index::apply_oracle_policy(&mut index, config.oracles());
     trace_latency_phase("apply_oracle_policy", "ok", policy_started.elapsed());
     let seams_started = Instant::now();
-    let seams = inventory_seams_from_index_checked(&production_files, &index)?;
+    let (seams, shared_context) =
+        inventory_seams_from_index_checked_with_context(&production_files, &index)?;
     trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
     let evidence_started = Instant::now();
     let (evidence, evidence_limitations) =
-        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &index)?;
+        test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+            &seams,
+            &index,
+            shared_context,
+        )?;
     require_complete_evidence(&evidence_limitations, "uncached seam walk")?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -1134,6 +1208,10 @@ pub(crate) fn inventory_seam_grip_class_counts_at_with_config(
     config: &RiprConfig,
 ) -> Result<SeamGripClassCounts, String> {
     let cache = RepoSeamCountCache::at(root);
+    // No fingerprint-derived key exists for the count cache, so a
+    // build-first single pass would make every warm count hit pay a
+    // full index build instead of only the hashing read (#8643).
+    // Keep the legacy order: hash collect -> load -> build on miss.
     let state = collect_workspace_state(root, config)?;
     let key = state.cache_key();
     match cache.load_counts(&key) {
@@ -1145,7 +1223,9 @@ pub(crate) fn inventory_seam_grip_class_counts_at_with_config(
             }
         }
     }
-    let counts = inventory_seam_grip_class_counts_from_state_with_config(&state, config)?;
+    let cached_index = state.build_index(config)?;
+    let counts =
+        inventory_seam_grip_class_counts_from_state_with_config(&state, cached_index, config)?;
     let _ = cache.store_counts(&key, &counts);
     Ok(counts)
 }
@@ -1170,9 +1250,10 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
 
     // Stat-only fast path (issue #2108): rebuild the byte-identical cache
     // key from the corpus fingerprint store when the signature is unchanged.
+    let mut fingerprint_miss_key: Option<RepoSeamCacheKey> = None;
     if let Some(key) = fingerprint_cached_workspace_key(root, &inputs, fingerprint.as_deref()) {
         let cache_started = Instant::now();
-        match cache.load_classified_seams_with_fallback(&key) {
+        match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
             CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
                 trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
                 trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
@@ -1185,7 +1266,66 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
-                // Disclosed once at the post-collect load below (#12505).
+                // Disclosed once at the authoritative load below (#12505).
+                fingerprint_miss_key = Some(key);
+            }
+            CacheLoad::CorruptIgnored { reason } => {
+                trace_latency_phase(
+                    "compact_cache_load",
+                    "corrupt_ignored",
+                    cache_started.elapsed(),
+                );
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+                }
+                fingerprint_miss_key = Some(key);
+            }
+        }
+    }
+
+    // Single-pass build (#8643) only when the fingerprint path above
+    // already proved this exact key misses, as in the full classified
+    // path. With no fingerprint-derived key (always on Windows), keep
+    // the legacy order: hash collect -> cache load -> build on miss,
+    // so a warm compact hit pays only the hashing read.
+    let (state, prebuilt_index) = if fingerprint_miss_key.is_some() {
+        let mut state = workspace_state_from_paths(root, config, rust_files);
+        let build_started = Instant::now();
+        let cached_index = state.build_index_single_pass(config)?;
+        (state, Some((cached_index, build_started.elapsed())))
+    } else {
+        let state = collect_workspace_state_from_files(root, config, rust_files)?;
+        (state, None)
+    };
+    let key = state.cache_key();
+    // The compact (badge) path has no receipt channel yet; its store failures
+    // keep the ordinary stderr sentence.
+    store_corpus_fingerprint_mapping(
+        &state,
+        fingerprint,
+        &key,
+        &mut FileFactCacheStats::zero_work(),
+    );
+    let cache_started = Instant::now();
+    if fingerprint_miss_key.as_ref() == Some(&key) {
+        // The fingerprint load already missed under this exact key.
+        trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+        disclose_seam_facts_cache_miss(true);
+    } else {
+        match reject_stand_in_entry(cache.load_classified_seams_with_fallback(&key)) {
+            CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
+                trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
+                trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
+                if let Some(disclosure) =
+                    rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
+                {
+                    eprintln!("{disclosure}");
+                }
+                return Ok(cached);
+            }
+            CacheLoad::Miss => {
+                trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+                disclose_seam_facts_cache_miss(true);
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase(
@@ -1200,46 +1340,17 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         }
     }
 
-    let state = collect_workspace_state_from_files(root, config, rust_files)?;
-    let key = state.cache_key();
-    // The compact (badge) path has no receipt channel yet; its store failures
-    // keep the ordinary stderr sentence.
-    store_corpus_fingerprint_mapping(
-        &state,
-        fingerprint,
-        &key,
-        &mut FileFactCacheStats::zero_work(),
-    );
-    let cache_started = Instant::now();
-    match cache.load_classified_seams_with_fallback(&key) {
-        CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
-            trace_latency_phase("compact_cache_load", "hit", cache_started.elapsed());
-            trace_latency_phase("total", "compact_cache_hit", total_started.elapsed());
-            if let Some(disclosure) =
-                rust_index::lexical_fallback_disclosure_at(root, &lexical_fallback_files)
-            {
-                eprintln!("{disclosure}");
-            }
-            return Ok(cached);
-        }
-        CacheLoad::Miss => {
-            trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
-            disclose_seam_facts_cache_miss(true);
-        }
-        CacheLoad::CorruptIgnored { reason } => {
-            trace_latency_phase(
-                "compact_cache_load",
-                "corrupt_ignored",
-                cache_started.elapsed(),
-            );
-            if claim_base_untrusted_reason_emission(&reason) {
-                eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
-            }
-        }
-    }
-
+    let (cached_index, index_build) = match prebuilt_index {
+        Some(built) => built,
+        None => build_index_timed(&state, config)?,
+    };
     let (classified, lexical_fallback_files) =
-        inventory_compact_classified_seams_from_state_with_config(&state, config)?;
+        inventory_compact_classified_seams_from_state_with_config(
+            &state,
+            cached_index,
+            index_build,
+            config,
+        )?;
     let store_started = Instant::now();
     trace_latency_phase(
         "compact_cache_store",
@@ -1304,18 +1415,31 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
     let context = test_grip_evidence::CompactGripContext::new(&index);
     for seam in &seams {
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         counts.increment(class);
     }
     Ok(counts)
 }
 
+/// Build the index on the legacy two-pass order and measure the build, so
+/// the `file_fact_cache` phase reports the real duration.
+fn build_index_timed(
+    state: &OwnedWorkspaceState,
+    config: &RiprConfig,
+) -> Result<(super::facts::CachedRustIndex, Duration), String> {
+    let build_started = Instant::now();
+    let cached = state.build_index(config)?;
+    Ok((cached, build_started.elapsed()))
+}
+
 fn inventory_compact_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
+    mut cached: super::facts::CachedRustIndex,
+    index_build: Duration,
     config: &RiprConfig,
 ) -> Result<(Vec<ClassifiedSeam>, Vec<PathBuf>), String> {
     let production_files = production_files_from_state_with_role(state, config);
-    let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
         &format!(
@@ -1325,12 +1449,11 @@ fn inventory_compact_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = state.build_index(config)?;
     cancellation::checkpoint()?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
-        build_started.elapsed(),
+        index_build,
     );
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
@@ -1354,6 +1477,7 @@ fn compact_classified_seams_from_seams<'a>(
     for seam in seams {
         cancellation::checkpoint()?;
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         classified.push(ClassifiedSeam {
             evidence,
@@ -1380,10 +1504,11 @@ type ClassifiedSeamInventory = (
 
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
+    mut cached: super::facts::CachedRustIndex,
+    index_build: Duration,
     config: &RiprConfig,
     production_files: &[PathBuf],
 ) -> Result<ClassifiedSeamInventory, String> {
-    let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
         &format!(
@@ -1393,11 +1518,10 @@ fn inventory_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = state.build_index(config)?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
-        build_started.elapsed(),
+        index_build,
     );
     trace_file_fact_cache(&cached.file_fact_cache);
     let policy_started = Instant::now();
@@ -1411,7 +1535,8 @@ fn inventory_classified_seams_from_state_with_config(
     // inventory work, rather than after; every other behavior is unchanged.
     let limit_and_source = repo_exposure_seam_limit()?;
     let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
-    let bounded = inventory_seams_from_index_bounded(production_files, &cached.index, limit)?;
+    let (bounded, shared_context) =
+        inventory_seams_from_index_bounded_with_context(production_files, &cached.index, limit)?;
     cancellation::checkpoint()?;
     // The retained-object peak is production-observable here (issue #4997):
     // the retained prefix stays within K while the trace reports the peak
@@ -1446,7 +1571,11 @@ fn inventory_classified_seams_from_state_with_config(
         Duration::ZERO,
     );
     let (evidence, evidence_limitations) =
-        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &cached.index)?;
+        test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+            &seams,
+            &cached.index,
+            shared_context,
+        )?;
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -1905,12 +2034,18 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?
+    let (inventoried, shared_context) =
+        inventory_seams_from_index_checked_with_context(&production_files, &cached.index)?;
+    let seams = inventoried
         .into_iter()
         .filter(|seam| candidate_functions.contains_key(seam.owner()))
         .collect::<Vec<_>>();
     let (evidence, evidence_limitations) =
-        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &cached.index)?;
+        test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+            &seams,
+            &cached.index,
+            shared_context,
+        )?;
     require_complete_evidence(&evidence_limitations, "targeted test rerun")?;
     let classified =
         classify_seams_owned_retaining(seams, evidence, super::witness::repo_adapter_input(true));
@@ -2827,18 +2962,29 @@ pub(crate) fn inventory_diff_scoped_streamed_seams_with_optional_prepared(
     )
 }
 
+#[cfg(test)]
 fn classify_scoped_seams_streamed(
     seams: &[RepoSeam],
     index: &RustIndex,
     consumer: &mut dyn ScopedEvidenceConsumer,
     window_size: usize,
 ) -> Result<(usize, usize, Vec<AnalysisLimitation>), String> {
+    classify_scoped_seams_streamed_with_shared_context(seams, index, consumer, window_size, None)
+}
+
+fn classify_scoped_seams_streamed_with_shared_context<'index>(
+    seams: &[RepoSeam],
+    index: &'index RustIndex,
+    consumer: &mut dyn ScopedEvidenceConsumer,
+    window_size: usize,
+    shared_context: Option<test_grip_evidence::CompactGripContext<'index>>,
+) -> Result<(usize, usize, Vec<AnalysisLimitation>), String> {
     if window_size == 0 || window_size > MAX_REVIEW_EVIDENCE_WINDOW {
         return Err("invalid review evidence window size".into());
     }
     #[cfg(test)]
     source_lifetime_probe::observe_evidence_boundary();
-    let pass = test_grip_evidence::EvidencePass::new(index);
+    let pass = test_grip_evidence::EvidencePass::with_shared_context(index, shared_context);
     cancellation::checkpoint()?;
     let mut first = Vec::new();
     let mut rest = Vec::new();
@@ -3000,13 +3146,24 @@ pub(crate) fn prepare_diff_scoped_classified_workspace(
     config: &RiprConfig,
     generated_context: Option<&[PathBuf]>,
 ) -> Result<PreparedDiffScopedClassifiedWorkspace, String> {
+    // Single-pass build (#8643) is not gated here: this entry point
+    // attempts no classified/count cache load before the build (the
+    // reuse lookups in `inventory_diff_scoped_classified_seams_inner`
+    // run before `prepare_diff_scoped_classified_workspace_from_state`
+    // with their own two-pass state, and pass `single_pass = false`
+    // when reuse was requested), so no warm cache hit can be made to
+    // pay for this build and the hashing read would be purely
+    // redundant. Same justification for the changed-test entry point
+    // above, which also loads no cache keyed by the workspace key
+    // before building.
     let state = if let Some(paths) = generated_context {
         let (corpus, _) = discover_analyzable_rust_corpus_for_changed_paths(root, config, paths)?;
-        collect_workspace_state_from_files(root, config, corpus.analyzable)?
+        workspace_state_from_paths(root, config, corpus.analyzable)
     } else {
-        collect_workspace_state(root, config)?
+        let rust_files = discover_analyzable_rust_corpus(root, config)?.analyzable;
+        workspace_state_from_paths(root, config, rust_files)
     };
-    prepare_diff_scoped_classified_workspace_from_state(state, config, false)
+    prepare_diff_scoped_classified_workspace_from_state(state, config, true)
 }
 
 fn prepare_diff_scoped_classified_workspace_from_state(
@@ -3118,7 +3275,8 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         .collect::<Vec<_>>();
     cancellation::checkpoint()?;
     let seams_started = Instant::now();
-    let seams = inventory_seams_from_index_checked(&scoped_production_files, &cached.index)?;
+    let (seams, shared_context) =
+        inventory_seams_from_index_checked_with_context(&scoped_production_files, &cached.index)?;
     trace_latency_phase(
         "inventory_seams",
         "review_scope_ok",
@@ -3128,11 +3286,21 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
     let (classified, classified_seams_considered, unevaluated_seams, evidence_limitations) =
         if let Some((consumer, window_size)) = consumer {
             let (evaluated, unevaluated, limitations) =
-                classify_scoped_seams_streamed(&seams, &cached.index, consumer, window_size)?;
+                classify_scoped_seams_streamed_with_shared_context(
+                    &seams,
+                    &cached.index,
+                    consumer,
+                    window_size,
+                    shared_context,
+                )?;
             (Vec::new(), evaluated, unevaluated, limitations)
         } else {
-            let (classified, unevaluated, limitations) =
-                classify_scoped_seams(seams, &cached.index, stages)?;
+            let (classified, unevaluated, limitations) = classify_scoped_seams_with_shared_context(
+                seams,
+                &cached.index,
+                stages,
+                shared_context,
+            )?;
             let evaluated = classified.len();
             (classified, evaluated, unevaluated, limitations)
         };
@@ -3394,13 +3562,23 @@ fn repo_seam_limit_from_index(
 /// the evidence pass's limitations, non-empty when it failed closed (#13340).
 /// Each stage rejects cancellation before classifying the evidence it
 /// built, as [`classify_complete_scoped_evidence`] does for the full scope.
+#[cfg(test)]
 fn classify_scoped_seams(
     seams: Vec<RepoSeam>,
     index: &RustIndex,
     stages: Option<&DiffScopeEvidenceStages<'_>>,
 ) -> Result<(Vec<ClassifiedSeam>, usize, Vec<AnalysisLimitation>), String> {
+    classify_scoped_seams_with_shared_context(seams, index, stages, None)
+}
+
+fn classify_scoped_seams_with_shared_context<'index>(
+    seams: Vec<RepoSeam>,
+    index: &'index RustIndex,
+    stages: Option<&DiffScopeEvidenceStages<'_>>,
+    shared_context: Option<test_grip_evidence::CompactGripContext<'index>>,
+) -> Result<(Vec<ClassifiedSeam>, usize, Vec<AnalysisLimitation>), String> {
     let evidence_started = Instant::now();
-    let pass = test_grip_evidence::EvidencePass::new(index);
+    let pass = test_grip_evidence::EvidencePass::with_shared_context(index, shared_context);
     let mut evidence = Vec::new();
     let mut evaluated = vec![false; seams.len()];
     if let Some(stages) = stages {
@@ -3789,10 +3967,10 @@ pub(crate) fn pilot_packet_budget() -> Result<Option<(usize, SeamLimitSource)>, 
 #[cfg(test)]
 fn inventory_seam_grip_class_counts_from_state_with_config(
     state: &OwnedWorkspaceState,
+    mut cached: super::facts::CachedRustIndex,
     config: &RiprConfig,
 ) -> Result<SeamGripClassCounts, String> {
     let production_files = production_files_from_state_with_role(state, config);
-    let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
         &format!(
@@ -3802,11 +3980,10 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = state.build_index(config)?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
-        build_started.elapsed(),
+        Duration::ZERO,
     );
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?;
@@ -3814,6 +3991,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
     let context = test_grip_evidence::CompactGripContext::new(&cached.index);
     for seam in &seams {
         let evidence = test_grip_evidence::compact_evidence_for_seam(seam, &context);
+        cancellation::checkpoint()?;
         let class = seam_classification::classify_seam(seam, &evidence);
         counts.increment(class);
     }
@@ -3876,9 +4054,13 @@ where
 }
 
 /// Collect the per-file content + intent + suppressions inputs the
-/// cache key derives from. The repo exposure cold path reuses the
-/// discovered paths when building cached file facts; that build reads the
-/// files again and is refused if they changed (`OwnedWorkspaceState::build_index`).
+/// cache key derives from. Key-only callers (workspace identity, the
+/// diff-scoped reuse lookup) still need this hashing read on its own.
+/// The repo-exposure paths fold the same hash into the single-pass
+/// index build (`OwnedWorkspaceState::build_index_single_pass`,
+/// #8643) only once a fingerprint-derived key has already proved the
+/// classified cache misses; with no such key they collect here first
+/// so a warm cache hit never pays for an index build.
 ///
 /// Hashes the **same analyzable Rust file set fed to `build_index`** —
 /// production seam sources *and* test evidence sources, after the generated
@@ -3935,8 +4117,8 @@ fn collect_workspace_state_from_files(
         files: sorted_files,
         files_content_hash: builder.finish(),
         config_text: Some(classified_config_identity(config)),
-        test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
-        suppressions_text: read_optional(&root.join(config.suppressions().path())),
+        test_intent_text: read_optional(root, &Path::new(".ripr").join("test_intent.toml")),
+        suppressions_text: read_optional(root, config.suppressions().path()),
     })
 }
 
@@ -3956,8 +4138,8 @@ fn workspace_state_from_paths(
         files: sorted_files,
         files_content_hash: String::new(),
         config_text: Some(classified_config_identity(config)),
-        test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
-        suppressions_text: read_optional(&root.join(config.suppressions().path())),
+        test_intent_text: read_optional(root, &Path::new(".ripr").join("test_intent.toml")),
+        suppressions_text: read_optional(root, config.suppressions().path()),
     }
 }
 
@@ -4021,8 +4203,8 @@ fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs 
     WorkspaceKeyInputs {
         cfg_features: std::env::var("RIPR_CFG_FEATURES").ok(),
         config_text: Some(classified_config_identity(config)),
-        test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
-        suppressions_text: read_optional(&root.join(config.suppressions().path())),
+        test_intent_text: read_optional(root, &Path::new(".ripr").join("test_intent.toml")),
+        suppressions_text: read_optional(root, config.suppressions().path()),
     }
 }
 
@@ -4121,8 +4303,15 @@ fn store_corpus_fingerprint_mapping(
     }
 }
 
-fn read_optional(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+/// Identity input only (hashed, never echoed). Read through the same
+/// root-contained, regular-file, size-capped reader as the suppressions
+/// loader, so a checkout's link out of the repository, FIFO or `/dev/zero`
+/// at a config path neither feeds outside bytes into the identity nor blocks
+/// or exhausts the workspace scan (#15546).
+fn read_optional(root: &Path, relative_path: &Path) -> Option<String> {
+    crate::bounded_input::read_root_metadata_toml(root, relative_path, "workspace config")
+        .ok()
+        .flatten()
 }
 
 /// Whether the aggregate key's `\` to `/` fold is lossless for `text` when the
@@ -4367,11 +4556,27 @@ pub(crate) fn inventory_seams_from_index_checked(
     production_files: &[PathBuf],
     index: &RustIndex,
 ) -> Result<Vec<RepoSeam>, String> {
+    Ok(inventory_seams_from_index_checked_with_context(production_files, index)?.0)
+}
+
+/// [`inventory_seams_from_index_checked`] plus the field admission's grip
+/// context when admission built one, so the caller's evidence pass reuses it
+/// instead of building a second context for the same index (Wave F2a).
+pub(crate) fn inventory_seams_from_index_checked_with_context<'index>(
+    production_files: &[PathBuf],
+    index: &'index RustIndex,
+) -> Result<
+    (
+        Vec<RepoSeam>,
+        Option<test_grip_evidence::CompactGripContext<'index>>,
+    ),
+    String,
+> {
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
     rust_index::eprint_index_limit_disclosures(index);
-    seams_from_index_files(production_files, index)
+    seams_from_index_files_with_context(production_files, index)
 }
 
 /// [`inventory_seams_from_index_checked`] for tests, which are never
@@ -4423,10 +4628,27 @@ impl FileSeamIndex {
         seams_from_index_files(std::slice::from_ref(&file.to_path_buf()), &self.index)
     }
 
+    fn seams_in_file_with_context<'index>(
+        &'index self,
+        file: &Path,
+    ) -> Result<
+        (
+            Vec<RepoSeam>,
+            Option<test_grip_evidence::CompactGripContext<'index>>,
+        ),
+        String,
+    > {
+        seams_from_index_files_with_context(std::slice::from_ref(&file.to_path_buf()), &self.index)
+    }
+
     pub(crate) fn classify_in_file(&self, file: &Path) -> Result<Vec<ClassifiedSeam>, String> {
-        let seams = self.seams_in_file(file)?;
+        let (seams, shared_context) = self.seams_in_file_with_context(file)?;
         let (evidence, evidence_limitations) =
-            test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &self.index)?;
+            test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+                &seams,
+                &self.index,
+                shared_context,
+            )?;
         require_complete_evidence(&evidence_limitations, "in-file seam classification")?;
         Ok(seam_classification::classify_seams(&seams, &evidence))
     }
@@ -4575,6 +4797,19 @@ fn seams_from_index_files(
     production_files: &[PathBuf],
     index: &RustIndex,
 ) -> Result<Vec<RepoSeam>, String> {
+    Ok(seams_from_index_files_with_context(production_files, index)?.0)
+}
+
+fn seams_from_index_files_with_context<'index>(
+    production_files: &[PathBuf],
+    index: &'index RustIndex,
+) -> Result<
+    (
+        Vec<RepoSeam>,
+        Option<test_grip_evidence::CompactGripContext<'index>>,
+    ),
+    String,
+> {
     let mut seams: Vec<RepoSeam> = Vec::new();
     let admission = FieldSeamAdmission::new(index);
 
@@ -4649,7 +4884,7 @@ fn seams_from_index_files(
             && a.owner() == b.owner()
     });
 
-    Ok(seams)
+    Ok((seams, admission.into_shared_context()))
 }
 
 /// Canonical sort identity shared by the legacy full sort and the bounded
@@ -4761,6 +4996,23 @@ pub(crate) fn inventory_seams_from_index_bounded(
     index: &RustIndex,
     limit: Option<usize>,
 ) -> Result<BoundedSeamInventory, String> {
+    Ok(inventory_seams_from_index_bounded_with_context(production_files, index, limit)?.0)
+}
+
+/// [`inventory_seams_from_index_bounded`] plus the field admission's grip
+/// context when admission built one (Wave F2a; see
+/// [`inventory_seams_from_index_checked_with_context`]).
+pub(crate) fn inventory_seams_from_index_bounded_with_context<'index>(
+    production_files: &[PathBuf],
+    index: &'index RustIndex,
+    limit: Option<usize>,
+) -> Result<
+    (
+        BoundedSeamInventory,
+        Option<test_grip_evidence::CompactGripContext<'index>>,
+    ),
+    String,
+> {
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
@@ -4810,7 +5062,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
             }
         }
     }
-    Ok(collector.finish())
+    Ok((collector.finish(), admission.into_shared_context()))
 }
 
 /// Test-only entry that feeds pre-built seams through the bounded
@@ -4872,6 +5124,12 @@ impl<'a> FieldSeamAdmission<'a> {
             context: std::cell::OnceCell::new(),
             tables: std::cell::RefCell::new(BTreeMap::new()),
         }
+    }
+
+    /// The grip context admission built on first need, if any, for reuse by
+    /// the evidence pass over the admitted seams (Wave F2a).
+    fn into_shared_context(self) -> Option<test_grip_evidence::CompactGripContext<'a>> {
+        self.context.into_inner()
     }
 
     fn some_test_reads_weakly(&self, field: &str) -> bool {
@@ -4957,11 +5215,9 @@ impl<'a> FieldSeamAdmission<'a> {
         let context = self
             .context
             .get_or_init(|| test_grip_evidence::CompactGripContext::new(self.index));
-        Ok(
-            !test_grip_evidence::compact_evidence_for_seam(seam, context)
-                .missing_discriminators
-                .is_empty(),
-        )
+        let evidence = test_grip_evidence::compact_evidence_for_seam(seam, context);
+        cancellation::checkpoint()?;
+        Ok(!evidence.missing_discriminators.is_empty())
     }
 }
 
@@ -5259,6 +5515,72 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    #[test]
+    fn compact_classification_refuses_deadline_before_publication() -> Result<(), String> {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let path = PathBuf::from("src/value.rs");
+        let index = index_from_files(&[
+            (path.clone(), "pub fn value() -> i32 { 1 }"),
+            (
+                PathBuf::from("tests/value.rs"),
+                "#[test] fn reads_value() { assert_eq!(value(), 1); }",
+            ),
+        ])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        assert_eq!(seams.len(), 1);
+        let started = std::time::Instant::now();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let clock = Arc::clone(&calls);
+        let live = cancellation::AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                clock.fetch_add(1, Ordering::SeqCst);
+                started
+            }),
+        );
+        let complete = cancellation::with_token(&live, || {
+            compact_classified_seams_from_seams(&seams, &index)
+        })?;
+        assert_eq!(complete.len(), 1);
+        let consultations = calls.load(Ordering::SeqCst);
+        assert!(
+            consultations > 2,
+            "must enter the relation walk before the publication guard"
+        );
+        let clock = Arc::new(AtomicUsize::new(0));
+        let observations = Arc::clone(&clock);
+        // The last live consultation is the post-computation guard. Expire
+        // one consultation earlier, inside the compact computation, so the
+        // guard must reject an already-interrupted result.
+        let deadline = cancellation::AnalysisCancellationToken::with_budget(
+            started,
+            Duration::from_secs(1),
+            Arc::new(move || {
+                if observations.fetch_add(1, Ordering::SeqCst) >= consultations - 2 {
+                    started + Duration::from_secs(1)
+                } else {
+                    started
+                }
+            }),
+        );
+        let result = cancellation::with_token(&deadline, || {
+            compact_classified_seams_from_seams(&seams, &index)
+        });
+        assert!(
+            result.is_err(),
+            "interrupted compact evidence must not become classified output"
+        );
+        assert_eq!(
+            deadline.observed_abort(),
+            Some(cancellation::AnalysisAbortKind::DeadlineExceeded)
+        );
+        Ok(())
+    }
 
     #[test]
     fn seam_facts_cache_miss_messages_name_each_family_walk() {
@@ -6523,6 +6845,38 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
         Ok(())
     }
 
+    /// Wave F2a: inventory hands the field admission's grip context to the
+    /// evidence pass, and evidence over the shared context matches a fresh one.
+    #[test]
+    fn inventory_hands_admission_context_to_the_evidence_pass() -> Result<(), String> {
+        let source = "pub struct C {\n    count: u32,\n}\n\nimpl C {\n    pub fn new() -> Self {\n        C { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count = 2;\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn t() {\n        let mut c = C::new();\n        c.bump();\n        assert!(c.count > 0);\n    }\n}\n";
+        let path = PathBuf::from("src/counter.rs");
+        let mut index = index_from_files(&[(path.clone(), source)])?;
+        let adapter = RaRustSyntaxAdapter;
+        index.extend_tests(adapter.summarize_file(&path, source)?.tests.iter().cloned());
+        let (seams, shared_context) =
+            inventory_seams_from_index_checked_with_context(&[path], &index)?;
+        assert!(!seams.is_empty(), "the weakly read field write is admitted");
+        let shared_context =
+            shared_context.ok_or("field admission builds its grip context on first need")?;
+        let (shared_evidence, shared_limitations) =
+            test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+                &seams,
+                &index,
+                Some(shared_context),
+            )?;
+        let (fresh_evidence, fresh_limitations) =
+            test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+                &seams, &index, None,
+            )?;
+        assert_eq!(
+            format!("{shared_evidence:?}"),
+            format!("{fresh_evidence:?}")
+        );
+        assert_eq!(shared_limitations.len(), fresh_limitations.len());
+        Ok(())
+    }
+
     /// #11870: the start withholds when the owner's name is mentioned anywhere
     /// but in the placed weak read; a sibling test that does not mention it
     /// does not.
@@ -7236,6 +7590,34 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         Ok(dir)
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn identity_read_ignores_a_config_link_that_leaves_the_root() -> Result<(), String> {
+        let base = make_tempdir("identity-link-escape")?;
+        let root = base.join("repo");
+        let ripr = root.join(".ripr");
+        std::fs::create_dir_all(&ripr).map_err(|err| err.to_string())?;
+        let outside = base.join("outside.toml");
+        std::fs::write(&outside, "outside_key = 1\n").map_err(|err| err.to_string())?;
+        std::fs::write(ripr.join("inside.toml"), "inside_key = 1\n")
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&outside, ripr.join("suppressions.toml"))
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(ripr.join("inside.toml"), ripr.join("test_intent.toml"))
+            .map_err(|err| err.to_string())?;
+        let escaped = super::read_optional(&root, Path::new(".ripr/suppressions.toml"));
+        let contained = super::read_optional(&root, Path::new(".ripr/test_intent.toml"));
+        let missing = super::read_optional(&root, Path::new(".ripr/absent.toml"));
+        let _ = std::fs::remove_dir_all(&base);
+        assert_eq!(
+            escaped, None,
+            "outside bytes must not feed the workspace identity"
+        );
+        assert_eq!(contained.as_deref(), Some("inside_key = 1\n"));
+        assert_eq!(missing, None);
+        Ok(())
+    }
+
     fn write_file(path: &Path, content: &str) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -7799,6 +8181,45 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         }
         if changed.cache_key() == legacy_key {
             return Err("changed source bytes must invalidate the workspace cache key".into());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #8643: the single-pass build used on the gated fingerprint-miss
+    /// path (and by the no-cache-load entry points) folds the identical
+    /// `files_content_hash` (and therefore the identical cache key) as
+    /// the legacy two-pass collect, on a multi-file fixture and
+    /// independent of input enumeration order, with zero hash-pass
+    /// reads of its own.
+    #[test]
+    fn single_pass_build_matches_legacy_hash_key_and_order() -> Result<(), String> {
+        let root = make_tempdir("single-pass-oracle")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let config = RiprConfig::default();
+
+        let legacy_hash = super::super::seam_cache::files_content_hash(&loaded);
+        let reversed_paths: Vec<PathBuf> =
+            loaded.iter().map(|(path, _)| path.clone()).rev().collect();
+        let mut state = workspace_state_from_paths(&root, &config, reversed_paths);
+        let (built, hash_reads) =
+            super::hash_pass_source_reads::observe(|| state.build_index_single_pass(&config));
+        let _cached = built?;
+        if hash_reads != 0 {
+            return Err(format!(
+                "single-pass build must not run the hashing pass, got {hash_reads} reads"
+            ));
+        }
+        if state.files_content_hash != legacy_hash {
+            return Err(format!(
+                "single-pass hash {} must equal legacy hash {legacy_hash}",
+                state.files_content_hash
+            ));
+        }
+        let collected = collect_workspace_state(&root, &config)?;
+        if state.files != collected.files || state.cache_key() != collected.cache_key() {
+            return Err("single-pass state must match the collected state and key".into());
         }
 
         let _ = std::fs::remove_dir_all(&root);
@@ -9003,6 +9424,12 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         }
     }
 
+    /// Paths that still read the corpus twice (the counts path always, and
+    /// the full and compact paths when no fingerprint-derived key proves a
+    /// miss, so they keep the hash collect -> cache load -> build order)
+    /// refuse a source edited between the hashing read and the index build,
+    /// and store nothing from the refused run (#4996). Run unprimed, each
+    /// entry point takes that two-read order on every platform.
     #[test]
     fn a_source_edited_between_hash_and_index_reads_is_refused_and_never_cached()
     -> Result<(), String> {
@@ -9052,9 +9479,7 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
 
             // Control: the same workspace, unmoved, completes and stores.
             run_inventory_path(path, &root, &config)?;
-            if matches!(path, "full" | "compact" | "counts")
-                && !stored_inventory_entry(path, &root, &edited_key)
-            {
+            if !stored_inventory_entry(path, &root, &edited_key) {
                 return Err(format!("{path}: an unmoved build must store its entry"));
             }
             let _ = std::fs::remove_dir_all(&root);
@@ -9062,9 +9487,129 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
-    /// Issue #6758: changed-test and diff-scoped review inventory derive the
-    /// workspace key from the same streaming index read and must not run the
-    /// separate hashing pass in [`collect_workspace_state_from_files`].
+    /// The `file_fact_cache` completion carries the measured index build, on
+    /// the legacy two-pass order and on the gated single-pass order, for the
+    /// full and compact inventories. A constant-zero duration (the index
+    /// built by the caller, outside the phase) would make the pilot
+    /// `inventory.parse_index` read 0 ms whatever the build cost.
+    #[test]
+    fn file_fact_cache_phase_reports_the_measured_index_build() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
+        let config = RiprConfig::default();
+        let mut orders = vec![("full", false), ("compact", false)];
+        if cfg!(unix) {
+            orders.extend([("full", true), ("compact", true)]);
+        }
+        for (path, gated) in orders {
+            let root = make_tempdir(&format!("phase-build-{path}-{gated}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                "pub fn check(value: i32) -> bool { value > 0 }\n",
+            )?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+            if gated {
+                // Priming the fingerprint mapping proves the key misses, so
+                // the run builds single-pass before the cache load.
+                workspace_cache_key_at_with_config(&root, &config)?;
+            }
+            let (result, phases) = crate::analysis::resource_cost::record_latency_phases(|| {
+                run_inventory_path(path, &root, &config)
+            });
+            result?;
+            let completions: Vec<_> = phases
+                .iter()
+                .filter(|phase| {
+                    phase.phase == "file_fact_cache" && !phase.status.starts_with("start_")
+                })
+                .collect();
+            if completions.len() != 1 {
+                return Err(format!(
+                    "{path} gated={gated}: expected one file_fact_cache completion, got {phases:?}"
+                ));
+            }
+            if completions[0].duration.is_zero() {
+                return Err(format!(
+                    "{path} gated={gated}: file_fact_cache completion must carry the measured \
+                     index build, got a zero duration"
+                ));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    /// #8643: on the gated single-pass path there is no hash/index gap
+    /// left in which a moved source could be refused: each such run
+    /// stores under the hash of exactly the bytes it parsed, and an
+    /// edit changes that key, so a later run recomputes instead of
+    /// serving the earlier state. On the legacy (non-gated) path the
+    /// hashed and parsed bytes are the same for an unmoved corpus, so
+    /// the same stored-key expectation holds on both paths. (The
+    /// moved-source refusal itself remains pinned on the still-two-pass
+    /// diff-scoped reuse paths by
+    /// `bound_seams_persisted_hit_refuses_a_source_moved_after_hashing`.)
+    #[test]
+    fn single_pass_inventory_paths_store_under_the_parsed_bytes_key() -> Result<(), String> {
+        let _seam_limit_mutators = hold_seam_limit_mutators();
+        const ORIGINAL: &str = "pub fn check(value: i32) -> bool { value > 0 }\n";
+        const EDITED: &str = "pub fn check(value: i32) -> bool { value >= 10 }\n";
+        let config = RiprConfig::default();
+        for path in ["full", "compact", "counts"] {
+            let root = make_tempdir(&format!("single-pass-store-{path}"))?;
+            let lib = root.join("src/lib.rs");
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(&lib, ORIGINAL)?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+
+            run_inventory_path(path, &root, &config)?;
+            let original_key = collect_workspace_state(&root, &config)?.cache_key();
+            if !stored_inventory_entry(path, &root, &original_key) {
+                return Err(format!(
+                    "{path}: an unmoved build must store under its parsed-bytes key"
+                ));
+            }
+
+            write_file(&lib, EDITED)?;
+            run_inventory_path(path, &root, &config)?;
+            let edited_key = collect_workspace_state(&root, &config)?.cache_key();
+            if edited_key == original_key {
+                return Err(format!("{path}: the edit must change the workspace key"));
+            }
+            if !stored_inventory_entry(path, &root, &edited_key) {
+                return Err(format!(
+                    "{path}: the edited build must store under the new key"
+                ));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    /// Issue #6758, #8643: entry points that attempt no cache load
+    /// before the build — changed-test and diff-scoped review — derive
+    /// the workspace key from the same streaming index read and must
+    /// not run the separate hashing pass in
+    /// [`collect_workspace_state_from_files`]. The same zero-read
+    /// proof holds on the gated fingerprint-miss path of the full and
+    /// compact paths: priming only the fingerprint mapping (no
+    /// classified entry) proves the key misses, so the run must build
+    /// single-pass with zero hash-pass reads. That gate is reachable
+    /// only where `corpus_fingerprint` signs (Unix); elsewhere the
+    /// legacy hash-then-load order applies and the counts path, which
+    /// has no fingerprint key at all, always pays the hashing read.
     #[test]
     fn single_pass_inventory_entry_points_skip_hash_pass_reads() -> Result<(), String> {
         let config = RiprConfig::default();
@@ -9092,6 +9637,59 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             }
             let _ = std::fs::remove_dir_all(&root);
         }
+        #[cfg(unix)]
+        for path in ["full", "compact"] {
+            let root = make_tempdir(&format!("hash-pass-skip-gated-{path}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                "pub fn check(value: i32) -> bool { value > 0 }\n",
+            )?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+            // Prime fingerprint -> hash mapping without storing any
+            // classified entry, so the fingerprint load misses and the
+            // gated single-pass build is the only correct next step.
+            workspace_cache_key_at_with_config(&root, &config)?;
+            let (result, hash_reads) =
+                super::hash_pass_source_reads::observe(|| run_inventory_path(path, &root, &config));
+            result?;
+            if hash_reads != 0 {
+                return Err(format!(
+                    "{path}: gated single-pass build must not read sources in the hashing pass, got {hash_reads} reads"
+                ));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        // Counts has no fingerprint-derived key, so it intentionally
+        // keeps the legacy hashing read before its cache load.
+        let root = make_tempdir("hash-pass-counts-legacy")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn check(value: i32) -> bool { value > 0 }\n",
+        )?;
+        write_file(
+            &root.join("tests/basic.rs"),
+            "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+        )?;
+        let (result, hash_reads) =
+            super::hash_pass_source_reads::observe(|| run_inventory_path("counts", &root, &config));
+        result?;
+        if hash_reads == 0 {
+            return Err(
+                "counts: legacy path must run the hashing pass before its cache load".into(),
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 

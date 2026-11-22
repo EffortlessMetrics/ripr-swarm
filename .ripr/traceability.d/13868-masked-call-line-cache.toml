@@ -1,0 +1,11 @@
+# Registers the run-scoped masked call-line cache tests (#13868) under RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::masked_call_line_masks_each_file_once_per_run_at_any_size",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::masked_call_line_never_runs_without_a_matching_hop_call",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::masked_call_line_skips_calls_that_never_name_the_hop_caller",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::masked_call_line_falls_back_to_call_text_without_indexed_file",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::masked_call_line_builds_once_per_distinct_file",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::masked_call_line_returns_only_the_masked_requested_line",
+]

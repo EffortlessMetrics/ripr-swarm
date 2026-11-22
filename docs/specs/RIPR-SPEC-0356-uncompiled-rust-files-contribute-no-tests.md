@@ -21,11 +21,14 @@ Linked plan:
 Linked issues:
 
 - #8999
+- #14768 (benchmark inputs that contain module-generating syntax)
 - #14962 (tests compiled only into a target `cargo test` skips: `[lib]
   test = false`, `[[bin]] test = false`, a bin's unmet default-feature
   `required-features`)
 - #14972 (targets `cargo test` never runs: a conventional crate root under
   `autolib`/`autobins`/... `= false`, and an example's default `test = false`)
+- #15079 (`required-features` met only through another workspace member's
+  dependency on the package)
 - #15262 (a bench's default `test = false`: plain `cargo test` never builds
   or runs it)
 
@@ -67,20 +70,38 @@ provenance #7426 introduced for `src/<name>.rs` orphans) when all of these hold:
    its package's `src/lib.rs` or `src/main.rs` is indexed.
 3. No Rust source or `Cargo.toml` of the workspace mentions its file name as a
    substring anywhere (a `#[path]`, an `include!`, a `[[bench]]`/`[[test]]`/`[lib]`
-   `path`, a `build =`), no `path` attribute or key, or `include!` operand, contains a
-   backslash (escape, line continuation or separator), names compare
-   ASCII-case-insensitively, no source declares a `mod` of its stem, no source builds a `mod`
-   or `include!` operand from a macro metavariable (any `$` beside a
-   `mod`/`include` word, whatever comments or strings intervene) or passes a
-   computed `include!` operand, and the file is not a `mod.rs`.
-4. The workspace has no unresolved `include!`, and every lexical-fallback file
+   `path`, a `build =`). Names compare ASCII-case-insensitively. No source
+   declares a `mod` of its stem, and the file is not a `mod.rs`.
+4. The Rust mount-token scan finds no uncertain mount operand in another
+   indexed source, such as a macro-generated module or a computed `include!`.
+   A literal `mod` inside a macro invocation may be forwarded into an
+   out-of-line declaration.
+   A macro binding named `$mod` is an ordinary metavariable. An uncertain
+   operand inside the candidate still counts when judging other files.
+   Escaped mount operands in other sources and escaped manifest paths
+   also preserve uncertainty.
+5. The workspace has no unresolved `include!`, and every lexical-fallback file
    or unknown `#[path]` is itself unlinked: a file no root reaches never
    compiles its own declarations either.
+6. Manifest reads establish the Cargo context. A missing root manifest is
+   allowed for a standalone nested package. An unreadable or malformed
+   manifest preserves uncertainty. For a candidate's governing workspace,
+   including one nested beneath the analysis root, the bounded path inventory
+   must be covered by the index and its manifests examined. A member can use
+   `#[path]` into another member without a Cargo dependency. Explicit source
+   roots and build paths in the relevant manifests must also be covered,
+   including roots that discovery skips. For a standalone candidate package,
+   a bounded path scan must find no symlink that could hide an autodiscovered
+   Cargo root or another source spelling. Both scans skip conventional Cargo
+   build output.
 
 The executable tests registered in such a file are withheld from the index, so
 they are neither related tests nor oracles, and a parser refusal of the file
 adds no lexical-fallback limitation. The file and its functions stay indexed,
 and an owner inside it still reads as outside the module tree.
+The workspace assertion macro-binding scan omits parser-refused files with
+this source-role verdict. A parser-refused reachable or unresolved file
+retains its assertion-binding uncertainty.
 
 Any doubt keeps the file as before: it stays indexed with its tests. The
 change only removes credit; it never adds a relation, raises a class or
@@ -100,7 +121,8 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
 2. Every execution root is the `src_path` of at least one cargo metadata
    target, and `cargo test` runs none of them: each is a `lib`-family or
    `bin` target whose metadata `test` flag is false or whose
-   `required-features` are unmet under cargo defaults. The query is
+   `required-features` are unmet under the analyzed feature set (cargo
+   defaults unified across the workspace, below). The query is
    `ManifestInventory::crate_root_unit_tests_skipped`, the same metadata
    owner that already decides `[[test]] test = false` (#7265) and
    `required-features` (#7266). A skipped `[[test]]` target keeps those
@@ -138,9 +160,12 @@ file are withheld, exactly as for an uncompiled file, when all of these hold:
    `include!("gen.inc")`, and an alias such as `use std::include as inc;`
    whose `inc!` no rule could follow); a
    `path` attribute whose value is a metavariable or a non-`.rs` string
-   (`#[path = "m.txt"]`); or `mod $name` anywhere; an ordinary
-   `macro_rules!` (`($e:expr) => { $e * 2 }`) has none of those tokens and
-   is no doubt; when a source spells a mount operand with escapes (an
+   (`#[path = "m.txt"]`); or `mod $name` anywhere. A literal `mod` inside a
+   macro invocation can be forwarded or renamed. It keeps uncertainty when
+   it comes from outside the skipped ancestry, since an invocation inside
+   that ancestry cannot bring its own ancestor into another target. Plain
+   metavariable names such as `$mod` and `$include` alone add no doubt. The
+   file also keeps its tests when a source spells a mount operand with escapes (an
    `include!` operand or `path` value holding a backslash names no `.rs`
    file the scan can match, however the tokens are spaced); when any file of
    the holder's ancestry other than its skipped roots is mounted from
@@ -209,6 +234,60 @@ bench's tests.
 The withheld changed owner reads `no_static_path` like any owner without a
 running test; no named stop reason is added on this issue.
 
+### Workspace feature unification (#15079)
+
+Scope decision: ripr reads the tests of every workspace member as run, so its
+assumed build is `cargo test --workspace`, or a plain `cargo test` at a
+virtual workspace root without `workspace.default-members`. That build
+selects every member with its default features and unifies each package's
+features across them. A narrower build (`cargo test -p <member>`, a virtual
+root with `default-members`, or a plain `cargo test` at a non-virtual root,
+which tests only the root package) is outside this scope; see Known Limits. The `required-features` check (for a `[[bin]]` or a `test =
+true` `[[example]]` here, and a `[[test]]` under #7266) therefore compares
+against a member's unified set, computed from the same `cargo metadata
+--no-deps --offline` document:
+
+1. Each member starts from its own `default` closure.
+2. A normal or dev dependency of any member whose metadata `path` is a member
+   directory requests, on that member, its `features`, `default` unless
+   `default-features = false`, and every `key/feature` or `key?/feature`
+   enable among the dependent's enabled features, where `key` is the rename
+   or package name. An optional dependency counts only when the dependent's
+   enabled features name `dep:key` (metadata lists the implicit `key =
+   ["dep:key"]` feature when no `dep:` syntax hides it) or a `key/feature`
+   enable; an explicit feature that only shares the dependency's name does
+   not activate it. For an optional dependency, a strong `key/feature` enable also
+   activates the dependent's own feature named `key` when present. A required
+   dependency can share a local feature's name without activating it. A weak
+   `key?/feature` leaves local activation unchanged. Requests expand through the receiving member's
+   feature table, and the pass repeats until no set grows, so a chain
+   through several members resolves.
+3. A build dependency does not count: under resolver 2 its features are
+   built apart from the target build that runs the tests. A platform-specific
+   (`[target.'cfg(..)'.dependencies]`) edge does not count either: ripr does
+   not evaluate the cfg, so the edge keeps the base reading. Nor does an
+   edge from another member into a proc-macro member: cargo builds that
+   proc-macro for the host, so the features requested on it, and what they
+   chain onward, never reach the tested build. A proc-macro member's own
+   features still count, since `cargo test` builds it as a tested root.
+4. Doubt fails toward no skip. A dependency entry whose `path` names a
+   member but whose other fields cannot be read, or a member's unreadable
+   `features` table, puts that member in doubt; a `dependencies` field that
+   is not an array, or an entry whose `path` is present but not a string,
+   puts every member in doubt, since the entry's member is unknown. A target
+   of a member in doubt establishes no `required-features` skip, unless its
+   own `required-features` value is malformed, which still fails closed as
+   before. The doubt carries over an edge whose request
+   depends on the doubtful member's features: an optional edge, or one its
+   feature table chains through (`dep:key`, `key/feature`, `key?/feature`).
+
+This only re-admits a target Cargo builds in that workspace build: a request
+for another feature, an inactive optional edge, a chain the dependent leaves
+off, a build dependency, a platform-specific edge and a request that
+reaches the bin only through a proc-macro member's host build keep the
+skip. The query and its owner do not
+change.
+
 ## Required Evidence
 
 - Positive: a haystack `#[test]` is not a related test of the changed owner,
@@ -218,6 +297,18 @@ running test; no named stop reason is added on this issue.
   `include!`, by a same-stem `mod`, below a macro that builds `mod` operands,
   or beside a lexical-fallback crate root keeps its tests; so does a package
   whose crate root is not indexed.
+- A benchmark input with module-generating syntax in its own text stays out
+  of related tests and assertion refusals. A declared `[[test]]`
+  target and a `#[path]` module keep the same unusual path as related evidence.
+- A sibling member outside Draft selection, a literal `mod` forwarded by a
+  declared target's macro, and an unreadable or malformed root Cargo manifest
+  each preserve the potential test in the shared source-role pass.
+- A nested governing workspace and a declared test root under `target/` also
+  preserve possible mounts. Removing the declared target restores the data-only
+  verdict with the same generated-output directory on disk.
+- An autodiscovered test symlink in a standalone package keeps its source
+  eligible as related evidence. Removing the alias restores the data-only
+  verdict in Draft, Fast and Deep.
 - Skipped targets (#14962): `[lib] test = false` unit tests, in the root or a
   child module, and `[[bin]] test = false` unit tests do not credit a
   discriminator (nor, as before, a `[[test]] test = false` target), while
@@ -258,13 +349,25 @@ running test; no named stop reason is added on this issue.
   discriminator in every mode except `instant`, as on base (#14972
   review).
 
+- Feature unification (#15079): a `[[bin]]` whose required feature only a
+  member's renamed dev dependency, a normal dependency, a default-enabled
+  `a/special` chain, an enabled optional dependency or a chain through a
+  third member requests reads `exposed` with its test related, as do a
+  `[[test]]` target and a `test = true` example under the same request. A
+  `workspace = true` inherited edge, a self dev dependency and an old-style
+  `x = ["a"]` enable of an optional dependency also read `exposed`, as do
+  a proc-macro member's own request, a proc-macro requester's chain through
+  a normal member, and a strong `a/other` chain that turns on the
+  dependent's feature `a = ["dep:a", "a/special"]`. A
+  request for another feature, no request, a chain behind a feature left
+  off, an inactive optional or weak `a?/special` edge, an explicit feature
+  that only shares the optional dependency's name, a build dependency, a
+  `cfg(windows)` edge, a request into a proc-macro member that chains to
+  `a/special`, and a strong-chain dependent whose `x` nothing enables keep
+  the skip.
+
 ## Known Limits
 
-- A parser-refused file still makes the workspace-wide macro-binding scan
-  ambiguous when it spells `assert_eq!`, so a finding can stay
-  `static_unknown` with `rust_assertion_context_unresolved` (fail closed,
-  disclosed); it does not become a related test or a limitation. A follow-up
-  can let the scan skip never-compiled files.
 - Only the `.rs` file name is matched, not its directory: another file of the
   same name that is referenced keeps every same-named file (more doubt).
 - Build scripts that write sources into the tree, `cargo script` files and
@@ -311,14 +414,11 @@ running test; no named stop reason is added on this issue.
   `test = false` lib or bin, a bench, or an undiscovered test file) keeps
   its credit, as on base. The same mount through `#[path]` is an indexed
   edge, so the skipped holder is seen and the credit is withheld.
-- Undiscovered and example targets, under-credit (#14972 review): the
-  `required-features` check reads only the package's own default feature
-  closure, the same owner bins use (#7266). A `test = true` example (or a
-  `[[bin]]`) whose required feature is enabled only through another
-  workspace member's dependency edge (`a = { path = "../a", features =
-  ["special"] }`) runs under a workspace `cargo test` by feature
-  unification, but reads as skipped here and loses its credit. Tracked for
-  both target kinds in #15079.
+- Undiscovered and example targets (#14972 review, resolved by #15079): the
+  `required-features` check of a `test = true` example uses the same
+  workspace-unified feature set as bins and `[[test]]` targets, so an
+  example whose required feature only another member's dependency edge
+  enables keeps its credit (see Workspace feature unification).
 - `autolib` needs Cargo 1.83 or later; an older Cargo ignores the key and
   lists the library, which keeps the credit.
 - Undiscovered and example targets, over-credit (#14972 review): cargo
@@ -326,6 +426,19 @@ running test; no named stop reason is added on this issue.
   harness = false` or a `[[bin]] harness = false` reads as a running target,
   and its `#[test]` functions keep their credit on base and here alike,
   although the harness-less binary runs none of them.
+- Feature unification (#15079), under-credit kept from #7266: a resolver 1
+  workspace also unifies build-dependency features; a non-member path
+  dependency or a `[patch]` entry can request a member's features where
+  `--no-deps` metadata does not show it; and a platform-specific edge whose
+  cfg matches the host (`cfg(unix)` on Linux) does request its features.
+  Those targets stay skipped, as on base.
+- Feature unification (#15079), over-credit outside the assumed scope: a
+  narrower build skips a target this rule re-admits. That covers a
+  per-package run (`cargo test -p a`), a virtual root with
+  `workspace.default-members` that leaves the requesting member out, a
+  plain `cargo test` at a non-virtual root (only the root package is
+  tested), and a `.cargo/config.toml` that narrows unification
+  (`resolver.feature-unification = "package"`), which is not read.
 
 ## Non-Goals
 
@@ -358,6 +471,9 @@ running test; no named stop reason is added on this issue.
   `mount_operand_doubt_needs_a_dynamic_mount_operand` (#14962 review).
 - `crates/ripr/src/analysis/seam_inventory.rs`:
   `reuse_reviving_cargo_test_skipped_tests_matches_fresh` (#14962).
+- `crates/ripr/tests/workspace_feature_unification.rs` (#15079).
+- `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
+  `workspace_features_unify_member_requests_and_record_doubt` (#15079).
 
 ## Implementation Mapping
 
@@ -366,8 +482,10 @@ running test; no named stop reason is added on this issue.
 - `crates/ripr/src/analysis/facts/role_composition.rs`:
   `files_outside_module_tree`, `withhold_tests_outside_module_tree`,
   `files_in_skipped_unit_test_targets` (#14962).
+- `crates/ripr/src/analysis/classify/owner_pin.rs`: `scan_macro_sites` (#14768).
 - `crates/ripr/src/analysis/workspace/cargo_targets.rs`:
-  `ManifestInventory::crate_root_unit_tests_skipped` (#14962).
+  `ManifestInventory::crate_root_unit_tests_skipped` (#14962),
+  `workspace_enabled_features` (#15079).
 
 ## Metrics
 

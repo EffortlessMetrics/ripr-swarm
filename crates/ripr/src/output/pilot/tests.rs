@@ -63,6 +63,7 @@ fn missing() -> MissingDiscriminatorFact {
 
 fn related_test() -> RelatedTestGrip {
     RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "below_threshold_has_no_discount".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -4350,10 +4351,30 @@ fn changed(file: &str, line: usize) -> PilotCurrentChange {
 }
 
 fn changed_lines(lines: &[(&str, usize)]) -> PilotCurrentChange {
-    let diff = lines
-        .iter()
-        .map(|(file, line)| one_line_diff(file, *line))
-        .collect::<String>();
+    // One section per file, as git writes it: a path repeated across sections
+    // is a patch series whose coordinates the parser refuses (#15268).
+    let mut diff = String::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for (file, _) in lines {
+        if seen.contains(file) {
+            continue;
+        }
+        seen.push(file);
+        let mut hunks = lines
+            .iter()
+            .filter(|(other, _)| other == file)
+            .map(|(_, line)| *line)
+            .collect::<Vec<_>>();
+        hunks.sort_unstable();
+        hunks.dedup();
+        let mut section = one_line_diff(file, hunks[0]);
+        for line in &hunks[1..] {
+            let full = one_line_diff(file, *line);
+            let hunk_start = full.find("@@").unwrap_or(0);
+            section.push_str(&full[hunk_start..]);
+        }
+        diff.push_str(&section);
+    }
     PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), &diff)
 }
 

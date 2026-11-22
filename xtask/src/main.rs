@@ -74,6 +74,7 @@ mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
 mod policy_root;
+pub(crate) use policy::parse_clippy_lints_ledger;
 #[cfg(test)]
 pub(crate) use policy::parse_workspace_lints_section;
 pub(crate) use policy_root::{
@@ -160,27 +161,27 @@ pub(crate) use dogfood::{
     DogfoodReportPacketIndexRun, DogfoodRun, DogfoodSurfaceProjectionAlignmentRun,
     DogfoodTypescriptPreviewRepairLoopRun, DogfoodTypescriptPreviewRepairLoopScenario,
     DogfoodUserSurfaceProjectionRun, GENERATED_CI_COCKPIT_COMMAND,
-    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
-    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR,
-    TypeScriptBunUbCalibrationCase, artifact_router_path_violation,
-    bun_ub_calibration_report_markdown, bun_ub_calibration_report_value,
-    bun_ub_preview_summary_markdown, bun_ub_preview_summary_report_value,
-    configured_bridge_inventory_markdown, configured_bridge_inventory_report_value,
-    cross_language_oracle_graph_cases, cross_language_oracle_graph_corpus_path,
-    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
-    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
-    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families,
-    dogfood_first_action_run, dogfood_first_action_scenarios, dogfood_first_pr_metrics,
-    dogfood_first_pr_run, dogfood_first_pr_scenarios, dogfood_gate_adoption_run,
-    dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
-    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
-    dogfood_push_python_ranked_findings_json, dogfood_python_no_action_eval_scenarios,
-    dogfood_python_ranked_findings, dogfood_python_real_repo_eval_scenarios,
-    dogfood_python_static_limit_eval_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios, dogfood_report_status,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
+    GENERATED_CI_PACKET_INDEX_REPAIR, TypeScriptBunUbCalibrationCase,
+    artifact_router_path_violation, bun_ub_calibration_report_markdown,
+    bun_ub_calibration_report_value, bun_ub_preview_summary_markdown,
+    bun_ub_preview_summary_report_value, configured_bridge_inventory_markdown,
+    configured_bridge_inventory_report_value, cross_language_oracle_graph_cases,
+    cross_language_oracle_graph_corpus_path, dogfood_bun_ub_cross_language_scenarios,
+    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
+    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
+    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_first_action_run,
+    dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
+    dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_result, dogfood_generated_ci_cockpit_run_from_surfaces,
+    dogfood_language_preview_run, dogfood_language_preview_scenarios,
+    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+    dogfood_push_python_quality_ratio_json, dogfood_push_python_ranked_findings_json,
+    dogfood_python_no_action_eval_scenarios, dogfood_python_ranked_findings,
+    dogfood_python_real_repo_eval_scenarios, dogfood_python_static_limit_eval_scenarios,
+    dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
+    dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_typescript_false_actionable_audit_summary,
     dogfood_typescript_preview_repair_loop_scenarios, finding_alignment_verify_command_is_missing,
     front_panel_case_inputs, json_number_after, parse_bun_ub_preview_summary_args,
@@ -335,9 +336,10 @@ use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist,
     check_cli_exit_contract, check_covered_by, check_doc_roles, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
-    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
+    check_no_panic_family, check_package_content, check_packaged_readme,
+    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
+    check_release_targets, check_static_language, check_text_encoding, check_user_text,
+    check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -6138,6 +6140,7 @@ fn check_allow_attributes_impl() -> Result<(), String> {
     let guarded = guarded_allow_attribute_lints();
     let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
 
+    let mut violations = Vec::new();
     for path in tracked_files()? {
         if !path.ends_with(".rs") {
             continue;
@@ -6147,6 +6150,17 @@ fn check_allow_attributes_impl() -> Result<(), String> {
             continue;
         }
         let text = read_text_lossy(file_path)?;
+        // Fixture inputs model other crates and do not inherit the workspace lints.
+        if !is_fixture_path(&path)
+            && !path.starts_with("crates/ripr/tests/fixtures/")
+            && !path.starts_with("tools/repo-policy/tests/fixtures/")
+        {
+            for (line, lint) in unguarded_allows_without_reason(&text, &guarded) {
+                violations.push(format!(
+                    "{path}:{line} allow({lint}) needs a written reason"
+                ));
+            }
+        }
         for (line, attribute) in guarded_allow_attributes_in_text(&text, &guarded) {
             counts
                 .entry((path.clone(), attribute))
@@ -6155,7 +6169,9 @@ fn check_allow_attributes_impl() -> Result<(), String> {
         }
     }
 
-    let violations = allow_attribute_budget_violations(&allowlist, &counts, &guarded);
+    violations.extend(allow_attribute_budget_violations(
+        &allowlist, &counts, &guarded,
+    ));
 
     finish_policy_report(
         PolicyReportSpec {
@@ -14674,7 +14690,7 @@ fn check_architecture() -> Result<(), String> {
             ],
             rerun_command: "cargo xtask check-architecture",
             exception_template: Some(
-                "glob|forbidden_pattern|reason\n!path|forbidden_pattern|reason (scoped exception: a literal tracked-file path, never a glob; suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)",
+                "glob|forbidden_pattern|reason\n!path|forbidden_pattern|reason (scoped exception: a literal tracked-file path, never a glob; suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)\n!cfg(test):path|forbidden_pattern|reason (only inside top-level #[cfg(test)] items)",
             ),
         },
         &violations,
@@ -14691,7 +14707,8 @@ fn check_architecture() -> Result<(), String> {
 /// (#4146). An exception that suppresses nothing is itself a violation,
 /// mirroring the count-policy stale/orphan convention (#2413): exception
 /// budget that matches nothing is invisible slack, so the entry must be
-/// removed or the denied usage restored.
+/// removed or the denied usage restored. The `!cfg(test):path` form counts
+/// only occurrences inside parser-identified top-level test items.
 fn architecture_rule_violations(
     records: &[Vec<String>],
     file_texts: &[(String, String)],
@@ -14712,18 +14729,26 @@ fn architecture_rule_violations(
             if !glob_matches(glob, path) || !text.contains(forbidden) {
                 continue;
             }
-            let exception_index =
-                exceptions
-                    .iter()
-                    .position(|(exception_path, exception_pattern, _)| {
-                        exception_pattern == forbidden && exception_path == path
-                    });
-            match exception_index {
-                Some(index) => suppressed[index] = true,
-                None => violations.push(format!(
-                    "{path} contains forbidden architecture pattern `{forbidden}`\n  reason: {reason}"
-                )),
+            if let Some(index) = exceptions.iter().position(|(selector, pattern, _)| {
+                pattern == forbidden
+                    && selector.strip_prefix("cfg(test):").unwrap_or(selector) == path
+            }) {
+                if !exceptions[index].0.starts_with("cfg(test):") {
+                    suppressed[index] = true;
+                    continue;
+                }
+                // The parser scans malformed source verbatim. A production match
+                // still fails even when another match uses the test exception.
+                let production = rust_region_scan::production_text_regions(text);
+                let production_count = production.text.matches(forbidden).count();
+                suppressed[index] = production_count < text.matches(forbidden).count();
+                if production_count == 0 {
+                    continue;
+                }
             }
+            violations.push(format!(
+                "{path} contains forbidden architecture pattern `{forbidden}`\n  reason: {reason}"
+            ));
         }
     }
 
@@ -14899,47 +14924,95 @@ mod architecture_rule_tests {
     }
 
     #[test]
-    fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
+    fn cli_exceptions_allow_test_fixtures_and_imports_but_reject_production_imports()
     -> Result<(), String> {
         let policy_path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../policy/architecture.txt");
         let records =
             super::read_pipe_records(super::path_to_utf8(&policy_path, "architecture policy")?, 3)?;
-        let required_paths = [
-            "crates/ripr/src/output/**",
-            "!crates/ripr/src/output/first_pr.rs",
+        let paths = [
+            "crates/ripr/src/app/impacted_evidence.rs",
+            "crates/ripr/src/app/pr_evidence.rs",
+            "crates/ripr/src/app/pr_summary/mod.rs",
+            "crates/ripr/src/app/ripr_plus.rs",
+            "crates/ripr/src/output/first_pr.rs",
         ];
         let records = records
             .into_iter()
             .filter(|record| {
-                required_paths.contains(&record[0].as_str()) && record[1] == "crate::cli"
+                let selector = record[0].as_str();
+                record[1] == "crate::cli"
+                    && (matches!(
+                        selector,
+                        "crates/ripr/src/app/**" | "crates/ripr/src/output/**"
+                    ) || selector
+                        .strip_prefix("!cfg(test):")
+                        .or_else(|| selector.strip_prefix('!'))
+                        .is_some_and(|path| paths.contains(&path)))
             })
             .collect::<Vec<_>>();
-        for path in required_paths {
+        let fixture = r#"#[cfg(test)] mod tests {
+            const FIXTURE: &str = "use crate::cli::parse_options;";
+            use crate::cli::parse_options;
+        }"#;
+        let files = paths.map(|path| (path.to_owned(), fixture.to_owned()));
+        assert_eq!(
+            architecture_rule_violations(&records, &files),
+            Vec::<String>::new()
+        );
+
+        // Same bytes on the same line after the item's closing brace.
+        for (index, path) in paths.iter().enumerate() {
+            let mut mixed = files.clone();
+            mixed[index].1.push_str(" use crate::cli::parse_options;");
+            let violations = architecture_rule_violations(&records, &mixed);
+            assert_eq!(violations.len(), 1, "{path}: {violations:?}");
             assert!(
-                records.iter().any(|record| record[0] == path),
-                "policy/architecture.txt must retain {path}|crate::cli"
+                violations[0].starts_with(&format!(
+                    "{path} contains forbidden architecture pattern `crate::cli`"
+                )),
+                "{violations:?}"
             );
         }
-        let violations = architecture_rule_violations(
-            &records,
-            &[
-                (
-                    "crates/ripr/src/output/first_pr/options.rs".to_string(),
-                    "use crate::cli::unknown_argument;".to_string(),
-                ),
-                (
-                    "crates/ripr/src/output/first_pr.rs".to_string(),
-                    "crate::cli::commands::first_pr::first_pr(args)".to_string(),
-                ),
-            ],
-        );
+
+        let mut with_sibling = files.to_vec();
+        let sibling = "crates/ripr/src/output/first_pr/options.rs";
+        with_sibling.push((sibling.to_owned(), fixture.to_owned()));
+        let violations = architecture_rule_violations(&records, &with_sibling);
         assert_eq!(violations.len(), 1, "{violations:?}");
-        assert!(
-            violations[0].contains("first_pr/options.rs"),
-            "{violations:?}"
-        );
+        assert!(violations[0].contains(sibling), "{violations:?}");
         Ok(())
+    }
+
+    #[test]
+    fn test_exception_requires_a_match_in_a_parsed_test_item() {
+        let records = [
+            record(BROAD_RULE),
+            record(&format!(
+                "!cfg(test):{RUNNER_TESTS_PATH}|crate::output|test fixture"
+            )),
+        ];
+        for source in [
+            "// #[cfg(test)]\nuse crate::output;",
+            "#[cfg(any(test, unix))] use crate::output;",
+            "#[cfg(test)] mod broken { use crate::output;",
+        ] {
+            let violations = architecture_rule_violations(
+                &records,
+                &[(RUNNER_TESTS_PATH.to_owned(), source.to_owned())],
+            );
+            assert_eq!(violations.len(), 2, "{source}: {violations:?}");
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("forbidden architecture pattern")),
+                "{violations:?}"
+            );
+            assert!(
+                violations.iter().any(|v| v.contains("is stale")),
+                "{violations:?}"
+            );
+        }
     }
 }
 
@@ -17468,77 +17541,9 @@ fn missing_anchor_violation(
     ))
 }
 
-/// The anchor GitHub gives a heading whose text is `text`.
-///
-/// GitHub lowercases the text, turns each space into `-`, and drops every other
-/// character that is not a letter, digit, `_` or `-`. Dropping rather than
-/// collapsing is load-bearing: an em-dash or a slash surrounded by spaces
-/// leaves both of those spaces behind and so produces a doubled dash, which
-/// links into this repository's own headings depend on.
-fn heading_slug(text: &str) -> String {
-    let mut slug = String::new();
-    for ch in text.chars() {
-        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
-            slug.extend(ch.to_lowercase());
-        } else if ch == ' ' {
-            slug.push('-');
-        }
-    }
-    slug
-}
-
-/// Every anchor the headings of `text` offer.
-///
-/// Headings that slugify the same way are numbered the way GitHub numbers them:
-/// the first keeps the bare slug and later ones gain `-1`, `-2`, and so on.
-fn heading_slugs(text: &str) -> BTreeSet<String> {
-    let mut slugs = BTreeSet::new();
-    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
-    let mut in_fence = false;
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        let Some(title) = atx_heading_title(trimmed) else {
-            continue;
-        };
-        let base = heading_slug(title);
-        let count = seen.entry(base.clone()).or_insert(0);
-        let slug = if *count == 0 {
-            base
-        } else {
-            format!("{base}-{count}")
-        };
-        *count += 1;
-        slugs.insert(slug);
-    }
-    slugs
-}
-
-/// The heading text of an ATX heading line, or `None` when `trimmed` is not one.
-fn atx_heading_title(trimmed: &str) -> Option<&str> {
-    let rest = trimmed.trim_start_matches('#');
-    let level = trimmed.len() - rest.len();
-    if level == 0 || level > 6 {
-        return None;
-    }
-    if !rest.is_empty() && !rest.starts_with(' ') {
-        // `#hashtag` is body text, not a heading.
-        return None;
-    }
-    let title = rest.trim();
-    // A closing sequence of hashes is decoration when a space precedes it.
-    let without_closing = title.trim_end_matches('#');
-    if without_closing.len() < title.len() && without_closing.ends_with(' ') {
-        return Some(without_closing.trim_end());
-    }
-    Some(title)
-}
+#[cfg(test)]
+use repo_policy::markdown_headings::heading_slug;
+use repo_policy::markdown_headings::heading_slugs;
 
 fn next_checkpoints_from_capabilities(text: &str) -> Result<Vec<String>, String> {
     let mut checkpoints = Vec::new();
@@ -18267,123 +18272,6 @@ fn is_deletion_only(change: &ChangedPath) -> bool {
             .statuses
             .iter()
             .all(|status| status.chars().all(|character| character == 'D'))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LedgerLintEntry {
-    name: String,
-    level: String,
-    activate_when_msrv: Option<String>,
-    reason: Option<String>,
-    blocked_by: Option<String>,
-    block_line: usize,
-    is_planned: bool,
-}
-
-/// Parse `[[active.<group>]]` and `[[planned]]` blocks out of
-/// `policy/clippy-lints.toml`. Returns the entries in source order.
-fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) {
-    let mut entries = Vec::new();
-    let mut violations = Vec::new();
-    let mut current: Option<LedgerLintEntry> = None;
-
-    fn flush(
-        current: &mut Option<LedgerLintEntry>,
-        entries: &mut Vec<LedgerLintEntry>,
-        violations: &mut Vec<String>,
-    ) {
-        if let Some(entry) = current.take() {
-            if entry.name.is_empty() {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} entry missing required `name`",
-                    entry.block_line
-                ));
-                return;
-            }
-            if entry.level.is_empty() {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} entry `{}` missing required `level`",
-                    entry.block_line, entry.name
-                ));
-                return;
-            }
-            entries.push(entry);
-        }
-    }
-
-    for (index, raw) in text.lines().enumerate() {
-        let line_number = index + 1;
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("[[") {
-            let header = rest.trim_end_matches(']').trim_end_matches('[').trim();
-            // Only reset when we cross into a new array-of-tables that
-            // matters to the lint policy. Other top-level tables (like
-            // `[policy]`) are flushed too so the next array-of-tables starts
-            // clean.
-            flush(&mut current, &mut entries, &mut violations);
-            let is_active = header.starts_with("active.");
-            let is_planned = header == "planned";
-            if is_active || is_planned {
-                current = Some(LedgerLintEntry {
-                    name: String::new(),
-                    level: String::new(),
-                    activate_when_msrv: None,
-                    reason: None,
-                    blocked_by: None,
-                    block_line: line_number,
-                    is_planned,
-                });
-            }
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            // Plain table header (e.g. `[policy]`); not a lint entry.
-            flush(&mut current, &mut entries, &mut violations);
-            continue;
-        }
-        let Some(entry) = current.as_mut() else {
-            continue;
-        };
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = raw_value.trim();
-        let unquoted = unquote_toml_basic_string(value);
-        match key {
-            "name" => {
-                if let Some(name) = unquoted {
-                    entry.name = name;
-                }
-            }
-            "level" => {
-                if let Some(level) = unquoted {
-                    entry.level = level;
-                }
-            }
-            "activate_when_msrv" => {
-                if let Some(msrv) = unquoted {
-                    entry.activate_when_msrv = Some(msrv);
-                }
-            }
-            "reason" => {
-                if let Some(reason) = unquoted {
-                    entry.reason = Some(reason);
-                }
-            }
-            "blocked_by" => {
-                if let Some(blocked_by) = unquoted {
-                    entry.blocked_by = Some(blocked_by);
-                }
-            }
-            _ => {}
-        }
-    }
-    flush(&mut current, &mut entries, &mut violations);
-    (entries, violations)
 }
 
 /// Strip the `clippy::` prefix from a ledger-style lint name so it can be
@@ -21854,6 +21742,8 @@ pub(crate) fn read_file_policy_test_commands(
             (None, entry.covered_by),
             (Some(FilePolicyHost::Unix), entry.covered_by_unix),
             (Some(FilePolicyHost::Windows), entry.covered_by_windows),
+            (Some(FilePolicyHost::Linux), entry.covered_by_linux),
+            (Some(FilePolicyHost::Macos), entry.covered_by_macos),
         ] {
             for command in values.unwrap_or_default() {
                 if is_cargo_test_command(&command) {
@@ -21873,18 +21763,31 @@ impl FilePolicyHost {
     fn parse(family: &str) -> Result<Self, String> {
         match family {
             "unix" => Ok(Self::Unix),
+            "linux" => Ok(Self::Linux),
+            "macos" => Ok(Self::Macos),
             "windows" => Ok(Self::Windows),
             _ => Err(format!("unsupported file-policy host family `{family}`")),
         }
     }
 
     fn current() -> Result<Self, String> {
-        Self::parse(std::env::consts::FAMILY)
+        Self::parse(match std::env::consts::OS {
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => std::env::consts::FAMILY,
+        })
+    }
+
+    /// Whether this declared scope includes the executing host.
+    fn applies_to(self, host: Self) -> bool {
+        self == host || (self == Self::Unix && matches!(host, Self::Linux | Self::Macos))
     }
 
     fn name(self) -> &'static str {
         match self {
             Self::Unix => "unix",
+            Self::Linux => "linux",
+            Self::Macos => "macos",
             Self::Windows => "windows",
         }
     }
@@ -21972,7 +21875,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                     "classification" => entry.classification = Some(scalar()?),
                     "reason" => entry.reason = Some(scalar()?),
                     "generated_by" => entry.generated_by = Some(scalar()?),
-                    "covered_by" | "covered_by_unix" | "covered_by_windows" => {
+                    "covered_by" | "covered_by_unix" | "covered_by_windows"
+                    | "covered_by_linux" | "covered_by_macos" => {
                         let array_error = || {
                             format!(
                                 "{path}:{field_line} non-Rust allowlist `{key}` requires a string array"
@@ -21993,6 +21897,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                         match key {
                             "covered_by_unix" => entry.covered_by_unix = Some(commands),
                             "covered_by_windows" => entry.covered_by_windows = Some(commands),
+                            "covered_by_linux" => entry.covered_by_linux = Some(commands),
+                            "covered_by_macos" => entry.covered_by_macos = Some(commands),
                             _ => entry.covered_by = Some(commands),
                         }
                     }
@@ -22077,6 +21983,8 @@ fn validate_file_policy_allow_entry(
     for (field, commands) in [
         ("covered_by_unix", &entry.covered_by_unix),
         ("covered_by_windows", &entry.covered_by_windows),
+        ("covered_by_linux", &entry.covered_by_linux),
+        ("covered_by_macos", &entry.covered_by_macos),
     ] {
         if let Some(commands) = commands
             && (commands.is_empty() || commands.iter().any(|value| !is_cargo_test_command(value)))
@@ -22173,6 +22081,85 @@ fn guarded_allow_attribute_lints() -> BTreeSet<&'static str> {
     ]
     .into_iter()
     .collect()
+}
+
+/// Inspect actual Rust attributes, including each suppression inside cfg_attr.
+/// Comments, example source strings and sibling attributes cannot supply a reason.
+fn unguarded_allows_without_reason(
+    text: &str,
+    guarded: &BTreeSet<&'static str>,
+) -> Vec<(usize, String)> {
+    let mut findings = Vec::new();
+    if !text.contains("allow") {
+        return findings;
+    }
+    let parsed = SourceFile::parse(text, Edition::CURRENT);
+    for meta in parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTreeMeta::cast)
+    {
+        if let (Some(path), Some(args)) = (meta.path(), meta.token_tree()) {
+            inspect_allow_arguments(&path.to_string(), &args, text, guarded, &mut findings);
+        }
+    }
+    findings
+}
+
+fn inspect_allow_arguments(
+    name: &str,
+    args: &ast::TokenTree,
+    text: &str,
+    guarded: &BTreeSet<&'static str>,
+    findings: &mut Vec<(usize, String)>,
+) {
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    if !matches!(name, "allow" | "cfg_attr") {
+        return;
+    }
+    let tokens: Vec<_> = args
+        .syntax()
+        .children_with_tokens()
+        .filter(|token| {
+            !token.kind().is_trivia()
+                && !matches!(token.kind(), SyntaxKind::L_PAREN | SyntaxKind::R_PAREN)
+        })
+        .collect();
+    let parts = tokens.split(|token| token.kind() == SyntaxKind::COMMA);
+    // The parser exposes a raw-identifier cfg_attr as an ordinary token tree.
+    // Its first argument is a predicate. Each remaining argument is a separate attribute.
+    if name == "cfg_attr" {
+        for part in parts.skip(1) {
+            if let [key, tree] = part
+                && let Some(group) = tree.as_node().cloned().and_then(ast::TokenTree::cast)
+            {
+                inspect_allow_arguments(&key.to_string(), &group, text, guarded, findings);
+            }
+        }
+        return;
+    }
+    if parts.clone().any(|part| matches!(part, [key, eq, value]
+            if matches!(key.to_string().as_str(), "reason" | "r#reason") && eq.kind() == SyntaxKind::EQ && value.kind() == SyntaxKind::STRING)) {
+            return;
+        }
+    for part in parts {
+        if part.is_empty()
+            || !part.iter().all(|t| {
+                matches!(
+                    t.kind(),
+                    SyntaxKind::IDENT | SyntaxKind::COLON | SyntaxKind::COLON2
+                )
+            })
+        {
+            continue;
+        }
+        let lint: String = part.iter().map(ToString::to_string).collect();
+        if !guarded.contains(lint.as_str()) {
+            let offset = usize::from(args.syntax().text_range().start());
+            findings.push((byte_line_number(text, offset), lint));
+        }
+    }
 }
 
 fn guarded_allow_attributes_in_text(
@@ -22946,6 +22933,26 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("benchmarks/agentic/cohort/harness/") && path.ends_with(".py") {
         return Some(
             "Opt-in agent cohort harness drives headless `claude -p` sessions and scores hidden mutants with stdlib Python; it is never on the default CI path (#12902).",
+        );
+    }
+
+    if matches!(
+        path,
+        "benchmarks/mutation_spot_check/run_python_calibration.py"
+            | "benchmarks/mutation_spot_check/test_run_python_calibration.py"
+    ) {
+        return Some(
+            "Bounded Python real-mutant calibration must run the authored subjects' own pytest suites with the subject interpreter and drive ripr check --diff per mutant; it is stdlib-only, never on the default CI path, and its receipt is re-derived by the Rust-owned python_calibration tests (#12901).",
+        );
+    }
+
+    if matches!(
+        path,
+        "tools/python/installed-wheel-identity/verify_installed_wheel.py"
+            | "tools/python/installed-wheel-identity/test_verify.py"
+    ) {
+        return Some(
+            "The package smoke checks the pip environment's own scripts directory without a checkout or xtask; its stdlib verifier and substitution controls run on the existing release rehearsal (#4624).",
         );
     }
 

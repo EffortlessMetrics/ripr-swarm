@@ -787,6 +787,9 @@ canonical gap when distinct attempt-instance evidence is available. Generated
 `attempt_id` values include the outcome timestamp, receipt artifact path, or
 targeted-test-outcome artifact path when present so repeated unchanged,
 regressed, no-receipt, and improved attempts remain visible as durable history.
+Distinct receipt paths that fold to the same generated ID retain separate history
+rows on replay. If a prior ledger disagrees with its own registered attempt IDs or
+counts, the refresh reports unavailable history before writing a replacement.
 
 No provider SDK, mutation executor, generated-test writer, PR/CI renderer,
 LSP/editor feature, gate policy, or public badge change belongs to this spec.

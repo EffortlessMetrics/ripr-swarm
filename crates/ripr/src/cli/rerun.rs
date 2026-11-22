@@ -37,11 +37,16 @@ struct RerunOptions {
     check_parity: bool,
 }
 
+/// The `ripr rerun --json` report version, published as
+/// `schemas/ripr/rerun.schema.json` and pinned there by the output-contract
+/// version gate (#3920).
+const TARGETED_RERUN_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
+
 /// The `ripr rerun --json` refusal envelope keys its document with the
-/// targeted rerun report's schema version (#7331). Owner: the
-/// `TargetedRerunReport.schema_version` literal in the report construction
-/// (pinned by the output-contract version gate), mirrored here because the
-/// report value exists only on the success path.
+/// targeted rerun report's schema version (#7331). The version gate checks
+/// this constant and `TARGETED_RERUN_SCHEMA_VERSION` each against its own
+/// published schema and documentation row; it does not compare the two, so a
+/// report-only version bump must update this mirror by hand.
 const TARGETED_RERUN_REFUSAL_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1420,7 +1425,7 @@ fn report(
     scope_limitations: Vec<TargetedRerunScopeLimitation>,
 ) -> TargetedRerunReport {
     TargetedRerunReport {
-        schema_version: "ripr-targeted-rerun-v1",
+        schema_version: TARGETED_RERUN_SCHEMA_VERSION,
         state,
         selector,
         cache,
@@ -3025,6 +3030,41 @@ mod tests {
     }
 
     #[test]
+    fn ledger_rerun_admits_only_schema_compatible_working_directories() -> Result<(), String> {
+        for (cwd, admitted) in [
+            ("a\n", false),
+            ("a\rb", false),
+            ("src:gen/x", false),
+            ("src/gen:x", true),
+        ] {
+            let mut spec = verify_spec_fixture("verify", "ripr verify", vec!["verify".into()]);
+            spec.cwd = cwd.into();
+            let record = gap_record_with_specs(
+                "gap:cwd",
+                None,
+                None,
+                &["ripr verify"],
+                None,
+                Some(spec),
+                None,
+            );
+            let json = serde_json::to_value(record).map_err(|e| e.to_string())?;
+            match serde_json::from_value::<GapRecord>(json) {
+                Ok(record) if admitted => {
+                    let route = route_from_gap_records(&[(0, record)]);
+                    if route.verify_command_specs.first().map(|s| s.cwd.as_str()) != Some(cwd) {
+                        return Err(format!("lost working directory {cwd:?} in the rerun route"));
+                    }
+                }
+                Err(e)
+                    if !admitted && e.to_string().contains("cwd must be a root-relative path") => {}
+                other => return Err(format!("unexpected ledger outcome for {cwd:?}: {other:?}")),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn targeted_rerun_route_carries_typed_specs() -> Result<(), String> {
         let verify_spec = verify_spec_fixture(
             "ripr:agent:verify",
@@ -4028,6 +4068,7 @@ mod tests {
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "rejects_boundary".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 4,

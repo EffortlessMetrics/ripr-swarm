@@ -70,6 +70,17 @@ struct LimitationAggregate {
     samples: Vec<TypeScriptLimitationSample>,
 }
 
+/// Why the leaderboard is `blocked`, empty when its check output was usable.
+pub(crate) fn typescript_limitation_blocked_reasons(
+    report: &TypeScriptLimitationLeaderboardReport,
+) -> &[String] {
+    if report.status == "blocked" {
+        &report.warnings
+    } else {
+        &[]
+    }
+}
+
 pub(crate) fn build_typescript_limitation_leaderboard_report(
     input: TypeScriptLimitationLeaderboardInput,
 ) -> TypeScriptLimitationLeaderboardReport {

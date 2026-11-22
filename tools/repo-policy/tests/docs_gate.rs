@@ -48,6 +48,115 @@ fn ordinary_markdown_change_passes_new_path() -> TestResult {
 }
 
 #[test]
+fn scoped_docs_gate_checks_unchanged_document_roles_in_the_subject_tree() -> TestResult {
+    let good = "# Tree\n## Context\n## Decision\n## Consequences\n## Alternatives Considered\n";
+    let rel = "docs/adr/0001-tree.md";
+    let note = "docs/releases/note.md";
+    let root = fixture(&[(rel, good), (note, "# Note\n")])?;
+    let paths = changed(&[note]);
+    let passing = run_docs_gate(&root, &paths)?;
+    if !passing.violations.is_empty() || !passing.plan.gates.contains(&"check-doc-roles") {
+        return Err(passing.render().into());
+    }
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "valid roles"])?;
+    fs::write(root.join(rel), good.replace("## Decision", "## decision"))?;
+    let failed = run_docs_gate(&root, &paths)?;
+    if failed.violations
+        != [format!(
+            "{rel} is missing required ADR section `## Decision`"
+        )]
+    {
+        return Err(failed.render().into());
+    }
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "lowercase role section"])?;
+    fs::write(root.join(note), "# Note\nUpdated release note.\n")?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "release note only"])?;
+    fs::write(root.join(rel), good)?;
+    let revision = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if revision.violations != failed.violations {
+        return Err(revision.render().into());
+    }
+    fs::write(root.join("docs/adr/README.md"), "# Index\n")?;
+    fs::write(
+        root.join(".gitattributes"),
+        "docs/adr/README.md export-ignore\n",
+    )?;
+    git(&root, &["add", "docs/adr/README.md", ".gitattributes"])?;
+    git(
+        &root,
+        &["commit", "-q", "-m", "omit the excluded directory index"],
+    )?;
+    fs::write(root.join(note), "# Note\nFirst index control.\n")?;
+    git(&root, &["add", note])?;
+    git(
+        &root,
+        &["commit", "-q", "-m", "release note after index exclusion"],
+    )?;
+    let index_filtered = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !index_filtered.plan.is_docs_eligible() || index_filtered.violations != failed.violations {
+        return Err(index_filtered.render().into());
+    }
+    fs::write(root.join(".gitattributes"), "docs/adr export-ignore\n")?;
+    git(&root, &["add", ".gitattributes"])?;
+    git(
+        &root,
+        &["commit", "-q", "-m", "exclude roles from archives"],
+    )?;
+    fs::write(root.join(note), "# Note\nSecond release note.\n")?;
+    git(&root, &["add", note])?;
+    git(&root, &["commit", "-q", "-m", "second release note only"])?;
+    let filtered = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if filtered.plan.is_docs_eligible() {
+        return Err(filtered.render().into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn unrelated_non_utf8_doc_name_keeps_the_scoped_role_verdict() -> TestResult {
+    use std::os::unix::ffi::OsStrExt;
+    let note = "docs/releases/note.md";
+    let root = fixture(&[(note, "# Note\n")])?;
+    fs::write(
+        root.join("docs")
+            .join(std::ffi::OsStr::from_bytes(b"other-\xff.txt")),
+        "ordinary bytes",
+    )?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-q", "-m", "unrelated document"])?;
+    fs::write(root.join(note), "# Note\nUpdated note.\n")?;
+    git(&root, &["add", note])?;
+    git(&root, &["commit", "-q", "-m", "release notes only"])?;
+    let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !report.plan.is_docs_eligible() || !report.violations.is_empty() {
+        return Err(report.render().into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn scoped_roles_refuse_symlinks_even_for_an_unchanged_role_directory() -> TestResult {
+    use std::os::unix::fs::symlink;
+    let root = fixture(&[("docs/releases/note.md", "# Note\n")])?;
+    symlink(root.join("missing"), root.join("docs/adr"))?;
+    let error = run_docs_gate(&root, &changed(&["docs/releases/note.md"])).err();
+    if !error
+        .as_deref()
+        .is_some_and(|error| error.contains("expected a regular file or directory"))
+    {
+        return Err(format!("unexpected symlink result: {error:?}").into());
+    }
+    Ok(())
+}
+
+#[test]
 fn changed_spec_runs_spec_gates() -> TestResult {
     let root = fixture(&[
         ("docs/specs/RIPR-SPEC-0099-example.md", GOOD_SPEC),
@@ -436,5 +545,182 @@ fn forbidden_static_language_and_broken_link_fail() -> TestResult {
         "{}",
         report.render()
     );
+    Ok(())
+}
+#[test]
+fn revision_mode_widens_when_unchanged_markdown_can_lose_its_destination() -> TestResult {
+    let note = "docs/releases/0.11.0-release-notes.md";
+    let root = fixture(&[
+        (
+            "README.md",
+            "[Upgrade](docs/releases/0.11.0-release-notes.md#upgrade-1)\n",
+        ),
+        (note, "# Upgrade\n## Upgrade ##\n"),
+    ])?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "retain duplicate heading"])?;
+    fs::write(root.join(note), "# Upgrade\n## Upgrade ##\n\nNew prose.\n")?;
+    git(&root, &["commit", "-qam", "ordinary release note"])?;
+    let safe = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !safe.plan.is_docs_eligible() || !safe.violations.is_empty() {
+        return Err(safe.render().into());
+    }
+    fs::write(root.join(note), "# Upgrade\n~~~\n## Upgrade ##\n~~~\n")?;
+    git(&root, &["commit", "-qam", "turn second heading into code"])?;
+    let renamed = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !renamed
+        .plan
+        .widen_reasons
+        .iter()
+        .any(|reason| reason.contains("#upgrade-1"))
+    {
+        return Err(format!("lost incoming anchor was eligible: {}", renamed.render()).into());
+    }
+    git(&root, &["rm", note])?;
+    git(&root, &["commit", "-qm", "remove linked page"])?;
+    let deleted = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if deleted.plan.is_docs_eligible() {
+        return Err(format!("deleted destination was eligible: {}", deleted.render()).into());
+    }
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn revision_mode_preserves_non_markdown_link_destinations() -> TestResult {
+    let data = "fixtures/rust-verdict-corpus/spec-scopes/targets.json";
+    let root = fixture(&[
+        (
+            "README.md",
+            "[scope](fixtures/rust-verdict-corpus/spec-scopes/targets.json#L1)\n",
+        ),
+        (data, "{}\n"),
+    ])?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "linked JSON"])?;
+    fs::write(root.join(data), "{ \"paths\": [] }\n")?;
+    git(&root, &["commit", "-qam", "ordinary JSON content"])?;
+    let content = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !content.plan.is_docs_eligible() || !content.violations.is_empty() {
+        return Err(content.render().into());
+    }
+    git(&root, &["update-index", "--chmod=+x", data])?;
+    git(&root, &["commit", "-qm", "mode change"])?;
+    let mode = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if mode.plan.is_docs_eligible() {
+        return Err(format!("mode transition was eligible: {}", mode.render()).into());
+    }
+    git(
+        &root,
+        &[
+            "mv",
+            data,
+            "fixtures/rust-verdict-corpus/spec-scopes/renamed.json",
+        ],
+    )?;
+    git(&root, &["commit", "-qm", "rename linked JSON"])?;
+    let removed = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if removed.plan.is_docs_eligible() {
+        return Err(format!("renamed destination was eligible: {}", removed.render()).into());
+    }
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn outgoing_links_keep_the_scoped_empty_heading_rule() -> TestResult {
+    let root = fixture(&[("docs/GUIDE.md", "#\n##\n[empty duplicate](#-1)\n")])?;
+    let report = run_docs_gate(&root, &changed(&["docs/GUIDE.md"]))?;
+    if !report.violations.iter().any(|v| v.contains("#-1")) {
+        return Err(format!(
+            "empty headings supplied an outgoing anchor: {}",
+            report.render()
+        )
+        .into());
+    }
+    fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn missing_promised_heading_blob_widens_without_hydrating_it() -> TestResult {
+    let origin = fixture(&[("note.md", "# Release\nOld prose.\n")])?;
+    git(&origin, &["init", "-q"])?;
+    git(&origin, &["config", "uploadpack.allowFilter", "true"])?;
+    git(&origin, &["add", "."])?;
+    git(&origin, &["commit", "-qm", "old note"])?;
+    let old = rev_parse(&origin, "HEAD:note.md")?;
+    fs::write(origin.join("note.md"), "# Release\nNew prose.\n")?;
+    git(&origin, &["commit", "-qam", "new note"])?;
+    let clone = origin.with_extension("partial");
+    let clone_path = clone.to_str().ok_or("non-UTF8 test directory")?;
+    git(
+        &origin,
+        &[
+            "clone",
+            "--no-local",
+            "--filter=blob:none",
+            "--no-checkout",
+            ".",
+            clone_path,
+        ],
+    )?;
+    git(&clone, &["checkout", "-q", "--detach", "HEAD"])?;
+    let missing = || -> Result<bool, Box<dyn std::error::Error>> {
+        let out = git_output(
+            &clone,
+            &["rev-list", "--objects", "--all", "--missing=print"],
+        )?;
+        Ok(String::from_utf8(out.stdout)?
+            .lines()
+            .any(|line| line.strip_prefix('?') == Some(old.as_str())))
+    };
+    if !missing()? {
+        return Err("historical blob already present before gate".into());
+    }
+    let report = run_docs_gate_at_revision(&clone, "HEAD~1", "HEAD")?;
+    if !missing()?
+        || !report
+            .plan
+            .widen_reasons
+            .iter()
+            .any(|reason| reason.contains(&old))
+    {
+        return Err(format!(
+            "promised blob must stay absent and require full proof: {}",
+            report.render()
+        )
+        .into());
+    }
+    fs::remove_dir_all(clone)?;
+    fs::remove_dir_all(origin)?;
+    Ok(())
+}
+
+#[test]
+fn revision_encoding_repair_requires_full_proof_for_the_unknown_old_anchor_set() -> TestResult {
+    let root = fixture(&[("note.md", "")])?;
+    fs::write(root.join("note.md"), b"# Title\n\xff")?;
+    git(&root, &["init", "-q"])?;
+    git(&root, &["add", "."])?;
+    git(&root, &["commit", "-qm", "legacy bytes"])?;
+    fs::write(root.join("note.md"), "# Title\n")?;
+    git(&root, &["commit", "-qam", "repair encoding"])?;
+    let report = run_docs_gate_at_revision(&root, "HEAD~1", "HEAD")?;
+    if !report
+        .plan
+        .widen_reasons
+        .iter()
+        .any(|reason| reason.contains("not UTF-8"))
+    {
+        return Err(format!(
+            "unreadable old heading set was unaccounted for: {}",
+            report.render()
+        )
+        .into());
+    }
+    fs::remove_dir_all(root)?;
     Ok(())
 }
