@@ -196,3 +196,43 @@ fn non_relative_target_without_base_url_stays_unresolved() -> Result<(), String>
     }
     Ok(())
 }
+
+/// `paths` fallback arrays follow `tsc`'s order: `@/pricing` names the first
+/// target that exists, and a later target is used only when nothing sits at
+/// the earlier one.
+#[test]
+fn fallback_array_relates_the_test_only_through_the_first_existing_target() -> Result<(), String> {
+    const FALLBACK: &str =
+        "{\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@/*\":[\"generated/*\",\"src/*\"]}}}";
+    let subject = Subject::create_with(TYPESCRIPT_ON, "tsconfig.json", FALLBACK)?;
+    expect_related(&subject.json()?, "only the second target exists")?;
+
+    // The first target now exists, so the test imports that same-named
+    // module and the changed `src/pricing.ts` is not what it exercises.
+    subject.write(
+        "generated/pricing.ts",
+        "export function discountRate(tier: string): number {\n  return tier === \"pro\" ? 0.1 : 0;\n}\n",
+    )?;
+    let json = subject.json()?;
+    if !json.contains("\"classification\": \"no_static_path\"") {
+        return Err(format!("an existing first target must win: {json}"));
+    }
+    Ok(())
+}
+
+/// A declaration file at the first target is something `tsc` resolves and
+/// this reader does not model: the walk stops, unresolved and disclosed,
+/// instead of crediting the later target.
+#[test]
+fn fallback_array_stops_at_a_first_target_it_cannot_rule_out() -> Result<(), String> {
+    let subject = Subject::create_with(
+        TYPESCRIPT_ON,
+        "tsconfig.json",
+        "{\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@/*\":[\"generated/*\",\"src/*\"]}}}",
+    )?;
+    subject.write(
+        "generated/pricing.d.ts",
+        "export declare function discountRate(tier: string): number;\n",
+    )?;
+    expect_unresolved(&subject.json()?, "declaration file at the first target")
+}

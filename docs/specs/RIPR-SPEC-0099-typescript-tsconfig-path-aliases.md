@@ -75,7 +75,19 @@ every ambiguity:
 
 - Missing file, JSONC parse error, or a config chain that sets neither `compilerOptions.baseUrl` nor `compilerOptions.paths` â†’ `None`.
 - `references` present fails closed. `extends` chains are followed up to 8 hops when every target is a relative (`./`, `../`) path naming a regular, non-symlinked file inside the workspace root (#11204): bases merge first, a declared `paths` object replaces the inherited one whole (as `tsc` treats it, even when empty), and `baseUrl` is the nearest declaration, anchored at the directory of the config that declares it (as `tsc` resolves an inherited `baseUrl`). `paths` templates resolve against that anchored `baseUrl`. A `baseUrl` with `..` segments is accepted when its anchored location stays inside the workspace; one that escapes it or is absolute keeps the named limitation. A target without a `.json` suffix tries `<target>.json` first, as `tsc` does. An explicit `null` `baseUrl` or `paths` clears the inherited value. Package-name bases, bases outside the root or reached through a symlinked file or directory, cycles (at any depth), over-deep chains, and missing or invalid targets fail closed, except that an unfollowable base (never a cycle) is ignored when the extending config itself declares a non-null `baseUrl` and `paths`, because nothing it could inherit changes alias resolution.
-- Empty or multi-entry `paths` value array, or a template with more than one
+- A `paths` value array is `tsc`'s fallback list and is walked in order: the
+  first template whose candidate is exactly one workspace file wins. A later
+  template is reached only when every earlier candidate is provably absent:
+  its directory holds no entry named `<stem>` or `<stem>.<anything>`, where
+  `<stem>` is the candidate's last segment up to its first `.`, compared
+  without regard to case. That rules out a declaration file (`owner.d.ts`,
+  `style.d.css.ts`), any other extension `tsc` may load, a directory it would
+  search for an index or `package.json`, and a differently-cased file a
+  case-insensitive host would open. An earlier
+  candidate that is ambiguous, unsafe (`..`/absolute), multi-`*`, non-relative
+  without a `baseUrl`, or present in a form this reader does not model ends
+  the walk unresolved.
+- Empty `paths` value array, an unresolved fallback walk, or a template with more than one
   `*` â†’ retain the literal/single-wildcard key as an unresolved blocker. A
   broader alias must not take over the blocked key's imports.
 
@@ -103,9 +115,10 @@ relative path ONLY when ALL of:
 1. Specifier is non-relative (does not start with `./` or `../`).
 2. An exact key matches, or there is a unique matching single-`*` key with
    the longest prefix before `*`. Exact keys take priority over all globs.
-3. The matched value array has exactly one entry.
-4. The value template has at most one `*`.
-5. After substituting the captured `*`, the candidate path resolves to
+3. Walking the matched value array in order, every template before the
+   winning one names a location where provably nothing exists.
+4. The winning template has at most one `*`.
+5. After substituting the captured `*`, its candidate path resolves to
    EXACTLY ONE existing workspace file (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`).
    Zero or >1 matches â†’ `None`. Ambiguity is never broken by suffix
    preference: two existing candidates for one alias (`src/owner.mts` and
@@ -215,12 +228,12 @@ in `finding.evidence`.
 ### AC-3 (AMBIGUOUS FAIL-CLOSED, flag ON)
 
 Given:
-- `tsconfig.json` with `paths={"@/*":["src/*","lib/*"]}` (multi-entry value).
-- `src/owner.ts` exists.
+- `tsconfig.json` with `paths={"@/*":["gen/*","src/*"]}` (fallback list).
+- `gen/owner/` exists as a directory (`tsc` may resolve an index there) and `src/owner.ts` exists.
 - Test imports owner from `@/owner`.
 - `resolve_tsconfig_paths = true`.
 
-Then: alias map retains the multi-entry key as a blocker â†’ resolution returns `None` â†’
+Then: the fallback walk stops at the first target it cannot rule out; the key stays a blocker â†’ resolution returns `None` â†’
 `finding.class == NoStaticPath`, AND
 `typescript_limitation: typescript_path_alias_unresolved` IS emitted.
 
@@ -365,7 +378,7 @@ Unit tests in `crates/ripr/src/analysis/language/typescript/tests.rs`:
    no_static_path`, `typescript_path_alias_unresolved` present in evidence.
 
 3. `tsconfig_alias_resolution_multi_entry_value_fails_closed` â€” AMBIGUOUS
-   FAIL-CLOSED (AC-3): multi-entry value array, flag ON â†’ alias blocked
+   FAIL-CLOSED (AC-3): fallback list whose first target cannot be ruled out, flag ON â†’ alias blocked
    without falling back to a broader key â†’ `class: no_static_path`, disclosure present.
 
 4. `tsconfig_alias_non_owner_import_emits_no_limitation` â€” NON-MATCH

@@ -506,7 +506,9 @@ mod tests {
 
     /// A specifier a tsconfig `paths` key owns never falls back to the
     /// package's own entry, even when the key's substitutions cannot be
-    /// resolved uniquely (review #4611): the compiler would use `paths`.
+    /// resolved (review #4611): the compiler would use `paths`. Here the
+    /// first fallback target is a template this map does not support, so
+    /// the walk never reaches the second.
     #[test]
     fn paths_key_owning_specifier_blocks_package_fallback() -> Result<(), String> {
         let root = super::super::tests::ts_unique_tempdir("workspace-packages-paths")?;
@@ -524,7 +526,7 @@ mod tests {
         )?;
         super::super::tests::ts_write_file(
             &root.join("tsconfig.json"),
-            r#"{"compilerOptions":{"baseUrl":".","paths":{"@acme/utils":["packages/utils-v2/src/index.ts","packages/utils/src/index.ts"]}}}"#,
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@acme/utils":["packages/*/*/src/index.ts","packages/utils/src/index.ts"]}}}"#,
         )?;
         let files = vec![
             PathBuf::from("packages/utils/src/index.ts"),

@@ -108,7 +108,7 @@ fn unsupported_winning_keys_block_broader_aliases() -> Result<(), String> {
     for key in ["@/feature/cart", "@/feature/*"] {
         for values in [
             json!([]),
-            json!(["src/cart", "other/cart"]),
+            json!(["other/*/*", "src/cart"]),
             json!(["src/*/*"]),
         ] {
             let mut paths = serde_json::Map::new();
@@ -204,7 +204,7 @@ fn direct_and_barrel_relations_do_not_borrow_a_same_named_fallback_owner() -> Re
 
     for blocked in [false, true] {
         let target = if blocked {
-            json!(["src/*", "other/*"])
+            json!(["other/*/*", "src/*"])
         } else {
             json!(["src/*"])
         };
