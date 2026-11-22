@@ -714,7 +714,7 @@ const CONTRACTS: &[VerificationContract] = &[
         fixture_path: "tests/fixtures/verification/ripr/context-refusal.valid.json",
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
-        doc_markers: &["context-refusal.schema.json", "json-compact"],
+        doc_markers: &["CONTEXT_PACKET_VERSION_CONTRACT", "json-compact"],
     },
     VerificationContract {
         schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
