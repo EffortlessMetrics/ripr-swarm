@@ -237,14 +237,29 @@ arguments only into generated function bodies, closures and expressions:
   `prop_oneof!` (the same crate): expressions over the caller's tokens.
 - `serde_json::json!` (the audited literal `json!` identity): an expression
   over the caller's tokens.
+- `tokio::select!` (tokio 1.54.1 `src/macros/select.rs`): branch patterns,
+  futures, `if` preconditions, handlers and the `else` arm are captured as
+  `pat`, `expr` and `block` fragments and placed in a `match`, a tuple and
+  `if` conditions; the `mod __tokio_select_util` it emits receives only the
+  branch count.
+
+A wrapper whose expansion changes between releases is trusted only at the
+locked versions it was read at. The drop-in authority checks the nearest
+`Cargo.lock` against this table, which
+`spec_wrapper_version_table_matches_the_code_authority` keeps equal to the
+code's `AUDITED_WRAPPER_VERSIONS`:
+
+| Wrapper | Audited lock package and version |
+| --- | --- |
+| tokio::select! | tokio 1.54.1 |
 
 Inside such a body a `use` or a non-exported `macro_rules!` binds only within
 the call's own text. So the argument site of such a call is scoped to the
 call's line and byte range and kept to its crate, and it no longer refuses a
 test elsewhere, when all of these hold:
 
-- The call is spelled `proptest::proptest!` or `serde_json::json!` (either
-  with a leading `::`), or `proptest::` and one of the other `proptest`
+- The call is spelled `proptest::proptest!`, `serde_json::json!` or
+  `tokio::select!` (each with or without a leading `::`), or `proptest::` and one of the other `proptest`
   wrappers above on its own, such as `proptest::prop_oneof!` building a
   strategy in a helper outside `proptest!`, and the crate root passes the
   drop-in authority

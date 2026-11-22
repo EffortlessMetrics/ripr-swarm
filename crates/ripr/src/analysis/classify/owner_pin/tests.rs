@@ -71,6 +71,7 @@ mod shared_macro_scan;
 mod shared_target_context;
 mod standalone_proptest_wrapper;
 mod standard_wrapper_disclosure;
+mod tokio_select_pass_through;
 mod tuple_projection;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
