@@ -14,7 +14,10 @@ use super::capabilities::{
     workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
-use super::config::{LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary};
+use super::config::{
+    LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary,
+    pushed_setting_rejections,
+};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
@@ -259,6 +262,9 @@ pub(super) struct Backend {
     /// input context resets. An attempt in flight leaves it latched, so pull
     /// and push agree while a retry runs.
     base_withdrawal: Mutex<Option<AnalysisFailure>>,
+    /// The last pushed-settings warning disclosed (#15312), so a verbatim
+    /// re-push of the same unrepaired mistake is not shown twice.
+    last_pushed_settings_warning: Mutex<Option<String>>,
     /// Languages whose "adapter not enabled" notice a generic client has
     /// already been shown (#8585). A language is shown once while it stays
     /// unavailable; leaving the set (adapter enabled, or its files no longer
@@ -405,6 +411,7 @@ impl Backend {
             pull_delivery_disclosure_logged_for: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
             base_withdrawal: Mutex::new(None),
+            last_pushed_settings_warning: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: Arc::new(RefreshScheduler::default()),
@@ -3633,6 +3640,36 @@ impl Backend {
     }
 
     async fn apply_session_configuration_change(&self, settings: &LSPAny) {
+        // #15312: the push path is lenient, so an ignored pushed value falls
+        // back silently. Name every ignored part of this notification. The
+        // text carries the value received, so a second typo in the same key
+        // is a new warning, not a repeat.
+        let rejections = pushed_setting_rejections(settings);
+        let warning = (!rejections.is_empty()).then(|| {
+            let listed = rejections
+                .iter()
+                .map(|rejection| bounded_failure_message(rejection))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!(
+                "ripr ignored pushed ripr settings: {listed}. Each ignored setting keeps its repository or default value."
+            )
+        });
+        // A client that re-pushes its whole section on every settings change
+        // repeats an unrepaired mistake verbatim; that repeat is not shown
+        // again. A clean push forgets it, so the same mistake made again
+        // after a repair warns again.
+        let repeated = self
+            .last_pushed_settings_warning
+            .lock()
+            .map(|mut last| std::mem::replace(&mut *last, warning.clone()) == warning)
+            .unwrap_or(false);
+        if let Some(warning) = warning
+            && !repeated
+        {
+            self.disclose_configuration_reload_failure(warning.clone(), warning)
+                .await;
+        }
         if !LspAnalysisConfig::has_session_option_changes(settings) {
             return;
         }
@@ -3645,16 +3682,7 @@ impl Backend {
         if next == current {
             return;
         }
-        let previous_warnings = current.ignored_initialization_option_warnings();
-        let new_warnings: Vec<String> = next
-            .ignored_initialization_option_warnings()
-            .into_iter()
-            .filter(|warning| !previous_warnings.contains(warning))
-            .collect();
         self.set_analysis_config(next);
-        for warning in new_warnings {
-            self.client.log_message(MessageType::WARNING, warning).await;
-        }
         if self.configuration_failure().is_some() {
             // Keep the config_invalid signal visible while repository
             // configuration remains broken. The stored session override is

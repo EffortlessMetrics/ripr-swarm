@@ -654,6 +654,60 @@ fn validate_pulled_value(key: &str, value: &Value) -> Result<(), String> {
     ))
 }
 
+/// What a `workspace/didChangeConfiguration` payload asked for that the push
+/// path ignores (#15312): one repair line per ignored part, each naming the
+/// key, its accepted values and the value received. The push path stays
+/// lenient (an ignored key falls back to its repository or default value), so
+/// without these lines a typo in a pushed setting looked accepted.
+///
+/// `null` settings carry no request. A payload that is not an object cannot
+/// carry a `ripr` section at all and is reported as one shape line.
+pub(super) fn pushed_setting_rejections(settings: &Value) -> Vec<String> {
+    if settings.is_null() {
+        return Vec::new();
+    }
+    let shape = |got: &Value| {
+        vec![format!(
+            "workspace/didChangeConfiguration settings must be an object of ripr settings (optionally under a `ripr` key), got {}; nothing was applied",
+            clipped_value_echo(got)
+        )]
+    };
+    // A `ripr` key that is neither an object nor null is a malformed
+    // section, not a request addressed to another server.
+    if let Some(section) = settings.get("ripr")
+        && !section.is_object()
+        && !section.is_null()
+    {
+        return shape(section);
+    }
+    let Some(options) = session_options_object(settings) else {
+        return shape(settings);
+    };
+    options
+        .iter()
+        .filter(|(key, value)| is_supported_session_option(key) && !value.is_null())
+        .filter_map(|(key, value)| pushed_value_rejection(key, value))
+        .collect()
+}
+
+fn pushed_value_rejection(key: &str, value: &Value) -> Option<String> {
+    if key == "refreshDeadlineMs"
+        && value
+            .as_u64()
+            .is_some_and(|ms| ms < MIN_LSP_REFRESH_DEADLINE_MS)
+    {
+        return Some(REFRESH_DEADLINE_MS_TOO_SMALL.to_string());
+    }
+    if session_option_value_is_valid(key, value) {
+        return None;
+    }
+    Some(format!(
+        "pushed value for `{key}` has an invalid type or literal (accepted: {}); got {}; fix the value in the editor settings",
+        session_option_accepted_values(key),
+        clipped_value_echo(value)
+    ))
+}
+
 /// The accepted values of one supported session option, named in every
 /// rejection so a user can repair the setting without reading the docs
 /// (#15312). Mirrors `session_option_value_is_valid`.
@@ -942,6 +996,76 @@ include_unchanged_tests = false
 
         assert_eq!(changed.base_ref.as_deref(), Some("origin/main"));
         assert_eq!(changed.mode, Mode::Fast);
+        Ok(())
+    }
+
+    /// #15312: the push path names each ignored value with its accepted
+    /// values, treats a second bad value of the same key as its own
+    /// rejection, and stays silent for requests it accepts or does not own.
+    #[test]
+    fn pushed_setting_rejections_name_each_ignored_part_and_nothing_else() -> Result<(), String> {
+        let rejections = pushed_setting_rejections(&json!({"ripr": {
+            "checkMode": "depe",
+            "seamDiagnostics": "yes",
+            "baseRef": "main",
+            "diagnosticProfile": null,
+            "unrelatedKey": 7
+        }}));
+        if rejections.len() != 2 {
+            return Err(format!("expected two rejections: {rejections:?}"));
+        }
+        let joined = rejections.join(" | ");
+        for needle in [
+            "`checkMode`",
+            "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+            "got \"depe\"",
+            "`seamDiagnostics`",
+            "true or false",
+            "got \"yes\"",
+        ] {
+            if !joined.contains(needle) {
+                return Err(format!("rejections must contain {needle}: {joined}"));
+            }
+        }
+        for absent in ["baseRef", "diagnosticProfile", "unrelatedKey"] {
+            if joined.contains(absent) {
+                return Err(format!("{absent} is not a rejection: {joined}"));
+            }
+        }
+        // A different bad value of the same key reads differently, so a
+        // caller that compares texts cannot swallow the second mistake.
+        let second = pushed_setting_rejections(&json!({"checkMode": "deeep"}));
+        if second.len() != 1
+            || !second[0].contains("got \"deeep\"")
+            || rejections.contains(&second[0])
+        {
+            return Err(format!("second typo must be its own rejection: {second:?}"));
+        }
+        // Shapes that cannot carry a ripr section.
+        for payload in [json!("instant"), json!(["a"]), json!({"ripr": "instant"})] {
+            let shape = pushed_setting_rejections(&payload);
+            if shape.len() != 1 || !shape[0].contains("must be an object of ripr settings") {
+                return Err(format!("{payload} must be one shape rejection: {shape:?}"));
+            }
+        }
+        // Accepted or unowned requests are silent.
+        for payload in [
+            json!(null),
+            json!({}),
+            json!({"ripr": null}),
+            json!({"ripr": {"checkMode": "fast"}}),
+            json!({"editor": {"formatOnSave": true}}),
+            json!({"refreshDeadlineMs": 100}),
+        ] {
+            let none = pushed_setting_rejections(&payload);
+            if !none.is_empty() {
+                return Err(format!("{payload} must not be rejected: {none:?}"));
+            }
+        }
+        let too_small = pushed_setting_rejections(&json!({"refreshDeadlineMs": 5}));
+        if too_small != [REFRESH_DEADLINE_MS_TOO_SMALL.to_string()] {
+            return Err(format!("deadline floor must be named: {too_small:?}"));
+        }
         Ok(())
     }
 

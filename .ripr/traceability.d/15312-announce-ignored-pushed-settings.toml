@@ -1,0 +1,11 @@
+# Registers the ignored-pushed-settings disclosure (#15312) under RIPR-SPEC-0136.
+[[extend]]
+id = "RIPR-SPEC-0136"
+tests = [
+  "crates/ripr/src/lsp/config.rs::tests::pushed_setting_rejections_name_each_ignored_part_and_nothing_else",
+  "crates/ripr/src/lsp/tests.rs::framed_lsp_rejected_pushed_settings_warn_naming_key_and_accepted_values_per_mistake",
+]
+code = [
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/lsp/config.rs",
+]

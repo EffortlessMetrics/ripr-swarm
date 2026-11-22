@@ -12637,6 +12637,177 @@ fn framed_lsp_rejected_pulled_settings_warn_naming_each_key_and_accepted_values(
     })
 }
 
+/// #15312, push half: a client without `workspace/configuration` pushes its
+/// settings, and the push path ignores a malformed value. The rejection must
+/// reach the log and the screen with the key, the accepted values and the
+/// value received; a second typo in the same key warns again; a verbatim
+/// re-push does not; a payload that cannot carry a ripr section is reported
+/// instead of dropped.
+#[test]
+#[serial]
+fn framed_lsp_rejected_pushed_settings_warn_naming_key_and_accepted_values_per_mistake()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("framed-config-push-rejected")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let (client_io, server_io) = tokio::io::duplex(1024 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let outcome = tokio::time::timeout(std::time::Duration::from_mins(2), async {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": root_uri.as_str(),
+                        "capabilities": {}
+                    }
+                }),
+            )
+            .await?;
+            read_lsp_response(&mut client_read, 1).await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            // The logged and shown copies of the next pushed-settings warning.
+            async fn pushed_warning(
+                client_read: &mut (impl tokio::io::AsyncRead + Unpin),
+            ) -> Result<[String; 2], String> {
+                let mut logged = None;
+                let mut shown = None;
+                loop {
+                    if let (Some(logged), Some(shown)) = (&logged, &shown) {
+                        return Ok([String::clone(logged), String::clone(shown)]);
+                    }
+                    let message = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        read_lsp_message(client_read),
+                    )
+                    .await
+                    .map_err(|elapsed| {
+                        format!(
+                            "no pushed-settings warning arrived ({elapsed}): logged={logged:?} shown={shown:?}"
+                        )
+                    })??;
+                    let text = message["params"]["message"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    if !text.contains("ignored pushed ripr settings") {
+                        continue;
+                    }
+                    match message["method"].as_str() {
+                        Some("window/logMessage") => logged = Some(text),
+                        Some("window/showMessage") => shown = Some(text),
+                        _ => {}
+                    }
+                }
+            }
+            let push = |settings: serde_json::Value| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeConfiguration",
+                    "params": {"settings": settings}
+                })
+            };
+            let require_texts = |texts: &[String; 2], needles: &[&str]| {
+                for text in texts {
+                    for needle in needles {
+                        if !text.contains(needle) {
+                            return Err(format!("warning must contain {needle}: {text}"));
+                        }
+                    }
+                }
+                Ok::<(), String>(())
+            };
+
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "depe", "unrelatedKey": 1}})),
+            )
+            .await?;
+            let first = pushed_warning(&mut client_read).await?;
+            require_texts(
+                &first,
+                &[
+                    "`checkMode`",
+                    "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+                    "got \"depe\"",
+                    "keeps its repository or default value",
+                ],
+            )?;
+            if first.iter().any(|text| {
+                text.contains("unrelatedKey") || text.contains("initializationOption")
+            }) {
+                return Err(format!("wrong subject in the pushed warning: {first:?}"));
+            }
+
+            // A second typo in the same key is a new mistake and warns again.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            let second = pushed_warning(&mut client_read).await?;
+            require_texts(&second, &["`checkMode`", "got \"deeep\""])?;
+
+            // A verbatim re-push of the unrepaired mistake is not shown again:
+            // the next warning the client reads is the shape one below. A
+            // payload that cannot carry a ripr section is reported.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            write_lsp_message(&mut client_write, push(serde_json::json!("instant"))).await?;
+            let shape = pushed_warning(&mut client_read).await?;
+            require_texts(
+                &shape,
+                &["must be an object of ripr settings", "got \"instant\""],
+            )?;
+            if shape.iter().any(|text| text.contains("deeep")) {
+                return Err(format!("the verbatim re-push must not warn again: {shape:?}"));
+            }
+
+            // A clean push forgets the mistake; making it again warns again.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "fast"}})),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            let again = pushed_warning(&mut client_read).await?;
+            require_texts(&again, &["`checkMode`", "got \"deeep\""])?;
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|elapsed| format!("pushed-settings sequence did not finish ({elapsed})"))
+        .and_then(|outcome| outcome);
+        server_task.abort();
+        outcome
+    })
+}
+
 #[test]
 #[serial]
 fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<(), String> {
