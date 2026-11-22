@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Verdict corpus: the avoidable-abstention bar moves from 0.20 to 0.28 on measured evidence (0.20 needs 102 sound flips against 3-6 per analyzer slice, and only 124 avoidable rows are credit-side, so the rest would be gap claims), and the total abstention target follows to 0.32. The bar is lowered whenever landed slices pass it and is pinned against being raised (#12766).
