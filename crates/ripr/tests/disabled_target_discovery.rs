@@ -209,3 +209,63 @@ fn an_edition_2015_bin_keeps_the_legacy_main_fallback() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn an_edition_2015_declared_bin_turns_off_bin_discovery() -> Result<(), String> {
+    // Without an `edition` key the package is edition 2015, where declaring
+    // any `[[bin]]` leaves `autobins` off unless set (#15877): Cargo builds
+    // `src/cli.rs` only, so `src/main.rs` and the module it mounts are never
+    // compiled. Edition 2021 and `autobins = true` build them.
+    let legacy = |package_keys: &str| {
+        main_mounting_tool(&format!(
+            "[package]\nname = \"price\"\nversion = \"0.1.0\"\n{package_keys}\n[[bin]]\nname = \"cli\"\npath = \"src/cli.rs\"\n\n[workspace]\n"
+        ))
+    };
+    let disabled = legacy("")?;
+    std::fs::write(disabled.0.join("src/cli.rs"), "fn main() {}\n")
+        .map_err(|error| format!("write cli: {error}"))?;
+    assert!(
+        !disabled.reports("src/tool.rs")?,
+        "edition 2015 with a declared [[bin]] never builds src/main.rs"
+    );
+    for keys in ["edition = \"2021\"\n", "autobins = true\n"] {
+        let built = legacy(keys)?;
+        std::fs::write(built.0.join("src/cli.rs"), "fn main() {}\n")
+            .map_err(|error| format!("write cli: {error}"))?;
+        assert!(built.reports("src/tool.rs")?, "{keys} builds src/main.rs");
+    }
+    Ok(())
+}
+
+/// Cargo resolves a path-less edition 2015 `[[bin]]` through its inferred
+/// layout first, so `src/bin/cli.rs` wins and a stray `src/cli.rs` is never
+/// compiled (#16051 review). Without `src/bin/cli.rs` the legacy fallback
+/// builds `src/cli.rs`, which then reports.
+#[test]
+fn an_edition_2015_bin_prefers_the_inferred_layout_over_the_legacy_fallback() -> Result<(), String>
+{
+    let manifest = "[package]\nname = \"price\"\nversion = \"0.1.0\"\n\n[[bin]]\nname = \"cli\"\n\n[workspace]\n";
+    let stray = Fixture::with_files(&[
+        ("Cargo.toml", manifest),
+        ("src/lib.rs", "pub fn unrelated() {}\n"),
+        ("src/bin/cli.rs", "fn main() {}\n"),
+        ("src/cli.rs", BULK),
+        ("diff.patch", &predicate_diff("src/cli.rs")),
+    ])?;
+    assert!(
+        !stray.reports("src/cli.rs")?,
+        "src/bin/cli.rs is the `cli` target, so src/cli.rs is never compiled"
+    );
+
+    let legacy = Fixture::with_files(&[
+        ("Cargo.toml", manifest),
+        ("src/lib.rs", "pub fn unrelated() {}\n"),
+        ("src/cli.rs", BULK),
+        ("diff.patch", &predicate_diff("src/cli.rs")),
+    ])?;
+    assert!(
+        legacy.reports("src/cli.rs")?,
+        "control: with no inferred layout the legacy fallback builds src/cli.rs"
+    );
+    Ok(())
+}

@@ -996,6 +996,161 @@ fn repair_never_says_check_reports_the_same_while_check_reports_a_weak_gap() -> 
     Ok(())
 }
 
+// #15278 item 1: the same disagreement on the explicit surfaces. `a + b` to
+// `a - b` with only `total(0, 0) == 0` is weak for check (the inputs cannot
+// tell the two apart), while the inventory reads the returned value as pinned.
+const SUM_OLD: &str = "pub fn total(a: i32, b: i32) -> i32 {\n    a + b\n}\n";
+const SUM_NEW: &str = "pub fn total(a: i32, b: i32) -> i32 {\n    a - b\n}\n";
+const SUM_TEST: &str =
+    "use ar::total;\n\n#[test]\nfn zero() {\n    assert_eq!(total(0, 0), 0);\n}\n";
+
+/// The id of the one finding `ripr check --format json` reports.
+fn only_finding_id(repo: &Repo) -> Result<String, String> {
+    let json = repo.ripr(&["check", "--format", "json"])?;
+    let (_, tail) = json
+        .split_once("\"id\": \"probe:")
+        .ok_or_else(|| format!("check JSON names no probe finding:\n{json}"))?;
+    let (id, _) = tail
+        .split_once('"')
+        .ok_or_else(|| format!("unterminated finding id:\n{json}"))?;
+    Ok(format!("probe:{id}"))
+}
+
+fn weak_sum_repo() -> Result<Repo, String> {
+    let repo = Repo::create_uncommitted(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: weak"),
+        "precondition, check reports a weak gap on the changed return:\n{check}"
+    );
+    Ok(repo)
+}
+
+#[test]
+fn repair_by_finding_id_never_says_already_checked_while_check_reports_a_weak_gap()
+-> Result<(), String> {
+    let repo = weak_sum_repo()?;
+    let id = only_finding_id(&repo)?;
+    let (code, repair) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("already check it") && !repair.contains("no gap to repair"),
+        "repair must not call check's own weak finding already checked:\n{repair}"
+    );
+    assert!(
+        repair.contains("`ripr check` reads this changed code as weak")
+            && repair.contains("write or strengthen the test by hand"),
+        "repair must name check's reading and the by-hand next step:\n{repair}"
+    );
+    Ok(())
+}
+
+#[test]
+fn stub_never_says_tests_already_discriminate_while_check_reports_a_weak_gap() -> Result<(), String>
+{
+    let repo = weak_sum_repo()?;
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        !stub.contains("existing tests already discriminate it")
+            && !stub.contains("not evidence of a missing discriminator"),
+        "the stub must not call a change check reads as weak already discriminated:\n{stub}"
+    );
+    assert!(
+        stub.contains("`ripr check` reads your changed code there as weak (weakly_exposed)")
+            && stub.contains("this stub is for that gap"),
+        "the stub must name check's reading:\n{stub}"
+    );
+    let json = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+        "--json",
+    ])?;
+    assert!(
+        json.contains("\"grip_class\": \"strongly_gripped\"")
+            && json.contains("\"classification\": \"weakly_exposed\""),
+        "the JSON keeps the inventory class and carries check's class:\n{json}"
+    );
+    Ok(())
+}
+
+#[test]
+fn pilot_never_says_no_test_to_add_while_check_reports_a_weak_gap() -> Result<(), String> {
+    let repo = weak_sum_repo()?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        !pilot.contains("so there is no test to add"),
+        "pilot must not say there is no test to add while check reports a gap:\n{pilot}"
+    );
+    assert!(
+        pilot.contains("but `ripr check` reads your changed code there as a gap or cannot tell")
+            && pilot.contains("Pilot ranked no gap, but `ripr check` reads your changed code")
+            && pilot.contains("run `ripr check --root "),
+        "pilot must point at check's reading of the change:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// Discriminating negative: a change check reads as exposed keeps every
+/// surface's "already checked" wording.
+#[test]
+fn an_exposed_change_keeps_the_already_checked_wording_on_every_surface() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(
+        "pub fn dbl(x: i32) -> i32 {\n    x * 2\n}\n",
+        "pub fn dbl(x: i32) -> i32 {\n    x * 3\n}\n",
+        "use ar::dbl;\n\n#[test]\nfn exact() {\n    assert_eq!(dbl(2), 6);\n}\n",
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: exposed"),
+        "precondition, check reads exposed:\n{check}"
+    );
+    let id = only_finding_id(&repo)?;
+    let (code, repair) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        repair.contains("existing tests already check it")
+            && !repair.contains("`ripr check` reads this changed code as"),
+        "an exposed change stays already checked:\n{repair}"
+    );
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        stub.contains("existing tests already discriminate it")
+            && !stub.contains("`ripr check` reads your changed code"),
+        "an exposed change keeps the strongly gripped disclosure:\n{stub}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("No gap was found, so there is no test to add")
+            && !pilot.contains("but `ripr check` reads"),
+        "an exposed change keeps pilot's no-gap closing line:\n{pilot}"
+    );
+    Ok(())
+}
+
 // Not-ready burn-down (#11111): the closing step of a bare-repair refusal
 // follows what `ripr check` says about the change.
 
@@ -1182,38 +1337,27 @@ fn outer_repo_with_subdir_root(commit_change: bool) -> Result<Repo, String> {
     Ok(repo)
 }
 
-/// #13636 (A): the seam route keeps every dirty file the start's preflight
-/// reports, including one outside the analyzed root, spelled `../...` as the
-/// gap route spells it, so `ripr check --root <subdir>` never reports `ready`
-/// for a start that refuses. The outside file is the repository-level
-/// `src/lib.rs`, which the shared preflight reads at its true path and reports
-/// as `../src/lib.rs` for root `crate` (#13962), beside the root's own dirty
-/// `src/lib.rs`.
+/// #15488: `ripr check --root <subdir>` withholds the seam start altogether
+/// and names the Git top-level, because a repair attempt starts only there
+/// (#15363) — the start (and its commit step) printed here before would
+/// refuse at the before phase even after the commit. The dirty files inside
+/// and outside the analyzed root no longer need a `../...` commit step on
+/// this screen; the top-level check names them in its own route.
 #[test]
-fn commit_step_names_dirty_files_outside_the_analyzed_root() -> Result<(), String> {
+fn subdir_check_withholds_the_seam_start_and_names_the_top_level() -> Result<(), String> {
     let repo = outer_repo_with_subdir_root(false)?;
     let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD"])?;
-    let commit_line = check
-        .lines()
-        .skip_while(|line| !line.contains("Commit your production change first"))
-        .nth(1)
-        .ok_or_else(|| format!("check must name the commit step:\n{check}"))?;
     assert!(
-        commit_line.ends_with(" -- src/lib.rs ../src/lib.rs"),
-        "the commit step must name the root's file and the outside file:\n{check}"
+        !check.contains("\n  ripr repair ")
+            && !check.contains("Commit your production change first")
+            && check.contains("is not the exact Git top-level"),
+        "a subdirectory check must offer no seam start and name the top-level:\n{check}"
     );
-    let seam_id = check
-        .split("\n  ripr repair ")
-        .nth(1)
-        .and_then(|rest| rest.split_whitespace().next())
-        .ok_or_else(|| format!("check must still name the repair start:\n{check}"))?;
-    // Precondition: the start refuses. Since #15363 it refuses `crate` first,
-    // before writing anything, because a repair attempt starts only at the
-    // exact Git top-level; withholding this start in check is #15488.
-    let (code, repair) = repo.ripr_status(&["repair", seam_id, "--root", "crate"])?;
+    // The start itself still refuses first, before writing anything.
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "crate"])?;
     assert!(
         code != Some(0) && repair.contains("is not the exact Git top-level"),
-        "precondition, the start refuses the subdirectory root:\n{repair}"
+        "the start refuses the subdirectory root:\n{repair}"
     );
     assert!(
         !repo.0.join("crate/target/ripr/repair-attempts").exists(),
@@ -1222,31 +1366,39 @@ fn commit_step_names_dirty_files_outside_the_analyzed_root() -> Result<(), Strin
     let json = repo.ripr(&[
         "check", "--root", "crate", "--base", "HEAD", "--format", "json",
     ])?;
-    let route = json_repair_route(&json)?;
-    assert_eq!(route["status"], "blocked_uncommitted", "{json}");
-    let files = route["uncommitted_files"]
-        .as_array()
-        .ok_or_else(|| format!("uncommitted_files must be an array:\n{json}"))?;
+    // A withheld route offers no repair entry at all: no command, no step.
+    // The error must be the specific missing-repair one, so malformed JSON
+    // or a missing or multiple-route document fails here instead of passing.
+    let error = match json_repair_route(&json) {
+        Ok(_) => {
+            return Err(format!(
+                "a subdirectory route must carry no repair entry:\n{json}"
+            ));
+        }
+        Err(error) => error,
+    };
     assert!(
-        files.iter().any(|file| file == "../src/lib.rs"),
-        "the outside file must be named relative to the root:\n{json}"
+        error.starts_with("the finding route must carry a repair entry:"),
+        "expected the missing-repair error, got: {error}"
     );
-    assert!(route.get("command").is_none(), "{json}");
     Ok(())
 }
 
 /// #13636 (A): a committed-only run did not analyze the dirty file the start
 /// refuses over, so the seam route prints no commit step vouching for it and
 /// no runnable start; it is refused, as the gap route refuses the same state.
+/// #15488 ordering: under a subdirectory root the finding's own refusal is
+/// named first. The top-level gate applies only where a start would otherwise
+/// be printed, so it does not rewrite this reason.
 #[test]
-fn committed_only_check_refuses_the_seam_route_over_dirty_files() -> Result<(), String> {
+fn committed_only_check_at_a_subdirectory_root_refuses_the_seam_route() -> Result<(), String> {
     let repo = outer_repo_with_subdir_root(true)?;
     let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD~1"])?;
     assert!(
         !check.contains("Commit your production change")
             && !check.contains("\n  ripr repair ")
-            && check.contains("the committed-only check excluded dirty tracked files"),
-        "a committed-only run must refuse the seam route over dirty files:\n{check}"
+            && check.contains("No strong assertion was detected"),
+        "a committed-only run at a subdirectory root must refuse the seam route:\n{check}"
     );
     let json = repo.ripr(&[
         "check", "--root", "crate", "--base", "HEAD~1", "--format", "json",
@@ -1658,6 +1810,36 @@ fn assert_comparison_unreached(pilot: &str) -> Result<(), String> {
                 && line.contains("ripr found no test that reaches this")
         }),
         "a call that cannot reach the owner leaves the comparison unreached:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #15278 item 4: a field change in a method no test calls. Pilot names the
+/// method a test must call instead of describing oracles that never run it.
+#[test]
+fn pilot_names_the_method_a_test_must_call() -> Result<(), String> {
+    const HEAD: &str = "pub struct Counter {\n    pub count: u32,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count += STEP;\n    }\n}\n";
+    let old = HEAD.replace("STEP", "1");
+    let new = HEAD.replace("STEP", "2");
+    let repo = Repo::create_uncommitted(
+        &old,
+        &new,
+        "use ar::Counter;\n\n#[test]\nfn starts_at_zero() {\n    assert_eq!(Counter::new().count, 0);\n}\n",
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: no path"),
+        "precondition, check finds no test path to the changed field:\n{check}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("why it matters: no test is seen calling `bump`")
+            && pilot.contains("test to add: one that calls `bump`"),
+        "pilot must say a test has to call bump:\n{pilot}"
+    );
+    assert!(
+        !pilot.contains("Strongest oracle") && !pilot.contains("has no test file to use"),
+        "pilot must not describe oracles or a missing test file here:\n{pilot}"
     );
     Ok(())
 }

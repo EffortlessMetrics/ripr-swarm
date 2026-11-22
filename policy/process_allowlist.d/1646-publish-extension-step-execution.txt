@@ -1,0 +1,2 @@
+tools/repo-policy/src/workflow_tests.rs|Command::new|1|publish-extension-step-proof|ripr#1646: the Linux test module runs the checked-in publish-extension.yml duplicate-comparison and attach-guard step scripts under bash in a temp directory with stand-in fetch and unzip tools on PATH. Test module only; no production spawn and no network.
+tools/repo-policy/src/workflow_tests.rs|use std::process::Command|1|publish-extension-step-proof|ripr#1646: the step-execution test module imports Command only for that bounded bash invocation.

@@ -53,6 +53,9 @@ pub struct LoadedDiff {
 /// file-header line that is not UTF-8 therefore fails closed, naming the
 /// regeneration command.
 fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
+    if let Some(decoded) = decode_utf16_diff_text(source, &bytes) {
+        return decoded;
+    }
     let error = match String::from_utf8(bytes) {
         Ok(text) => return Ok(text),
         Err(error) => error,
@@ -80,6 +83,41 @@ fn decode_diff_text(source: &str, bytes: Vec<u8>) -> Result<String, String> {
         ));
     }
     Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// Decode a diff that opens with a UTF-16 byte-order mark; `None` when it does
+/// not. Windows PowerShell 5.1 writes `git diff > change.diff` as UTF-16LE with
+/// a BOM, and read as UTF-8 that file holds no diff line at all, so the
+/// redirect most Windows users type first was refused as "not a valid unified
+/// diff" (#15907).
+///
+/// The BOM declares the encoding, so the decode is exact or it fails: an odd
+/// byte count or an unpaired surrogate is refused rather than replaced, which
+/// keeps the path-identity rule above (no lossy decode may merge two names).
+fn decode_utf16_diff_text(source: &str, bytes: &[u8]) -> Option<Result<String, String>> {
+    let (payload, little_endian) = match bytes {
+        [0xFF, 0xFE, payload @ ..] => (payload, true),
+        [0xFE, 0xFF, payload @ ..] => (payload, false),
+        _ => return None,
+    };
+    let (pairs, trailing) = payload.as_chunks::<2>();
+    let units = pairs.iter().map(|pair| {
+        if little_endian {
+            u16::from_le_bytes(*pair)
+        } else {
+            u16::from_be_bytes(*pair)
+        }
+    });
+    let decoded = char::decode_utf16(units).collect::<Result<String, _>>();
+    Some(match decoded {
+        Ok(text) if trailing.is_empty() => Ok(text),
+        _ => Err(format!(
+            "failed to read {source}: the input starts with a UTF-16 byte-order mark but is \
+             not complete UTF-16 text (a truncated final unit or an unpaired surrogate), so \
+             it cannot be decoded exactly; write the diff as UTF-8 with \
+             `git diff --output=<file> ...`"
+        )),
+    })
 }
 
 /// Git file-header lines that carry a path. None can be a hunk line, which
@@ -2598,6 +2636,24 @@ fn load_pr_evidence_diff_range_within(
     String::from_utf8(bytes).map_err(|err| format!("packet diff is not valid UTF-8: {err}"))
 }
 
+/// The `ci-packet` capture of `target/ripr/reports/pr.diff` (#9365): the
+/// shared pinned assembly with the PR-evidence presentation (`--binary`,
+/// three context lines), so the packet no longer restates the argv and gets
+/// every ambient pin this file owns (#15954 rename limit, algorithm, indent
+/// heuristic, big-file threshold, full index). The bytes are recorded and
+/// hashed as they are, so no UTF-8 decode, and there is no deadline, as
+/// before.
+pub(crate) fn load_ci_packet_diff_bytes(root: &Path, range: &str) -> Result<Vec<u8>, String> {
+    Ok(run_git_diff_bytes(
+        root,
+        range,
+        &["--binary"],
+        "3",
+        None,
+        None,
+    )?)
+}
+
 /// Return `true` when the working tree at `root` has uncommitted changes to
 /// tracked source files (staged or unstaged).
 ///
@@ -2943,6 +2999,30 @@ enum GitOperation {
     CherryPick,
 }
 
+/// Doctor's advisory for an interrupted Git operation, or `None` when none is
+/// in progress (or Git did not answer). It shares the marker probe with the
+/// check-time warning so the two surfaces cannot disagree, and states the next
+/// step once: finish or abort the operation, then rerun.
+pub(crate) fn git_operation_advisory(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    let operation = git_operation_in_progress(root, git_timeout)?;
+    let (name, finish, abort) = match operation {
+        GitOperation::RebaseMerge | GitOperation::RebaseApply => {
+            ("rebase", "git rebase --continue", "git rebase --abort")
+        }
+        GitOperation::Merge => ("merge", "git merge --continue", "git merge --abort"),
+        GitOperation::CherryPick => (
+            "cherry-pick",
+            "git cherry-pick --continue",
+            "git cherry-pick --abort",
+        ),
+    };
+    Some(format!(
+        "this repository is mid-{name}: while conflict markers remain, `ripr check` does not read \
+         their regions as changes and exits 2 (analysis incomplete); \
+         finish it (`{finish}`) or abort it (`{abort}`), then rerun `ripr check`"
+    ))
+}
+
 fn git_operation_warning(operation: GitOperation) -> String {
     let (operation, context) = match operation {
         GitOperation::RebaseMerge | GitOperation::RebaseApply => (
@@ -3057,6 +3137,14 @@ fn run_git_diff_bytes(
     // as a copy section that carries only its difference from another file.
     // It is a config pin, not a flag, so a caller extra such as
     // `--no-renames` still decides for its own invocation.
+    // The next four pins restore git's own defaults so the analyzed patch
+    // and its identities do not depend on the machine (#15954):
+    // `diff.algorithm` (histogram or patience give different hunks, so
+    // different changed lines, for an ambiguous edit), `diff.indentHeuristic`
+    // (off, a sliding insertion is reported one line later),
+    // `diff.renameLimit` (below the rename count, each rename becomes a
+    // deletion plus a whole new file) and `core.bigFileThreshold` (below a
+    // source file's size, the file arrives as `Binary files differ`).
     let mut args: Vec<&str> = vec![
         "-c",
         "core.quotePath=true",
@@ -3064,6 +3152,14 @@ fn run_git_diff_bytes(
         "diff.orderFile=/dev/null",
         "-c",
         "diff.renames=true",
+        "-c",
+        "diff.algorithm=myers",
+        "-c",
+        "diff.indentHeuristic=true",
+        "-c",
+        "diff.renameLimit=1000",
+        "-c",
+        "core.bigFileThreshold=512m",
         "diff",
     ];
     args.extend_from_slice(extra_args);
@@ -3084,9 +3180,14 @@ fn run_git_diff_bytes(
     // Ambient submodule ignore settings can hide a changed gitlink before
     // the parser's skipped-content disclosure sees it (#8209). Keep those
     // sections visible without analyzing the child repository's contents.
+    // `--full-index` writes whole blob ids on the `index` line (#15954).
+    // The abbreviated form follows `core.abbrev` and, unset, an automatic
+    // length that grows with the object count, so a shallow CI clone and a
+    // full local clone produced different patch bytes for one range.
     let unified_arg = format!("--unified={unified}");
     args.extend_from_slice(&[
         "--no-ext-diff",
+        "--full-index",
         "--no-textconv",
         "--no-color",
         crate::git::SUBMODULE_POINTERS_ONLY,
@@ -3418,6 +3519,74 @@ mod tests {
                 .to_vec();
         let text = decode_diff_text("diff from stdin", quoted).map_err(std::io::Error::other)?;
         assert!(text.contains("-caf\u{fffd}"), "{text}");
+        Ok(())
+    }
+
+    /// The bytes Windows PowerShell 5.1 writes for `git diff > change.diff`:
+    /// a byte-order mark, UTF-16 units, and CRLF line ends.
+    fn utf16_diff_bytes(text: &str, bom: [u8; 2], unit_bytes: fn(u16) -> [u8; 2]) -> Vec<u8> {
+        let mut bytes = bom.to_vec();
+        for unit in text.replace('\n', "\r\n").encode_utf16() {
+            bytes.extend(unit_bytes(unit));
+        }
+        bytes
+    }
+
+    const UTF16_CASE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-fn a() -> bool { 1 > 0 }\n+fn a() -> bool { \"caf\u{e9} \u{1d11e}\"; 1 >= 0 }\n";
+
+    #[test]
+    fn utf16_diff_with_a_byte_order_mark_decodes_to_its_exact_text() -> std::io::Result<()> {
+        // #15907. The astral character proves surrogate pairs decode, not
+        // only the ASCII half of each unit. The mark itself is dropped.
+        let expected = UTF16_CASE_DIFF.replace('\n', "\r\n");
+        for (bom, unit_bytes) in [
+            ([0xFF, 0xFE], u16::to_le_bytes as fn(u16) -> [u8; 2]),
+            ([0xFE, 0xFF], u16::to_be_bytes),
+        ] {
+            let bytes = utf16_diff_bytes(UTF16_CASE_DIFF, bom, unit_bytes);
+            // Fixture check: these bytes are not the UTF-8 spelling.
+            assert_ne!(bytes, expected.as_bytes());
+            let text = decode_diff_text("diff from stdin", bytes).map_err(std::io::Error::other)?;
+            assert_eq!(text, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn utf16_diff_that_cannot_decode_exactly_fails_closed() -> std::io::Result<()> {
+        let whole = utf16_diff_bytes(UTF16_CASE_DIFF, [0xFF, 0xFE], u16::to_le_bytes);
+        let truncated = whole[..whole.len() - 1].to_vec();
+        // A lone high surrogate in a path: a lossy decode would merge it
+        // with every other undecodable name.
+        let mut unpaired = vec![0xFF, 0xFE];
+        for unit in "--- a/src/p_".encode_utf16().chain([0xD800]) {
+            unpaired.extend(unit.to_le_bytes());
+        }
+        for bytes in [truncated, unpaired] {
+            let Err(message) = decode_diff_text("diff file change.diff", bytes) else {
+                return Err(std::io::Error::other("inexact UTF-16 must fail closed"));
+            };
+            assert!(
+                message.starts_with("failed to read diff file change.diff: "),
+                "{message}"
+            );
+            assert!(message.contains("git diff --output=<file>"), "{message}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn utf8_diff_is_not_read_as_utf16() -> std::io::Result<()> {
+        // Negative control: a UTF-8 BOM and a first byte that is half of a
+        // UTF-16 mark both stay on the byte-preserving UTF-8 route.
+        let mut with_utf8_bom = b"\xef\xbb\xbf".to_vec();
+        with_utf8_bom.extend(UTF16_CASE_DIFF.as_bytes());
+        let text = decode_diff_text("diff from stdin", with_utf8_bom.clone())
+            .map_err(std::io::Error::other)?;
+        assert_eq!(text.as_bytes(), with_utf8_bom);
+        let lone_ff = b"\xff--- not a mark\n".to_vec();
+        let text = decode_diff_text("diff from stdin", lone_ff).map_err(std::io::Error::other)?;
+        assert_eq!(text, "\u{fffd}--- not a mark\n");
         Ok(())
     }
 

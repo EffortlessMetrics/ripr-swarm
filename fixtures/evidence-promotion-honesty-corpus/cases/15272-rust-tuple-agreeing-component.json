@@ -1,0 +1,20 @@
+{
+  "id": "rust_tuple_agreeing_component_equal_value_at_the_asserted_input",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/invisible_change_tuple_agreeing_component",
+  "vector": "tuple_tail_builds_the_baseline_tuple_at_every_asserted_input",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    }
+  ]
+}

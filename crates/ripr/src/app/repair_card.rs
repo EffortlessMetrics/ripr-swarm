@@ -393,7 +393,8 @@ pub(crate) fn project_target(selection: &RepairTargetSelection) -> Option<Repair
                 crate::analysis::test_grip_evidence::TestKind::InlineUnit => {
                     RepairCardTestKind::InlineUnit
                 }
-                crate::analysis::test_grip_evidence::TestKind::Integration => {
+                crate::analysis::test_grip_evidence::TestKind::Integration
+                | crate::analysis::test_grip_evidence::TestKind::DeclaredIntegration => {
                     RepairCardTestKind::Integration
                 }
             },

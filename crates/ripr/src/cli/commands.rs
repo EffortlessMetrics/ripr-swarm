@@ -408,16 +408,18 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
 }
 
 pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
+    // The bare group prints its help, like every other group. It used to
+    // imply `plan` (#2013, when `plan` was the only subcommand) and so wrote
+    // the default plan files for a command that named no action (#15985).
+    let Some((subcommand, rest)) = args.split_first() else {
+        help::print_group_help("pr-comments", args);
+        return Ok(());
+    };
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_group_help("pr-comments", args);
         return Ok(());
     }
-    // `plan` is implied when the command runs bare: `ripr pr-comments`
-    // behaves like `ripr pr-comments plan` (#2013).
-    let (subcommand, rest) = match args.split_first() {
-        Some((subcommand, rest)) => (subcommand.as_str(), rest),
-        None => ("plan", &[][..]),
-    };
+    let subcommand = subcommand.as_str();
     match subcommand {
         "plan" => pr_comments_plan(rest),
         "existing" => pr_comments_github::pr_comments_existing(rest),
@@ -494,7 +496,9 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     let mut reads = SuppliedInputReads::default();
     let input = output::ripr_zero_status::RiprZeroStatusInput {
         root: ".".to_string(),
-        generated_at: baseline_created_at()?,
+        // Zero status judges review deadlines and baseline age against this
+        // stamp, so it stays on the wall clock under `RIPR_GENERATED_AT`.
+        generated_at: crate::cli::commands_timestamps::wall_clock_unix_ms()?,
         baseline_path,
         delta_path: output::ripr_zero_status::display_path(&options.delta),
         gap_ledger_path,
@@ -4955,42 +4959,20 @@ language = "rust"
     }
     #[test]
     fn pr_comments_plan_rejects_bad_subcommands_and_options() {
-        // Bare `ripr pr-comments` is the `plan` alias (#2013). The dispatch
-        // writes the default plan files, so they are cleaned on both sides.
-        for residue in [
-            "target/ripr/review/comment-publish-plan.json",
-            "target/ripr/review/comment-publish-plan.md",
-        ] {
-            let _ = std::fs::remove_file(residue);
-        }
-        let bare_result = pr_comments(&args(&[]));
+        // Bare `ripr pr-comments` prints the group help and writes no plan
+        // (#15985); only an explicit `plan` writes the default files.
         let json_path = "target/ripr/review/comment-publish-plan.json";
         let md_path = "target/ripr/review/comment-publish-plan.md";
-        let json_text = std::fs::read_to_string(json_path);
-        assert!(json_text.is_ok(), "bare dispatch must write {json_path}");
-        let json_text = json_text.unwrap_or_default();
-        let plan = serde_json::from_str::<serde_json::Value>(&json_text);
-        assert!(
-            plan.is_ok(),
-            "plan output must be valid JSON: {}",
-            plan.err().map(|err| err.to_string()).unwrap_or_default()
-        );
-        let plan = plan.unwrap_or_default();
-        assert!(
-            plan.get("schema_version").is_some() || plan.get("mode").is_some(),
-            "plan output lost its contract shape: {json_text}"
-        );
-        assert!(
-            std::path::Path::new(md_path).is_file(),
-            "bare dispatch must write the markdown plan"
-        );
         for residue in [json_path, md_path] {
             let _ = std::fs::remove_file(residue);
         }
-        assert!(
-            bare_result.is_ok(),
-            "bare pr-comments must dispatch to plan with defaults"
-        );
+        assert_eq!(pr_comments(&args(&[])), Ok(()));
+        for residue in [json_path, md_path] {
+            assert!(
+                !std::path::Path::new(residue).exists(),
+                "bare pr-comments must not write {residue}"
+            );
+        }
         assert_eq!(
             pr_comments(&args(&["publish"])),
             Err("unknown pr-comments subcommand \"publish\". Accepted: plan, existing, requests, summary.".to_string())

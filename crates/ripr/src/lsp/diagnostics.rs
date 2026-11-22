@@ -970,9 +970,18 @@ pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<
 pub(super) fn empty_scope_diagnostic(snapshot: &AnalysisSnapshot) -> Diagnostic {
     // The not-all-clear fact and recovery route come from the shared wording
     // owner (#12416), so the marker cannot drift from hover and status.
+    //
+    // `snapshot.base` is the base the run resolved, which is a branch name
+    // even when no base was requested. The cause sentence needs the requested
+    // base, which the bound input identity records; hover and status read the
+    // same requested value from the session configuration (#15951).
+    let requested_base = match snapshot.input_identity.as_ref() {
+        Some(identity) => identity.requested_base.as_deref(),
+        None => snapshot.base.as_deref(),
+    };
     let disclosure = super::backend::empty_scope_disclosure(
         snapshot.analysis_outcome.as_ref(),
-        snapshot.base.as_deref(),
+        requested_base,
         false,
     )
     .unwrap_or_else(|| super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE.to_string());
@@ -1218,7 +1227,16 @@ fn analysis_pending_diagnostic_for(
     recovery: AnalysisPendingRecovery,
     withdrawn: bool,
 ) -> Diagnostic {
-    let message = if withdrawn {
+    let message = if withdrawn && matches!(recovery, AnalysisPendingRecovery::AnalysisFailed { .. })
+    {
+        // #15312: the retained findings answer an earlier base, so they are
+        // withdrawn rather than shown as the answer to the current one.
+        format!(
+            "ripr could not analyze this workspace with the current settings, so previously \
+             reported findings are withdrawn — this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if withdrawn {
         format!(
             "ripr analysis is paused and previously reported findings are withdrawn — \
              this is not evidence of a clean workspace. {}",
@@ -1245,10 +1263,10 @@ fn analysis_pending_diagnostic_for(
     };
     let mut data = serde_json::json!({
         "kind": "delivery_limitation",
-        "state": if withdrawn {
-            "withdrawn_configuration_failure"
-        } else {
-            "no_snapshot"
+        "state": match (withdrawn, &recovery) {
+            (true, AnalysisPendingRecovery::AnalysisFailed { .. }) => "withdrawn_analysis_failure",
+            (true, _) => "withdrawn_configuration_failure",
+            (false, _) => "no_snapshot",
         },
         "recovery": recovery.recovery_id(),
     });

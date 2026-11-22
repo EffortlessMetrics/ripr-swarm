@@ -66,8 +66,10 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
     Ok(())
 }
 
+mod nested_json_pass_through;
 mod shared_macro_scan;
 mod shared_target_context;
+mod standalone_proptest_wrapper;
 mod standard_wrapper_disclosure;
 mod tuple_projection;
 #[test]
@@ -14512,6 +14514,13 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
             "qualified-nested-wrapper",
             "proptest::proptest! { #[test] fn p(v in proptest::collection::vec(proptest::prop_oneof![proptest::strategy::Just(vec![1u8])], 0..3)) { proptest::prop_assert!(v.len() < 3); assert_eq!(v.len(), v.len()); } }\n".to_string(),
         ),
+        // A field colon is no `::` separator: a bare call after it stays bare.
+        (
+            "field-initializer-bare-calls",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ let c = Check {{ items: vec![vec![x]], strategy: prop_oneof![Just(vec![x])] }}; assert_eq!(c.items.len(), 1); }} }}\n"
+            ),
+        ),
         // A field colon before the path is no `::` separator.
         (
             "field-initializer-nested-wrapper",
@@ -14525,6 +14534,14 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
             "inert-attributes",
             format!(
                 "{glob}proptest! {{\n    #![proptest_config(ProptestConfig::with_cases(8))]\n    #[doc(hidden)]\n    {body}\n}}\n"
+            ),
+        ),
+        // A confined mention of `vec` leaves the file's other `vec!` calls
+        // standard, so one outside the property stays transparent.
+        (
+            "confined-mention-leaves-other-calls-standard",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(v in 0u8..3) {{ let _ = vec![v]; }} }}\nfn helper() {{ let _ = vec![assert_eq!(1, 1)]; }}\n"
             ),
         ),
         // Trusted calls nested in the confined arguments rebind nothing, so
@@ -14657,6 +14674,17 @@ fn audited_pass_through_wrappers_confine_their_arguments_to_the_call() -> Result
         (
             "nested-qualified-root-imported",
             "use other::proptest;\n::proptest::proptest! { #[test] fn p(x in 0u8..3) { proptest::prop_assert!(assert_eq); } }\n".to_string(),
+        ),
+        // A field's `:` ends the path; it does not launder what follows it.
+        (
+            "field-initializer-foreign-nested-wrapper",
+            format!(
+                "{glob}proptest! {{ #[test] fn p(x in 0u8..3) {{ let c = Check {{ result: dep::prop_assert!(assert_eq) }}; }} }}\n"
+            ),
+        ),
+        (
+            "field-initializer-nested-root-imported",
+            "use other::proptest;\n::proptest::proptest! { #[test] fn p(x in 0u8..3) { let c = Check { result: proptest::prop_assert!(assert_eq) }; } }\n".to_string(),
         ),
     ] {
         assert!(

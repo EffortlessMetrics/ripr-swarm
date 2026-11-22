@@ -670,7 +670,7 @@ literal the owner does not return are refused by name.
 | State | Meaning |
 | --- | --- |
 | `top_gap` | A non-preview, non-exposed finding was selected as the first safe repair or inspection candidate. The human action line points at the instruction the digest prints (#14173): `Safe next action: follow the Next step below; this is static advisory evidence only` when the digest carries a `Next step` line, and `Safe next action: look at the reason and related test below before changing a test; this is static advisory evidence only` when it carries none. |
-| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
+| `no_actionable_gap` | Only `exposed` visible findings were selected; the output is not runtime proof or test adequacy. The human lines split this state in two (#14080). When the shared check verification verdict is complete (the decision behind the agent format's `verify=complete`), no finding is suppressed or withheld, and every finding is `exposed`, they read `State: no test gap found` and `Safe next action: none needed; tests appear to notice every changed behavior ripr checked. This is a static reading of the code, not a test run`. Otherwise the state reads `no gap selected for repair` (a run whose only findings are removed lines reads `every finding left is on removed code, which is never an edit target`; see Removed-code-only runs) and the action line says none is needed for this change, counts the other findings that did not read as noticed, and ends with the same static-reading sentence. |
 | `preview_limited` | The selected finding is from a preview-language adapter; evidence is advisory until the preview contract explicitly promotes it. |
 | `static_limited` | The selected finding is no-path, unknown, or carries a producer-owned typed static limitation. A typed limitation remains authoritative even when the retained classification is `reachable_unrevealed` or `weakly_exposed`; inspect the named limitation before treating it as repair-ready. When a selected `no_static_path` finding has no typed limitation, review the unresolved static path and existing tests instead. The finding classification does not change. |
 | `missing_scope` | The run produced no findings because no analysis scope was provided. This empty output is not an all-clear. |
@@ -1010,8 +1010,13 @@ unchanged, and the lines claim no runtime outcome.
 ### Removed-code-only runs (#15335)
 
 When no finding is selected and every omitted finding is a removed line
-(`source_currentness: base_deleted`), the `Safe next action` line says that
-the diff removes code, that removed code is never an edit target, and so
+(`source_currentness: base_deleted`), the `State:` line reads `every finding
+left is on removed code, which is never an edit target` instead of `no gap
+selected for repair`. It describes the findings left after suppression, not
+the whole diff: a policy-suppressed finding on added code is not counted, so
+the line does not claim the diff only removes code.
+
+The `Safe next action` line says that the diff removes code, that removed code is never an edit target, and so
 nothing is selected for repair. It then gives the static evidence on the
 removed code as class counts in the Summary line's plain words and order
 (`appear noticed by tests`, `partly noticed`, `reached but not noticed`,
@@ -1021,10 +1026,28 @@ expands the same evidence; it does not settle an unclear class. It
 does not say "before treating this run as actionable", which read as
 "nothing to look at" for a removal that tests reach.
 
+Under that line the run lists what was removed (#15617). A
+`Removed code (static evidence on the old lines, not a test result; each
+location is where the code stood in the current file):` heading
+is followed by one row per finding on a removed line: its location, the code
+that stood there in a code span, the finding kind as `(kind: predicate)` so two
+findings on one line stay distinct, and what the class says about the old line
+(`a related test appears to check this behavior`, `tests reach it but check it
+only loosely`, `tests reach it but none appears to check it`, `no test path
+was found`, or `ripr could not tell whether a test checks it (analysis limited,
+not a verdict)`). At most three rows are listed; identical rows print once,
+and a final `N more: rerun with --format human-full` row counts the rest
+(the Hidden list is bounded too, so it is not named as holding them). A
+finding on removed code carries the position in the current file where the
+code stood, not the old line number, so several removed statements can share
+one location; the heading says so. The rows
+restate classes the findings already carry. They select nothing for repair
+and add no verdict.
+
 Any other no-selection mix (a moved or renamed line, unresolved currentness,
-or a mix of those) keeps the earlier wording. The State id
+or a mix of those) keeps the earlier wording on both lines. The State id
 (`no_actionable_gap`), the Hidden list, the counts, repair routing and every
-machine format are unchanged; the line claims no runtime outcome.
+machine format are unchanged; the line and the rows claim no runtime outcome.
 
 ## Non-Claims
 
