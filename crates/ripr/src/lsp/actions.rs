@@ -85,13 +85,15 @@ pub(super) fn code_action_response(
             diagnostic,
             snapshot,
         ));
+        // #13636: with no spot inventory (deferred by a quick save, or not
+        // built in this configuration) the finding has no seam-bound start.
+        // A disabled-capable client sees the start inert with the blocker
+        // and next step named; other clients keep the legacy omission. A
+        // gap record in the same request carries its own start instead.
         if client_features.code_action_disabled
-            && let Some(action) = deferred_seam_start_disabled_action(diagnostic, snapshot)
+            && !params.context.diagnostics.iter().any(is_gap_diagnostic)
+            && let Some(action) = finding_start_blocked_action(diagnostic, snapshot)
         {
-            // #13636: an interactive refresh deferred the full spot
-            // inventory, so the finding has no seam-bound start. A
-            // disabled-capable client sees the start inert with the full
-            // refresh named; other clients keep the legacy omission.
             actions.push(action);
         }
     }
@@ -323,6 +325,7 @@ pub(super) fn disable_retained_analysis_actions(
                         | "preview_or_static_limitation"
                         | "repair_route_not_ready"
                         | "uncommitted_production_change"
+                        | "seam_inventory_not_enabled"
                 )
             )
         {
@@ -642,22 +645,32 @@ pub(super) mod test_premise {
     }
 }
 
-/// The inert "Start repair" action for a gap-class finding whose snapshot
-/// came from an interactive refresh that deferred the full spot inventory
-/// (#13636). `None` unless the snapshot is `seams_deferred`, a full refresh
-/// under its configuration builds the spot inventory, and the cited finding
-/// is a candidate-current actionable Rust gap with no static limit: an
-/// exposed or base-side finding never had a start to defer, and a preview,
-/// non-Rust or static-limited finding gets no spot start from a full refresh
-/// either. Under the default actionable profile, or with spot diagnostics
-/// off, a full refresh builds no spots, so naming it would mislead; the
-/// status already names that setting.
-fn deferred_seam_start_disabled_action(
+/// The inert "Start repair" action for a gap-class finding that has no
+/// seam-bound start because the snapshot carries no spot inventory (#13636).
+/// The cited finding must be a candidate-current actionable Rust gap with no
+/// static limit: an exposed or base-side finding has no start to explain, and
+/// a preview, non-Rust or static-limited finding gets no spot start in any
+/// configuration. The reason names the real blocker:
+/// - `seam_inventory_not_enabled` when even a full refresh builds no spots
+///   under the snapshot's configuration (the default actionable profile, or
+///   spot diagnostics off), naming the setting;
+/// - `seam_evidence_deferred` when an interactive refresh deferred the
+///   inventory a full refresh would build, naming that refresh.
+///
+/// `None` for a full snapshot whose configuration builds spots: the seam
+/// diagnostics carry their own start.
+fn finding_start_blocked_action(
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
 ) -> Option<CodeActionOrCommand> {
-    let snapshot = snapshot
-        .filter(|snapshot| snapshot.seams_deferred && snapshot.seam_inventory_on_full_refresh)?;
+    let snapshot = snapshot?;
+    let reason = if !snapshot.seam_inventory_on_full_refresh {
+        ActionDisabledReason::SeamInventoryNotEnabled
+    } else if snapshot.seams_deferred {
+        ActionDisabledReason::SeamEvidenceDeferred
+    } else {
+        return None;
+    };
     let finding_id = diagnostic
         .data
         .as_ref()
@@ -679,7 +692,7 @@ fn deferred_seam_start_disabled_action(
         COPY_AGENT_REPAIR_COMMAND,
         diagnostic,
         Some(snapshot),
-        ActionDisabledReason::SeamEvidenceDeferred,
+        reason,
     )
 }
 

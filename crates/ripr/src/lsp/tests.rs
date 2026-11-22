@@ -9465,17 +9465,69 @@ fn deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh() -> Resu
 
     // Under a configuration whose full refresh builds no spots (the default
     // actionable profile, or spot diagnostics off) the refresh would not
-    // bring a start back, so none is promised.
-    let mut no_inventory = snapshot.clone();
-    no_inventory.seam_inventory_on_full_refresh = false;
-    let no_inventory_actions = code_action_response(&params, Some(&no_inventory), &disabled_client);
-    let no_inventory_literals = code_action_literals(&no_inventory_actions)?;
-    assert!(
-        no_inventory_literals
+    // bring a start back: the start names the setting instead, deferred or
+    // not, and a running refresh does not replace that reason.
+    for deferred in [true, false] {
+        let mut no_inventory = snapshot.clone();
+        no_inventory.seams_deferred = deferred;
+        no_inventory.seam_inventory_on_full_refresh = false;
+        let no_inventory_actions =
+            code_action_response(&params, Some(&no_inventory), &disabled_client);
+        let no_inventory_literals = code_action_literals(&no_inventory_actions)?;
+        let blocked = no_inventory_literals
             .iter()
-            .all(|action| action.title != start_title),
-        "{no_inventory_literals:?}"
-    );
+            .find(|action| action.title == start_title)
+            .ok_or_else(|| format!("the settings-blocked start: {no_inventory_literals:?}"))?;
+        assert!(blocked.command.is_none(), "{blocked:?}");
+        let blocked_data = blocked.data.as_ref().ok_or("blocked start data")?;
+        assert_eq!(
+            blocked_data["disabled_reason"],
+            "seam_inventory_not_enabled"
+        );
+        let reason = blocked
+            .disabled
+            .as_ref()
+            .map(|disabled| disabled.reason.as_str())
+            .unwrap_or_default();
+        assert!(
+            reason.contains("ripr.diagnosticProfile")
+                && reason.contains("ripr: Refresh Full Analysis"),
+            "{reason}"
+        );
+        let mut retained = no_inventory_actions.clone();
+        super::actions::disable_retained_analysis_actions(
+            &mut retained,
+            &AnalysisHealth {
+                state: AnalysisAttemptState::Running,
+                ..AnalysisHealth::default()
+            },
+        );
+        let retained_literals = code_action_literals(&retained)?;
+        let retained_start = retained_literals
+            .iter()
+            .find(|action| action.title == start_title)
+            .ok_or("retained settings-blocked start")?;
+        let retained_data = retained_start.data.as_ref().ok_or("retained data")?;
+        assert_eq!(
+            retained_data["disabled_reason"],
+            "seam_inventory_not_enabled"
+        );
+        // A gap record in the same request carries its own start, so the
+        // finding adds no inert one beside it.
+        let mut gap_record = finding_diagnostic.clone();
+        gap_record.data = Some(serde_json::json!({ "gap_id": "gap:0011223344556677" }));
+        let with_gap = code_action_params(vec![finding_diagnostic.clone(), gap_record])?;
+        let with_gap_actions =
+            code_action_response(&with_gap, Some(&no_inventory), &disabled_client);
+        let with_gap_literals = code_action_literals(&with_gap_actions)?;
+        assert!(
+            with_gap_literals.iter().all(|action| action
+                .data
+                .as_ref()
+                .is_none_or(|data| data["disabled_reason"] != "seam_inventory_not_enabled")),
+            "{with_gap_literals:?}"
+        );
+    }
     // A non-Rust finding gets no spot start from a full refresh either.
     let mut python = snapshot.clone();
     python.findings[0].language = Some(crate::domain::LanguageId::Python);

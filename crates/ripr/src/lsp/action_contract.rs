@@ -66,6 +66,11 @@ pub(super) enum ActionDisabledReason {
     /// repair start exists for the finding yet. The emitted human text names
     /// the full refresh; it does not promise a start after it.
     SeamEvidenceDeferred,
+    /// The configuration builds no spot inventory even on a full refresh
+    /// (the default `actionable` diagnostic profile, or spot diagnostics
+    /// off; #13636), so no seam-bound repair start exists for the finding.
+    /// The emitted human text names the setting and the full refresh.
+    SeamInventoryNotEnabled,
     // Reserved below: closed-vocabulary members with named future producers.
     // The emit guard (`disabled_reason_emittable`) keeps every reserved
     // reason unemitted until its producer lands — real producers only.
@@ -104,6 +109,7 @@ impl ActionDisabledReason {
             Self::RepairRouteNotReady => "repair_route_not_ready",
             Self::UncommittedProductionChange => "uncommitted_production_change",
             Self::SeamEvidenceDeferred => "seam_evidence_deferred",
+            Self::SeamInventoryNotEnabled => "seam_inventory_not_enabled",
             Self::WorkspaceRootBlocked => "workspace_root_blocked",
             Self::FixSiteUnavailable => "fix_site_unavailable",
             Self::ExactReplacementUnavailable => "exact_replacement_unavailable",
@@ -144,6 +150,9 @@ impl ActionDisabledReason {
             Self::SeamEvidenceDeferred => {
                 "The last save ran a quick analysis that skips repair spots, so there is no repair start here yet; run \"ripr: Refresh Full Analysis\", then check this finding again."
             }
+            Self::SeamInventoryNotEnabled => {
+                "Your ripr settings skip repair spots, so there is no repair start here; set ripr.diagnosticProfile to \"full\" with ripr.seamDiagnostics on (or diagnostic_profile = \"full\" under [lsp] in ripr.toml), then run \"ripr: Refresh Full Analysis\"."
+            }
             Self::StaleDocument => "The document changed after this analysis snapshot",
             Self::WorkspaceRootBlocked => "The workspace root is blocked for analysis",
             Self::FixSiteUnavailable => "No fix site is available for this finding",
@@ -173,6 +182,7 @@ pub(super) const EMITTED_DISABLED_REASONS: &[ActionDisabledReason] = &[
     ActionDisabledReason::RepairRouteNotReady,
     ActionDisabledReason::UncommittedProductionChange,
     ActionDisabledReason::SeamEvidenceDeferred,
+    ActionDisabledReason::SeamInventoryNotEnabled,
 ];
 
 /// Reserved reasons with named future producers. Never emitted until the
@@ -545,6 +555,7 @@ mod tests {
             ActionDisabledReason::RepairRouteNotReady,
             ActionDisabledReason::UncommittedProductionChange,
             ActionDisabledReason::SeamEvidenceDeferred,
+            ActionDisabledReason::SeamInventoryNotEnabled,
             ActionDisabledReason::WorkspaceRootBlocked,
             ActionDisabledReason::FixSiteUnavailable,
             ActionDisabledReason::ExactReplacementUnavailable,

@@ -102,7 +102,8 @@ fix-instruction summaries, and no retrieval references — those belong to
 today `analysis_not_current`, `stale_snapshot`, `client_capability_missing`,
 `verification_route_unavailable`, `receipt_route_unavailable`,
 `preview_or_static_limitation`, `repair_route_not_ready`,
-`uncommitted_production_change`, and `seam_evidence_deferred` — while the
+`uncommitted_production_change`, `seam_evidence_deferred`, and
+`seam_inventory_not_enabled` — while the
 reserved members
 (`stale_document`, `workspace_root_blocked`, `fix_site_unavailable`,
 `exact_replacement_unavailable`, `ambiguous_fix_site`,
@@ -330,7 +331,8 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   `analysis_not_current`,
   `verification_route_unavailable`, `receipt_route_unavailable`,
   `preview_or_static_limitation`, `repair_route_not_ready`,
-  `uncommitted_production_change`, `seam_evidence_deferred`).
+  `uncommitted_production_change`, `seam_evidence_deferred`,
+  `seam_inventory_not_enabled`).
   `tests.rs::deferred_seam_snapshot_lists_an_inert_start_naming_the_full_refresh`
   pins the deferred-seam start, its legacy omission, and its absence on a
   full snapshot and on an `exposed` finding.
@@ -533,12 +535,18 @@ client supports:
   Full Analysis" (wire `ripr.refresh`) without promising a start after it.
   It is listed only when a full refresh under the snapshot's configuration
   builds the spot inventory (`seam_inventory_on_full_refresh`: full
-  diagnostic profile, spot diagnostics on, Rust enabled); under the default
-  actionable profile the refresh builds no spots and the status's
-  `seam_diagnostics_not_enabled` outcome names the setting instead. An
-  `exposed`, base-side, preview, non-Rust or static-limited finding, a full
-  snapshot and a legacy client get no inert start. While analysis is queued
-  or running, the retained start reads `analysis_not_current`. With no gap or seam diagnostic near the selection, "Start
+  diagnostic profile, spot diagnostics on, Rust enabled). When it does not
+  (the default actionable profile, or spot diagnostics off), deferred or
+  not, the same finding instead lists the start inert as
+  `seam_inventory_not_enabled`, whose reason names the setting
+  (`ripr.diagnosticProfile` = `full` with `ripr.seamDiagnostics` on, or
+  `[lsp] diagnostic_profile = "full"` in `ripr.toml`) and then the full
+  refresh. An `exposed`, base-side, preview, non-Rust or static-limited
+  finding, a full snapshot whose configuration builds spots, a request that
+  also carries a gap record (which has its own start) and a legacy client
+  get no inert start. While analysis is queued or running, the retained
+  deferred start reads `analysis_not_current`; the settings reason is kept,
+  because a refresh does not change the setting. With no gap or seam diagnostic near the selection, "Start
   Current Repair" asks the server about the nearest finding diagnostic and
   shows that reason before saying no repair gap is available (#13636).
   `ripr agent repair`
