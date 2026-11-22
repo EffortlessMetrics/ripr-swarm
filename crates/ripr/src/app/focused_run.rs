@@ -498,7 +498,10 @@ pub(crate) const PROPOSAL_FOCUSED_RESULT_FLAG: &str = " --test-result FILE";
 /// How a caller produces `FILE` for [`PROPOSAL_FOCUSED_RESULT_FLAG`]. One
 /// source for the up-front requirement (start, status, continue) and the
 /// gate's missing-result refusal, so the two cannot drift apart (#16164).
-const PROPOSAL_FOCUSED_RESULT_HOW_TO: &str = "run the new test (`cargo test -- --format json -Z unstable-options`) and pass its events with `--test-result FILE`";
+/// Libtest JSON output is unstable, so the run needs a nightly toolchain, and
+/// it must select the proposed file's own package and target: from a
+/// workspace root a bare `cargo test` runs only the default members.
+const PROPOSAL_FOCUSED_RESULT_HOW_TO: &str = "run the new test on a nightly toolchain, selecting its package and target (`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json`, or `--lib` in place of `--test TARGET` for an inline test), and pass its events with `--test-result FILE`";
 
 /// The shape of `FILE`, named once so the requirement says how to build it.
 const PROPOSAL_FOCUSED_RESULT_FILE_SHAPE: &str = "FILE is a JSON document saved outside the checkout with schema_version `0.1`, kind `focused_test_result`, attempt_id, head, test_file and libtest_events";

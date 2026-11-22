@@ -1079,8 +1079,9 @@ a focused result. When the attempt begins, its committed after command (the
 manifest `next_command`, the `--json` `repair_attempt.next_command`, and the
 human `Next, after the test edit:` line) ends with `--test-result FILE`, and
 the start states, in the finish gate's own words, that the attempt follows a
-new-test proposal and how to produce FILE (run the new test with
-`cargo test -- --format json -Z unstable-options` and pass its events in a
+new-test proposal and how to produce FILE (run the new test on a nightly
+toolchain for its own package and target, for example
+`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json` or `--lib` for an inline test, and pass its events in a
 `focused_test_result` document saved outside the checkout). The `--json`
 continuation carries that text as the additive `focused_result_requirement`
 member, present only for a proposal attempt. `ripr agent status` (default and

@@ -86,7 +86,10 @@ fn after_phase_requires_advanced_spelling(command: &str) -> bool {
         || command.contains("--edit-authority")
         || command.contains("--verify-authorized")
         || command.contains("--store")
-        || command.contains("--test-result")
+        // The proposal flag is always the command's suffix (#16164); matching
+        // the suffix keeps a checkout path that merely contains the text from
+        // switching a bounded projection to the host-local spelling.
+        || command.ends_with(crate::app::focused_run::PROPOSAL_FOCUSED_RESULT_FLAG)
 }
 
 fn continue_from_agent_after(persisted: &str) -> Option<String> {
@@ -128,6 +131,13 @@ mod tests {
         assert_eq!(
             human_after_phase_follow_up_for_display(persisted, "."),
             "ripr agent repair --root . --attempt repair-attempt-de699662a4338840692e0700 --phase after --test-result FILE"
+        );
+        // A checkout path that merely contains the flag text is not a proposal
+        // command: the bounded projection still uses the portable root.
+        let path_only = "ripr agent repair --root /tmp/x--test-result --attempt repair-attempt-de699662a4338840692e0700 --phase after";
+        assert_eq!(
+            human_after_phase_follow_up_for_display(path_only, "."),
+            "ripr continue --root . --attempt repair-attempt-de699662a4338840692e0700"
         );
     }
 

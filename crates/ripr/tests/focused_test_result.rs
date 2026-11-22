@@ -2908,7 +2908,8 @@ fn status_next(root: &Path, attempt: &Attempt) -> Result<(String, String), Strin
     Ok(texts)
 }
 
-const PRODUCE_FILE: &str = "cargo test -- --format json -Z unstable-options";
+const PRODUCE_FILE: &str =
+    "cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json";
 
 /// #16164: a proposal attempt states its focused-result requirement up front.
 /// The start (human and `--json`) and `agent status` (default and selected)
