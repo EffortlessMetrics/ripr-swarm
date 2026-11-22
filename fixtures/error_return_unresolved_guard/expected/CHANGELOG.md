@@ -59,3 +59,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_return_unresolved_guard (6)
+
+Reason:
+RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+
+Command:
+`cargo xtask goldens bless error_return_unresolved_guard --reason "..."`
+
+Updated:
+- `expected/human.txt`

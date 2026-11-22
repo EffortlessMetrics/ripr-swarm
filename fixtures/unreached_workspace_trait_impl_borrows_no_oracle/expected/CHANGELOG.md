@@ -275,3 +275,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — unreached_workspace_trait_impl_borrows_no_oracle (22)
+
+Reason:
+RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+
+Command:
+`cargo xtask goldens bless unreached_workspace_trait_impl_borrows_no_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

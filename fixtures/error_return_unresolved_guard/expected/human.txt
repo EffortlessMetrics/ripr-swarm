@@ -14,7 +14,7 @@ Start here:
   Static exposure: unknown (severity: warning, confidence 0.66)
   Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
   Changed behavior: return Err(OpError { code: -32800, message: "operation cancelled".to_string() })
-  Missing check (1 of 2): No exact error variant discriminator was detected
+  Missing check (1 of 2): No assertion on the exact error variant was detected
   Related test: tests/q.rs:4 cancelled_return_is_exact
   Next step: Typed static limitation (rust_value_propagation_unresolved): ripr cannot statically
     resolve the changed error return's producing expression through the boolean guard, so it does

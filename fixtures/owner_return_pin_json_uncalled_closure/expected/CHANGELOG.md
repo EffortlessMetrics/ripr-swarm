@@ -311,3 +311,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_uncalled_closure (26)
+
+Reason:
+RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/human.txt`

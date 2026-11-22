@@ -852,3 +852,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_variant_boxed_wrapper_downcast_witness (63)
+
+Reason:
+RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+
+Command:
+`cargo xtask goldens bless error_variant_boxed_wrapper_downcast_witness --reason "..."`
+
+Updated:
+- `expected/human.txt`

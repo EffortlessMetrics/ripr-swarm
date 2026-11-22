@@ -517,3 +517,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_operand_error_lexeme (39)
+
+Reason:
+RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+
+Command:
+`cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
+
+Updated:
+- `expected/human.txt`

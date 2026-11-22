@@ -16,7 +16,7 @@ Start here:
   Not credited: `assert_eq!` in reports_read_failure at src/lib.rs:24: the assertion is inside a closure ripr cannot see invoked exactly once
   Gap ID (for scripts): gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf
   Changed behavior: let n = rdr.read(&mut buf)?;
-  Missing check (1 of 2): No exact error variant discriminator was detected
+  Missing check (1 of 2): No assertion on the exact error variant was detected
   Related test: src/lib.rs:21 reports_read_failure (assertion inert: this test's assertion has a shape that can keep it from running as a standard check here)
   Next step: ripr did not credit the `assert_eq!` in reports_read_failure at src/lib.rs:24; the "not
     credited" note says why. That shape can keep the assertion from checking the change, so this is

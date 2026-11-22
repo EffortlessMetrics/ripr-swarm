@@ -744,3 +744,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — guarded_result_match_fail_closed (56)
+
+Reason:
+RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`

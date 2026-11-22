@@ -409,3 +409,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — propagated_error_closing_early_path (31)
+
+Reason:
+RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+
+Command:
+`cargo xtask goldens bless propagated_error_closing_early_path --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -406,3 +406,14 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — rust_returned_error_drop_exit (32)
+
+Reason:
+RIPR-SPEC-0108: the default human line says the missing error-variant check in plain words (check-user-text glossary); JSON and human-full keep the classifier wording
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/human.txt`
