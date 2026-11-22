@@ -452,17 +452,8 @@ fn module_path(file: &Path) -> Option<Vec<String>> {
         [_, second] => target_dir && second == "main",
         _ => false,
     };
-    // A crate root below another `src` directory (`src/a/src/lib.rs`) may be
-    // a module of the outer crate; it is read as one (fail closed).
-    let nested = components
-        .get(..anchor)
-        .is_some_and(|above| above.iter().any(|component| component == "src"));
     if root {
-        return Some(if nested {
-            rest.last().cloned().into_iter().collect()
-        } else {
-            Vec::new()
-        });
+        return Some(Vec::new());
     }
     if target_dir && !matches!(rest.as_slice(), [_, second] if second == "mod") {
         rest.drain(..1);
@@ -471,6 +462,18 @@ fn module_path(file: &Path) -> Option<Vec<String>> {
         rest.pop();
     }
     Some(rest)
+}
+
+/// The file stem of `file` when it sits below two `src` directories (a
+/// crate root of a package nested under another `src`).
+fn nested_root_stem(file: &Path) -> Option<String> {
+    let (components, anchor) = anchored_components(file)?;
+    components
+        .get(..anchor)?
+        .iter()
+        .any(|component| component == "src")
+        .then(|| file.file_stem()?.to_str().map(str::to_string))
+        .flatten()
 }
 
 /// The package directory of `file`: the path components before its anchor
@@ -1010,7 +1013,7 @@ impl ModuleDeclarations {
             || !self.changed_names.is_disjoint(names)
             || self.sysroot_shadowed && touches_chain(&self.changed_sysroot, chain, names)
             || (macro_scope_reaches(&self.changed_macro_scopes, owner_file)
-                && module_path(owner_file).is_none_or(|path| !path.is_empty()))
+                && !self.crate_root(owner_file))
             || included(&self.changed_files, owner_file)
     }
 
@@ -1029,6 +1032,16 @@ impl ModuleDeclarations {
             || included(&self.gated_files, owner_file)
     }
 
+    /// Whether `file` is read as a crate root: [`module_path`] says so, and
+    /// unless some module named `src` is declared, a root below another
+    /// `src` directory (`src/tools/foo/src/lib.rs`, a workspace member) is
+    /// one too; with one, it may be that module's child and is read as a
+    /// module named by its stem (#15035 round-8 review).
+    fn crate_root(&self, file: &Path) -> bool {
+        module_path(file).is_some_and(|path| path.is_empty())
+            && (nested_root_stem(file).is_none() || !self.modules.contains("src"))
+    }
+
     /// Whether plain `mod` declarations establish `file`'s module chain: it
     /// is a crate root, or no macro of its package (or exported) may emit a
     /// module, an out-of-line declaration is named like its module, and
@@ -1036,9 +1049,12 @@ impl ModuleDeclarations {
     /// only through `include!` (or a macro) has no such declaration. Names
     /// approximate the chain, as in [`ModuleDeclarations::chain_gated`].
     fn declares(&self, file: &Path) -> bool {
-        let Some(path) = module_path(file) else {
+        let Some(mut path) = module_path(file) else {
             return false;
         };
+        if path.is_empty() && !self.crate_root(file) {
+            path = nested_root_stem(file).into_iter().collect();
+        }
         let Some((leaf, directories)) = path.split_last() else {
             return true;
         };
@@ -2966,9 +2982,22 @@ mod tests {
         assert_eq!(path("src/lib.rs"), owned(&[]));
         assert_eq!(path("crates/x/src/main.rs"), owned(&[]));
         assert_eq!(path("work/src/proj/src/real.rs"), owned(&["real"]));
-        // A root below another `src` reads as a module (fail closed).
-        assert_eq!(path("src/a/src/lib.rs"), owned(&["lib"]));
-        assert_eq!(path("work/src/proj/src/bin/tool.rs"), owned(&["tool"]));
+        assert_eq!(path("src/tools/foo/src/lib.rs"), owned(&[]));
+        // A root below another `src` is a crate root unless a module named
+        // `src` is declared; then it must be declared itself.
+        let read = |files: &[(&str, &str)]| {
+            ModuleDeclarations::read(
+                files.iter().map(|(file, text)| (Path::new(*file), *text)),
+                std::iter::empty(),
+            )
+        };
+        let nested = Path::new("src/a/src/lib.rs");
+        assert!(read(&[("src/lib.rs", "pub fn f() {}\n")]).declares(nested));
+        let with_src = read(&[("src/lib.rs", "mod a;\n"), ("src/a.rs", "mod src;\n")]);
+        assert!(!with_src.declares(nested));
+        assert!(!with_src.crate_root(nested));
+        let declared = read(&[("src/a.rs", "mod src;\n"), ("src/a/src.rs", "mod lib;\n")]);
+        assert!(declared.declares(nested));
         assert_eq!(path("src/a/b/mod.rs"), owned(&["a", "b"]));
         assert_eq!(path("src/bin/tool.rs"), owned(&[]));
         assert_eq!(path("src/bin/tool/main.rs"), owned(&[]));

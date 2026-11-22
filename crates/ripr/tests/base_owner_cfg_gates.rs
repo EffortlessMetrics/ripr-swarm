@@ -848,13 +848,24 @@ fn a_removed_enclosing_gate_of_an_unchanged_reexport_refuses() -> Result<(), Str
     })
 }
 
+/// The changed tail of a crate-root `file` holding the owner and its test.
+fn package_root(file: &'static str) -> Run {
+    Box::new(move |path| {
+        let lib = format!("{}{}", path.owner(), tests_module(GLOB, &path.pin()));
+        class_at(path, &[(file, lib)], &path.patch(file), file, 2)
+    })
+}
+
 /// #15035 round-7 review (Devin 4658588495): a library's `mod bin;` file
 /// `src/bin.rs` is module `bin`, not the `src/bin` target directory, so its
-/// owner reads as the same owner in `src/real.rs` does.
+/// owner reads as the same owner in `src/real.rs` does. A package root
+/// below a top-level `src/` (`src/tools/foo/src/lib.rs`) with no `src`
+/// module declared stays a crate root (round-8 review).
 #[test]
 fn a_library_bin_module_is_a_module() -> Result<(), String> {
     check(rows! {
         like("src/bin.rs owner", lib("src/bin.rs", "mod bin;\npub use bin::ready;\n", GLOB, none), real("mod real;\npub use real::ready;\n")),
+        like("nested src package root", package_root("src/tools/foo/src/lib.rs"), package_root("crates/foo/src/lib.rs")),
     })
 }
 

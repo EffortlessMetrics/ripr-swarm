@@ -298,7 +298,8 @@ changed body. The identity reports a gate when any of these holds:
   `tests`, `examples` or `benches`, or such a directory's `x/main.rs`; its
   `x/mod.rs` (`tests/common/mod.rs`) is module `x` of a sibling root, and a
   library's `src/bin.rs` is module `bin`, and a root below another `src`
-  directory (`src/a/src/lib.rs`) reads as a module (#15035);
+  directory (`src/a/src/lib.rs`) reads as a module named by its stem when
+  some module named `src` is declared (#15035);
 - an `include!` (a call whose macro path ends in `include`, a comment before
   its `!` included) whose literal path, resolved against the including file's
   directory, is the owner file (compared case-insensitively); a literal that cannot be resolved (absolute, or climbing above
