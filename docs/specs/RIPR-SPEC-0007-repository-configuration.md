@@ -478,6 +478,17 @@ values; an unrelated value such as `mode = "slow"` gets no suggestion, a
 keeps the same span, rejected value and accepted-value list.
 ```
 
+A rejected value that equals an accepted one once `_` or a space is read as
+`-` names that accepted value before edit distance is consulted (#15481):
+
+```text
+Given ripr.toml sets [perl] producer = "perl_lsp", one edit from both
+`perllsp` and `perl-lsp`,
+when ripr loads the config,
+then the error ends with `(did you mean `perl-lsp`?)`; `producer = "perlsp"`,
+with no separator typed, still ends with `(did you mean `perllsp`?)`.
+```
+
 ### Per-crate overrides (#2671)
 
 ```text
