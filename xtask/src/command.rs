@@ -597,6 +597,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "ci-budget [--workflow <name>] [--limit <n>] [--input <path>]",
         "merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]",
         "merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]",
+        "merge-queue conflict-notice <new-output-directory> <pr> <main> <head> [--post]",
         "release-authority render-packet --input <packet-draft.json> [--out <dir>]",
         "module-health [--threshold <n>]",
         "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
@@ -984,6 +985,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Compares frozen PR heads to pinned main using a disposable bare Git store, without changing GitHub or scheduling CI.",
+        ),
+        command_entry(
+            "merge-queue conflict-notice <new-output-directory> <pr> <main> <head> [--post]",
+            "external_state_mutating",
+            "Pending and final queue-conflict-notice JSON receipts in <new-output-directory> and, only with --post, one GitHub PR comment",
+            true,
+            false,
+            "Rechecks one observed main/head conflict and previews its advisory. Explicit --post may add one PR comment.",
         ),
         command_entry(
             "release-authority render-packet --input <packet-draft.json> [--out <dir>]",
