@@ -1,0 +1,10 @@
+# A nested serde_json::json! keeps an audited outer call confined (#14116).
+[[extend]]
+id = "RIPR-SPEC-0369"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/nested_json_pass_through.rs::a_nested_serde_json_call_keeps_the_outer_call_confined",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/nested_json_pass_through.rs::a_nested_json_call_under_another_root_or_unverified_stays_workspace_wide",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+]

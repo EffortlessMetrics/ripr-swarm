@@ -277,7 +277,9 @@ test elsewhere, when all of these hold:
 - Every nested macro call in the arguments is a single-segment trusted
   assertion-context name, one of the wrapper macros above spelled bare or
   under the `proptest` root (`proptest::prop_oneof!`, `::proptest::prop_assert!`),
-  or one whose own arguments mention no trusted name. Any other path, such as
+  `serde_json::json!` or `::serde_json::json!` (the same expression-only
+  wrapper, needing the same drop-in proof of the `serde_json` root as an
+  outer call), or one whose own arguments mention no trusted name. Any other path, such as
   `dep::prop_assert!` or `crate::prop_assert!`, names whatever that module
   exports. Any other nested call could define a name from its arguments
   where the call's scope cannot bound it. When a nested bare `prop_*` call is

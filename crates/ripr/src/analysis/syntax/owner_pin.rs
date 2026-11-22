@@ -1545,14 +1545,16 @@ fn macro_binding_sites_in_tree(
                 .filter(|(wrapper, nested)| {
                     // A nested `proptest::prop_*` call needs the `proptest`
                     // root proved for its own spelling, as an outer one does.
-                    let proptest_root = |external: bool| {
-                        !drop_in_shadowed("proptest", external)
-                            && (external || !plain_import_names().contains("proptest"))
-                            && drop_in_verified("proptest")
+                    let verified_root = |krate: &str, external: bool| {
+                        !drop_in_shadowed(krate, external)
+                            && (external || !plain_import_names().contains(krate))
+                            && drop_in_verified(krate)
                     };
                     !pass_through_names_imported(binding_free)
-                        && (!nested.qualified_relative || proptest_root(false))
-                        && (!nested.qualified_external || proptest_root(true))
+                        && (!nested.qualified_relative || verified_root("proptest", false))
+                        && (!nested.qualified_external || verified_root("proptest", true))
+                        && (!nested.json_relative || verified_root("serde_json", false))
+                        && (!nested.json_external || verified_root("serde_json", true))
                         && match wrapper {
                             PassThroughCall::Qualified { krate, external } => {
                                 !drop_in_shadowed(krate, *external)
@@ -2095,6 +2097,11 @@ struct PassThroughNested {
     qualified_relative: bool,
     /// The same through an absolute `::proptest::prop_*` path.
     qualified_external: bool,
+    /// A nested `serde_json::json!` call: the `serde_json` root needs the
+    /// same proof as a qualified outer call (#14116).
+    json_relative: bool,
+    /// The same through an absolute `::serde_json::json!` path.
+    json_external: bool,
 }
 
 /// Whether `call` is spelled as an audited pass-through wrapper whose
@@ -2184,6 +2191,16 @@ fn audited_pass_through_call(
                 }
                 "::proptest" if audited => {
                     nested.qualified_external = true;
+                    true
+                }
+                // `serde_json::json!` nested in an audited call is the same
+                // expression-only wrapper as an outer one.
+                "serde_json" if name == "json" => {
+                    nested.json_relative = true;
+                    true
+                }
+                "::serde_json" if name == "json" => {
+                    nested.json_external = true;
                     true
                 }
                 _ => false,
