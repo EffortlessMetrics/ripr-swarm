@@ -462,7 +462,11 @@ with `stale_snapshot` and the current identity.
 Optional `file`, `class`, `language`, and `repair_ready` narrow the stored
 selection over already-projected commit-time facts before paging
 (conjunctive): `file` matches exact, prefix, or trailing-segment paths after
-ignoring one leading `./` on both sides, `class` takes an exposure-class wire
+ignoring one leading `./` on both sides. Item paths are relative to the
+repository root; an absolute `file` under the workspace root is rewritten to
+that relative form (the `filters.file` echo shows the path applied), and any
+other absolute path is an `invalid_argument` failure naming the relative form
+instead of an empty page. `class` takes an exposure-class wire
 token (for example `exposed`), `language` takes a language wire string (for
 example `rust`), and `repair_ready: true` (or `false`) selects the
 commit-time readiness projection. `selected` stays the full stored-selection
@@ -510,7 +514,8 @@ Optional tool fields must be omitted to use their defaults: explicit `null`
 is invalid for `snapshot_id`, `offset`, `limit`, `file`, `class`,
 `language`, and `repair_ready` (#7314). The server
 returns an `invalid_argument` tool failure naming the field (`failure.data.argument`);
-correct the argument or omit it and retry on the same connection.
+a null refusal says to omit the field. Correct the argument or omit it and
+retry on the same connection.
 `offset` must be a whole JSON integer (no fraction or exponent
 form) in `0..=M` where `M` is the platform's `usize` width, and `limit` a whole
 integer in `1..=500`, the working-set bound `budget.max_items_per_workspace_response`

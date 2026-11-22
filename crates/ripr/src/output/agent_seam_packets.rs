@@ -658,6 +658,11 @@ pub(crate) struct BeforePhaseAttemptContinuation {
     /// summary only; the `--json` continuation is unchanged. `None` when no
     /// exact command can be established.
     pub(crate) focused_test_command: Option<String>,
+    /// The selected file is a `[[test]]` target the manifest declares
+    /// outside `tests/` (#15910), from the attempt's cage policy. The human
+    /// summary then words it as a test file, not as a source file's inline
+    /// test module, which is what its path shape alone would suggest.
+    pub(crate) declared_cargo_test_target: bool,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -3138,7 +3143,39 @@ fn uniquify_recommended_test_name(base: &str, entry: &ClassifiedSeam, target_fil
 pub(crate) fn recommended_test_is_repair_edit_target(entry: &ClassifiedSeam) -> bool {
     let recommended = recommended_test_for(entry);
     crate::analysis::is_test_surface_path(&recommended.file)
+        || recommended_test_is_declared_test_target(entry, &recommended)
         || recommended_inline_test_module(entry, &recommended.file).is_some()
+}
+
+/// Whether the recommended test is an existing test in a `[[test]]` target
+/// entry the package manifest declares outside the test layouts (#15910).
+/// The producer read the manifest and recorded the answer on the related
+/// test (`TestKind::DeclaredIntegration`); this projection only reads it, and
+/// the edit cage asks the manifest again before it admits the file
+/// (`edit_cage_policy_from_packet_in`).
+/// The recommended test file when it is a manifest-declared test target
+/// ([`recommended_test_is_declared_test_target`]).
+pub(crate) fn declared_test_target_file(entry: &ClassifiedSeam) -> Option<String> {
+    let recommended = recommended_test_for(entry);
+    recommended_test_is_declared_test_target(entry, &recommended).then_some(recommended.file)
+}
+
+fn recommended_test_is_declared_test_target(
+    entry: &ClassifiedSeam,
+    recommended: &RecommendedTest,
+) -> bool {
+    let Some(symbol_id) = recommended.symbol_id.as_deref() else {
+        return false;
+    };
+    recommended.target_kind == RecommendedTestTargetKind::ExistingTest
+        && entry.evidence.related_tests.iter().any(|test| {
+            test.test_target.as_ref().is_some_and(|target| {
+                target.symbol_id().0 == symbol_id
+                    && target.test_kind()
+                        == crate::analysis::test_grip_evidence::TestKind::DeclaredIntegration
+                    && display_path(target.file()) == recommended.file
+            })
+        })
 }
 
 /// Whether the packet's recommended test file is exactly `proposed_file`. A

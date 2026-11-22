@@ -226,6 +226,16 @@ pub(crate) struct TypeScriptTest {
     /// anything but an identifier path, an index assignment, or an argument
     /// list past 8 KB. Populated once per file by `extract_tests`.
     pub(crate) member_replacements_in_file: Shared<String>,
+    /// Members the containing test file replaces with a substitute
+    /// implementation through a stub, a three-argument `replace`,
+    /// `replaceProperty`, `defineProperty`, an implemented `mock.method`, a
+    /// fabricated `spyOn` or a member assignment (#15939).
+    /// Entry forms are documented on
+    /// `function_replacement::replaced_function_member_names`. A function
+    /// owner named here is not credited through this file. Populated once per
+    /// file by `extract_tests`.
+    #[serde(default)]
+    pub(crate) function_replacements_in_file: Shared<String>,
     /// Literal specifiers of every `import("...")`, `require("...")`,
     /// `requireActual("...")` or `importActual("...")` anywhere in the
     /// containing test file (hooks, describe bodies, top level and sibling
@@ -516,6 +526,8 @@ pub(crate) fn reshare_file_lists(tests: &mut [TypeScriptTest]) {
             .share_with(&previous.written_locals_in_file);
         test.member_replacements_in_file
             .share_with(&previous.member_replacements_in_file);
+        test.function_replacements_in_file
+            .share_with(&previous.function_replacements_in_file);
         test.dynamic_load_specifiers_in_file
             .share_with(&previous.dynamic_load_specifiers_in_file);
         test.mock_factories_in_file

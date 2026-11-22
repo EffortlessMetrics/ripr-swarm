@@ -493,7 +493,8 @@ pub(crate) fn receipt_binding_from(
             "missing attempt; start one with `ripr agent repair`, then rerun".to_string()
         })?
     };
-    let mut policy = edit_cage_policy_from_packet(
+    let mut policy = edit_cage_policy_from_packet_in(
+        &root,
         std::str::from_utf8(&packet)
             .map_err(|error| format!("repair packet is not UTF-8: {error}; pass the JSON packet that `ripr agent repair` wrote"))?,
         seam_id,
@@ -3239,10 +3240,38 @@ fn test_surface_requirement() -> &'static str {
 /// recognition itself is the producer-owned typed fact
 /// (`analysis::workspace::is_test_surface_path`); this layer owns only the
 /// policy decision and its diagnostic.
+#[cfg(test)]
 pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
 ) -> Result<EditCagePolicy, String> {
+    edit_cage_policy_from_packet_with(packet, seam_id, &|_| false)
+}
+
+/// [`edit_cage_policy_from_packet`] with the workspace's manifest authority
+/// (#15910): the selected target may also be the entry file of a Cargo
+/// `[[test]]` target the package manifest declares outside the test layouts
+/// (`crate::analysis::is_declared_cargo_test_surface`). The manifest is read
+/// here, at the gate, so the packet's own text never widens the surface; the
+/// policy records the answer (`declared_cargo_test_target`) and the baseline
+/// capture asks the manifest again.
+pub(crate) fn edit_cage_policy_from_packet_in(
+    root: &Path,
+    packet: &str,
+    seam_id: &str,
+) -> Result<EditCagePolicy, String> {
+    edit_cage_policy_from_packet_with(packet, seam_id, &|path| {
+        crate::analysis::is_declared_cargo_test_surface(root, path)
+    })
+}
+
+pub(crate) fn edit_cage_policy_from_packet_with(
+    packet: &str,
+    seam_id: &str,
+    declared_test_target: &dyn Fn(&str) -> bool,
+) -> Result<EditCagePolicy, String> {
+    // A path-shaped test surface, or a manifest-declared `[[test]]` entry.
+    let is_test_surface = |path: &str| is_test_surface_path(path) || declared_test_target(path);
     let value: serde_json::Value = serde_json::from_str(packet).map_err(|error| {
         format!("decode repair packet for the allowed-files check failed: {error}")
     })?;
@@ -3323,11 +3352,13 @@ pub(crate) fn edit_cage_policy_from_packet(
     // policy then confines the edit to that module; the baseline capture
     // refuses a file without exactly one such module, and the after-phase
     // verdict admits only a pure insertion of test functions into it.
-    let inline_test_module_target = !is_test_surface_path(selected_target_text)
+    let inline_test_module_target = !is_test_surface(selected_target_text)
         && is_inline_test_module_candidate(selected_target_text);
-    let external_test_file_target = is_test_surface_path(selected_target_text)
+    let external_test_file_target = is_test_surface(selected_target_text)
         && Path::new(selected_target_text).extension() == Some(std::ffi::OsStr::new("rs"));
-    if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
+    let declared_cargo_test_target =
+        external_test_file_target && !is_test_surface_path(selected_target_text);
+    if !is_test_surface(selected_target_text) && !inline_test_module_target {
         return Err(format!(
             "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
             test_surface_requirement()
@@ -3362,7 +3393,7 @@ pub(crate) fn edit_cage_policy_from_packet(
                 // Only the selected target itself may be the confined inline
                 // module file; every other allowed path is a test surface.
                 let confined_selected_target = index == 0 && inline_test_module_target;
-                if !is_test_surface_path(path) && !confined_selected_target {
+                if !is_test_surface(path) && !confined_selected_target {
                     return Err(format!(
                         "repair packet allowed edit surface `{path}` is not a test surface; a production file is never an allowed edit path"
                     ));
@@ -3379,7 +3410,7 @@ pub(crate) fn edit_cage_policy_from_packet(
                 .ok_or_else(|| "repair packet is missing allowed edit target".to_string())?;
             let file = packet_path(file)?;
             let file = file.as_str();
-            if !is_test_surface_path(file) && !inline_test_module_target {
+            if !is_test_surface(file) && !inline_test_module_target {
                 return Err(format!(
                     "repair packet recommended test `{file}` is not a test surface"
                 ));
@@ -3467,6 +3498,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         untracked_build_lockfile,
         inline_test_module_target,
         external_test_file_target,
+        declared_cargo_test_target,
         new_test_proposal,
     })
 }
@@ -5902,7 +5934,7 @@ fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
     // repair target. This also carries every TypeScript adapter convention
     // (`*.test.*`, `*.spec.*`, `test-*`, `*.test-d.*`, `*.cy.*`, `__tests__`)
     // without forking that taxonomy here.
-    if is_test_surface_path(path) {
+    if crate::analysis::is_test_surface(root, path) {
         return false;
     }
     let candidate = Path::new(path);

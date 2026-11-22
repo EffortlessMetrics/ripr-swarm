@@ -985,10 +985,12 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        // Every null refusal says null is the problem and that the fix is to
+        // leave the field out.
         let message_matches = if *kind == "integer" {
             message.starts_with(expected_message.as_str()) && message.ends_with(", not null")
         } else {
-            message == expected_message
+            message == format!("{expected_message}, not null; omit {field} to use its default")
         };
         require_invalid_argument(rejected, &format!("{tool}.{field} null"))?;
         if !message_matches || rejected.get("id") != Some(&json!(format!("{index}-null"))) {
@@ -3689,6 +3691,50 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
                 "complete filtered page must close its window: {document}"
             ));
         }
+    }
+    // An agent usually holds the absolute path its editor gave it. Under the
+    // root it narrows exactly as the relative spelling does and the echo
+    // names the relative form the server applied; outside the root it is
+    // refused instead of answering with an empty page that reads like "no
+    // gaps in that file".
+    let canonical_root = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
+    let absolute = canonical_root.join("src").join("pricing.rs");
+    let absolute = absolute.to_str().ok_or("fixture root is not UTF-8")?;
+    let reply = session.call_tool(
+        "filtered-absolute",
+        "ripr_list_gaps",
+        json!({"file": absolute}),
+        timeout,
+    )?;
+    let document = structured_tool_success(&reply, "absolute file filter")?;
+    check_filtered_gap_page(&document, &[DISCOUNT, FEE], selected, 2, snapshot_id)?;
+    if document["filters"]["file"] != json!("src/pricing.rs") {
+        return Err(format!(
+            "absolute filter must echo the applied relative path: {document}"
+        ));
+    }
+    let outside = canonical_root
+        .parent()
+        .ok_or("fixture root has no parent")?
+        .join("ripr-mcp-outside-root")
+        .join("src")
+        .join("pricing.rs");
+    let outside = outside.to_str().ok_or("fixture root is not UTF-8")?;
+    let reply = session.call_tool(
+        "filtered-outside",
+        "ripr_list_gaps",
+        json!({"file": outside}),
+        timeout,
+    )?;
+    require_invalid_argument(&reply, "absolute file filter outside the root")?;
+    let detail = reply
+        .pointer("/result/structuredContent/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !detail.contains("relative to the repository root") || detail.contains(outside) {
+        return Err(format!(
+            "outside-root refusal must name the relative form and echo no host path: {reply}"
+        ));
     }
     let first_args = json!({"file":"src/pricing.rs", "class":"exposed", "language":"rust", "repair_ready":true, "limit":1, "snapshot_id":snapshot_id});
     let first = session.call_tool("filtered-first", "ripr_list_gaps", first_args, timeout)?;

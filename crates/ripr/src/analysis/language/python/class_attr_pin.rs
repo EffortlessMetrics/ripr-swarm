@@ -144,8 +144,10 @@ fn tokens(text: &str) -> Vec<Token> {
 /// fixed text. With `strict`, at least half the literal must be fixed text;
 /// otherwise at least one character (a placeholder alone would fit any text).
 fn text_matches(tokens: &[Token], literal: &[char], pin: &PinLiteral, strict: bool) -> bool {
-    // A text made only of placeholders can render as any literal.
-    if !strict && tokens.iter().all(|token| matches!(token, Token::Wildcard)) {
+    // A text made only of placeholders can render as any literal. An empty
+    // text has no placeholder and renders only as the empty string (#15646).
+    if !strict && !tokens.is_empty() && tokens.iter().all(|token| matches!(token, Token::Wildcard))
+    {
         return true;
     }
     let regex = pin.regex;
@@ -207,8 +209,9 @@ struct PinLiteral {
 
 /// The literals that can tell the old text from the new: the `match=` /
 /// `assertRaisesRegex` pattern of the assertion head (only `.` allowed as
-/// regex syntax), and the string operand of a one-line `assert x == "..."`,
-/// `assert "..." in x` or `assertEqual(x, "...")` in the assertion's gate.
+/// regex syntax), and the string operand of an `assert x == "..."`,
+/// `assert "..." in x` or `assertEqual(x, "...")` in the assertion's gate. An
+/// `assert a and b` pins through each operand it requires.
 /// Call arguments, assert messages, `!=` and `not in` operands never pin, and
 /// any statement that does not parse is skipped.
 fn pinning_literals(text: &str, gate_text: &str) -> Vec<PinLiteral> {
@@ -222,29 +225,65 @@ fn pinning_literals(text: &str, gate_text: &str) -> Vec<PinLiteral> {
             whole: false,
         });
     }
-    for line in gate_text.lines() {
-        let Ok(Mod::Module(module)) =
-            parse_module_result(Path::new("<class-attr-pin>"), line.trim())
-        else {
-            continue;
+    // The gate text keeps only an `and` chain's strongest conjuncts; the
+    // assertion's own text still holds a weaker one the test also requires
+    // (`assert f() == 1 and "text" in C.message`).
+    for statement in gate_statements(gate_text)
+        .into_iter()
+        .chain(gate_statements(text))
+    {
+        let literals = match &statement {
+            Stmt::Assert(assertion) => positive_conjuncts(&assertion.test)
+                .into_iter()
+                .filter_map(compared_literal)
+                .collect(),
+            Stmt::Expr(expression) => Vec::from_iter(assert_equal_literal(&expression.value)),
+            _ => Vec::new(),
         };
-        let [statement] = module.body.as_slice() else {
-            continue;
-        };
-        let literal = match statement {
-            Stmt::Assert(assertion) => compared_literal(&assertion.test),
-            Stmt::Expr(expression) => assert_equal_literal(&expression.value),
-            _ => None,
-        };
-        if let Some((text, whole)) = literal {
-            out.push(PinLiteral {
-                text,
-                regex: false,
-                whole,
-            });
-        }
+        out.extend(literals.into_iter().map(|(text, whole)| PinLiteral {
+            text,
+            regex: false,
+            whole,
+        }));
     }
     out
+}
+
+/// The statements of an assertion's gate text. The gate of one assertion can
+/// span several physical lines (`assert str(\n    exc.value\n) == "..."`), so
+/// the text is parsed whole (#15646). A gate whose comparison lost its
+/// enclosing parentheses (`assert (\n    x\n    == "..."\n)`) is read inside
+/// one pair. Text that still does not parse is read one physical line at a
+/// time, and a line that does not parse is skipped.
+fn gate_statements(gate_text: &str) -> Vec<Stmt> {
+    let parse = |text: &str| match parse_module_result(Path::new("<class-attr-pin>"), text) {
+        Ok(Mod::Module(module)) => Some(module.body),
+        _ => None,
+    };
+    let whole = gate_text.trim();
+    parse(whole)
+        .or_else(|| parse(&format!("assert ({})", whole.strip_prefix("assert ")?)))
+        .unwrap_or_else(|| {
+            gate_text
+                .lines()
+                .filter_map(|line| parse(line.trim()))
+                .flatten()
+                .collect()
+        })
+}
+
+/// The operands an `assert` requires all at once: the test itself, or every
+/// operand of a (nested) `and`. An `or` or a `not` requires none of its
+/// operands, so it stays one opaque operand (#15646).
+fn positive_conjuncts(test: &Expr) -> Vec<&Expr> {
+    match test {
+        Expr::BoolOp(operation) if operation.op == ast::BoolOp::And => operation
+            .values
+            .iter()
+            .flat_map(positive_conjuncts)
+            .collect(),
+        _ => vec![test],
+    }
 }
 
 /// The string operand of `x == "..."`, `"..." == x` (whole text) or

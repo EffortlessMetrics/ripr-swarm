@@ -2968,6 +2968,14 @@ pub(crate) struct EditCagePolicy {
     /// edit must be a pure insertion of new test functions (#8710).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) external_test_file_target: bool,
+    /// The external test-file target is the entry file of a Cargo `[[test]]`
+    /// target the package manifest declares outside the test layouts
+    /// (`[[test]] path = "spec/pricing.rs"`, #15910). The policy constructor
+    /// read the manifest; the baseline capture reads it again. Only ever set
+    /// together with `external_test_file_target`. Absent (false) in every
+    /// other policy, which keeps their serialized form unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) declared_cargo_test_target: bool,
     /// The producer-owned new-test proposal this attempt follows (#13203),
     /// recorded in the retained baseline policy. Absent for an existing-test
     /// repair, which keeps every other policy's serialized form unchanged.
@@ -3439,8 +3447,19 @@ fn validate_policy(policy: &EditCagePolicy) -> Vec<EditCageViolation> {
             "an inline test-module target must be a Rust source file",
         ));
     }
+    if policy.declared_cargo_test_target
+        && (!policy.external_test_file_target
+            || crate::analysis::is_test_surface_path(&selected_path))
+    {
+        violations.push(invalid_policy_violation(
+            &selected_path,
+            "a manifest-declared test target must be an external test file outside the test layouts",
+        ));
+    }
     if policy.external_test_file_target {
-        if !crate::analysis::is_test_surface_path(&selected_path) {
+        if !crate::analysis::is_test_surface_path(&selected_path)
+            && !policy.declared_cargo_test_target
+        {
             violations.push(invalid_policy_violation(
                 &selected_path,
                 "an external test-file target must be a test-surface path",
@@ -4056,6 +4075,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: true,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         })
     }
@@ -4909,6 +4929,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: false,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         };
         Ok((fixture, policy))
@@ -6981,6 +7002,7 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
             external_test_file_target: false,
+            declared_cargo_test_target: false,
             new_test_proposal: None,
         };
         let verdict = evaluate_edit_cage(

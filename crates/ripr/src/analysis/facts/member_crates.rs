@@ -106,6 +106,9 @@ pub(crate) struct MemberCrates {
     /// Kept for this analysis only. A missing entry or macro is not an
     /// absence certificate and must never clear a broader ambiguity.
     imported_macro_exports: Arc<Mutex<ImportedMacroExports>>,
+    /// Per root-relative file: [`Self::is_declared_test_only_entry`], so the
+    /// related tests of one declared file read its manifest once per analysis.
+    declared_test_only_entries: Arc<Mutex<BTreeMap<PathBuf, bool>>>,
     /// Per source directory: the custom `[lib] path` root of its nearest
     /// package, read once per analysis (#14495).
     custom_lib_roots: Arc<Mutex<BTreeMap<PathBuf, Option<CustomLibRoot>>>>,
@@ -121,6 +124,7 @@ impl MemberCrates {
             library_exports: Arc::default(),
             library_roots: Arc::default(),
             imported_macro_exports: Arc::default(),
+            declared_test_only_entries: Arc::default(),
             custom_lib_roots: Arc::default(),
         }
     }
@@ -1173,6 +1177,59 @@ impl MemberCrates {
                 && target.get("harness").and_then(toml::Value::as_bool) != Some(false)
                 && target.get("required-features").is_none()
         })
+    }
+
+    /// Whether `file` (root-relative) is a `[[test]]` target entry
+    /// ([`Self::is_declared_test_target_entry`], any package) that roots no
+    /// other Cargo target (#15910). The nearest package manifest must not
+    /// also name the file as its `[lib]`, a `[[bin]]`, `[[example]]` or
+    /// `[[bench]]` `path`, or its build script, so a manifest can never turn
+    /// production code into a test file by declaring it twice.
+    pub(crate) fn is_declared_test_only_entry(&self, file: &Path) -> bool {
+        if let Ok(memo) = self.declared_test_only_entries.lock()
+            && let Some(answer) = memo.get(file)
+        {
+            return *answer;
+        }
+        let answer = self.is_declared_test_target_entry(file, false)
+            && !self.is_declared_entry_of(file, &["bin", "example", "bench"])
+            && !self.is_library_or_build_script_entry(file);
+        if let Ok(mut memo) = self.declared_test_only_entries.lock() {
+            memo.insert(file.to_path_buf(), answer);
+        }
+        answer
+    }
+
+    /// Whether the nearest package manifest names `file` as its `[lib]
+    /// path` or its build script (`package.build`, or the default
+    /// `build.rs`). A manifest that cannot be read answers yes, so the
+    /// caller's exclusion fails closed.
+    fn is_library_or_build_script_entry(&self, file: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return true;
+        };
+        let root = lexical(root);
+        let file_abs = lexical(&root.join(file));
+        let Some((package, manifest)) = file_abs.parent().and_then(|directory| {
+            committed_package(self.root.as_deref().unwrap_or(&root), &root, directory)
+        }) else {
+            return true;
+        };
+        let names = |path: &str| lexical(&package.join(path)) == file_abs;
+        let library = manifest
+            .get("lib")
+            .and_then(|lib| lib.get("path"))
+            .and_then(toml::Value::as_str)
+            .is_some_and(names);
+        let build_script = match manifest
+            .get("package")
+            .and_then(|package| package.get("build"))
+        {
+            Some(toml::Value::String(path)) => names(path),
+            Some(toml::Value::Boolean(false)) => false,
+            _ => names("build.rs"),
+        };
+        library || build_script
     }
 
     fn is_declared_entry_of(&self, file: &Path, kinds: &[&str]) -> bool {
