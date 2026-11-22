@@ -5891,7 +5891,10 @@ mod tests {
         // #15632: `python_membership_removed_member` keeps a removed
         // literal-collection member no row passes weakly exposed; its weak
         // finding names `val == "y"`, one more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (25, 36, 49, 2) {
+        // #16009: `python_class_attr_value_unread_weakly_exposed` keeps a class
+        // attribute value no test reads through its readers weakly exposed;
+        // its card names `_PER_YEAR` and stays direct-aligned.
+        if (direct, no_strong, orthogonal, family_selection) != (26, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
