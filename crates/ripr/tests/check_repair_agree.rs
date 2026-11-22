@@ -1232,8 +1232,9 @@ fn subdir_check_withholds_the_seam_start_and_names_the_top_level() -> Result<(),
 /// #13636 (A): a committed-only run did not analyze the dirty file the start
 /// refuses over, so the seam route prints no commit step vouching for it and
 /// no runnable start; it is refused, as the gap route refuses the same state.
-/// Under a subdirectory root the #15488 top-level refusal names the reason
-/// first (the start could not run there even once committed).
+/// #15488 ordering: under a subdirectory root the finding's own refusal is
+/// named first. The top-level gate applies only where a start would otherwise
+/// be printed, so it does not rewrite this reason.
 #[test]
 fn committed_only_check_refuses_the_seam_route_over_dirty_files() -> Result<(), String> {
     let repo = outer_repo_with_subdir_root(true)?;
@@ -1241,7 +1242,7 @@ fn committed_only_check_refuses_the_seam_route_over_dirty_files() -> Result<(), 
     assert!(
         !check.contains("Commit your production change")
             && !check.contains("\n  ripr repair ")
-            && check.contains("is not the exact Git top-level"),
+            && check.contains("No strong assertion was detected"),
         "a committed-only run must refuse the seam route over dirty files:\n{check}"
     );
     let json = repo.ripr(&[

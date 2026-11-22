@@ -3084,15 +3084,19 @@ pub(crate) fn check_repair_route(
     if finding.class == crate::domain::ExposureClass::Exposed && !static_limited {
         return CheckRepairRoute::Refused(RepairRouteRefusal::FindingAlreadyExposed);
     }
-    // #15488: a repair attempt starts only at the exact Git top-level, so
-    // every start this route could print (gap-bound or seam-bound) under a
-    // subdirectory root would refuse at the before phase. Withhold it here
-    // and name the top-level; the attempt's own refusal stays the backstop.
-    if let Some(top) = crate::edit_cage::enclosing_git_top_level_above(root) {
-        return CheckRepairRoute::Refused(RepairRouteRefusal::SubdirectoryRoot {
-            top_level: crate::agent::loop_commands::root_path_display(&top),
-        });
-    }
+    // #15488: a repair attempt starts only at the exact Git top-level, so a
+    // start this route is about to print (gap-bound or seam-bound) under a
+    // subdirectory root would refuse at the before phase. Gate only the
+    // printed start, after every finding-specific refusal: a not-ready or
+    // otherwise ineligible finding keeps its own reason instead of being
+    // rewritten as a root problem.
+    let subdirectory_refusal = || {
+        crate::edit_cage::enclosing_git_top_level_above(root).map(|top| {
+            CheckRepairRoute::Refused(RepairRouteRefusal::SubdirectoryRoot {
+                top_level: crate::agent::loop_commands::root_path_display(&top),
+            })
+        })
+    };
     // #9103 (RIPR-SPEC-0311): a TypeScript preview finding carries no Rust
     // canonical gap, but its GapRecord validates through the shared
     // agent-packet validator and starts a gap-bound attempt. The canonical
@@ -3102,7 +3106,12 @@ pub(crate) fn check_repair_route(
     // (#10373); the other routed languages are unchanged.
     if !static_limited {
         match gap_bound_route(output, check_config, finding) {
-            Ok(Some(route)) => return CheckRepairRoute::GapRoute(route),
+            Ok(Some(route)) => {
+                if let Some(refusal) = subdirectory_refusal() {
+                    return refusal;
+                }
+                return CheckRepairRoute::GapRoute(route);
+            }
             Err(refusal) => return CheckRepairRoute::Refused(refusal),
             Ok(None) => {}
         }
@@ -3279,6 +3288,9 @@ pub(crate) fn check_repair_route(
     };
     if let Some(reason) = seam_commit_step_refusal(output, &uncommitted_files) {
         return CheckRepairRoute::Refused(RepairRouteRefusal::SeamRouteUnavailable { reason });
+    }
+    if let Some(refusal) = subdirectory_refusal() {
+        return refusal;
     }
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
