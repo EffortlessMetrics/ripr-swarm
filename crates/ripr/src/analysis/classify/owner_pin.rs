@@ -10298,7 +10298,12 @@ fn assertion_context_macros() -> Vec<&'static str> {
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
 fn is_bounded_macro(name: &str) -> bool {
-    NON_RETURNING_MACROS.contains(&name) && !is_test_scoped_trusted_macro(name)
+    NON_RETURNING_MACROS.contains(&name)
+        && !is_test_scoped_trusted_macro(name)
+        // The owner-side return scan reads spellings without the binding
+        // check, so a local `macro_rules! include_str` there could hide a
+        // `return`; the include pair is trusted in assertion context only.
+        && !matches!(name, "include_bytes" | "include_str")
 }
 
 fn has_unbounded_macro(masked: &str) -> bool {

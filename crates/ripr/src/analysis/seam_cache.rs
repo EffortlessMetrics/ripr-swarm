@@ -1470,6 +1470,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
 /// `1.63`: a unit owner's tail block of `;`-terminated statements is not
 /// probed as `return_value` (#15459); `1.62` facts still carry that shape.
+/// `1.65`: `include_bytes` and `include_str` join the trusted macro names
+/// (#14116); `1.64` candidates cannot name them, and would hide a
+/// `macro_rules! include_str` from the binding scan.
+/// `1.66`: main claimed 1.65 after this branch's base, so the branch pins the
+/// next free value; the judged file-fact shape is unchanged.
 pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.66";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
@@ -5617,6 +5622,9 @@ mod tests {
         // 1.59 -> 1.60: tail if/else branch values probed as return_value (#14385).
         // 1.60 -> 1.61: digest-framed entries verified over stored bytes (#9216).
         // 1.62 -> 1.63: unit tail statement blocks are not return values (#15459).
+        // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
+        // 1.64 -> 1.65: `include_bytes`/`include_str` binding candidates (#14116).
+        // 1.65 -> 1.66: main claimed 1.65 after this branch's base.
         assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.66");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
