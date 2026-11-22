@@ -442,7 +442,8 @@ TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. No
 has a `tsconfig.json`, `jsconfig.json`, `deno.json` or `deno.jsonc` (or TypeScript source under `src/` or
 `tests/`), or a package one level down or under `packages/*`, `apps/*`, `libs/*`
 or `libraries/*` has one. JavaScript-led repositories can also qualify through a
-root `package.json` with eligible JavaScript or TypeScript source; see
+`package.json` with eligible JavaScript or TypeScript source, at the root or in
+one of those workspace packages; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.

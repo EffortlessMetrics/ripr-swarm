@@ -9627,6 +9627,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_resolution_multi_entry_value_fails_closed",
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::tsconfig_alias_non_owner_import_emits_no_limitation",
+  "crates/ripr/tests/typescript_paths_directory_target.rs::a_directory_target_relates_the_sibling_package_test",
+  "crates/ripr/tests/typescript_paths_directory_target.rs::a_resolution_without_directory_lookup_stays_unresolved",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/tsconfig.rs",
