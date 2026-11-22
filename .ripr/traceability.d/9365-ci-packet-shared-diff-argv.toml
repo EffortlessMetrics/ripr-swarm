@@ -1,7 +1,7 @@
-# Registers the ci-packet capture through the shared pinned diff argv
-# (#9365) beside the #15954 loader pins.
+# Registers the ci-packet pr.diff capture through the shared pinned diff
+# argv (#9365) under the generated PR workflow contract.
 [[extend]]
-id = "RIPR-SPEC-0170"
+id = "RIPR-SPEC-0038"
 tests = [
   "crates/ripr/tests/cli_smoke/diff_ambient_settings.rs::ci_packet_diff_capture_ignores_ambient_git_diff_settings",
 ]
