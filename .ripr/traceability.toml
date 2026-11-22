@@ -20801,6 +20801,8 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_blanket_in_another_module_than_the_bound_trait_is_not_reach",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_concrete_impl_of_the_entry_trait_is_a_rival_to_the_blanket",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_call_inside_stringify_does_not_establish_blanket_reach",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_call_inside_a_nested_evaluating_macro_is_still_discarded",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_multibyte_separator_before_a_macro_does_not_split_its_name",
   "crates/ripr/tests/operator_call_credit.rs::block_statements_followed_by_minus_stay_unrelated",
   "crates/ripr/tests/operator_call_credit.rs::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",

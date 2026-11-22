@@ -4287,9 +4287,54 @@ fn blanket_impl_type_param(header: &str) -> Option<String> {
     names_generic_param.then(|| param.to_string())
 }
 
+/// Byte ranges of nested item bodies (`fn`, `impl`, `trait`, `mod`) inside
+/// `masked`, so a `self` call in a nested item is not read as the entry's own
+/// call. The entry's own body brace is the first one and is never a range
+/// (#13041 review).
+fn nested_item_body_ranges(masked: &str) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let mut ranges = Vec::new();
+    let mut stack: Vec<(usize, bool)> = Vec::new();
+    let mut head_start = 0usize;
+    let mut first_body = true;
+    for (index, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'{' => {
+                let head = &masked[head_start..index];
+                let nested_item = !first_body
+                    && head
+                        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                        .any(|word| matches!(word, "fn" | "impl" | "trait" | "mod"));
+                first_body = false;
+                stack.push((index, nested_item));
+                head_start = index + 1;
+            }
+            b'}' => {
+                if let Some((open, nested_item)) = stack.pop()
+                    && nested_item
+                {
+                    ranges.push((open, index + 1));
+                }
+                head_start = index + 1;
+            }
+            b';' => head_start = index + 1,
+            _ => {}
+        }
+    }
+    ranges
+}
+
 /// Whether a captured call is `self.method(..)` rather than another receiver.
 fn self_method_call(text: &str, method: &str) -> bool {
+    let nested = nested_item_body_ranges(text);
     text.match_indices("self").any(|(start, keyword)| {
+        // A `self` inside a nested item belongs to that item, not the entry.
+        if nested
+            .iter()
+            .any(|&(open, close)| start > open && start < close)
+        {
+            return false;
+        }
         // `self` must be a whole identifier: not `myself`, `itself`, or a
         // Unicode identifier that ends in `self` (#13041 review).
         let starts_identifier = text[..start]
@@ -8002,6 +8047,11 @@ fn real() {}
         // A call inside a macro that discards its tokens is not a self call.
         entry.body = "fn to_text(&self) -> String {\n    stringify!(self.render())\n}".into();
         assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
+        // A `self` call in a nested item belongs to that item, not the entry.
+        entry.body =
+            "fn to_text(&self) -> String {\n    fn unused(&self) { self.render(); }\n    String::new()\n}"
+                .into();
+        assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
     }
 
     #[test]
@@ -8076,6 +8126,57 @@ fn real() {}
             &render_f64,
             &index,
         ));
+    }
+
+    /// A call inside `stringify!` is discarded even when an evaluating
+    /// assertion macro is nested inside it: every enclosing macro is checked,
+    /// not only the innermost (#13041 review).
+    #[test]
+    fn a_call_inside_a_nested_evaluating_macro_is_still_discarded() {
+        let render_f64 = make_impl_fn(
+            "render",
+            "impl Render for f64",
+            vec![("is_sign_negative", "self.is_sign_negative()")],
+        );
+        let to_text_blanket = make_impl_fn(
+            "to_text",
+            "impl <T: Render> ToText for T",
+            vec![("render", "self.render()")],
+        );
+        let mut test = make_test("negative_zero", vec!["to_text"]);
+        test.body = "let _ = stringify!(assert_eq!((-0.0f64).to_text(), \"\"));".into();
+        test.calls = vec![CallFact {
+            line: 1,
+            name: "to_text".to_string(),
+            text: "(-0.0f64).to_text()".into(),
+        }]
+        .into();
+        let index = index_with(
+            vec![
+                render_f64.clone(),
+                to_text_blanket,
+                trait_decl("render", "Render"),
+                trait_decl("to_text", "ToText"),
+            ],
+            vec![test.clone()],
+        );
+        assert!(!test_reaches_trait_owner_through_blanket_impl(
+            &test,
+            &render_f64,
+            &index,
+        ));
+    }
+
+    /// A multibyte separator before a macro name must not split the name: the
+    /// scan advances past the whole character, not one byte (#13041 review).
+    #[test]
+    fn a_multibyte_separator_before_a_macro_does_not_split_its_name() {
+        let text = "let x = 1;\u{85}stringify!(self.render())";
+        let at = text.find("render").expect("render");
+        assert!(
+            crate::analysis::classify::related_tests::call_site_in_discarded_macro(text, at),
+            "{text}"
+        );
     }
 
     /// The blanket, the owner impl and the bound trait's declaration share one

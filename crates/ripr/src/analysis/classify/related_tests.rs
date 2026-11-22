@@ -6323,8 +6323,8 @@ pub(in crate::analysis) fn call_site_in_let_closure(masked: &str, at: usize) -> 
         || (initializer.starts_with('|') && initializer[1..].contains('|'))
 }
 
-/// The innermost macro invocation whose delimiters enclose byte `at`, if any.
-fn enclosing_macro_name(masked: &str, at: usize) -> Option<String> {
+/// The macro invocations whose delimiters enclose byte `at`, innermost first.
+fn enclosing_macro_names(masked: &str, at: usize) -> Vec<String> {
     let bytes = masked.as_bytes();
     let mut stack: Vec<Option<String>> = Vec::new();
     let mut index = 0usize;
@@ -6335,8 +6335,10 @@ fn enclosing_macro_name(masked: &str, at: usize) -> Option<String> {
                 let name = before.strip_suffix('!').and_then(|head| {
                     let head = head.trim_end();
                     let start = head
-                        .rfind(|ch: char| !(ch == '_' || unicode_ident::is_xid_continue(ch)))
-                        .map_or(0, |i| i + 1);
+                        .char_indices()
+                        .rev()
+                        .find(|(_, ch)| !(*ch == '_' || unicode_ident::is_xid_continue(*ch)))
+                        .map_or(0, |(i, ch)| i + ch.len_utf8());
                     let name = &head[start..];
                     (!name.is_empty()).then(|| name.to_string())
                 });
@@ -6349,27 +6351,28 @@ fn enclosing_macro_name(masked: &str, at: usize) -> Option<String> {
         }
         index += 1;
     }
-    stack.into_iter().rev().flatten().next()
+    stack.into_iter().rev().flatten().collect()
 }
 
 /// Whether the call of `method` at byte `at` of `masked` sits inside a macro
 /// invocation whose tokens are not evaluated (`stringify!`, `quote!`). Only
 /// the operands of the evaluating assertion macros are executable call sites;
 /// every other macro is treated as opaque, the same fail-closed stance the
-/// grip evidence takes for a macro around an owner call (#13041 review).
+/// grip evidence takes for a macro around an owner call. Every enclosing
+/// macro is checked, so `stringify!(assert_eq!(..))` is opaque even though
+/// the innermost macro evaluates (#13041 review).
 pub(in crate::analysis) fn call_site_in_discarded_macro(masked: &str, at: usize) -> bool {
-    let Some(name) = enclosing_macro_name(masked, at) else {
-        return false;
-    };
-    !matches!(
-        name.as_str(),
-        "assert"
-            | "assert_eq"
-            | "assert_ne"
-            | "debug_assert"
-            | "debug_assert_eq"
-            | "debug_assert_ne"
-    )
+    enclosing_macro_names(masked, at).iter().any(|name| {
+        !matches!(
+            name.as_str(),
+            "assert"
+                | "assert_eq"
+                | "assert_ne"
+                | "debug_assert"
+                | "debug_assert_eq"
+                | "debug_assert_ne"
+        )
+    })
 }
 
 /// Whether the call of `method` spelled at byte `at` of `text` resolves its
