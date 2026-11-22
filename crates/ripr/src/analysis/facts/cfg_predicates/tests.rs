@@ -520,6 +520,35 @@ fn test_build_availability_preserves_unknown_and_boolean_identity() {
 }
 
 #[test]
+fn every_build_disable_needs_a_predicate_false_without_any_atom() {
+    for (text, expected) in [
+        ("#[cfg(any())]", true),
+        ("#[cfg( any ( ) )]", true),
+        ("#[cfg(not(all()))]", true),
+        ("#[cfg(all(unix, any()))]", true),
+        ("#[cfg(all(test, not(all())))]", true),
+        ("#[cfg(any(any(), not(all())))]", true),
+        // `test` is a build atom here, not a test-build fact.
+        ("#[cfg(not(test))]", false),
+        ("#[cfg(test)]", false),
+        ("#[cfg(any(unix, any()))]", false),
+        ("#[cfg(feature = \"never\")]", false),
+        ("#[cfg(all())]", false),
+        ("#[cfg(not(any()))]", false),
+        // Conditional, inner, malformed and raw spellings never disable.
+        ("#[cfg_attr(all(), cfg(any()))]", false),
+        ("#![cfg(any())]", false),
+        ("#[cfg(any(,))]", false),
+        ("#[cfg(not())]", false),
+        ("#[r#cfg(any())]", false),
+        ("#[cfg(r#any())]", false),
+        ("#[doc = \"cfg(any())\"]", false),
+    ] {
+        assert_eq!(attribute_disables_every_build(text), expected, "{text}");
+    }
+}
+
+#[test]
 fn test_build_availability_refuses_raw_attribute_heads() {
     for text in [
         "#[r#cfg(any())]",
