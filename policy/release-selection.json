@@ -5,7 +5,7 @@
   "authority_issue": 2766,
   "stage": "scope_pending",
   "observed_main": {
-    "sha": "7cf9cd6d61feb6c2f4ea58d2ca1a0b8fa51adce2"
+    "sha": "0053c8feef554743445f094ff412a78a26dbc37b"
   },
   "claims": [
     {
@@ -629,7 +629,8 @@
         10865,
         12092,
         12338,
-        15601
+        15601,
+        16036
       ],
       "materiality": "release_required",
       "resolution": "final_candidate_execution_only",
@@ -669,8 +670,8 @@
       ],
       "materiality": "release_required",
       "resolution": "pending",
-      "candidate_effect": "Published-schema lanes for cache export, agent status and rerun are in main (#15453, #15640, #15855); the required Rust gate replays the schema-producer sweep on every protected merge. Open before the cut: empty-root refusal coverage (#15839, #15842; PRs #15838, #15845), the help schema (#15890), agent packet and agent brief, and the review-comments 0.1 compatibility repair carried by #13325.",
-      "next": "Land or disposition the open schema rows (#15838, #15845, #15890, the command working-directory producer and schema discrepancy #15860 with its repair #15905, agent packet, agent brief version decision, #13325 review-comments compatibility), then run the schema-producer sweep with live artifacts on the proposed cut and record the inventory and route dispositions on #3920. Owner: published-schema lane (#3920 comment 7068352513)."
+      "candidate_effect": "Published-schema lanes for cache export, agent status, rerun and help are in main (#15453, #15640, #15855, #15890), and command working directories match the published pattern (#15905, closing #15860); the required Rust gate replays the schema-producer sweep on every protected merge. Open before the cut: empty-root refusal coverage (#15839, #15842; PRs #15838, #15845), agent packet and agent brief, and the review-comments 0.1 compatibility repair carried by the public-history import (#16016, successor to #13325).",
+      "next": "Land or disposition the open schema rows (#15838, #15845, agent packet, agent brief version decision, the review-comments compatibility repair in #16016), then run the schema-producer sweep with live artifacts on the proposed cut and record the inventory and route dispositions on #3920. Owner: published-schema lane (#3920 comment 7068352513)."
     },
     {
       "claim_id": "release-docs",
@@ -1174,7 +1175,7 @@
     "rows": []
   },
   "census": {
-    "captured_on": "2026-11-21",
+    "captured_on": "2026-11-22",
     "open_release_check_issues": [
       1579,
       1609,
@@ -1296,7 +1297,8 @@
       15606,
       15839,
       15842,
-      15902
+      15902,
+      16036
     ]
   },
   "non_claims": [
