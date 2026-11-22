@@ -1393,6 +1393,10 @@ header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
+When every finding is on removed code, the block also prints a
+`Removed code` list of up to three rows (current-file location, removed code,
+probe kind and what the class says about the old line), then an
+`N more: rerun with --format human-full` row for the rest.
 Each listed hidden finding includes its probe kind and bounded explanatory
 reason alongside location, exposure class, and any currentness label. When
 `--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
