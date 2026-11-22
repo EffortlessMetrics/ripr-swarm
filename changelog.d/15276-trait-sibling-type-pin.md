@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An exact assertion on a trait method through a receiver of the owner's own type, such as `assert_eq!(Square(3).area(), 9)`, is now read as `exposed` even when another declared type also implements the method (`impl Shape for Line`); a rival that may be the same type (an alias, a rename, a blanket impl parameter, or a same-named type in another module) still holds the finding back (#15276).
