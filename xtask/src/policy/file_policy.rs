@@ -374,7 +374,9 @@ fn validate_packet_coverage(coverage: &[TestCoverageObservation]) -> Result<(), 
         );
     }
     match native.host {
-        FilePolicyHost::Unix => validate_packet_subjects(native, &PACKET_NATIVE_SUBJECTS),
+        FilePolicyHost::Unix | FilePolicyHost::Linux | FilePolicyHost::Macos => {
+            validate_packet_subjects(native, &PACKET_NATIVE_SUBJECTS)
+        }
         FilePolicyHost::Windows if native.selected.is_none() => Ok(()),
         FilePolicyHost::Windows => {
             Err("Windows native packet coverage must remain not enumerated".to_string())
@@ -491,7 +493,11 @@ fn partition_resolved_in_source(
     let mut resolved = Vec::new();
     for selector in commands {
         let tests = in_source
-            .filter(|_| selector.host.is_none_or(|declared| declared == host))
+            .filter(|_| {
+                selector
+                    .host
+                    .is_none_or(|declared| declared.applies_to(host))
+            })
             .and_then(|resolve| resolve(&selector.command))
             .filter(|tests| !tests.is_empty());
         match tests {
@@ -634,7 +640,9 @@ fn combined_preparation_builds(
     }
     let mut groups = BTreeMap::<BTreeSet<String>, Group>::new();
     for selector in commands {
-        if selector.host.is_some_and(|declared| declared != host)
+        if selector
+            .host
+            .is_some_and(|declared| !declared.applies_to(host))
             || !is_cargo_test_command(&selector.command)
         {
             continue;
@@ -918,7 +926,10 @@ fn validate_test_covered_by_with(
                 "{path}:{line} unsupported test-valued `covered_by`: {command}"
             ));
         }
-        if selector.host.is_some_and(|declared| declared != host) {
+        if selector
+            .host
+            .is_some_and(|declared| !declared.applies_to(host))
+        {
             observations.push(TestCoverageObservation {
                 selector: selector.clone(),
                 host,
@@ -2221,7 +2232,7 @@ mod tests {
                 if observation
                     .selector
                     .host
-                    .is_some_and(|declared| declared != host)
+                    .is_some_and(|declared| !declared.applies_to(host))
                 {
                     assert!(observation.selected.is_none());
                     assert!(rendered.contains("not_applicable; selected=not_enumerated;"));
@@ -2263,7 +2274,7 @@ mod tests {
             FilePolicyHost::parse("windows"),
             Ok(FilePolicyHost::Windows)
         );
-        for unsupported in ["", "linux", "Windows", "wasm", "unix,windows"] {
+        for unsupported in ["", "Linux", "Windows", "wasm", "unix,windows"] {
             assert_eq!(
                 FilePolicyHost::parse(unsupported),
                 Err(format!(
@@ -2271,6 +2282,134 @@ mod tests {
                 ))
             );
         }
+    }
+
+    #[test]
+    fn test_covered_by_native_host_uses_os_not_only_family() -> Result<(), String> {
+        if cfg!(target_os = "linux") {
+            assert_eq!(FilePolicyHost::current()?, FilePolicyHost::Linux);
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(FilePolicyHost::current()?, FilePolicyHost::Macos);
+        } else if cfg!(windows) {
+            assert_eq!(FilePolicyHost::current()?, FilePolicyHost::Windows);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_os_scope_matrix_has_no_false_credit() -> Result<(), String> {
+        use FilePolicyHost::{Linux, Macos, Unix, Windows};
+        // Simulated hosts challenge selection, preparation and source resolution.
+        // They do not represent native Windows/macOS test execution.
+        for (host, eligible) in [
+            (Linux, [true, true, false, true, false]),
+            (Macos, [true, true, false, false, true]),
+            (Windows, [true, false, true, false, false]),
+            (Unix, [true, true, false, false, false]),
+        ] {
+            for (declared, eligible) in [None, Some(Unix), Some(Windows), Some(Linux), Some(Macos)]
+                .into_iter()
+                .zip(eligible)
+            {
+                let commands = [FilePolicyTestCommand {
+                    host: declared,
+                    ..common(1, "cargo test -p xtask --bin xtask scoped_case")
+                }];
+                let mut enumerations = 0;
+                let rows = validate_test_covered_by_with("policy.toml", &commands, host, |_| {
+                    enumerations += 1;
+                    Ok((true, "scoped_case: test\n".to_string(), String::new()))
+                })?;
+                assert_eq!(enumerations, usize::from(eligible), "{host:?}/{declared:?}");
+                assert_eq!(rows[0].selected.is_some(), eligible);
+                let rendered = rows[0].render();
+                assert!(rendered.contains(&format!("host={};", host.name())));
+                if !eligible {
+                    assert!(rendered.contains("not_applicable; selected=not_enumerated;"));
+                    assert!(!rendered.contains("tests=["));
+                }
+                let (to_list, resolved) = super::partition_resolved_in_source(
+                    &commands,
+                    host,
+                    Some(&|_| Some(vec!["scoped_case".to_string()])),
+                );
+                assert_eq!(resolved.len(), usize::from(eligible));
+                assert_eq!(to_list.len(), usize::from(!eligible));
+
+                // Two mergeable selectors make any accidental build visible.
+                let paired = [commands[0].clone(), commands[0].clone()];
+                assert_eq!(
+                    super::combined_preparation_builds(&paired, host).len(),
+                    usize::from(eligible)
+                );
+                for success in [true, false] {
+                    let empty =
+                        validate_test_covered_by_with("policy.toml", &commands, host, |_| {
+                            Ok((success, String::new(), String::new()))
+                        });
+                    assert_eq!(
+                        empty.is_err(),
+                        eligible,
+                        "empty/failed {host:?}/{declared:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(FilePolicyHost::parse("linux")?, Linux);
+        assert_eq!(FilePolicyHost::parse("macos")?, Macos);
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_contabo_ledger_is_linux_only() -> Result<(), String> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../policy/non-rust-allowlist.toml");
+        let all_commands = crate::read_file_policy_test_commands(&path.to_string_lossy())?;
+        let commands = all_commands
+            .iter()
+            .filter(|row| row.command.contains("contabo_product_proof"))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            commands.len(),
+            3,
+            "both shims and contract selector must remain present"
+        );
+        assert!(
+            commands
+                .iter()
+                .all(|row| row.host == Some(FilePolicyHost::Linux))
+        );
+        let result_policy = all_commands
+            .iter()
+            .find(|row| row.command.contains("contabo_result_policy"))
+            .ok_or("result-policy selector missing")?;
+        assert_eq!(result_policy.host, Some(FilePolicyHost::Unix));
+        for host in [
+            FilePolicyHost::Linux,
+            FilePolicyHost::Macos,
+            FilePolicyHost::Windows,
+        ] {
+            let mut calls = 0;
+            let result = validate_test_covered_by_with("policy.toml", &commands, host, |_| {
+                calls += 1;
+                Ok((true, String::new(), String::new()))
+            });
+            if host == FilePolicyHost::Linux {
+                assert_eq!(calls, 1);
+                assert!(result.is_err_and(|error| error.contains("selects zero tests")));
+            } else {
+                assert_eq!(calls, 0);
+                for row in result? {
+                    assert!(row.selected.is_none());
+                    assert!(
+                        row.render()
+                            .contains("declared=linux; not_applicable; selected=not_enumerated;")
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

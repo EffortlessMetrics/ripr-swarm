@@ -525,6 +525,15 @@ points and must name the upstream repository, command template, exact 40-hex
 commit, checked-in patch, runtime budget, and artifact-size budget before the
 gate will accept them.
 
+A pure case's corpus `language` label must match a finding language in its
+own report or golden — derived from the findings' probe owner prefixes and
+probe file extensions and from `changed_files_by_language` entries with a
+non-zero file count. When a finding language can be derived and the label is
+none of them, the gate fails closed and names the case; a case whose report
+carries no derivable finding language (for example an empty or repo-seam
+report) leaves its label unconstrained. Relabeling a case never changes its
+assertions or classifications.
+
 The corpus summary envelope is the canonical result/failure projection for this
 corpus runner. The older `evidence-promotion-honesty.md` and
 `evidence-promotion-pinned-external.{json,md}` reports remain detailed

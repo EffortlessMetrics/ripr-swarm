@@ -1659,6 +1659,49 @@ census cannot produce a complete report. The operator can inspect the evidence
 and coordinate with the PR owner. The command has no GitHub write operation
 and the scheduled watchdog does not invoke it (#14705).
 
+### Preview or post one queued conflict notice
+
+From a conflict row in `queue-conflicts.json`, copy the PR number, the observed
+main SHA and the PR head SHA. Use a separate, new output directory for every
+attempt. Preview requires authenticated read access to the repository and its queue.
+
+```sh
+cargo xtask merge-queue conflict-notice <new-output-directory> <pr> <main-sha> <head-sha>
+```
+
+The command checks the live queue entry, fetches just the selected commits and
+reruns the Git comparisons. A preview includes the paths and their verified
+first-parent transitions. Clean heads and incomplete or unattributed
+comparisons produce no advisory. The JSON receipt records the comparison and
+the disposition. The existing private-directory guidance applies.
+
+To publish the previewed observation, repeat the command with the same SHAs,
+a fresh output directory, and `--post`. That mode requires a local operator
+with permission to comment on the PR. It can add one comment. It reads
+existing comments across all pages and checks current main, PR head and native
+entry again immediately before submission. Serialize attempts for the same
+PR. GitHub's comment endpoint has no atomic membership check or unique marker
+constraint. The comment therefore names both observed commits. A later serial
+run suppresses the same trusted marker. The command commits the immutable
+`queue-conflict-notice-pending.json` intent before dispatch and writes the final
+`queue-conflict-notice.json` separately. A failed final membership or comment
+read records `not_submitted`. A transport failure after dispatch records
+`unconfirmed`. If the terminal receipt cannot be committed, the diagnostic
+retains the comment ID or the transport error alongside the storage error.
+After an uncertain submission, copy the first line of the saved intent's
+`body` and look for that exact marker in comments on the original PR:
+
+```bash
+gh api --hostname github.com --paginate repos/EffortlessMetrics/ripr-swarm/issues/<pr>/comments --jq '.[] | [.id, .user.login, .author_association, (.body | split("\n")[0])] | @json'
+```
+
+Compare the first line and confirm the author is the authenticated operator or
+has a MEMBER, OWNER or COLLABORATOR association. This read also works after main
+moves or the PR leaves the queue. A matching comment supplies its ID. An
+incomplete API read leaves delivery uncertain. While the original membership
+and commits still match, a preview in a fresh directory also checks for the
+marker. The scheduled watchdog does not run this command.
+
 ### Issue Staleness Watchdog
 
 Open investigation issues often cite repo-rooted `path:line` evidence that

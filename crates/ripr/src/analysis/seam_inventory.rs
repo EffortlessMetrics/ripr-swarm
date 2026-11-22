@@ -1182,11 +1182,16 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     rust_index::apply_oracle_policy(&mut index, config.oracles());
     trace_latency_phase("apply_oracle_policy", "ok", policy_started.elapsed());
     let seams_started = Instant::now();
-    let seams = inventory_seams_from_index_checked(&production_files, &index)?;
+    let (seams, shared_context) =
+        inventory_seams_from_index_checked_with_context(&production_files, &index)?;
     trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
     let evidence_started = Instant::now();
     let (evidence, evidence_limitations) =
-        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &index)?;
+        test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+            &seams,
+            &index,
+            shared_context,
+        )?;
     require_complete_evidence(&evidence_limitations, "uncached seam walk")?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
     let classify_started = Instant::now();
@@ -1537,7 +1542,8 @@ fn inventory_classified_seams_from_state_with_config(
     // inventory work, rather than after; every other behavior is unchanged.
     let limit_and_source = repo_exposure_seam_limit()?;
     let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
-    let bounded = inventory_seams_from_index_bounded(production_files, &cached.index, limit)?;
+    let (bounded, shared_context) =
+        inventory_seams_from_index_bounded_with_context(production_files, &cached.index, limit)?;
     cancellation::checkpoint()?;
     // The retained-object peak is production-observable here (issue #4997):
     // the retained prefix stays within K while the trace reports the peak
@@ -1571,8 +1577,11 @@ fn inventory_classified_seams_from_state_with_config(
         &format!("start_seams_{}", seams.len()),
         Duration::ZERO,
     );
-    let pass = test_grip_evidence::EvidencePass::new(&cached.index);
+    // The pass outlives evidence production because publication reads it;
+    // it reuses the admission's grip context when one was built (Wave F2a).
+    let pass = test_grip_evidence::EvidencePass::with_shared_context(&cached.index, shared_context);
     let evidence = pass.evidence_for(&seams);
+    cancellation::checkpoint()?;
     let evidence_limitations = pass.limitations()?;
     cancellation::checkpoint()?;
     trace_latency_phase("evidence_for_seams", "ok", evidence_started.elapsed());
@@ -2014,12 +2023,18 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let seams = inventory_seams_from_index_checked(&production_files, &cached.index)?
+    let (inventoried, shared_context) =
+        inventory_seams_from_index_checked_with_context(&production_files, &cached.index)?;
+    let seams = inventoried
         .into_iter()
         .filter(|seam| candidate_functions.contains_key(seam.owner()))
         .collect::<Vec<_>>();
     let (evidence, evidence_limitations) =
-        test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &cached.index)?;
+        test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+            &seams,
+            &cached.index,
+            shared_context,
+        )?;
     require_complete_evidence(&evidence_limitations, "targeted test rerun")?;
     let classified =
         classify_seams_owned_retaining(seams, evidence, super::witness::repo_adapter_input(true));
@@ -2936,18 +2951,29 @@ pub(crate) fn inventory_diff_scoped_streamed_seams_with_optional_prepared(
     )
 }
 
+#[cfg(test)]
 fn classify_scoped_seams_streamed(
     seams: &[RepoSeam],
     index: &RustIndex,
     consumer: &mut dyn ScopedEvidenceConsumer,
     window_size: usize,
 ) -> Result<(usize, usize, Vec<AnalysisLimitation>), String> {
+    classify_scoped_seams_streamed_with_shared_context(seams, index, consumer, window_size, None)
+}
+
+fn classify_scoped_seams_streamed_with_shared_context<'index>(
+    seams: &[RepoSeam],
+    index: &'index RustIndex,
+    consumer: &mut dyn ScopedEvidenceConsumer,
+    window_size: usize,
+    shared_context: Option<test_grip_evidence::CompactGripContext<'index>>,
+) -> Result<(usize, usize, Vec<AnalysisLimitation>), String> {
     if window_size == 0 || window_size > MAX_REVIEW_EVIDENCE_WINDOW {
         return Err("invalid review evidence window size".into());
     }
     #[cfg(test)]
     source_lifetime_probe::observe_evidence_boundary();
-    let pass = test_grip_evidence::EvidencePass::new(index);
+    let pass = test_grip_evidence::EvidencePass::with_shared_context(index, shared_context);
     cancellation::checkpoint()?;
     let mut first = Vec::new();
     let mut rest = Vec::new();
@@ -3238,7 +3264,8 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
         .collect::<Vec<_>>();
     cancellation::checkpoint()?;
     let seams_started = Instant::now();
-    let seams = inventory_seams_from_index_checked(&scoped_production_files, &cached.index)?;
+    let (seams, shared_context) =
+        inventory_seams_from_index_checked_with_context(&scoped_production_files, &cached.index)?;
     trace_latency_phase(
         "inventory_seams",
         "review_scope_ok",
@@ -3248,11 +3275,21 @@ pub(crate) fn evaluate_diff_scoped_classified_seams_from_prepared<'a>(
     let (classified, classified_seams_considered, unevaluated_seams, evidence_limitations) =
         if let Some((consumer, window_size)) = consumer {
             let (evaluated, unevaluated, limitations) =
-                classify_scoped_seams_streamed(&seams, &cached.index, consumer, window_size)?;
+                classify_scoped_seams_streamed_with_shared_context(
+                    &seams,
+                    &cached.index,
+                    consumer,
+                    window_size,
+                    shared_context,
+                )?;
             (Vec::new(), evaluated, unevaluated, limitations)
         } else {
-            let (classified, unevaluated, limitations) =
-                classify_scoped_seams(seams, &cached.index, stages)?;
+            let (classified, unevaluated, limitations) = classify_scoped_seams_with_shared_context(
+                seams,
+                &cached.index,
+                stages,
+                shared_context,
+            )?;
             let evaluated = classified.len();
             (classified, evaluated, unevaluated, limitations)
         };
@@ -3514,13 +3551,23 @@ fn repo_seam_limit_from_index(
 /// the evidence pass's limitations, non-empty when it failed closed (#13340).
 /// Each stage rejects cancellation before classifying the evidence it
 /// built, as [`classify_complete_scoped_evidence`] does for the full scope.
+#[cfg(test)]
 fn classify_scoped_seams(
     seams: Vec<RepoSeam>,
     index: &RustIndex,
     stages: Option<&DiffScopeEvidenceStages<'_>>,
 ) -> Result<(Vec<ClassifiedSeam>, usize, Vec<AnalysisLimitation>), String> {
+    classify_scoped_seams_with_shared_context(seams, index, stages, None)
+}
+
+fn classify_scoped_seams_with_shared_context<'index>(
+    seams: Vec<RepoSeam>,
+    index: &'index RustIndex,
+    stages: Option<&DiffScopeEvidenceStages<'_>>,
+    shared_context: Option<test_grip_evidence::CompactGripContext<'index>>,
+) -> Result<(Vec<ClassifiedSeam>, usize, Vec<AnalysisLimitation>), String> {
     let evidence_started = Instant::now();
-    let pass = test_grip_evidence::EvidencePass::new(index);
+    let pass = test_grip_evidence::EvidencePass::with_shared_context(index, shared_context);
     let mut evidence = Vec::new();
     let mut evaluated = vec![false; seams.len()];
     if let Some(stages) = stages {
@@ -4498,11 +4545,27 @@ pub(crate) fn inventory_seams_from_index_checked(
     production_files: &[PathBuf],
     index: &RustIndex,
 ) -> Result<Vec<RepoSeam>, String> {
+    Ok(inventory_seams_from_index_checked_with_context(production_files, index)?.0)
+}
+
+/// [`inventory_seams_from_index_checked`] plus the field admission's grip
+/// context when admission built one, so the caller's evidence pass reuses it
+/// instead of building a second context for the same index (Wave F2a).
+pub(crate) fn inventory_seams_from_index_checked_with_context<'index>(
+    production_files: &[PathBuf],
+    index: &'index RustIndex,
+) -> Result<
+    (
+        Vec<RepoSeam>,
+        Option<test_grip_evidence::CompactGripContext<'index>>,
+    ),
+    String,
+> {
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
     rust_index::eprint_index_limit_disclosures(index);
-    seams_from_index_files(production_files, index)
+    seams_from_index_files_with_context(production_files, index)
 }
 
 /// [`inventory_seams_from_index_checked`] for tests, which are never
@@ -4554,10 +4617,27 @@ impl FileSeamIndex {
         seams_from_index_files(std::slice::from_ref(&file.to_path_buf()), &self.index)
     }
 
+    fn seams_in_file_with_context<'index>(
+        &'index self,
+        file: &Path,
+    ) -> Result<
+        (
+            Vec<RepoSeam>,
+            Option<test_grip_evidence::CompactGripContext<'index>>,
+        ),
+        String,
+    > {
+        seams_from_index_files_with_context(std::slice::from_ref(&file.to_path_buf()), &self.index)
+    }
+
     pub(crate) fn classify_in_file(&self, file: &Path) -> Result<Vec<ClassifiedSeam>, String> {
-        let seams = self.seams_in_file(file)?;
+        let (seams, shared_context) = self.seams_in_file_with_context(file)?;
         let (evidence, evidence_limitations) =
-            test_grip_evidence::evidence_for_seams_reporting_failure(&seams, &self.index)?;
+            test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+                &seams,
+                &self.index,
+                shared_context,
+            )?;
         require_complete_evidence(&evidence_limitations, "in-file seam classification")?;
         Ok(seam_classification::classify_seams(&seams, &evidence))
     }
@@ -4713,6 +4793,19 @@ fn seams_from_index_files(
     production_files: &[PathBuf],
     index: &RustIndex,
 ) -> Result<Vec<RepoSeam>, String> {
+    Ok(seams_from_index_files_with_context(production_files, index)?.0)
+}
+
+fn seams_from_index_files_with_context<'index>(
+    production_files: &[PathBuf],
+    index: &'index RustIndex,
+) -> Result<
+    (
+        Vec<RepoSeam>,
+        Option<test_grip_evidence::CompactGripContext<'index>>,
+    ),
+    String,
+> {
     let mut seams: Vec<RepoSeam> = Vec::new();
     let admission = FieldSeamAdmission::new(index);
 
@@ -4787,7 +4880,7 @@ fn seams_from_index_files(
             && a.owner() == b.owner()
     });
 
-    Ok(seams)
+    Ok((seams, admission.into_shared_context()))
 }
 
 /// Canonical sort identity shared by the legacy full sort and the bounded
@@ -4899,24 +4992,43 @@ pub(crate) fn inventory_seams_from_index_bounded(
     index: &RustIndex,
     limit: Option<usize>,
 ) -> Result<BoundedSeamInventory, String> {
+    Ok(inventory_seams_from_index_bounded_with_context(production_files, index, limit)?.0)
+}
+
+/// [`inventory_seams_from_index_bounded`] plus the field admission's grip
+/// context when admission built one (Wave F2a; see
+/// [`inventory_seams_from_index_checked_with_context`]).
+pub(crate) fn inventory_seams_from_index_bounded_with_context<'index>(
+    production_files: &[PathBuf],
+    index: &'index RustIndex,
+    limit: Option<usize>,
+) -> Result<
+    (
+        BoundedSeamInventory,
+        Option<test_grip_evidence::CompactGripContext<'index>>,
+    ),
+    String,
+> {
     if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
         eprintln!("{disclosure}");
     }
     rust_index::eprint_index_limit_disclosures(index);
     let mut collector = BoundedSeamCollector::new(limit);
-    visit_inventory_seams(production_files, index, |seam| {
+    let shared_context = visit_inventory_seams(production_files, index, |seam| {
         collector.push(seam);
         Ok(())
     })?;
-    Ok(collector.finish())
+    Ok((collector.finish(), shared_context))
 }
 
 /// Shared construction authority; callers choose retention and publication.
-fn visit_inventory_seams(
+/// Returns the field admission's grip context when admission built one, so
+/// the evidence pass can reuse it (Wave F2a).
+fn visit_inventory_seams<'index>(
     production_files: &[PathBuf],
-    index: &RustIndex,
+    index: &'index RustIndex,
     mut visit: impl FnMut(RepoSeam) -> Result<(), String>,
-) -> Result<(), String> {
+) -> Result<Option<test_grip_evidence::CompactGripContext<'index>>, String> {
     let admission = FieldSeamAdmission::new(index);
     for file in production_files {
         cancellation::checkpoint()?;
@@ -4962,7 +5074,7 @@ fn visit_inventory_seams(
             }
         }
     }
-    Ok(())
+    Ok(admission.into_shared_context())
 }
 
 /// Test-only entry that feeds pre-built seams through the bounded
@@ -5024,6 +5136,12 @@ impl<'a> FieldSeamAdmission<'a> {
             context: std::cell::OnceCell::new(),
             tables: std::cell::RefCell::new(BTreeMap::new()),
         }
+    }
+
+    /// The grip context admission built on first need, if any, for reuse by
+    /// the evidence pass over the admitted seams (Wave F2a).
+    fn into_shared_context(self) -> Option<test_grip_evidence::CompactGripContext<'a>> {
+        self.context.into_inner()
     }
 
     fn some_test_reads_weakly(&self, field: &str) -> bool {
@@ -6806,6 +6924,38 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
         let twin =
             format!("mod other {{\n    pub struct C {{\n        count: u32,\n    }}\n}}\n{here}");
         assert!(written_field_seam_files(&[("src/counter.rs", &twin)])?.is_empty());
+        Ok(())
+    }
+
+    /// Wave F2a: inventory hands the field admission's grip context to the
+    /// evidence pass, and evidence over the shared context matches a fresh one.
+    #[test]
+    fn inventory_hands_admission_context_to_the_evidence_pass() -> Result<(), String> {
+        let source = "pub struct C {\n    count: u32,\n}\n\nimpl C {\n    pub fn new() -> Self {\n        C { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count = 2;\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn t() {\n        let mut c = C::new();\n        c.bump();\n        assert!(c.count > 0);\n    }\n}\n";
+        let path = PathBuf::from("src/counter.rs");
+        let mut index = index_from_files(&[(path.clone(), source)])?;
+        let adapter = RaRustSyntaxAdapter;
+        index.extend_tests(adapter.summarize_file(&path, source)?.tests.iter().cloned());
+        let (seams, shared_context) =
+            inventory_seams_from_index_checked_with_context(&[path], &index)?;
+        assert!(!seams.is_empty(), "the weakly read field write is admitted");
+        let shared_context =
+            shared_context.ok_or("field admission builds its grip context on first need")?;
+        let (shared_evidence, shared_limitations) =
+            test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+                &seams,
+                &index,
+                Some(shared_context),
+            )?;
+        let (fresh_evidence, fresh_limitations) =
+            test_grip_evidence::evidence_for_seams_reporting_failure_with_shared_context(
+                &seams, &index, None,
+            )?;
+        assert_eq!(
+            format!("{shared_evidence:?}"),
+            format!("{fresh_evidence:?}")
+        );
+        assert_eq!(shared_limitations.len(), fresh_limitations.len());
         Ok(())
     }
 

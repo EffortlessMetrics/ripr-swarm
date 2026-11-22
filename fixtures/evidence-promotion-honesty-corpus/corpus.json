@@ -13976,7 +13976,7 @@
     },
     {
       "id": "javascript_awaited_local_registration_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-local-root.json",
       "vector": "local_async_test_helper_does_not_execute_exact_assertion_callback",
@@ -13999,7 +13999,7 @@
     },
     {
       "id": "javascript_awaited_forged_require_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-forged-require.json",
       "vector": "awaited_commonjs_forged_require_does_not_execute_assertion_callback",
@@ -14022,7 +14022,7 @@
     },
     {
       "id": "javascript_awaited_rebound_runner_discards_callback",
-      "language": "typescript",
+      "language": "javascript",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/javascript-awaited-rebound-runner.json",
       "vector": "awaited_commonjs_rebound_runner_does_not_execute_assertion_callback",
