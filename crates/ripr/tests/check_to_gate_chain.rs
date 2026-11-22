@@ -349,6 +349,110 @@ fn check_json_review_comments_gate_chain_blocks_and_exits_3() -> Result<(), Stri
     Ok(())
 }
 
+/// `text` as Windows PowerShell 5.1 `>` writes it: UTF-16LE with a
+/// byte-order mark and CRLF line ends.
+fn powershell_redirect_bytes(text: &str) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in text.replace('\n', "\r\n").encode_utf16() {
+        bytes.extend(unit.to_le_bytes());
+    }
+    bytes
+}
+
+/// #15936: the gate's `--pr-guidance` input is hashed from the bytes as
+/// written and parsed from the same bytes, so it had its own reader. A
+/// guidance document saved in a Windows PowerShell 5.1 encoding must give the
+/// decision the UTF-8 document gives, and undecodable UTF-16 is refused with
+/// the encoding named.
+#[test]
+fn gate_reads_pr_guidance_in_the_encodings_powershell_writes() -> Result<(), String> {
+    let fixture = build_changed_repo("powershell-guidance")?;
+    mkdir_chain_dirs(&fixture.0)?;
+    let check_path = fixture.0.join(CHECK_JSON);
+    run_check_json(&fixture.0, &check_path)?;
+    run_ok(
+        &fixture.0,
+        "review-comments --check-output",
+        &review_comments_args(COMMENTS_JSON, &["--check-output", CHECK_JSON]),
+    )?;
+    let comments = std::fs::read_to_string(fixture.0.join(COMMENTS_JSON))
+        .map_err(|error| format!("read {COMMENTS_JSON}: {error}"))?;
+
+    // Control: the UTF-8 document blocks, which is the decision each other
+    // spelling must reproduce.
+    let (control, control_exit) = evaluate_gate(&fixture.0, COMMENTS_JSON)?;
+    let control_status = control.get("status").and_then(Value::as_str);
+    if control_status != Some("blocked") || control_exit != Some(3) {
+        return Err(format!(
+            "UTF-8 control should block with exit 3, got {control_status:?} exit {control_exit:?}\n{control}"
+        ));
+    }
+
+    let mut utf8_with_mark = vec![0xEF, 0xBB, 0xBF];
+    utf8_with_mark.extend(comments.as_bytes());
+    let mut truncated = powershell_redirect_bytes(&comments);
+    truncated.pop();
+    let mut failures = Vec::new();
+    for (name, relative, bytes) in [
+        (
+            "UTF-8 with a byte-order mark",
+            "target/ripr/review/comments-utf8-bom.json",
+            utf8_with_mark,
+        ),
+        (
+            "UTF-16LE redirect",
+            "target/ripr/review/comments-utf16.json",
+            powershell_redirect_bytes(&comments),
+        ),
+    ] {
+        std::fs::write(fixture.0.join(relative), bytes)
+            .map_err(|error| format!("write {relative}: {error}"))?;
+        let (gate, exit) = evaluate_gate(&fixture.0, relative)?;
+        let status = gate.get("status").and_then(Value::as_str);
+        if status != control_status || exit != control_exit {
+            failures.push(format!(
+                "{name}: got {status:?} exit {exit:?}, UTF-8 gave {control_status:?} exit {control_exit:?}\n{gate}"
+            ));
+        }
+    }
+
+    let relative = "target/ripr/review/comments-utf16-truncated.json";
+    std::fs::write(fixture.0.join(relative), truncated)
+        .map_err(|error| format!("write {relative}: {error}"))?;
+    // Remove the earlier decision so a run that writes none cannot be read
+    // as this run's answer.
+    let _ = std::fs::remove_file(fixture.0.join(GATE_JSON));
+    let output = run_ripr(
+        &fixture.0,
+        &[
+            "gate",
+            "evaluate",
+            "--root",
+            ".",
+            "--pr-guidance",
+            relative,
+            "--mode",
+            "acknowledgeable",
+            "--out",
+            GATE_JSON,
+        ],
+    )?;
+    let decision = std::fs::read_to_string(fixture.0.join(GATE_JSON)).unwrap_or_default();
+    let said = format!("{decision}\n{}", diagnose("gate evaluate", &output));
+    if matches!(output.status.code(), Some(0) | Some(3)) || !said.contains("UTF-16 byte-order mark")
+    {
+        failures.push(format!(
+            "truncated UTF-16 guidance must be refused naming the encoding\n{said}"
+        ));
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
 /// Malformed or incomplete `check --format json` output must be refused by
 /// `review-comments --check-output`. If that flag were ignored, review-comments
 /// would re-analyze the repo and exit 0.

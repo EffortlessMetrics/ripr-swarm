@@ -219,8 +219,16 @@ pub(crate) fn decode_utf16_with_bom(bytes: &[u8]) -> Option<Option<String>> {
 /// UTF-8 file. UTF-16 that cannot be decoded exactly is refused by name.
 /// Not for source files: there a mark is content and byte offsets matter.
 pub(crate) fn read_artifact_text(path: impl AsRef<Path>) -> std::io::Result<String> {
-    let bytes = read(path)?;
-    if let Some(decoded) = decode_utf16_with_bom(&bytes) {
+    decode_artifact_text(&read(path)?)
+}
+
+/// Decode the bytes of a user-named JSON artifact the way
+/// [`read_artifact_text`] does. For a caller that must keep the exact bytes
+/// it read (a gate input whose subject hash covers them) and parse the same
+/// bytes: the hash stays over the file as written, and the parsed value is a
+/// pure function of those bytes.
+pub(crate) fn decode_artifact_text(bytes: &[u8]) -> std::io::Result<String> {
+    if let Some(decoded) = decode_utf16_with_bom(bytes) {
         return decoded.ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -230,16 +238,13 @@ pub(crate) fn read_artifact_text(path: impl AsRef<Path>) -> std::io::Result<Stri
             )
         });
     }
-    let text = String::from_utf8(bytes).map_err(|err| {
+    let text = std::str::from_utf8(bytes).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("stream did not contain valid UTF-8 ({err})"),
         )
     })?;
-    Ok(match text.strip_prefix('\u{feff}') {
-        Some(rest) => rest.to_owned(),
-        None => text,
-    })
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(text).to_owned())
 }
 
 /// Bounded replacement for `std::fs::read` on a user-named input.

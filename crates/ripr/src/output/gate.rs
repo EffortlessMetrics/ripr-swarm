@@ -1664,8 +1664,12 @@ fn read_json_value_and_bytes_with_display(
             format!("read {display} failed: {err}")
         }
     })?;
+    // The subject hash covers the bytes as written; the parse reads the same
+    // bytes decoded from a PowerShell 5.1 encoding when one is marked (#15936).
+    let text = crate::bounded_input::decode_artifact_text(&bytes)
+        .map_err(|err| format!("read {display} failed: {err}"))?;
     let value =
-        serde_json::from_slice(&bytes).map_err(|err| format!("parse {display} failed: {err}"))?;
+        serde_json::from_str(&text).map_err(|err| format!("parse {display} failed: {err}"))?;
     Ok((value, bytes))
 }
 
