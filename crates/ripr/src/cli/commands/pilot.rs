@@ -201,7 +201,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                     // The loaded change selects both the generated-source view
                     // and later change-first ranking, inside the same deadline.
                     let load_started = Instant::now();
-                    let change = load_pilot_current_change(&input, git_timeout);
+                    let change = load_pilot_current_change(&input, &cfg, git_timeout);
                     let load_ms = elapsed_ms(load_started);
                     let inventory_started = Instant::now();
                     // #10727: the inventory already reports its phases through
@@ -236,7 +236,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         )?
     } else {
         let load_started = Instant::now();
-        let change = load_pilot_current_change(&input, git_timeout);
+        let change = load_pilot_current_change(&input, &config, git_timeout);
         PilotAnalysisResult::Complete((
             analysis::ClassifiedSeamsReport {
                 classified: Vec::new(),
@@ -915,13 +915,16 @@ fn run_pilot_inventory(
 /// tracked changes, else `<base>...HEAD`. Plain `ripr check` reads committed
 /// history only, so a working-tree change is recorded as such and pilot's
 /// printed `ripr check` command carries `--worktree` to analyze the same
-/// diff. Keep this the one place pilot picks its diff. Pilot ranks seams on
+/// diff. With no `--base` on a clean checkout of the comparison base, the
+/// change is the last commit, as bare `ripr check` reads it (#16082). Keep
+/// this the one place pilot picks its diff. Pilot ranks seams on
 /// the changed lines first and says whether its top recommendation is part
 /// of the change. A load failure (not a Git work tree, no resolvable default
 /// base, a git error) never fails pilot: it is recorded as `unavailable` and
 /// the ranking stays repo-wide.
 fn load_pilot_current_change(
     input: &CheckInput,
+    config: &RiprConfig,
     git_timeout: Option<std::time::Duration>,
 ) -> output::pilot::PilotCurrentChange {
     let mut from_working_tree = false;
@@ -956,6 +959,25 @@ fn load_pilot_current_change(
                     None,
                     git_timeout,
                 )
+                .map(|mut loaded| {
+                    // #16082: on a clean checkout of the comparison base, a
+                    // bare `ripr check` analyzes the last commit; pilot's
+                    // change and its printed check command follow it.
+                    if input.base.is_none()
+                        && let Some(text) = app::diff_source::last_commit_fallback_diff(
+                            &input.root,
+                            &loaded.text,
+                            loaded.effective_base.as_deref(),
+                            config,
+                            git_timeout,
+                        )
+                    {
+                        loaded.text = text;
+                        loaded.effective_base =
+                            Some(app::diff_source::LAST_COMMIT_BASE.to_string());
+                    }
+                    loaded
+                })
             }
             .map_err(|err| current_change_unavailable_reason(&err, "git diff failed"))
         })
@@ -1391,7 +1413,8 @@ mod tests {
             ..CheckInput::default()
         };
         let config = load_for_root(&root)?;
-        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        let change =
+            load_pilot_current_change(&input, &config, Some(std::time::Duration::from_secs(30)));
         assert!(
             change.is_working_tree(),
             "fixture must be read as a working-tree change: {change:?}"
@@ -1427,7 +1450,8 @@ mod tests {
             ..CheckInput::default()
         };
         let config = load_for_root(&root)?;
-        let change = load_pilot_current_change(&input, Some(std::time::Duration::from_secs(30)));
+        let change =
+            load_pilot_current_change(&input, &config, Some(std::time::Duration::from_secs(30)));
         assert!(
             matches!(change, output::pilot::PilotCurrentChange::NoChange { .. }),
             "restoring the base must leave an empty working-tree diff: {change:?}"

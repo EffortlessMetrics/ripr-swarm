@@ -2048,14 +2048,14 @@ fn check_inner(
         && candidate_tree.is_none()
         && output_dir.is_none()
         && write_artifact.is_none()
-        && last_commit_fallback_applies(
+        && app::diff_source::last_commit_fallback_applies(
             &output,
             &limited_check_input.root,
             limited_check_input.git_timeout,
         )
     {
         let mut retry = limited_check_input.clone();
-        retry.base = Some("HEAD~1".to_string());
+        retry.base = Some(app::diff_source::LAST_COMMIT_BASE.to_string());
         let retry_config = config.clone();
         // Below this, a retry worker would only time out after its cancel
         // grace; keep the original empty result instead.
@@ -2106,7 +2106,7 @@ fn check_inner(
             output = retried;
             // Drill-in, stub and repair routes rebuild their commands from
             // this input; keep them on the range that was actually shown.
-            limited_check_input.base = Some("HEAD~1".to_string());
+            limited_check_input.base = Some(app::diff_source::LAST_COMMIT_BASE.to_string());
         }
     }
     // The findings formats apply suppression only through the explicit flag.
@@ -2481,31 +2481,6 @@ fn record_human_legend_seen(root: &Path, marker: &Path) {
         return;
     }
     let _ = crate::atomic_file::write(marker, b"1\n", "legend marker");
-}
-
-/// #13644: true when an unscoped check produced an empty range because HEAD
-/// is the checked-out comparison-base branch itself, the tree is clean and
-/// HEAD has a parent, so `--base HEAD~1` names the last commit.
-fn last_commit_fallback_applies(
-    output: &crate::CheckOutput,
-    root: &Path,
-    git_timeout: Option<std::time::Duration>,
-) -> bool {
-    if !output.findings.is_empty()
-        || output.unanalyzed_working_tree
-        || !output.untracked_working_tree_source_paths.is_empty()
-        || !output.ignored_working_tree_source_paths.is_empty()
-        || output
-            .analysis_outcome
-            .as_ref()
-            .is_none_or(|outcome| outcome.counts.changed_file_count != 0)
-    {
-        return false;
-    }
-    let Some(base) = output.base.as_deref() else {
-        return false;
-    };
-    crate::analysis::base_is_checked_out_head_with_parent(root, base, git_timeout)
 }
 
 /// The stderr warning for an empty default-base result when the default base
