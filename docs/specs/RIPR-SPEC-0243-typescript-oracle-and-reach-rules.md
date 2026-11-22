@@ -1810,6 +1810,24 @@ reading a member or destructuring it, such as `Object.assign(lib, stubs)`,
 `const alias = lib` or `{ lib }`) no longer holds the module's export
 there, so members read off it record nothing.
 
+A loop that runs one suite over a table of namespace imports calls each
+module's export (#13592, unjs/ohash `test/crypto.test.ts`). With
+`import * as cryptoJS from "<module>"`, a file-level `const impls = { js:
+cryptoJS, node: cryptoNode }` (or `{ cryptoJS }`, or `[cryptoJS, cryptoNode]`)
+and `for (const [name, { digest }] of Object.entries(impls))`, a bare
+`digest(...)` in a test the loop registers is `ImportedOwnerCall` of
+`digest` in each listed namespace's module, as `cryptoJS.digest(...)` would
+be, and module-entry reach continues from it. `Object.values(impls)` with
+`{ digest }`, and an array table iterated directly, are the same. Refused:
+a table value that is not an identifier, a table naming no namespace import,
+a table name mentioned anywhere in the file except as the argument of
+`Object.entries(` / `Object.values(` or the iterable after `of` (so no write,
+alias or call can swap an entry), a table a describe or loop level
+re-declares, a renamed, defaulted or rest destructure (`{ digest: run }`),
+an `await` loop, and a body-local declaration of the name. The binding is the
+loop's own `const`, recorded on the test's scope binding as
+`namespace_member_of`; file-fact schema 14 carries it.
+
 Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,
 `function require() {}`, also a block-level function, which hoists in sloppy
