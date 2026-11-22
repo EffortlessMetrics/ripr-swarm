@@ -726,6 +726,32 @@ pub(crate) fn read_root_manifest(
     crate::bounded_input::read_root_metadata_toml(root, relative_path, "suppressions manifest")
 }
 
+/// Loads suppressions relative to the analyzed workspace root. Returns
+/// an empty list when the file does not exist (the normal case for
+/// projects with no accepted debt). Parse violations are returned via
+/// `Err` so the orchestrator can surface them through the existing
+/// badge-rendering error path.
+pub fn load_suppressions_for_root_at(
+    root: &Path,
+    relative_path: &Path,
+) -> Result<Vec<SuppressionEntry>, Vec<String>> {
+    let Some(text) = read_root_manifest(root, relative_path).map_err(|err| vec![err])? else {
+        return Ok(Vec::new());
+    };
+    let (entries, violations) = parse_suppressions_manifest(&text);
+    if violations.is_empty() {
+        Ok(entries)
+    } else {
+        // Config may select another root-relative file. Rename only the
+        // parser's location prefix, preserving values and declaration lines.
+        let display = relative_path.display().to_string();
+        Err(violations
+            .into_iter()
+            .map(|violation| violation.replacen(SUPPRESSIONS_PATH, &display, 1))
+            .collect())
+    }
+}
+
 /// Today's UTC date in `YYYY-MM-DD` form. Pure-time helper used at the
 /// boundary; tests pass synthetic values directly through
 /// [`apply_exposure_suppressions`] / [`apply_test_efficiency_suppressions`].
