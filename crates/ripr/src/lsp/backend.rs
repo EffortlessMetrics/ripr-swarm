@@ -285,6 +285,9 @@ pub(super) struct Backend {
     /// would pin a handler task forever and leave the sidecar alive but
     /// silent. Expiry fails the one request through its ordinary error arm.
     client_request_timeout: Duration,
+    /// Set when the session ends (#16091), so a handler waiting on the
+    /// client stops waiting for an answer that can no longer arrive.
+    session_ended: super::session_end::SessionEnded,
     #[cfg(test)]
     consumed_source_barrier: Mutex<Option<ConsumedSourceBarrier>>,
     #[cfg(test)]
@@ -414,6 +417,7 @@ impl Backend {
             #[cfg(test)]
             last_requested_workspace_revision: AtomicU64::new(0),
             client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+            session_ended: super::session_end::SessionEnded::default(),
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
             #[cfg(test)]
@@ -441,16 +445,26 @@ impl Backend {
         &self,
         request: impl std::future::Future<Output = tower_lsp_server::jsonrpc::Result<T>>,
     ) -> tower_lsp_server::jsonrpc::Result<T> {
-        match tokio::time::timeout(self.client_request_timeout, request).await {
-            Ok(result) => result,
-            Err(_) => Err(tower_lsp_server::jsonrpc::Error {
-                code: tower_lsp_server::jsonrpc::ErrorCode::InternalError,
-                message: std::borrow::Cow::Owned(format!(
+        let failed = |message: String| tower_lsp_server::jsonrpc::Error {
+            code: tower_lsp_server::jsonrpc::ErrorCode::InternalError,
+            message: std::borrow::Cow::Owned(message),
+            data: None,
+        };
+        tokio::select! {
+            // An answer that already arrived wins over a simultaneous end.
+            biased;
+            bounded = tokio::time::timeout(self.client_request_timeout, request) => match bounded {
+                Ok(result) => result,
+                Err(_) => Err(failed(format!(
                     "ripr server-to-client request exceeded its {}s liveness bound; treating the unanswered client as failed (#5278)",
                     self.client_request_timeout.as_secs()
-                )),
-                data: None,
-            }),
+                ))),
+            },
+            // #16091: after `exit` or the end of input the answer can never
+            // arrive; waiting out the bound only keeps the process alive.
+            () = self.session_ended.wait() => Err(failed(
+                "ripr session ended before the client answered a server-to-client request; the request is abandoned (#16091)".to_string(),
+            )),
         }
     }
 
@@ -1813,10 +1827,15 @@ impl Backend {
 
     /// Cancels every active and pending refresh when the session ends
     /// (`exit` or end of input), without the terminal diagnostics clear that
-    /// `shutdown` performs (#11439).
+    /// `shutdown` performs (#11439), and releases handlers waiting on a
+    /// server-to-client answer that can no longer arrive (#16091).
     pub(super) fn session_end_hook(&self) -> super::session_end::SessionEndHook {
         let scheduler = Arc::clone(&self.refresh_scheduler);
-        Arc::new(move || scheduler.stop())
+        let session_ended = self.session_ended.clone();
+        Arc::new(move || {
+            scheduler.stop();
+            session_ended.mark();
+        })
     }
 
     #[cfg(test)]
