@@ -201,6 +201,24 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             );
         }
     };
+    // #3920: a missing or non-directory `--root` is the shared root refusal
+    // (`repository_root_unusable`), as for `check`, `diff`, `rerun` and the
+    // agent commands, not an `analysis_failed` from the later config load.
+    // The directory-only gate: it adds no output-containment refusal.
+    if let Err(err) = crate::cli::commands_context::ensure_command_root_dir(&input.root, "context")
+    {
+        return Err(
+            crate::cli::commands_context::refuse_json_envelope_with_format(
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "diff",
+                Some(input.mode.as_str()),
+                &input.root,
+                input.base.as_deref(),
+                crate::core_error::CoreError::repository_root_unusable(err),
+                format,
+            ),
+        );
+    }
     let replay = from_artifact.is_some() || input.diff_file.is_some();
     // A binding failure (for example a shadowed member selector) is a
     // post-argv-parse failure like the root and config refusals, so it writes

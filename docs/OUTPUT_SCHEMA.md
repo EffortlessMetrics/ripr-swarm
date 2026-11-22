@@ -181,6 +181,7 @@ records that distinction.
 | `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
+| `schemas/ripr/context-refusal.schema.json` | `1.1` | `crates/ripr/src/output/json/context_packet.rs` (`CONTEXT_PACKET_VERSION_CONTRACT`); the refusal envelope `ripr context` writes when it cannot produce a context packet, keyed with the context packet's version |
 | `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document has its own schema |
 | `schemas/ripr/agent-seam-packets.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the repository-wide packet document (`ripr check --format agent-seam-packets-json`), sharing the packet definitions of `agent-packet.schema.json` |
 | `schemas/ripr/agent-gap-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the GapRecord-backed packet document (`ripr agent packet --gap-ledger <path> --gap-id <id> --json`), advisory or blocked |
@@ -1927,14 +1928,19 @@ These envelopes have published schemas, each tested against the real
 command's output:
 [`schemas/ripr/diff-refusal.schema.json`](../schemas/ripr/diff-refusal.schema.json),
 [`schemas/ripr/rerun-refusal.schema.json`](../schemas/ripr/rerun-refusal.schema.json),
-[`schemas/ripr/agent-brief-refusal.schema.json`](../schemas/ripr/agent-brief-refusal.schema.json)
+[`schemas/ripr/agent-brief-refusal.schema.json`](../schemas/ripr/agent-brief-refusal.schema.json),
+[`schemas/ripr/agent-packet-refusal.schema.json`](../schemas/ripr/agent-packet-refusal.schema.json)
 and
-[`schemas/ripr/agent-packet-refusal.schema.json`](../schemas/ripr/agent-packet-refusal.schema.json).
-The last three are the diff refusal schema with the command's own version and
-scope and without the fields it never writes (`mode`, and `base` except on
-agent brief), and `crates/ripr/tests/refusal_envelope_schemas.rs` holds them
-to exactly that difference. The `ripr context` refusal has no published schema
-yet.
+[`schemas/ripr/context-refusal.schema.json`](../schemas/ripr/context-refusal.schema.json).
+The last four are the diff refusal schema with the command's own version and
+scope and without the fields it never writes (`mode` except on context, and
+`base` except on agent brief and context), and
+`crates/ripr/tests/refusal_envelope_schemas.rs` holds them to exactly that
+difference. The `ripr context` refusal is keyed with the context packet's
+version (`1.1`), keeps the run's `mode` and the caller's `--base`, and is
+written indented for `--json` and minified for `--format json-compact`. A
+missing or non-directory `--root` refuses as `repository_root_unusable`, as for
+the other commands, rather than `analysis_failed`.
 
 For `ripr check`, the machine-readable formats also carry their own refusal
 document on stdout instead of zero bytes (#7332), each parseable as its own

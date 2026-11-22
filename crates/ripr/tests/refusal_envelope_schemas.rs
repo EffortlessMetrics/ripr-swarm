@@ -1,9 +1,9 @@
 //! The published refusal-envelope schemas of `ripr rerun --json`,
-//! `ripr agent brief --json` and `ripr agent packet --json`, checked against
-//! bytes the real commands wrote.
+//! `ripr agent brief --json`, `ripr agent packet --json` and `ripr context`,
+//! checked against bytes the real commands wrote.
 //!
 //! Each command answers a post-argv-parse failure with the check JSON refusal
-//! envelope keyed with its own `schema_version` (#7331). The three schemas are
+//! envelope keyed with its own `schema_version` (#7331). The four schemas are
 //! `schemas/ripr/diff-refusal.schema.json` with a different version, scope and
 //! set of optional fields, and a test holds them to exactly that difference so
 //! a change to the shared envelope cannot reach one schema and miss another.
@@ -24,36 +24,59 @@ const DIFF_REFUSAL_SCHEMA: &str = "schemas/ripr/diff-refusal.schema.json";
 const RERUN_REFUSAL_SCHEMA: &str = "schemas/ripr/rerun-refusal.schema.json";
 const AGENT_BRIEF_REFUSAL_SCHEMA: &str = "schemas/ripr/agent-brief-refusal.schema.json";
 const AGENT_PACKET_REFUSAL_SCHEMA: &str = "schemas/ripr/agent-packet-refusal.schema.json";
+const CONTEXT_REFUSAL_SCHEMA: &str = "schemas/ripr/context-refusal.schema.json";
 
 /// One schema derived from the diff refusal schema: its pinned version, its
-/// `analysis_scope.scope`, and whether it may echo `base`. None of the three
-/// commands accepts `--mode`, so none declares `mode`.
+/// `analysis_scope.scope`, whether it may echo `base`, and whether it carries
+/// the run's `mode`. Only `context` accepts `--mode`, so only its schema keeps
+/// `mode`.
 struct Derived {
     path: &'static str,
     version: &'static str,
     scope: &'static str,
     echoes_base: bool,
+    has_mode: bool,
 }
 
-const DERIVED: [Derived; 3] = [
+const DERIVED: [Derived; 4] = [
     Derived {
         path: RERUN_REFUSAL_SCHEMA,
         version: "ripr-targeted-rerun-v1",
         scope: "diff",
         echoes_base: false,
+        has_mode: false,
     },
     Derived {
         path: AGENT_BRIEF_REFUSAL_SCHEMA,
         version: "0.2",
         scope: "repo",
         echoes_base: true,
+        has_mode: false,
     },
     Derived {
         path: AGENT_PACKET_REFUSAL_SCHEMA,
         version: "0.5",
         scope: "repo",
         echoes_base: false,
+        has_mode: false,
     },
+    Derived {
+        path: CONTEXT_REFUSAL_SCHEMA,
+        version: "1.1",
+        scope: "diff",
+        echoes_base: true,
+        has_mode: true,
+    },
+];
+
+/// A `ripr context` run that echoes `--base`; `--mode` is left at its default.
+const CONTEXT_ARGS: &[&str] = &[
+    "context",
+    "--json",
+    "--base",
+    "main",
+    "--at",
+    "src/lib.rs:2",
 ];
 
 static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -97,8 +120,8 @@ fn fixture_repo(label: &str, broken_config: bool) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-/// Stdout of a `ripr` run that must exit with `exit` and write a refusal.
-fn refusal_json(args: &[&str], root: &Path, exit: i32) -> Result<Value, String> {
+/// Stdout bytes of a `ripr` run that must exit with `exit`.
+fn ripr_stdout(args: &[&str], root: &Path, exit: i32) -> Result<Vec<u8>, String> {
     let root_arg = root.display().to_string();
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
         .args(args)
@@ -112,10 +135,16 @@ fn refusal_json(args: &[&str], root: &Path, exit: i32) -> Result<Value, String> 
             String::from_utf8_lossy(&output.stderr)
         ));
     }
-    serde_json::from_slice(&output.stdout).map_err(|error| {
+    Ok(output.stdout)
+}
+
+/// Stdout of a `ripr` run that must exit with `exit` and write a refusal.
+fn refusal_json(args: &[&str], root: &Path, exit: i32) -> Result<Value, String> {
+    let stdout = ripr_stdout(args, root, exit)?;
+    serde_json::from_slice(&stdout).map_err(|error| {
         format!(
             "ripr {args:?} refusal JSON did not parse: {error}\nstdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
+            String::from_utf8_lossy(&stdout)
         )
     })
 }
@@ -176,7 +205,7 @@ fn the_checker_covers_every_keyword_the_refusal_schemas_use() -> Result<(), Stri
     Ok(())
 }
 
-/// The three schemas copy the diff refusal schema. Apart from the identity
+/// The four schemas copy the diff refusal schema. Apart from the identity
 /// text, the pinned version, the scope and the optional fields a command never
 /// writes, each must be identical to it, so the envelope's shared definitions
 /// (`summary`, `run_limitation`, `refusal_remedy`, themselves held equal to
@@ -204,7 +233,9 @@ fn refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated() -> Re
         expected["properties"]["analysis_scope"]["properties"]["scope"]["const"] =
             json!(derived.scope);
         if let Some(properties) = expected["properties"].as_object_mut() {
-            properties.remove("mode");
+            if !derived.has_mode {
+                properties.remove("mode");
+            }
             if !derived.echoes_base {
                 properties.remove("base");
             }
@@ -318,6 +349,92 @@ fn agent_packet_json_refusals_conform_to_the_published_schema() -> Result<(), St
     }
 }
 
+/// `ripr context` refuses through the same envelope for an unusable root, an
+/// unreadable config, an unresolvable base and an unreadable `--from` check
+/// artifact, echoing `--mode` always and `--base` when given;
+/// `--format json-compact` writes the same document without whitespace.
+#[test]
+fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String> {
+    let mut refusals = root_and_config_refusals("context", CONTEXT_ARGS)?;
+    let root = fixture_repo("context-base", false)?;
+    let produced = (|| {
+        let unresolvable = refusal_json(
+            &[
+                "context",
+                "--json",
+                "--mode",
+                "deep",
+                "--base",
+                "nosuchrev",
+                "--at",
+                "src/lib.rs:2",
+            ],
+            &root,
+            2,
+        )?;
+        let artifact = refusal_json(
+            &[
+                "context",
+                "--json",
+                "--from",
+                "missing-check-artifact.json",
+                "--at",
+                "src/lib.rs:2",
+            ],
+            &root,
+            2,
+        )?;
+        let compact_args = [
+            "context",
+            "--format",
+            "json-compact",
+            "--mode",
+            "deep",
+            "--base",
+            "nosuchrev",
+            "--at",
+            "src/lib.rs:2",
+        ];
+        let compact_bytes = ripr_stdout(&compact_args, &root, 2)?;
+        let compact: Value = serde_json::from_slice(&compact_bytes)
+            .map_err(|error| format!("json-compact refusal did not parse: {error}"))?;
+        if compact_bytes.trim_ascii_end().contains(&b'\n') || compact != unresolvable {
+            return Err(format!(
+                "--format json-compact must write the --json refusal without whitespace:\n{}",
+                String::from_utf8_lossy(&compact_bytes)
+            ));
+        }
+        Ok::<_, String>([unresolvable, artifact])
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    let [unresolvable, artifact] = produced?;
+    refusals.push(("base_unresolvable", unresolvable));
+    refusals.push(("check_artifact_unusable", artifact));
+    check_refusals(CONTEXT_REFUSAL_SCHEMA, &refusals)?;
+    let observed: Vec<Value> = refusals
+        .iter()
+        .map(|(_, refusal)| {
+            json!([
+                refusal["schema_version"],
+                refusal["analysis_scope"]["scope"],
+                refusal.get("base"),
+                refusal.get("mode"),
+            ])
+        })
+        .collect();
+    let expected = vec![
+        json!(["1.1", "diff", "main", "draft"]),
+        json!(["1.1", "diff", "main", "draft"]),
+        json!(["1.1", "diff", "nosuchrev", "deep"]),
+        json!(["1.1", "diff", null, "draft"]),
+    ];
+    if observed == expected {
+        Ok(())
+    } else {
+        Err(format!("unexpected context refusals: {observed:?}"))
+    }
+}
+
 /// The negative experiment: each schema rejects a real refusal of its own
 /// command once one contract term is broken, including another command's
 /// version or scope and a field the command never writes.
@@ -343,9 +460,10 @@ fn published_refusal_schemas_reject_documents_they_forbid() -> Result<(), String
                 object.remove("remedy");
             }
         }),
-        ("a mode on a command without --mode", |doc| {
-            doc["mode"] = json!("draft")
-        }),
+        (
+            "a mode that is not a run mode, or on a command without --mode",
+            |doc| doc["mode"] = json!("turbo"),
+        ),
         ("the diff report's version", |doc| {
             doc["schema_version"] = json!("0.1")
         }),
@@ -359,10 +477,11 @@ fn published_refusal_schemas_reject_documents_they_forbid() -> Result<(), String
         std::process::id(),
         FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    let commands: [&[&str]; 3] = [
+    let commands: [&[&str]; 4] = [
         &["rerun", "--json", "--changed-test", "tests/over.rs"],
         &["agent", "brief", "--json", "--base", "main"],
         &["agent", "packet", "--json", "--seam-id", "seam:none"],
+        CONTEXT_ARGS,
     ];
     let mut rejected = 0;
     for (derived, args) in DERIVED.iter().zip(commands) {
