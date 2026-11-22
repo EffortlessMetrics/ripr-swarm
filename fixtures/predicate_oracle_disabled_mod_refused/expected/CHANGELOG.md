@@ -22,3 +22,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — predicate_oracle_disabled_mod_refused (3)
+
+Reason:
+RIPR-SPEC-0153: a mod behind #[cfg(any())] mounts nothing, rustc never compiles its file (#15877)
+
+Command:
+`cargo xtask goldens bless predicate_oracle_disabled_mod_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

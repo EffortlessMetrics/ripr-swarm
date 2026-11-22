@@ -478,6 +478,17 @@ values; an unrelated value such as `mode = "slow"` gets no suggestion, a
 keeps the same span, rejected value and accepted-value list.
 ```
 
+A rejected value that equals an accepted one once `_` or a space is read as
+`-` names that accepted value before edit distance is consulted (#15481):
+
+```text
+Given ripr.toml sets [perl] producer = "perl_lsp", one edit from both
+`perllsp` and `perl-lsp`,
+when ripr loads the config,
+then the error ends with `(did you mean `perl-lsp`?)`; `producer = "perlsp"`,
+with no separator typed, still ends with `(did you mean `perllsp`?)`.
+```
+
 ### Per-crate overrides (#2671)
 
 ```text
@@ -671,6 +682,15 @@ keeps exit 0 when the other checks pass, and recommends
 `ripr check --base REF` bound to the diagnosed root instead of a bare
 `ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
 never produces the advisory, and a failed prerequisite still outranks it.
+
+When the repository is mid-merge, mid-rebase or mid-cherry-pick (Git's
+operation marker exists), doctor records an advisory `git_operation` check
+naming the operation and its finish and abort commands, and keeps exit 0 when
+the other checks pass. While conflict markers remain, `ripr check` quarantines
+their regions, including regions a zero-context diff splits across hunks,
+records the `unresolved_conflict_markers` limitation and exits 2 instead of
+listing findings from rival source states. An unanswered Git probe never
+produces the advisory.
 
 ### Doctor separates analysis readiness from source-build prerequisites
 

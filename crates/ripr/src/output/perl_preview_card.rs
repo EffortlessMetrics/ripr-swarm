@@ -609,6 +609,7 @@ pub(crate) mod tests {
                 normalized_discriminator: "return_value".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
                 location: SourceLocation::new("lib/My/App.pm", 8, 5),
                 owner: None,

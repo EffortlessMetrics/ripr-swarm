@@ -1,0 +1,10 @@
+[package]
+name = "rust_lib_explicit_path_enabled_fixture"
+version = "0.0.0"
+edition = "2024"
+autolib = false
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"

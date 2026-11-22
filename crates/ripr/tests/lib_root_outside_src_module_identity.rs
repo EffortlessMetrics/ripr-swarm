@@ -391,6 +391,59 @@ fn a_binary_in_a_symlinked_src_leaves_its_neighbours_unplaced() -> Result<(), St
 
 #[cfg(unix)]
 #[test]
+fn a_module_only_the_linked_library_declares_stays_the_librarys() -> Result<(), String> {
+    // #16068: the twin above with a binary root that declares no module.
+    // Only `real/lib.rs` composes `real/pricing.rs`, so it is
+    // `my_pkg::pricing`, as in the plain layout (the control).
+    let entries = |root: &'static str| {
+        vec![
+            file("Cargo.toml", PACKAGE),
+            file(
+                if root == "src" {
+                    "src/lib.rs"
+                } else {
+                    "real/lib.rs"
+                },
+                "pub mod pricing;\npub mod legacy;\n",
+            ),
+            file(
+                if root == "src" {
+                    "src/main.rs"
+                } else {
+                    "real/main.rs"
+                },
+                "fn main() {}\n",
+            ),
+            file(
+                if root == "src" {
+                    "src/pricing.rs"
+                } else {
+                    "real/pricing.rs"
+                },
+                OWNER,
+            ),
+            file(
+                if root == "src" {
+                    "src/legacy.rs"
+                } else {
+                    "real/legacy.rs"
+                },
+                OWNER,
+            ),
+            file("tests/d.rs", integration_test("my_pkg::pricing::discount")),
+        ]
+    };
+    let control = finding_in(&entries("src"), ("src/pricing.rs", 2))?;
+    assert_exposed("plain layout control", &control);
+    let mut linked = entries("real");
+    linked.push(Entry::Link("src", "real"));
+    let found = finding_in(&linked, ("real/pricing.rs", 2))?;
+    assert_exposed("module only the linked library declares", &found);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
 fn a_symlinked_root_file_is_the_crate_root_but_lends_no_directory() -> Result<(), String> {
     // #15909: `src/lib.rs -> ../real/lib.rs`. The linked file is the crate
     // root, so an owner in it is `my_pkg::discount`.

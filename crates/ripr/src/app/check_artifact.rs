@@ -629,6 +629,7 @@ mod raw_path_tests {
             id: "probe:pricing:1:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing:1:error_path".to_string()),
                 family: ProbeFamily::ErrorPath,
                 location: SourceLocation::new(raw.clone(), 1, 1),

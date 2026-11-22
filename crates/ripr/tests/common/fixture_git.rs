@@ -30,6 +30,15 @@ const FIXTURE_GIT_STREAM_CAP: usize = 1024 * 1024;
 const RETRYABLE_FIXTURE_GIT: &[&str] =
     &["init", "config", "add", "update-ref", "rev-parse", "status"];
 
+/// Configuration every fixture invocation carries so a returned `git` leaves
+/// nothing running in the fixture. Since Git 2.47 a `commit` detaches
+/// `git maintenance run --auto`, which holds `.git/objects/maintenance.lock`
+/// after the commit has returned; a test that walks the tree right after setup
+/// can list the lock and lose it before the read (#9142, B4 in run
+/// 44902252177). Mirrors `FIXTURE_GIT_NO_BACKGROUND_CONFIG` in `crate::git`.
+const FIXTURE_GIT_NO_BACKGROUND_CONFIG: &[(&str, &str)] =
+    &[("maintenance.auto", "false"), ("gc.auto", "0")];
+
 /// Poll interval while waiting out a fixture invocation.
 const FIXTURE_GIT_POLL: Duration = Duration::from_millis(10);
 
@@ -322,6 +331,15 @@ fn fixture_git_command(root: &Path, args: &[&str]) -> Command {
         // global config, including a HOME fallback when XDG is unset.
         .env("XDG_CONFIG_HOME", root.join(".git").join("fixture-xdg"))
         .env("LC_ALL", "C");
+    for (index, (key, value)) in FIXTURE_GIT_NO_BACKGROUND_CONFIG.iter().enumerate() {
+        command
+            .env(format!("GIT_CONFIG_KEY_{index}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+    }
+    command.env(
+        "GIT_CONFIG_COUNT",
+        FIXTURE_GIT_NO_BACKGROUND_CONFIG.len().to_string(),
+    );
     command
 }
 

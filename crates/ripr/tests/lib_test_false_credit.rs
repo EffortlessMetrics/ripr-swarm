@@ -1018,6 +1018,67 @@ fn bench_unit_tests_are_not_a_discriminator_unless_the_bench_is_tested() -> Resu
     assert_credited_beyond_instant(&tested, "a `test = true` bench")
 }
 
+/// Cargo rejects a bare package nested in a workspace until it is admitted
+/// as a member. Check the same file, diff and API options in both layouts.
+#[test]
+fn bare_bench_requires_a_runnable_target() -> Result<(), String> {
+    let manifest = "[package]\nname = 'auto-targets'\nversion = '0.0.0'\nedition = '2021'\n";
+    let outer = TempCrate::create_in(
+        "[workspace]\nmembers = []\n",
+        &[
+            ("billing/Cargo.toml", manifest),
+            ("billing/src/lib.rs", OWNER),
+            ("billing/benches/load.rs", BENCH_TESTS),
+        ],
+        "src/lib.rs",
+        1,
+    )?;
+    let fixture = TempCrate {
+        root: outer.root.join("billing"),
+        changed_line: 2,
+    };
+    std::fs::rename(
+        outer.root.join("diff.patch"),
+        fixture.root.join("diff.patch"),
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        fixture.finding_in(Mode::Fast)?.class,
+        ExposureClass::NoStaticPath
+    );
+    std::fs::write(
+        outer.root.join("Cargo.toml"),
+        "[workspace]\nmembers = ['billing']\n",
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        fixture.finding_in(Mode::Fast)?.class,
+        ExposureClass::NoStaticPath
+    );
+    let tests = fixture.root.join("tests");
+    std::fs::create_dir(&tests).map_err(|error| error.to_string())?;
+    let sibling = tests.join("fee.rs");
+    std::fs::write(
+        &sibling,
+        BENCH_TESTS.replace("fn t()", "fn integration_pin()"),
+    )
+    .map_err(|error| error.to_string())?;
+    let finding = fixture.finding_in(Mode::Fast)?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(related_names(&finding), ["integration_pin"]);
+    std::fs::remove_file(sibling).map_err(|error| error.to_string())?;
+    std::fs::write(
+        fixture.root.join("Cargo.toml"),
+        format!("{manifest}\n[[bench]]\nname = 'load'\ntest = true\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        fixture.finding_in(Mode::Fast)?.class,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
 #[test]
 fn a_bench_included_into_an_integration_test_keeps_credit() -> Result<(), String> {
     // #15262: `tests/it.rs` compiles `benches/load.rs` through `include!`

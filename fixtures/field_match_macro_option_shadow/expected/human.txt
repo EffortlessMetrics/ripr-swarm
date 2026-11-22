@@ -44,7 +44,7 @@ Write a test for it:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (weak); kind: match_arm; reason: No strong assertion was detected
+    - ./src/lib.rs:5 (weak); kind: match_arm; reason: No assertion was tied to the changed value
     - ./src/lib.rs:5 (unrevealed); kind: return_value; reason: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   Hidden classes:
     weak = tests reach it but check it only loosely

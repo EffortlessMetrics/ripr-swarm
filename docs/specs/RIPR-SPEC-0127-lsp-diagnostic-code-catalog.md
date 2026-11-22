@@ -249,6 +249,18 @@ the failure, so a different failure re-renders. Blocked states keep their own
 recovery routes. A pull client is
 asked to re-pull only when the served recovery route changes.
 
+When a snapshot is committed and an attempt then fails because the requested
+base does not resolve (`failure_kind` `base_unresolvable`), the retained
+findings answer an earlier base, so they are withdrawn from service (#15312).
+Push and both pull paths serve the same marker code with `data.state`
+`withdrawn_analysis_failure`, recovery `fix_failure_then_refresh` and
+`data.failure_kind`, saying "previously reported findings are withdrawn" and
+quoting the recorded failure. The withdrawal holds while a retry is queued or
+running and ends when an attempt publishes a snapshot or fails for another
+reason; any other failure kind leaves the retained snapshot in service. A push
+client receives the marker for its tracked documents, and a pull client is
+asked to re-pull.
+
 The marker's code, data kind and state are unchanged; #14447 adds only the
 `analysis_running` recovery and its result id. These are advisory hover
 words using static vocabulary; they make no runtime-outcome or

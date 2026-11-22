@@ -1,0 +1,13 @@
+# Registers the tool-configuration-script exclusion (#15947) under
+# RIPR-SPEC-0082's skipped generated/excluded files rule. Lives in a fragment
+# so it does not edit the shared `.ripr/traceability.toml` arrays.
+[[extend]]
+id = "RIPR-SPEC-0082"
+tests = [
+  "crates/ripr-contract/src/config/typescript.rs::tests::tool_config_scripts_are_non_product_but_near_misses_are_source",
+  "crates/ripr/src/analysis/language/typescript/tests/tool_config_tests.rs::a_changed_tool_config_field_is_not_a_finding_subject",
+  "crates/ripr/src/analysis/language/typescript/tests/tool_config_tests.rs::the_same_object_in_an_ordinary_module_is_still_reported",
+  "crates/ripr/src/analysis/language/typescript/tests/tool_config_tests.rs::a_declared_handwritten_tool_config_is_analyzed_again",
+  "crates/ripr/src/analysis/language/typescript/repo_tests.rs::tool_config_script_is_disclosed_as_skipped_unless_declared_handwritten",
+  "crates/ripr/src/analysis/pipeline.rs::tests::changed_typescript_line_count_excludes_tool_configs_unless_declared_handwritten",
+]

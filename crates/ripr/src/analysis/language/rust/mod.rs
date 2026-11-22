@@ -522,6 +522,15 @@ fn mentioned_module_names(
             if at > 0 && is_ident(code[at - 1]) {
                 continue;
             }
+            // A `mod` behind a `#[cfg]` no build satisfies (`any()`,
+            // `not(all())`) is stripped before rustc loads its file, so it
+            // mentions nothing and the file it names stays a suspect
+            // (#15877).
+            if outer_attributes_before(code, at).iter().any(|attr| {
+                crate::analysis::facts::cfg_predicates::attribute_disables_every_build(attr)
+            }) {
+                continue;
+            }
             let rest = &code[at + 3..];
             let skipped = rest
                 .iter()
@@ -556,6 +565,77 @@ fn mentioned_module_names(
         }
     }
     mentioned
+}
+
+/// The outer attributes written directly before the item keyword at `at`,
+/// read backward over whitespace and an optional visibility (`pub`,
+/// `pub(crate)`). Comments and literals are already masked in `code`, so a
+/// bracket inside them cannot unbalance the scan. Anything else before the
+/// keyword ends the list.
+fn outer_attributes_before(code: &[u8], at: usize) -> Vec<String> {
+    let skip_space = |mut end: usize| {
+        while end > 0 && code[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        end
+    };
+    let mut end = skip_space(at);
+    if end > 0 && code[end - 1] == b')' {
+        let mut depth = 0usize;
+        let mut open = None;
+        for index in (0..end).rev() {
+            match code[index] {
+                b')' => depth += 1,
+                b'(' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        open = Some(index);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(open) = open {
+            let before = skip_space(open);
+            if code[..before].ends_with(b"pub") {
+                end = skip_space(before - 3);
+            }
+        }
+    } else if code[..end].ends_with(b"pub")
+        && (end == 3 || !(code[end - 4].is_ascii_alphanumeric() || code[end - 4] == b'_'))
+    {
+        end = skip_space(end - 3);
+    }
+    let mut attributes = Vec::new();
+    while end > 0 && code[end - 1] == b']' {
+        let mut depth = 0usize;
+        let mut open = None;
+        for index in (0..end).rev() {
+            match code[index] {
+                b']' => depth += 1,
+                b'[' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        open = Some(index);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(open) = open else {
+            break;
+        };
+        let hash = skip_space(open);
+        if hash == 0 || code[hash - 1] != b'#' {
+            break;
+        }
+        let start = hash - 1;
+        attributes.push(String::from_utf8_lossy(&code[start..end]).into_owned());
+        end = skip_space(start);
+    }
+    attributes
 }
 
 /// Whether `path` could be a file no target reaches: a module file whose
@@ -9044,7 +9124,9 @@ fn absent_delimiter_boundary_returns_head() {
 
         assert!(scope.selects(Path::new("src/a.rs")));
         assert!(scope.selects(Path::new("./src/a.rs")));
-        assert!(scope.selects(Path::new("src\\a.rs")));
+        // A backslash is a separator on Windows only; on Unix `src\a.rs` is a
+        // different file that this scope does not select (#15908).
+        assert_eq!(scope.selects(Path::new("src\\a.rs")), !cfg!(unix));
         assert!(!scope.selects(Path::new("src/b.rs")));
         Ok(())
     }
@@ -9570,6 +9652,7 @@ fn absent_delimiter_boundary_returns_head() {
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:predicate:test".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(SymbolId("src/lib.rs::inner".to_string())),

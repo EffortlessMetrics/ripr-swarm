@@ -52,6 +52,51 @@ mod tests {
     }
 
     #[test]
+    fn fixture_git_cannot_leave_background_maintenance_running() -> Result<(), String> {
+        let root = unique_root("no-background")?;
+        fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
+        // A repository that asks for background maintenance still gets none:
+        // the per-invocation configuration outranks the repository's.
+        fixture_git_ok(&root, &["config", "maintenance.auto", "true"])?;
+        fixture_git_ok(&root, &["config", "gc.auto", "1"])?;
+        for (key, want) in [("maintenance.auto", "false"), ("gc.auto", "0")] {
+            let effective = fixture_git_output(&root, &["config", "--get", key])?;
+            if effective.trim() != want {
+                return Err(format!(
+                    "fixture git resolves {key} to {:?}, want {want:?}",
+                    effective.trim()
+                ));
+            }
+        }
+        // The commit is the step that detaches maintenance. Every fixture
+        // subcommand is built by one function, so the commit command itself
+        // must carry the same pairs and no inherited `-c` channel.
+        let commit = fixture_git_command(&root, &["commit", "-qm", "fixture"]);
+        let env = |name: &str| {
+            commit
+                .get_envs()
+                .find(|(key, _)| *key == std::ffi::OsStr::new(name))
+                .map(|(_, value)| value.map(|value| value.to_string_lossy().into_owned()))
+        };
+        let pairs = [
+            ("GIT_CONFIG_COUNT", "2"),
+            ("GIT_CONFIG_KEY_0", "maintenance.auto"),
+            ("GIT_CONFIG_VALUE_0", "false"),
+            ("GIT_CONFIG_KEY_1", "gc.auto"),
+            ("GIT_CONFIG_VALUE_1", "0"),
+        ];
+        for (name, want) in pairs {
+            if env(name) != Some(Some(want.to_string())) {
+                return Err(format!(
+                    "commit command carries {name}={:?}, want {want:?}",
+                    env(name)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn fixture_setup_preserves_utf8_bytes_in_its_own_worktree() -> Result<(), String> {
         let root = unique_root("bytes with spaces")?;
         fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;

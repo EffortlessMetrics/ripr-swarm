@@ -40,6 +40,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::GhPrStatus(args) => super::reports::gh_pr_status(&args),
         XtaskCommand::CiBudget(args) => super::reports::ci_budget(&args),
         XtaskCommand::MergeQueue(args) => super::reports::merge_queue(&args),
+        XtaskCommand::ReleaseAuthority(args) => super::release_authority::run(&args),
         XtaskCommand::PerlMigrationRefresh(args) => super::reports::perl_migration_refresh(&args),
         XtaskCommand::FirstRun(args) => super::first_run::run(&args),
         XtaskCommand::PublicProof(args) => super::public_proof::run(&args),
@@ -171,6 +172,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::ReleaseBindServerDescriptor(args) => {
             super::reports::release_server::release_bind_server_descriptor(&args)
+        }
+        XtaskCommand::ReleaseGithubTransactionPlan(args) => {
+            super::release_github_transaction::plan_command(&args)
         }
         XtaskCommand::ReleaseUploadAssets(args) => {
             super::reports::release_server::release_upload_assets(&args)

@@ -1,0 +1,9 @@
+# A literal Unix backslash in a file name keeps its own path (#15908).
+[[extend]]
+id = "RIPR-SPEC-0170"
+tests = [
+  "crates/ripr/tests/backslash_file_name_repair_route.rs::backslash_named_library_file_keeps_its_own_path_and_completes_a_repair",
+  "crates/ripr/tests/backslash_file_name_repair_route.rs::attempt_refuses_an_edit_to_the_backslash_named_library_file",
+  "crates/ripr/tests/backslash_file_name_repair_route.rs::cage_observes_an_edit_to_an_unrelated_backslash_named_file",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_forbids_a_backslash_named_file_by_its_own_path",
+]

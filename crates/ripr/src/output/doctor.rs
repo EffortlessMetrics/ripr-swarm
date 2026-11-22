@@ -2101,6 +2101,14 @@ fn evaluate_doctor_core_with_probe_for_profile(
                     }
                     crate::analysis::HeadRefState::Unknown => {}
                 }
+                // An interrupted merge/rebase can leave conflict regions that
+                // `ripr check` refuses to read as changes (exit 2); name the
+                // operation and its finish/abort step next to the recommendation.
+                if let Some(message) =
+                    crate::analysis::git_operation_advisory(root, Some(DOCTOR_TOOL_TIMEOUT))
+                {
+                    report.add_advisory_check("git_operation", message);
+                }
             }
             Some(WorkTreeProbe::Refused(message)) => {
                 report.add_check("git_repository", DoctorStatus::Fail, Some(message));

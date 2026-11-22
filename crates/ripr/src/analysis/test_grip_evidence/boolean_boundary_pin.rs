@@ -22,6 +22,7 @@ pub(super) struct BooleanBoundaryPin<'a> {
 
 pub(super) fn predicate_probe(seam: &RepoSeam, owner: &FunctionSummary) -> Probe {
     Probe {
+        before_condition: None,
         id: ProbeId(format!("repo-boundary:{}", seam.id().as_str())),
         location: SourceLocation::new(seam.file().to_path_buf(), seam.display_line(), 1),
         owner: Some(owner.id.clone()),

@@ -1791,14 +1791,6 @@ fn custom_lib_root_placement(index: &RustIndex, file: &Path) -> Option<CustomRoo
     if linked_src && (body == "main.rs" || body.starts_with("bin/")) {
         return None;
     }
-    // Beside that binary root, a module file may belong to either crate,
-    // which the literal `src/` layout scan cannot settle through the link, so
-    // it names no module path (fail-closed, #16042 review).
-    let shares_binary = linked_src
-        && index
-            .files()
-            .get(&custom.module_dir.join("main.rs"))
-            .is_some();
     let mut segments: Vec<String> = body
         .strip_suffix(".rs")?
         .split('/')
@@ -1807,6 +1799,32 @@ fn custom_lib_root_placement(index: &RustIndex, file: &Path) -> Option<CustomRoo
     if segments.last().is_some_and(|last| last == "mod") {
         segments.pop();
     }
+    // Beside that binary root, a module file may belong to either crate. The
+    // literal `src/` layout scan cannot read the roots through the link, so
+    // read them here as `CrateLayout::classify` does: the module stays the
+    // library's only when the library root declares its first segment and
+    // the binary root readably does not (#16068). Anything else names no
+    // module path (fail-closed, #16042 review).
+    let shares_binary = linked_src
+        && index
+            .files()
+            .get(&custom.module_dir.join("main.rs"))
+            .is_some_and(|main| {
+                let declares = |source: Option<&str>, first: &str| {
+                    source
+                        .and_then(declared_first_segments)
+                        .map(|names| names.contains(first))
+                };
+                let lib = index.files().get(&custom.crate_root);
+                let first = segments.first().map(String::as_str).unwrap_or_default();
+                !matches!(
+                    (
+                        declares(lib.map(|lib| &*lib.data().source), first),
+                        declares(Some(&main.data().source), first),
+                    ),
+                    (Some(true), Some(false))
+                )
+            });
     (!segments.is_empty()).then(|| CustomRootPlacement {
         shares_binary,
         ..placed(segments)
@@ -6952,6 +6970,7 @@ fn integration_rename_case() {
         let index = renamed_other_index();
         let (owner, _) = renamed_other_parts(&index, "real_case")?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(owner.id.clone()),
@@ -7427,6 +7446,7 @@ fn raw_definition_case() {
         let index = std_glob_index();
         let (owner, _) = std_glob_parts(&index, "std_glob_only_case")?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(owner.id.clone()),
@@ -7688,6 +7708,7 @@ fn raw_definition_case() {
             return;
         };
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:render".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId(owner.id.0.clone())),
