@@ -731,3 +731,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_fixture_name_relation (38)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless python_fixture_name_relation --reason "..."`
+
+Updated:
+- `expected/human.txt`

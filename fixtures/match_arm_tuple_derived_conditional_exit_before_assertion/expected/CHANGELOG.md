@@ -87,3 +87,42 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — match_arm_tuple_derived_conditional_exit_before_assertion (8)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_derived_conditional_exit_before_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_tuple_derived_conditional_exit_before_assertion (9)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm and field_construction exact-oracle steps add an if-it-does branch naming the unconfirmed observation link; static class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_derived_conditional_exit_before_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_tuple_derived_conditional_exit_before_assertion (10)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm exact-oracle step names an arm whose result is replaced before the assertion; static class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_derived_conditional_exit_before_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -310,6 +310,13 @@ pub struct Probe {
     /// Head-side text of the change or of the probed source, when the
     /// producer has one. `None` for a removed-only line.
     pub after: Option<String>,
+    /// The old line's `if`/`while` condition, when `before` is the whole old
+    /// line and `after` is the condition of the same head on the new line
+    /// (#15420). The producer sets it from both lines; `None` whenever that
+    /// pairing is not established. Display evidence only: `before` is
+    /// unchanged and no classifier reads this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_condition: Option<String>,
     /// The source expression the probe is about, as the producer read it. For
     /// a probe on a changed line this is the trimmed line; a probe placed on
     /// another site carries that site's expression.
@@ -1426,6 +1433,7 @@ mod tests {
 
     fn probe_over(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
             location: SourceLocation {
                 file: PathBuf::from("src/lib.rs"),
@@ -1718,6 +1726,7 @@ mod decision_helper_tests {
             id: "finding:limit".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:limit".to_string()),
                 location: SourceLocation::new("src/lib.rs", 4, 5),
                 owner: None,

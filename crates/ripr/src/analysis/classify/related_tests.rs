@@ -17129,6 +17129,7 @@ let r = try_parse_summary();",
 
     fn wrapper_error_probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:wrapper".to_string()),
             location: SourceLocation::new(file, 5, 1),
             owner: Some(SymbolId(format!("{file}::owner"))),
@@ -18523,6 +18524,7 @@ try_parse_summary(raw).map_err(Into::into)"
 
     fn probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new(file, 2, 1),
             owner: Some(SymbolId(format!("{file}::owner"))),
@@ -18539,6 +18541,7 @@ try_parse_summary(raw).map_err(Into::into)"
     /// A probe with no function owner — models a module-level struct field.
     fn struct_field_probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:struct-field".to_string()),
             location: SourceLocation::new(file, 46, 1),
             owner: None,

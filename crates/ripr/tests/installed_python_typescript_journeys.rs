@@ -2511,7 +2511,7 @@ fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
     need(&out, "analysis incomplete", "incomplete analysis")?;
     need(
         &out,
-        "enabled = [\"typescript\"]",
+        "enabled = [\"rust\", \"typescript\"]",
         "names the enabling config",
     )?;
     Ok(())

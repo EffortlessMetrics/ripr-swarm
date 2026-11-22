@@ -189,9 +189,18 @@ file. It stays foreign when the module is inline (its imports are scoped to it),
 mounted with `#[path]`, declared twice (for example under exclusive `cfg`s),
 shadowed by an `extern crate`, `use` or other item of the same name, written
 with a longer path, a group or a leading `::`, nested in a module, reached next
-to an item-position macro, or one of `std`/`core`/`alloc`. Without this a
+to an item-position macro. Without this a
 re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
 in the crate's tests macro-binding unestablished.
+
+A module declared under a standard crate's name qualifies like any other
+(#14116): in `mod core; use core::*;` the declared module shadows the extern
+prelude, so the glob reads the local module and never the standard crate.
+The standard-root rule declines such a file because the module takes the
+root's name, so before this the glob was foreign under both rules. Every other
+standard-root spelling keeps the standard-root rule, and so does a declaration
+under `cfg` or `cfg_attr`: compiled out, it leaves the glob reading the standard
+name, which a renamed dependency can hold.
 
 An import path that only reads the module name does not shadow it (#14116):
 `pub(crate) use name::{A, B};`, a member renamed to another name, or an import
@@ -237,14 +246,29 @@ arguments only into generated function bodies, closures and expressions:
   `prop_oneof!` (the same crate): expressions over the caller's tokens.
 - `serde_json::json!` (the audited literal `json!` identity): an expression
   over the caller's tokens.
+- `tokio::select!` (tokio 1.54.1 `src/macros/select.rs`): branch patterns,
+  futures, `if` preconditions, handlers and the `else` arm are captured as
+  `pat`, `expr` and `block` fragments and placed in a `match`, a tuple and
+  `if` conditions; the `mod __tokio_select_util` it emits receives only the
+  branch count.
+
+A wrapper whose expansion changes between releases is trusted only at the
+locked versions it was read at. The drop-in authority checks the nearest
+`Cargo.lock` against this table, which
+`spec_wrapper_version_table_matches_the_code_authority` keeps equal to the
+code's `AUDITED_WRAPPER_VERSIONS`:
+
+| Wrapper | Audited lock package and version |
+| --- | --- |
+| tokio::select! | tokio 1.54.1 |
 
 Inside such a body a `use` or a non-exported `macro_rules!` binds only within
 the call's own text. So the argument site of such a call is scoped to the
 call's line and byte range and kept to its crate, and it no longer refuses a
 test elsewhere, when all of these hold:
 
-- The call is spelled `proptest::proptest!` or `serde_json::json!` (either
-  with a leading `::`), or `proptest::` and one of the other `proptest`
+- The call is spelled `proptest::proptest!`, `serde_json::json!` or
+  `tokio::select!` (each with or without a leading `::`), or `proptest::` and one of the other `proptest`
   wrappers above on its own, such as `proptest::prop_oneof!` building a
   strategy in a helper outside `proptest!`, and the crate root passes the
   drop-in authority

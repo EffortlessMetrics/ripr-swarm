@@ -73,6 +73,23 @@ fn producer_evidence_and_public_renderers_agree_about_reach() -> Result<(), Stri
         let compact = render_check(&output, &OutputFormat::Human)?;
         let full = render_check(&output, &OutputFormat::HumanFull)?;
         assert!(compact.contains(hint), "{name}: {compact}");
+        // #15295: the Summary bucket carries the same reach judgement as the
+        // reason line, in the bucket this finding is counted under.
+        let summary = compact
+            .lines()
+            .find(|line| line.starts_with("Summary: "))
+            .ok_or_else(|| format!("{name}: no Summary line: {compact}"))?;
+        let note = " (1 through a test link ripr could not confirm)";
+        let bucket = match class {
+            "weakly_exposed" => format!("1 partly noticed{note}, 0 reached but not noticed, "),
+            _ => format!("0 partly noticed, 1 reached but not noticed{note}, "),
+        };
+        if reach == "yes" {
+            assert!(!summary.contains("could not confirm"), "{name}: {summary}");
+            assert!(summary.contains("1 partly noticed, "), "{name}: {summary}");
+        } else {
+            assert!(summary.contains(&bucket), "{name}: {summary}");
+        }
         assert!(full.contains(&format!("reach {reach}:")), "{name}: {full}");
     }
     Ok(())
@@ -102,6 +119,10 @@ fn unestablished_reach_never_takes_the_weak_discriminator_shortcut() -> Result<(
         let human = render_check(&output, &OutputFormat::Human)?;
         assert!(
             human.contains("Why weak: test reach to this change is not established"),
+            "{state:?}: {human}"
+        );
+        assert!(
+            human.contains("1 partly noticed (1 through a test link ripr could not confirm)"),
             "{state:?}: {human}"
         );
     }
@@ -143,6 +164,67 @@ fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
     assert!(
         human.contains("Why unrevealed: a related test asserts here"),
         "{human}"
+    );
+    Ok(())
+}
+
+/// A withheld finding has left its Summary bucket, so the unconfirmed-link
+/// note must leave with it. Otherwise the note lands on the bucket's remaining
+/// member, whose reach is established (#15295).
+#[test]
+fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result<(), String> {
+    let name = "mixed_rust_typescript_preview";
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(name);
+    let summary_of = |policy: Option<&Path>| -> Result<String, String> {
+        // The CLI, not the library entry point: the fixture's `ripr.toml`
+        // enables the TypeScript preview, and the binary is what reads it.
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command
+            .current_dir(fixture.join("input"))
+            .args(["check", "--root", ".", "--diff"])
+            .arg(fixture.join("diff.patch"));
+        if let Some(policy) = policy {
+            command.arg("--suppression-policy").arg(policy);
+        }
+        let output = command.output().map_err(|error| error.to_string())?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        stdout
+            .lines()
+            .find(|line| line.starts_with("Summary: "))
+            .map(str::to_string)
+            .ok_or_else(|| {
+                format!(
+                    "{name}: no Summary line: {stdout}\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+            })
+    };
+
+    // Control: one Rust finding with established reach and one TypeScript
+    // finding with a heuristic link share the bucket.
+    let unsuppressed = summary_of(None)?;
+    assert!(
+        unsuppressed.contains("2 partly noticed (1 through a test link ripr could not confirm), "),
+        "{unsuppressed}"
+    );
+
+    let policy = Path::new(env!("CARGO_TARGET_TMPDIR")).join("weak_reach_hint_15295_policy.toml");
+    std::fs::write(
+        &policy,
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"web/discount.ts\"\nreason = \"accepted preview debt\"\nowner = \"team-web\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let suppressed = summary_of(Some(&policy))?;
+    assert!(
+        suppressed.contains("1 partly noticed, 0 reached but not noticed, "),
+        "{suppressed}"
+    );
+    assert!(!suppressed.contains("could not confirm"), "{suppressed}");
+    assert!(
+        suppressed.contains("1 suppressed by your settings"),
+        "{suppressed}"
     );
     Ok(())
 }

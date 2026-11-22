@@ -49,7 +49,8 @@ pub(crate) fn unplaced_location_prefix(path: &str, line: &str) -> String {
 }
 
 /// True when stable path text carries a `%XX` marker for a non-UTF-8 byte
-/// (any uppercase `%XX` other than the literal-percent `%25`). A property
+/// (any uppercase `%XX` other than the literal-percent `%25` and the literal
+/// Unix backslash `%5C`, #15908, which a property carries raw). A property
 /// cannot carry it: GitHub's runner decodes only `%25 %0D %0A %3A %2C`, so
 /// `file=a_%FF.rs` would name a different file than the one on disk (#13961).
 pub(crate) fn stable_path_has_non_utf8_marker(stable: &str) -> bool {
@@ -59,6 +60,7 @@ pub(crate) fn stable_path_has_non_utf8_marker(stable: &str) -> bool {
             && (w[1].is_ascii_digit() || (b'A'..=b'F').contains(&w[1]))
             && (w[2].is_ascii_digit() || (b'A'..=b'F').contains(&w[2]))
             && &w[1..] != b"25"
+            && &w[1..] != b"5C"
     })
 }
 
@@ -121,10 +123,21 @@ pub(crate) fn escape_property(value: &str) -> String {
 /// Escape a workflow-command *property* value from stable path text.
 ///
 /// Use only for values produced by stable path normalization, where `%`
-/// is already encoded. Encoding `%` again double-encodes (`%2525`).
+/// is already encoded. Encoding `%` again double-encodes (`%2525`). A `%5C`
+/// marker is a literal Unix backslash (#15908); the runner does not decode it,
+/// so it is written back as the `\` that names the file on disk. Every `%` in
+/// stable text starts a marker, so `%255C` (a literal `%5C`) is never read as
+/// one.
 pub(crate) fn escape_property_pre_encoded(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
-    for c in value.chars() {
+    let mut rest = value;
+    while let Some(c) = rest.chars().next() {
+        if let Some(tail) = rest.strip_prefix("%5C") {
+            escaped.push('\\');
+            rest = tail;
+            continue;
+        }
+        rest = &rest[c.len_utf8()..];
         match c {
             '\r' => escaped.push_str("%0D"),
             '\n' => escaped.push_str("%0A"),
@@ -213,6 +226,21 @@ mod tests {
             escape_property_pre_encoded("src/a%25b,c:d\r\nx.rs"),
             "src/a%25b%2Cc%3Ad%0D%0Ax.rs"
         );
+    }
+
+    #[test]
+    fn pre_encoded_property_writes_a_literal_backslash_marker_back_raw() {
+        // #15908: `%5C` is a literal Unix backslash; the runner never decodes
+        // it, so the property names the file on disk. A literal `%5C` in the
+        // name is `%255C` and stays text.
+        assert_eq!(escape_property_pre_encoded("src/a%5Cb.rs"), r"src/a\b.rs");
+        assert_eq!(
+            escape_property_pre_encoded("src/a%255C.rs"),
+            "src/a%255C.rs"
+        );
+        assert!(!stable_path_has_non_utf8_marker("src/a%5Cb.rs"));
+        assert!(!stable_path_has_non_utf8_marker("src/a%255C.rs"));
+        assert!(stable_path_has_non_utf8_marker("src/a%5C%FF.rs"));
     }
 
     #[test]

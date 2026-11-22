@@ -43,6 +43,7 @@ impl<'a> BooleanBoundaryPin<'a> {
         // This is a private input to the existing predicate authorities,
         // not a diff claim or a general seam-to-probe conversion.
         let probe = Probe {
+            before_condition: None,
             id: ProbeId(format!("repo-boolean-boundary:{}", seam.id().as_str())),
             location: SourceLocation::new(seam.file().to_path_buf(), seam.display_line(), 1),
             owner: Some(owner.id.clone()),

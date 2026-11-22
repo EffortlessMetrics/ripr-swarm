@@ -357,6 +357,7 @@ enum MetadataState {
     #[default]
     Unloaded,
     Failed,
+    WorkspaceMembershipRejected,
     /// Workspace test targets keyed by their lexically resolved source
     /// path; each entry lists the owning package manifest directories
     /// with the cargo target name (#3637 review), metadata `test` flag
@@ -612,7 +613,9 @@ impl ManifestInventory {
         self.ensure_workspace_metadata(workspace_root);
         match &self.metadata {
             MetadataState::Loaded(inventory) => Some(inventory.package_dirs.clone()),
-            MetadataState::Unloaded | MetadataState::Failed => None,
+            MetadataState::Unloaded
+            | MetadataState::Failed
+            | MetadataState::WorkspaceMembershipRejected => None,
         }
     }
 
@@ -689,11 +692,16 @@ impl ManifestInventory {
     /// batch fails closed deterministically instead of re-spawning.
     fn ensure_workspace_metadata(&mut self, workspace_root: &Path) {
         if matches!(self.metadata, MetadataState::Unloaded) {
-            self.metadata = match run_workspace_cargo_metadata(workspace_root) {
-                Some(targets) => MetadataState::Loaded(targets),
-                None => MetadataState::Failed,
-            };
+            self.metadata =
+                run_workspace_cargo_metadata(workspace_root).unwrap_or(MetadataState::Failed);
         }
+    }
+
+    /// Cargo explicitly rejected the analyzed package as a nonmember of its
+    /// enclosing workspace. Ordinary test discovery cannot run this package.
+    pub(crate) fn workspace_membership_rejected(&mut self, workspace_root: &Path) -> bool {
+        self.ensure_workspace_metadata(workspace_root);
+        matches!(self.metadata, MetadataState::WorkspaceMembershipRejected)
     }
 
     fn manifest_at(&mut self, dir: &Path) -> OwnedManifest {
@@ -737,6 +745,10 @@ fn cargo_metadata_command(workspace_root: &Path) -> std::process::Command {
     command
         .args([
             "metadata",
+            // The membership refusal below reads Cargo's diagnostic even when
+            // the parent process requests color for interactive output.
+            "--color",
+            "never",
             "--no-deps",
             "--format-version",
             "1",
@@ -775,7 +787,7 @@ fn cargo_metadata_command(workspace_root: &Path) -> std::process::Command {
 /// temp file rather than a pipe so a large workspace cannot fill the OS
 /// pipe buffer and deadlock against the poll; the file is removed on
 /// every path.
-fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInventory> {
+fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataState> {
     let manifest_path = workspace_root.join("Cargo.toml");
     if !manifest_path.is_file() {
         return None;
@@ -794,13 +806,15 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0)
     ));
+    let stderr_path = stdout_path.with_extension("stderr");
+    let stderr_file = std::fs::File::create_new(&stderr_path).ok()?;
     let parsed = std::fs::File::create(&stdout_path)
         .ok()
         .and_then(|stdout_file| {
             let mut command = cargo_metadata_command(workspace_root);
             command
                 .stdout(std::process::Stdio::from(stdout_file))
-                .stderr(std::process::Stdio::null());
+                .stderr(stderr_file);
             // The owned-subprocess authority (#3803) keeps the bounded
             // probe's tree termination Job-Object-backed on Windows.
             crate::process_owner::OwnedProcess::spawn(command).ok()
@@ -816,7 +830,27 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
                     std::fs::read(&stdout_path)
                         .ok()
                         .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                        .map(|value| workspace_target_inventory(&value))
+                        .map(|value| MetadataState::Loaded(workspace_target_inventory(&value)))
+                }
+                crate::git::ChildWait::Exited(status) if status.code() == Some(101) => {
+                    // The rejected manifest must be the analysis root. An
+                    // unrelated failure is not evidence about this package.
+                    use std::io::Read;
+                    let mut diagnostic = String::new();
+                    std::fs::File::open(&stderr_path)
+                        .ok()?
+                        .take(8192)
+                        .read_to_string(&mut diagnostic)
+                        .ok()?;
+                    let mut lines = diagnostic.lines().skip_while(|line| {
+                        *line
+                            != "error: current package believes it's in a workspace when it's not:"
+                    });
+                    lines.next()?;
+                    let rejected = Path::new(lines.next()?.strip_prefix("current:")?.trim());
+                    (std::fs::canonicalize(rejected).ok()?
+                        == std::fs::canonicalize(&manifest_path).ok()?)
+                    .then_some(MetadataState::WorkspaceMembershipRejected)
                 }
                 // Tree cleanup could not be confirmed after the probe
                 // ended abnormally: the wait contract only guarantees a
@@ -826,6 +860,7 @@ fn run_workspace_cargo_metadata(workspace_root: &Path) -> Option<MetadataInvento
                 _ => None,
             }
         });
+    let _ = std::fs::remove_file(&stderr_path);
     let _ = std::fs::remove_file(&stdout_path);
     parsed
 }
@@ -1462,7 +1497,9 @@ where
     I: IntoIterator<Item = &'a Path>,
 {
     let files = files.into_iter().collect::<Vec<_>>();
-    let mut manifests: BTreeMap<PathBuf, DeclaredCargoTargets> = BTreeMap::new();
+    // Per package: its declared targets and its linked production roots.
+    let mut manifests: BTreeMap<PathBuf, (DeclaredCargoTargets, BTreeSet<(PathBuf, PathBuf)>)> =
+        BTreeMap::new();
     let mut context = SourceRoleContext::empty();
     // (owning package dir, module dir) for each declared crate root that
     // sits in its own directory, both lexically resolved and anchored.
@@ -1473,12 +1510,18 @@ where
             continue;
         };
         if !manifests.contains_key(&root) {
-            let targets = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml"))
-                .map(|text| declared_targets_from_manifest(&text, &root))
+            let text = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")).ok();
+            let targets = text
+                .as_deref()
+                .map(|text| declared_targets_from_manifest(text, &root))
                 .unwrap_or_default();
-            manifests.insert(root.clone(), targets);
+            let linked = text
+                .as_deref()
+                .map(|text| linked_production_roots(workspace_root, &root, text))
+                .unwrap_or_default();
+            manifests.insert(root.clone(), (targets, linked));
         }
-        if let Some(targets) = manifests.get(&root) {
+        if let Some((targets, linked)) = manifests.get(&root) {
             context
                 .declared_test_targets
                 .extend(strip_root(workspace_root, &targets.tests));
@@ -1510,6 +1553,20 @@ where
                     .filter(|dir| !package_dir.starts_with(dir))
                     .map(|dir| (package_dir.clone(), dir)),
             );
+            // Git reports a change where a symlink lands, while Cargo names
+            // the target by the link (#15909, #16045): a `src -> real`
+            // directory or a `src/lib.rs -> ../real/lib.rs` root. Declare the
+            // root where it lands, and the directory its modules load from
+            // (beside the link, resolved), when both stay in the workspace.
+            for (physical_root, physical_dir) in linked {
+                context.declared_production_sources.extend(strip_root(
+                    workspace_root,
+                    &BTreeSet::from([physical_root.clone()]),
+                ));
+                if !package_dir.starts_with(physical_dir) {
+                    module_dirs.insert((package_dir.clone(), physical_dir.clone()));
+                }
+            }
         }
     }
     // Rust resolves a declared root's out-of-line modules below the root's
@@ -1532,6 +1589,45 @@ where
         }
     }
     context
+}
+
+/// The production roots Cargo builds for the package in `package_dir`
+/// (anchored), by the shared manifest target rules (`autobins`, `autolib`,
+/// a `[lib] path` replacing `src/lib.rs`), that reach their file through a
+/// symlink: each as [`linked_target`] lands it. A root Cargo does not build
+/// is never resolved, so a stale link beside it adds nothing (#16045
+/// review). The seam cache keys on this set, since a link can move without
+/// any file content changing.
+pub(crate) fn linked_production_roots(
+    workspace_root: &Path,
+    package_dir: &Path,
+    manifest_text: &str,
+) -> BTreeSet<(PathBuf, PathBuf)> {
+    super::module_graph::manifest_production_roots(workspace_root, manifest_text, package_dir)
+        .iter()
+        .filter_map(|root| linked_target(workspace_root, &lexical(&normalize(root))))
+        .collect()
+}
+
+/// Where a Cargo target path lands through symlinks, as (root file, module
+/// directory), both lexical under `workspace_root`. `None` when nothing on
+/// the path is a link, the path does not resolve, or it leaves the
+/// workspace.
+fn linked_target(workspace_root: &Path, target: &Path) -> Option<(PathBuf, PathBuf)> {
+    let canonical_root = std::fs::canonicalize(workspace_root).ok()?;
+    let land = |path: &Path| -> Option<PathBuf> {
+        let relative = std::fs::canonicalize(path)
+            .ok()?
+            .strip_prefix(&canonical_root)
+            .ok()?
+            .to_path_buf();
+        Some(lexical(&normalize(&workspace_root.join(relative))))
+    };
+    let lexical_target = lexical(&normalize(target));
+    let lexical_dir = lexical_target.parent()?.to_path_buf();
+    let root = land(target)?;
+    let dir = land(&lexical_dir)?;
+    (root != lexical_target || dir != lexical_dir).then_some((root, dir))
 }
 
 /// The package directory that owns `anchored`: the Cargo source-layout

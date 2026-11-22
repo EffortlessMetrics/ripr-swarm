@@ -6267,6 +6267,13 @@ pub(crate) fn owner_namespace_receivers(
                 .map(|import| import.local.clone()),
         );
     }
+    // An ES namespace import of a barrel whose member named like the owner
+    // is the owner's own export (#15923).
+    for local in super::related_tests::barrel_namespace_receivers(test, owner) {
+        if !receivers.contains(&local) {
+            receivers.push(local);
+        }
+    }
     // A dynamic import binds the same module namespace a static
     // `import * as` would, but as a local declaration, so it never reaches
     // `imports_in_file`. Without it the member-call gate below would
@@ -10153,6 +10160,7 @@ pub(crate) fn classify_resolved_owner(
         1,
     );
     let probe = Probe {
+        before_condition: None,
         id: ts_probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner_sym),

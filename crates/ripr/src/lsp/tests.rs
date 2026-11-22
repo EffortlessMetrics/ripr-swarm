@@ -1078,6 +1078,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         id: format!("probe:{file}:10:predicate:aabbccdd"),
         canonical_gap: None,
         probe: Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:{file}:10:predicate:aabbccdd")),
             location: SourceLocation::new(file, 10, 1),
             owner: Some(SymbolId("owner::fn".to_string())),
@@ -17821,6 +17822,7 @@ pub(super) fn sample_finding() -> Finding {
         id: "probe:pricing:88:predicate".to_string(),
         canonical_gap: None,
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:pricing:88:predicate".to_string()),
             location: SourceLocation {
                 file: PathBuf::from("src/pricing.rs"),

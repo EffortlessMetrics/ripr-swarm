@@ -1101,7 +1101,7 @@ Candidates come from the first non-empty tier:
    corpus (`benchmarks/mutation_spot_check/corpus-typescript.json`), this
    moves 296 caught mutants and 49 missed ones from `no_static_path` to
    `static_unknown` against main with #13719, and changes no other verdict.
-   File-fact schema 12 carries the `closure` flag.
+   File-fact schema 13 carries the `closure` flag.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -1146,6 +1146,45 @@ owner-module mock (fail closed). `spyOn(x, "owner")` with
 `.and.` strategy (`returnValue`, `returnValues`, `callFake`, `throwError`,
 `resolveTo`, `rejectWith`) removes the trusted relation and adds
 `typescript_spy_fabricated_observer`; a bare `spyOn` still relates.
+
+Setup-file mocks (#15949): a mock registered by a runner setup file counts
+for every test file under the config's directory, exactly like a mock
+written in the test file. Configs read: `vitest.config.*`, `vite.config.*`,
+`vitest.workspace.*`, `jest.config.*`, and, in every directory from a test
+file up to the root, `jest.config.json` and the `jest` key of `package.json`.
+Keys read, at any depth: `setupFiles`,
+`setupFilesAfterEnv` and the legacy `setupTestFrameworkScriptFile`
+(`globalSetup` runs in another process and registers no mock for a test).
+Every string literal inside the value is an entry, read against the config's
+directory and a literal `rootDir` or `root` beside it; `<rootDir>` is
+stripped. An absolute path inside the analysis root is read as that file, and
+one outside it names nothing. A relative mock specifier resolves from the file that holds the
+mock call, not from the test. Files a setup file loads through relative
+static imports, value re-exports and bare `require('./x')` statements are
+read too, 2 hops and 32 files per config at most; `import type` and
+`export type` load nothing. An entry
+that names no workspace file (a package, a variable), a setup file that does
+not parse, `automock` and automatic `__mocks__` are not modelled. A nearer
+config of another project is not told apart from the one that governs:
+applying both can only withhold a relation.
+
+Replaced methods (#15950, #6980): an instance method (not a getter, which
+has the wider #13726 rule, and not a constructor) or a static method has no
+tier-1 relation when the test file may replace the member. That is: the
+member's name is among the file-wide replacement names (an argument token of
+a `spyOn`, `stub`, `replace`, `mock`, `doMock`, `stubGlobal`,
+`mockImplementation` or `mockReturnValue` call, or a `.name =` target,
+hooks included); or the test body assigns the member (`c.apply =`, `c['apply'] =`), names it in a
+`defineProperty` or a prototype `delete`, or calls `spyOn`, `stub`,
+`replace`, `replaceGetter`, `replaceSetter`, `method` or `replaceProperty`
+with the literal name as second argument. A call-through spy is withheld as
+well. The file's any-name marker alone does not withhold an ordinary method
+(a `.mock.calls` read or an index assignment sets it); the body is read
+directly because that marker hides the file's names, so a hook-level
+replacement in such a file is not seen. A receiver the body declares with
+`new Class(...)` and assigns again (`c = new Other()`, `c ??= x`) is not a
+receiver; a block-scoped redeclaration of the name is a shadow and leaves the
+first binding a receiver.
 
 Replaced owner function (#15939): a function owner is not related through a
 test file that replaces it on its module object, wherever in the file the
@@ -1933,9 +1972,10 @@ and every test file holding an assertion that credits `exposed` mocks that
 module, a ladder result of `exposed` reads `static_unknown` instead. A
 module mock applies to its whole test file and to no other, so it is read
 per file: when one crediting assertion sits in a file with no such mock,
-`exposed` stands, with the limit as advisory below. ripr reads only mock
-calls written in the test file; config-level mocks (`setupFiles`,
-`automock`, automatic `__mocks__`) are not modelled. The result then is: reach Yes, observe and
+`exposed` stands, with the limit as advisory below. ripr reads mock
+calls written in the test file and in the runner setup files that govern it
+(#15949, see Reach); `automock` and automatic `__mocks__` are not modelled.
+The result then is: reach Yes, observe and
 discriminate Unknown, `static_limit_kind: mocked_module`,
 `gap_state: static_limitation` and `typescript_mock_only_observer`. The
 mock specifier resolves from the test file and the import source from the

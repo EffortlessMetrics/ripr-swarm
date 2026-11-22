@@ -809,7 +809,7 @@ pub(in crate::analysis) fn same_scalar_literal(fed: &str, literal: &str) -> bool
 
 /// `-?digits` with `_` separators and an optional integer type suffix,
 /// as its canonical digits; `None` for any other spelling.
-fn decimal_integer_value(text: &str) -> Option<String> {
+pub(in crate::analysis::classify) fn decimal_integer_value(text: &str) -> Option<String> {
     let (sign, rest) = text
         .strip_prefix('-')
         .map_or(("", text), |rest| ("-", rest));
@@ -4143,6 +4143,7 @@ mod tests {
 
     fn predicate_probe(expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::gate".to_string())),

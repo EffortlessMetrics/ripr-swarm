@@ -151,3 +151,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_parametrize_collection_error (13)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless python_parametrize_collection_error --reason "..."`
+
+Updated:
+- `expected/human.txt`

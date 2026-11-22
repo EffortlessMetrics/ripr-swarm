@@ -191,3 +191,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_self_body_same_name_with_caller_control (16)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_with_caller_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

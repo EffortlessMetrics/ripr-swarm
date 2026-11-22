@@ -173,6 +173,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::ReleaseBindServerDescriptor(args) => {
             super::reports::release_server::release_bind_server_descriptor(&args)
         }
+        XtaskCommand::ReleaseGithubTransactionPlan(args) => {
+            super::release_github_transaction::plan_command(&args)
+        }
         XtaskCommand::ReleaseUploadAssets(args) => {
             super::reports::release_server::release_upload_assets(&args)
         }
