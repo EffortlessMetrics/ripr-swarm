@@ -573,7 +573,10 @@ exec "$RIPR_TEST_REAL_GIT" "$@"
                 metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
             })
         })
-        .ok_or("git is missing from PATH")?;
+        .ok_or("git is missing from PATH")?
+        // Absolute, so the shim still finds it from the fixture directory.
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
     let path = std::env::join_paths(
         std::iter::once(shim_dir.clone()).chain(std::env::split_paths(&original_path)),
     )
@@ -610,21 +613,21 @@ exec "$RIPR_TEST_REAL_GIT" "$@"
             && text.contains("already exists"),
         "{text}"
     );
+    // An unreadable store or entry fails the test rather than passing as empty.
     let attempts = root.join("target/ripr/repair-attempts");
-    let left: Vec<_> = fs::read_dir(&attempts)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .starts_with("repair-attempt-")
-                })
-                .map(|entry| entry.file_name())
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut left = Vec::new();
+    match fs::read_dir(&attempts) {
+        Ok(entries) => {
+            for entry in entries {
+                let name = entry.map_err(|error| error.to_string())?.file_name();
+                if name.to_string_lossy().starts_with("repair-attempt-") {
+                    left.push(name);
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("read {}: {error}", attempts.display())),
+    }
     assert!(
         left.is_empty(),
         "a stale proposal left attempts behind: {left:?}"
