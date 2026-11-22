@@ -286,6 +286,64 @@ fn a_loop_that_may_skip_an_iteration_lends_no_reach() -> Result<(), String> {
         "  describe(`impl ${name}`, () => {\n    it(name, () => {\n      expect(digest(\"a\")).toBe(\"a=\");\n    });\n  });\n",
     );
     assert_reached("skip-titled", &pad_finding("skip-titled", &titled)?);
+    // Vitest's options argument can skip by the key.
+    let options = loop_test(
+        ENTRIES,
+        "  it(name, { skip: name === \"js\" }, () => {\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n",
+    );
+    assert_unreached("skip-options", &pad_finding("skip-options", &options)?);
+    let suite_options = loop_test(
+        ENTRIES,
+        "  describe(name, { skip: name === \"js\" }, () => {\n    it(\"digest\", () => {\n      expect(digest(\"a\")).toBe(\"a=\");\n    });\n  });\n",
+    );
+    assert_unreached(
+        "skip-suite-options",
+        &pad_finding("skip-suite-options", &suite_options)?,
+    );
+    Ok(())
+}
+
+#[test]
+fn a_test_that_reads_another_loop_member_lends_no_reach() -> Result<(), String> {
+    let guard = "  it(\"digest\", () => {\n    if (!supported) return;\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n";
+    let unread = "  it(\"digest\", () => {\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n";
+    for (label, header) in [
+        (
+            "entries",
+            "for (const [name, { digest, supported }] of Object.entries(impls))",
+        ),
+        (
+            "values",
+            "for (const { digest, supported } of Object.values(impls))",
+        ),
+    ] {
+        // A member the tests never read takes nothing away.
+        assert_reached(
+            &format!("member-twin-{label}"),
+            &pad_finding(&format!("member-twin-{label}"), &loop_test(header, unread))?,
+        );
+        assert_unreached(
+            &format!("member-guard-{label}"),
+            &pad_finding(&format!("member-guard-{label}"), &loop_test(header, guard))?,
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_type_only_wrapper_keeps_the_table() -> Result<(), String> {
+    for (label, table) in [
+        (
+            "as-const",
+            "const impls = { js: cryptoJS, node: cryptoNode } as const;\n",
+        ),
+        (
+            "satisfies",
+            "const impls = { js: cryptoJS, node: cryptoNode } satisfies Record<string, unknown>;\n",
+        ),
+    ] {
+        assert_reached(label, &pad_finding(label, &entries_test(table, BODY))?);
+    }
     Ok(())
 }
 

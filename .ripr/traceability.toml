@@ -20524,6 +20524,16 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_direct_owner_test_keeps_its_own_verdict_beside_the_importer_test",
   "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::a_weak_oracle_behind_an_importer_is_unknown_not_an_actionable_gap",
   "crates/ripr/src/analysis/language/typescript/tests/cross_module_entry_tests.rs::outbound_calls_are_persisted_with_the_file_facts",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::the_export_a_table_loop_calls_is_an_imported_owner_call",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::a_helper_the_looped_export_calls_is_reached_through_the_entry",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::a_table_written_anywhere_else_lends_no_reach",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::a_table_without_the_owner_module_lends_no_reach",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::a_renamed_or_shadowed_binding_lends_no_reach",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::only_a_const_binding_each_iteration_runs_lends_reach",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::a_loop_that_may_skip_an_iteration_lends_no_reach",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::a_test_that_reads_another_loop_member_lends_no_reach",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::a_type_only_wrapper_keeps_the_table",
+  "crates/ripr/src/analysis/language/typescript/tests/implementation_table_tests.rs::an_exported_table_or_a_local_object_lends_no_reach",
 ]
 fixtures = [
   "fixtures/typescript_mock_count_nested_alias",

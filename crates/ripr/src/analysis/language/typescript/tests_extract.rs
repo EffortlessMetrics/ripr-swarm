@@ -5104,7 +5104,7 @@ fn collect_const_iterables(stmt: &Statement<'_>, out: &mut Vec<(String, Iterable
 
 /// Strip parentheses and TypeScript-only wrappers (`as`, `satisfies`, `!`,
 /// `<T>x`), which do not change the runtime value.
-fn runtime_expression<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
+pub(super) fn runtime_expression<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
     match expression {
         Expression::ParenthesizedExpression(inner) => runtime_expression(&inner.expression),
         Expression::TSAsExpression(inner) => runtime_expression(&inner.expression),

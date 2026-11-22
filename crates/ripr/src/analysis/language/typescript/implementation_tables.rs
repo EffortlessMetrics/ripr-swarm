@@ -26,7 +26,10 @@
 //! - the loop is `for (const [_, { m }] of Object.entries(T))`,
 //!   `for (const { m } of Object.values(T))`, or, over an array table,
 //!   `for (const { m } of T)`, and `m` is shorthand: no rename, default or
-//!   rest. The member read is the binding's own name.
+//!   rest. The member read is the binding's own name;
+//! - the iteration registers the same tests every time: no branch, skip or
+//!   member callee on the path, and no test body or registration argument
+//!   reads another loop binding (the key or another member).
 
 use super::*;
 use oxc_ast::ast::{BindingProperty, ForOfStatement, ForStatementLeft};
@@ -164,22 +167,22 @@ impl ImplementationTables {
             return None;
         }
         let table = self.tables.iter().find(|table| table.name == table_name)?;
-        let pattern = match (enumeration, table.array, &declarator.id) {
+        let (key, pattern) = match (enumeration, table.array, &declarator.id) {
             // `Object.entries(T)` yields `[key, value]` pairs.
             (Enumeration::Entries, _, BindingPattern::ArrayPattern(pair)) => {
                 if pair.rest.is_some() || pair.elements.len() != 2 {
                     return None;
                 }
-                // The key may title a registration; a test body that reads it
-                // can choose to skip the call on one iteration.
-                if let Some(Some(BindingPattern::BindingIdentifier(key))) = pair.elements.first()
-                    && test_bodies_mention(body, source, key.name.as_str())
-                {
-                    return None;
-                }
-                pair.elements.get(1)?.as_ref()?
+                let key = match pair.elements.first()? {
+                    None => None,
+                    Some(BindingPattern::BindingIdentifier(key)) => Some(key.name.as_str()),
+                    Some(_) => return None,
+                };
+                (key, pair.elements.get(1)?.as_ref()?)
             }
-            (Enumeration::Values, _, pattern) | (Enumeration::Direct, true, pattern) => pattern,
+            (Enumeration::Values, _, pattern) | (Enumeration::Direct, true, pattern) => {
+                (None, pattern)
+            }
             _ => return None,
         };
         let BindingPattern::ObjectPattern(object) = pattern else {
@@ -188,10 +191,31 @@ impl ImplementationTables {
         if object.rest.is_some() {
             return None;
         }
+        // Every name the header binds. A nested pattern or a default is
+        // refused outright rather than read.
+        let mut bound: Vec<&str> = key.into_iter().collect();
+        for property in &object.properties {
+            let BindingPattern::BindingIdentifier(binding) = &property.value else {
+                return None;
+            };
+            bound.push(binding.name.as_str());
+        }
+        // A test body or a registration argument that reads another loop
+        // binding (the key, or a member such as `supported` in
+        // `if (!supported) return;`) can choose to skip the call on one
+        // iteration, so the member is refused.
         let members: Vec<(String, Vec<String>)> = object
             .properties
             .iter()
             .filter_map(shorthand_member)
+            .filter(|member| {
+                let others: Vec<&str> = bound
+                    .iter()
+                    .copied()
+                    .filter(|name| *name != member.as_str())
+                    .collect();
+                !test_bodies_mention(body, source, &others)
+            })
             .map(|member| (member, table.namespaces.clone()))
             .collect();
         Some(members)
@@ -270,47 +294,51 @@ fn registers_unconditionally(statements: &[Statement<'_>]) -> bool {
     })
 }
 
-/// Whether `name` appears in the callback of any call statement on the
-/// registration path that is not a suite (`it`, `test`, a hook): the test
-/// bodies. A suite's own arguments (its title) may mention it.
-fn test_bodies_mention(statements: &[Statement<'_>], source: &str, name: &str) -> bool {
+/// Whether any of `names` appears where a registration can read it: in a
+/// declaration on the registration path (`const skip = name === "js"`), in
+/// the callback of a call that is not a suite (`it`, `test`, a hook: the test
+/// bodies), or in any argument after the first that is not a suite callback
+/// (Vitest's `it(title, { skip: name === "js" }, fn)`). A call's title, its
+/// first argument, may mention them, and a suite callback is walked.
+fn test_bodies_mention(statements: &[Statement<'_>], source: &str, names: &[&str]) -> bool {
+    let text = |start: u32, end: u32| source.get(start as usize..end as usize).unwrap_or("");
+    let mentions = |start: u32, end: u32| {
+        names
+            .iter()
+            .any(|name| mentions_identifier(text(start, end), name))
+    };
     statements.iter().any(|statement| match statement {
-        Statement::BlockStatement(block) => test_bodies_mention(&block.body, source, name),
+        Statement::BlockStatement(block) => test_bodies_mention(&block.body, source, names),
         Statement::ExpressionStatement(expression) => {
             let Expression::CallExpression(call) = &expression.expression else {
                 return false;
             };
             let suite = matches!(&call.callee, Expression::Identifier(callee) if matches!(callee.name.as_str(), "describe" | "context" | "suite"));
-            call.arguments.iter().any(|argument| {
-                let (span, statements) = match argument {
-                    Argument::ArrowFunctionExpression(function) => {
-                        (function.span, Some(&function.body.statements))
+            call.arguments
+                .iter()
+                .enumerate()
+                .any(|(index, argument)| match argument {
+                    Argument::ArrowFunctionExpression(function) if suite => {
+                        test_bodies_mention(&function.body.statements, source, names)
                     }
-                    Argument::FunctionExpression(function) => {
-                        (function.span, function.body.as_ref().map(|body| &body.statements))
+                    Argument::FunctionExpression(function) if suite => function
+                        .body
+                        .as_ref()
+                        .is_some_and(|body| test_bodies_mention(&body.statements, source, names)),
+                    Argument::ArrowFunctionExpression(_) | Argument::FunctionExpression(_) => {
+                        let span = argument.span();
+                        mentions(span.start, span.end)
                     }
-                    _ => return false,
-                };
-                if suite {
-                    statements.is_some_and(|inner| test_bodies_mention(inner, source, name))
-                } else {
-                    mentions_identifier(
-                        source
-                            .get(span.start as usize..span.end as usize)
-                            .unwrap_or(""),
-                        name,
-                    )
-                }
-            })
+                    _ if index == 0 => false,
+                    _ => {
+                        let span = argument.span();
+                        mentions(span.start, span.end)
+                    }
+                })
         }
-        // A declaration on the registration path that reads the key (`const
-        // skip = name === "js"`) can feed a test body.
-        Statement::VariableDeclaration(declaration) => mentions_identifier(
-            source
-                .get(declaration.span.start as usize..declaration.span.end as usize)
-                .unwrap_or(""),
-            name,
-        ),
+        Statement::VariableDeclaration(declaration) => {
+            mentions(declaration.span.start, declaration.span.end)
+        }
         _ => false,
     })
 }
@@ -346,7 +374,8 @@ fn shorthand_member(property: &BindingProperty<'_>) -> Option<String> {
 /// `{ js: cryptoJS, cryptoNode }` or `[cryptoJS, cryptoNode]` with every
 /// value a plain identifier: `(is_array, values)`.
 fn identifier_values(init: &Expression<'_>) -> Option<(bool, Vec<String>)> {
-    match init.without_parentheses() {
+    // `as const` and `satisfies` change no runtime value.
+    match super::tests_extract::runtime_expression(init) {
         Expression::ObjectExpression(object) => {
             let mut values = Vec::new();
             for property in &object.properties {
