@@ -148,9 +148,11 @@ pub fn violations(
     // call it and the swarm lane ledgers must not select it.
     for (path, text) in workflows {
         for entry in &ledger.workflow {
-            if path != &entry.path && text.contains(&format!("uses: ./{}", entry.path)) {
+            // Any mention counts, so quoting or spacing variants of `uses:`
+            // cannot slip past.
+            if path != &entry.path && text.contains(&entry.path) {
                 violations.push(format!(
-                    "{path}: calls source-only workflow {}; source-only files never run in swarm",
+                    "{path}: names source-only workflow {}; source-only files never run in swarm",
                     entry.path
                 ));
             }
@@ -158,7 +160,7 @@ pub fn violations(
     }
     for (ci_path, ci_text) in ci_ledgers {
         for entry in &ledger.workflow {
-            if ci_text.contains(&format!("\"{}\"", entry.path)) {
+            if ci_text.contains(&entry.path) {
                 violations.push(format!(
                     "{ci_path}: names source-only workflow {}; swarm lane ledgers describe swarm lanes only",
                     entry.path
@@ -298,17 +300,18 @@ pub fn job_blocks(text: &str) -> Vec<JobBlock> {
         if !in_jobs {
             continue;
         }
-        if let Some(rest) = line.strip_prefix("  ") {
-            if !rest.starts_with(' ') && !rest.starts_with('#') {
-                if let Some(id) = rest.trim_end().strip_suffix(':') {
-                    jobs.push(JobBlock {
-                        id: id.to_string(),
-                        name: None,
-                        condition: None,
-                    });
-                }
-                continue;
+        if let Some(rest) = line.strip_prefix("  ")
+            && !rest.starts_with(' ')
+            && !rest.starts_with('#')
+        {
+            if let Some(id) = rest.trim_end().strip_suffix(':') {
+                jobs.push(JobBlock {
+                    id: id.to_string(),
+                    name: None,
+                    condition: None,
+                });
             }
+            continue;
         }
         let Some(job) = jobs.last_mut() else {
             continue;
@@ -345,17 +348,21 @@ pub fn required_contexts(settings: &str) -> Vec<String> {
     let mut indent = None;
     for line in settings.lines() {
         let trimmed = line.trim_start();
+        // A comment inside the list must not end it early.
+        if trimmed.starts_with('#') {
+            continue;
+        }
         let width = line.len() - trimmed.len();
         if trimmed == "contexts:" {
             indent = Some(width);
             continue;
         }
         if let Some(base) = indent {
-            if let Some(value) = trimmed.strip_prefix("- ") {
-                if width > base {
-                    contexts.push(value.trim().trim_matches('"').to_string());
-                    continue;
-                }
+            if let Some(value) = trimmed.strip_prefix("- ")
+                && width > base
+            {
+                contexts.push(value.trim().trim_matches('"').to_string());
+                continue;
             }
             if !trimmed.is_empty() {
                 indent = None;
@@ -530,9 +537,9 @@ mod tests {
         let mut workflows = BTreeMap::from([(PATH.to_string(), good())]);
         workflows.insert(
             ".github/workflows/caller.yml".to_string(),
-            format!("jobs:\n  call:\n    uses: ./{PATH}\n"),
+            format!("jobs:\n  call:\n    uses: \"./{PATH}\"\n"),
         );
-        let lane = format!("[[lane]]\nworkflow = \"{PATH}\"\n");
+        let lane = format!("[[lane]]\nworkflow = '{PATH}'\n");
         let found = violations(
             &ledger("dispatch_only", "")?,
             &workflows,
@@ -572,6 +579,12 @@ mod tests {
     fn settings_contexts_parse_only_the_contexts_list() -> Result<(), String> {
         assert_eq!(required_contexts(SETTINGS), vec!["rust", "cargo-deny"]);
         assert!(required_contexts("labels:\n  - name: rust\n").is_empty());
+        let commented = SETTINGS.replace(
+            "          - rust\n",
+            "          - rust\n          # source producer: source-only-ci.yml\n",
+        );
+        assert_ne!(commented, SETTINGS);
+        assert_eq!(required_contexts(&commented), vec!["rust", "cargo-deny"]);
         Ok(())
     }
 }
