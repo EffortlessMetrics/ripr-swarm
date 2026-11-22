@@ -390,7 +390,7 @@ pub(super) fn python_boundary_evidence(
     }
     // A changed `!=` comparison is judged on every recognized call, including
     // one that passes nothing and takes the parameter's literal default.
-    if observed_values.is_empty() && !(negated && !rows.is_empty()) {
+    if observed_values.is_empty() && (!negated || rows.is_empty()) {
         // A recognized strong call whose arguments went unread (a `*` unpack,
         // a bare name it could not bind) is test-side input the analysis could
         // not see. A call it did read (a list display, a constructor call) and
