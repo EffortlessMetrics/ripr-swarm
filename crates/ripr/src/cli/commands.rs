@@ -496,7 +496,9 @@ fn ripr_zero_status(args: &[String]) -> Result<(), String> {
     let mut reads = SuppliedInputReads::default();
     let input = output::ripr_zero_status::RiprZeroStatusInput {
         root: ".".to_string(),
-        generated_at: baseline_created_at()?,
+        // Zero status judges review deadlines and baseline age against this
+        // stamp, so it stays on the wall clock under `RIPR_GENERATED_AT`.
+        generated_at: crate::cli::commands_timestamps::wall_clock_unix_ms()?,
         baseline_path,
         delta_path: output::ripr_zero_status::display_path(&options.delta),
         gap_ledger_path,
