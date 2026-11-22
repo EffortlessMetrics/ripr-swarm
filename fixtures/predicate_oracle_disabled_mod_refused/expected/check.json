@@ -3,7 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/predicate_oracle_disabled_mod_refused/input",
-  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":2,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":2,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
     "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:95adce16d68fb8b1b55f6d70e18f3263b91ca79f381876d3f08e253dd1b5e27a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
@@ -23,9 +23,9 @@
         "normalized_discriminator": "11==value"
 
       },
-      "classification": "reachable_unrevealed",
+      "classification": "no_static_path",
       "severity": "warning",
-      "confidence": 0.71,
+      "confidence": 0.48,
       "probe": {
         "id": "probe:src_lib.rs:predicate:574ee60a",
         "family": "predicate",
@@ -35,88 +35,45 @@
         "expression": "11 <= value"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins"},
-        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary check is missing"},
+        "reach": {"state":"no","confidence":"medium","summary":"No static test path found for the changed owner (unreferenced in workspace)"},
+        "infect": {"state":"unknown","confidence":"low","summary":"No tests were found, so activation/infection cannot be estimated"},
         "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: 11 <= value"},
-        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
-        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+        "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
       "evidence_stages": [
-        {"stage":"reach","state":"yes","confidence":"medium"},
-        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"medium"},
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection weak: Related tests contain input values, but the equality-boundary check is missing", "propagation yes: Changed behavior appears to influence returned value: 11 <= value", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 11 <= value (line 5)", "related test src/python.rs:4 pins uses no oracle", "source assertion argument value true at line 5", "source function argument value value = 10 at line 5", "missing discriminator value == 11: No related test call uses value equal to 11; observed value values: 10; target 11 value: 11"],
+      "evidence_path": ["reach no: No static test path found for the changed owner (unreferenced in workspace)", "infection unknown: No tests were found, so activation/infection cannot be estimated", "propagation yes: Changed behavior appears to influence returned value: 11 <= value", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches returned value: 11 <= value (line 5)"],
       "flow_sinks": [
         {"kind":"return_value","text":"11 <= value","line":5}
       ],
-      "evidence": ["Changed behavior appears to influence returned value: 11 <= value", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Related tests appear to reach gate: pins", "Related tests contain input values, but the equality-boundary check is missing", "assertion not credited: `assert_eq!` in pins at src/python.rs:5: `mod python;` at src/lib.rs:2 is gated by a `cfg` ripr cannot evaluate, or nested"],
-      "missing": ["Missing check value: value == 11", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "evidence": ["Changed behavior appears to influence returned value: 11 <= value", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No static test path found for the changed owner (unreferenced in workspace)", "No tests were found, so activation/infection cannot be estimated"],
+      "missing": ["No detected boundary input for the changed predicate", "No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
-        "5": "assert_eq!(crate::gate(10), true);"
       },
       "activation": {
         "observed_values": [
-          {
-            "line": 5,
-            "value": "true",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 5,
-            "value": "value = 10",
-            "context": "function_argument"
-          }
         ],
         "missing_discriminators": [
-          {
-            "value": "value == 11",
-            "reason": "No related test call uses value equal to 11; observed value values: 10; target 11 value: 11",
-            "flow_sink": {"kind":"return_value","text":"11 <= value","line":5}
-          }
         ]
       },
       "observed_values": [
-        {
-          "line": 5,
-          "value": "true",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 5,
-          "value": "value = 10",
-          "context": "function_argument"
-        }
       ],
       "missing_discriminators": [
-        {
-          "value": "value == 11",
-          "reason": "No related test call uses value equal to 11; observed value values: 10; target 11 value: 11",
-          "flow_sink": {"kind":"return_value","text":"11 <= value","line":5}
-        }
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 0,
       "related_tests": [
-        {
-          "name": "pins",
-          "file": "src/python.rs",
-          "line": 4,
-          "oracle_strength": "none",
-          "oracle_kind": "unknown",
-          "oracle": "",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
-        }
       ],
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr did not credit the `assert_eq!` in pins at src/python.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
-      "suggested_next_action": "ripr did not credit the `assert_eq!` in pins at src/python.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
+      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -134,9 +91,9 @@
         "normalized_discriminator": "11<=value"
 
       },
-      "classification": "reachable_unrevealed",
+      "classification": "no_static_path",
       "severity": "warning",
-      "confidence": 0.79,
+      "confidence": 0.48,
       "probe": {
         "id": "probe:src_lib.rs:return_value:49b2862c",
         "family": "return_value",
@@ -146,78 +103,45 @@
         "expression": "11 <= value"
        },
       "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach gate: pins"},
-        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "reach": {"state":"no","confidence":"medium","summary":"No static test path found for the changed owner (unreferenced in workspace)"},
+        "infect": {"state":"unknown","confidence":"low","summary":"No reachable tests were found, so infection cannot be established"},
         "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: 11 <= value"},
-        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
-        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+        "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
       "evidence_stages": [
-        {"stage":"reach","state":"yes","confidence":"medium"},
-        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
         {"stage":"propagate","state":"yes","confidence":"high"},
         {"stage":"observe","state":"no","confidence":"medium"},
         {"stage":"discriminate","state":"no","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach gate: pins", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: 11 <= value", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: 11 <= value (line 5)", "related test src/python.rs:4 pins uses no oracle", "source assertion argument value true at line 5", "source function argument value value = 10 at line 5"],
+      "evidence_path": ["reach no: No static test path found for the changed owner (unreferenced in workspace)", "infection unknown: No reachable tests were found, so infection cannot be established", "propagation yes: Complete propagation witness reaches returned value: 11 <= value", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test", "local flow reaches returned value: 11 <= value (line 5)"],
       "flow_sinks": [
         {"kind":"return_value","text":"11 <= value","line":5}
       ],
-      "evidence": ["Complete propagation witness reaches returned value: 11 <= value", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach gate: pins", "assertion not credited: `assert_eq!` in pins at src/python.rs:5: `mod python;` at src/lib.rs:2 is gated by a `cfg` ripr cannot evaluate, or nested"],
-      "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "evidence": ["Complete propagation witness reaches returned value: 11 <= value", "No assertion can discriminate the changed behavior without a reachable test", "No reachable test oracle found", "No reachable tests were found, so infection cannot be established", "No static test path found for the changed owner (unreferenced in workspace)"],
+      "missing": ["No relevant oracle was detected", "No static test path reaches the changed owner", "No strong discriminator was detected"],
       "assertion_texts": {
-        "5": "assert_eq!(crate::gate(10), true);"
       },
       "activation": {
         "observed_values": [
-          {
-            "line": 5,
-            "value": "true",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 5,
-            "value": "value = 10",
-            "context": "function_argument"
-          }
         ],
         "missing_discriminators": [
         ]
       },
       "observed_values": [
-        {
-          "line": 5,
-          "value": "true",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 5,
-          "value": "value = 10",
-          "context": "function_argument"
-        }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 1,
+      "related_tests_total": 0,
       "related_tests": [
-        {
-          "name": "pins",
-          "file": "src/python.rs",
-          "line": 4,
-          "oracle_strength": "none",
-          "oracle_kind": "unknown",
-          "oracle": "",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "assertion_inert",
-          "why": "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
-        }
       ],
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr did not credit the `assert_eq!` in pins at src/python.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
-      "suggested_next_action": "ripr did not credit the `assert_eq!` in pins at src/python.rs:5; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass.",
+      "recommended_next_step": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
+      "suggested_next_action": "ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }
