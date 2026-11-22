@@ -1829,7 +1829,9 @@ reassignable binding), a renamed, defaulted or rest destructure
 (`{ digest: run }`), an `await` loop, and a body-local declaration of the
 name. Every iteration must register the same tests: the path from the loop
 to its tests (the loop body and `describe` / `context` / `suite` callbacks)
-holds only declarations, call statements and blocks, with no `if`,
+holds only declarations, call statements with a bare identifier callee
+(`describe.only`, `describe.skipIf(c)` and `it.each` are refused) and
+blocks, with no `if`,
 `switch`, `continue`, `break`, `return`, `try`, label or `cond && it(...)`,
 and no test body or declaration on that path reads the `Object.entries`
 key (a suite or test title may). The binding is recorded on the test's

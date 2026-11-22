@@ -274,6 +274,12 @@ fn a_loop_that_may_skip_an_iteration_lends_no_reach() -> Result<(), String> {
         "  it(\"digest\", () => {\n    if (name === \"js\") return;\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n",
     );
     assert_unreached("skip-body", &pad_finding("skip-body", &body)?);
+    // A member callee can skip by its own arguments.
+    let member = loop_test(
+        ENTRIES,
+        "  describe.skipIf(name === \"js\")(name, () => {\n    it(\"digest\", () => {\n      expect(digest(\"a\")).toBe(\"a=\");\n    });\n  });\n",
+    );
+    assert_unreached("skip-member", &pad_finding("skip-member", &member)?);
     // The key titling a suite or a test is not a skip.
     let titled = loop_test(
         ENTRIES,

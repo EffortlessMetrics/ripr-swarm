@@ -234,9 +234,10 @@ fn iterated_table<'a>(right: &'a Expression<'a>) -> Option<(&'a str, Enumeration
 
 /// The statements between the loop and its tests run the same way on every
 /// iteration: only declarations, call statements and blocks, recursing into
-/// the callback of a `describe` / `context` / `suite` call. No `if`,
-/// `switch`, `continue`, `break`, `return`, `try`, label or conditional
-/// expression statement (`cond && it(...)`) on that path.
+/// the callback of a `describe` / `context` / `suite` call. Every call on
+/// that path has a bare identifier callee. No `if`, `switch`, `continue`,
+/// `break`, `return`, `try`, label or conditional expression statement
+/// (`cond && it(...)`) on that path.
 fn registers_unconditionally(statements: &[Statement<'_>]) -> bool {
     statements.iter().all(|statement| match statement {
         Statement::VariableDeclaration(_) | Statement::EmptyStatement(_) => true,
@@ -245,8 +246,13 @@ fn registers_unconditionally(statements: &[Statement<'_>]) -> bool {
             let Expression::CallExpression(call) = &expression.expression else {
                 return false;
             };
-            if !matches!(&call.callee, Expression::Identifier(callee) if matches!(callee.name.as_str(), "describe" | "context" | "suite"))
-            {
+            // A member or call callee (`describe.only`, `describe.skipIf(c)`,
+            // `it.each(rows)`) can skip or repeat by its own arguments, which
+            // this walk does not read: only a bare callee is on the path.
+            let Expression::Identifier(callee) = &call.callee else {
+                return false;
+            };
+            if !matches!(callee.name.as_str(), "describe" | "context" | "suite") {
                 return true;
             }
             call.arguments.iter().all(|argument| match argument {
