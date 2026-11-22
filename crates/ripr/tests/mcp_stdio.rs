@@ -7367,6 +7367,61 @@ fn weak_boundary_naming_its_discriminator_is_repair_ready_only_where_the_cli_adm
     Ok(())
 }
 
+/// #13096 worktree leg: a worktree refresh over a tests-only range names the
+/// base retry, and following it keeps worktree custody. The checkout has no
+/// tracked edit, where an omitted `source` would select committed input.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn worktree_tests_only_refresh_names_a_retry_that_keeps_the_worktree_source() -> Result<(), String>
+{
+    const TIMEOUT: Duration = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    let tests = root.join("tests/pricing.rs");
+    let mut text = std::fs::read_to_string(&tests).map_err(|error| error.to_string())?;
+    text.push_str(
+        "\n#[test]\nfn just_above_threshold_discounts() {\n    assert_eq!(discounted_total(101, 100), 91);\n}\n",
+    );
+    std::fs::write(&tests, text).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "tests only, after the production change")?;
+
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), TIMEOUT)?;
+    let mut refresh = |id: &str, arguments: Value| {
+        let reply = session.call_tool(id, "ripr_refresh", arguments, TIMEOUT)?;
+        structured_tool_success(&reply, "ripr_refresh")
+    };
+    let tests_only = refresh(
+        "tests-only",
+        json!({ "source": "worktree", "base": "HEAD~1" }),
+    )?;
+    let route = tests_only
+        .pointer("/worktree_base_hint/pass_base")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if tests_only.pointer("/snapshot/outcome_kind") != Some(&json!("no_behavioral_candidates"))
+        || tests_only.get("captured_source") != Some(&json!("worktree"))
+        || !route.contains("{\"source\": \"worktree\", \"base\": \"HEAD~1\"}")
+        || tests_only.get("empty_scope_hint").is_some()
+    {
+        return Err(format!(
+            "a tests-only worktree refresh must name the worktree base retry: {tests_only}"
+        ));
+    }
+    // Follow the route with a base before the production change.
+    let widened = refresh("widened", json!({ "source": "worktree", "base": "HEAD~2" }))?;
+    if widened.get("captured_source") != Some(&json!("worktree"))
+        || widened.pointer("/snapshot/outcome_kind") != Some(&json!("complete_with_findings"))
+        || widened.get("worktree_base_hint").is_some()
+    {
+        return Err(format!(
+            "the retry must analyze the production change from the worktree source: {widened}"
+        ));
+    }
+    Ok(())
+}
+
 /// `ripr_refresh` `source: "worktree"` (#7357): the opt-in saved
 /// tracked-worktree input. Real temporary tracked Git repository, production
 /// stdio, committed -> worktree -> committed switching with an equal-findings

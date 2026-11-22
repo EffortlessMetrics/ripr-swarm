@@ -1876,6 +1876,15 @@ fn refresh_output_schema() -> Value {
                         "required": ["why", "pass_base", "pass_source"],
                         "additionalProperties": false
                     },
+                    "worktree_base_hint": {
+                        "type": "object",
+                        "properties": {
+                            "why": { "type": "string" },
+                            "pass_base": { "type": "string" }
+                        },
+                        "required": ["why", "pass_base"],
+                        "additionalProperties": false
+                    },
                     "requested_source": { "type": "string", "enum": ["committed", "worktree", "default"] },
                     "captured_source": { "type": ["string", "null"], "enum": ["committed", "worktree", null] },
                     "snapshot": {
@@ -3952,7 +3961,13 @@ mod tests {
         // on the tree composed with the two decisions above: slim 12,007,
         // inside its unchanged ceiling; full 42,198, so only the opt-in
         // full budget moves, from 41,700 to 42,300.
-        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 42_300)] {
+        // #13096 worktree-leg budget decision: the full listing declares
+        // the closed `worktree_base_hint` object on the refresh document.
+        // Measured on the tree composed with #16071's `ripr_refresh`
+        // status answer (+100 bytes on that tool): full 42,466, so only
+        // the opt-in full budget moves, from 42,300 to 42,600. The slim
+        // default every session pays is unchanged.
+        for (mode, budget) in [(ToolsListMode::Slim, 12_300), (ToolsListMode::Full, 42_600)] {
             let payload = tools_list_result_for(mode);
             let bytes = serde_json::to_vec(&payload)
                 .map_err(|error| format!("measure tools/list payload: {error}"))?

@@ -52,7 +52,8 @@ the live tool inventory and stop visibly when the server is absent.
    disclosed, snapshot id, and `fresh_for_working_tree`. A failed refresh's
    last-known-good snapshot is not a successful current check. Disclose
    excluded edits or scope mismatch rather than reporting them analyzed.
-   An empty scope is not an all-clear: surface `empty_scope_hint`.
+   An empty scope is not an all-clear: surface `empty_scope_hint`, or
+   `worktree_base_hint` when a worktree refresh checked no behavior.
 
 ## Outcomes (report exactly one, with its evidence)
 
