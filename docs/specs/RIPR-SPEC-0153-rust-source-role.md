@@ -111,7 +111,13 @@ inventory lists, so leaving it out produced a weak finding with no start.
 A symlinked `src` directory or `src/lib.rs` (and the declared roots) is read
 where the link lands inside the workspace: Git reports the change at the link
 target, and that target is declared as the root and its directory as the
-module directory. A link that leaves the workspace declares nothing, and a
+module directory. Only a root Cargo builds is resolved, by the module walk's
+target rules: a link at an `autobins = false` `src/main.rs`, or at a
+`src/lib.rs` a `[lib] path` replaces, declares nothing. The classified seam
+cache keys on where each built root lands, since a link can move with no
+manifest or Rust file changing. Such a root is no diff-only shape, so pilot
+ranks it rather than naming it as left out. A link that leaves the workspace
+declares nothing, and a
 copy of the library nothing names (`real/lib.rs` beside a plain `src/lib.rs`)
 stays evidence with no start. Build scripts and `xtask/` stay out of the repo
 inventory, since no test target exercises them.
