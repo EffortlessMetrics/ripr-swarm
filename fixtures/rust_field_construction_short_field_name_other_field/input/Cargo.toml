@@ -1,0 +1,4 @@
+[package]
+name = "rust_field_construction_short_field_name_other_field_fixture"
+version = "0.0.0"
+edition = "2024"

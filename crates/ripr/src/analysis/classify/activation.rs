@@ -6774,7 +6774,12 @@ fn is_ident_char(ch: char) -> bool {
 /// block or closure body too: that fails closed to a gap. So does a read in
 /// an `assert_eq!`/`assert_ne!` operand whose other operand is the whole
 /// result (`assert_eq!(c, Config::new(c.retries))`).
-fn reads_owner_result_field(body: &str, assertion: &str, read: &str, owner: &str) -> bool {
+pub(super) fn reads_owner_result_field(
+    body: &str,
+    assertion: &str,
+    read: &str,
+    owner: &str,
+) -> bool {
     let is_ident = is_ident_char;
     let owner_call = format!("{owner}(");
     let masked = crate::analysis::extract::mask_comments_and_strings(assertion);
@@ -11388,6 +11393,32 @@ mod tests {
             "assert_eq!(cfg.retries, 3);",
             ".retries",
             "default_config"
+        ));
+    }
+
+    /// #15274: a one-letter field (`y`) is no token, so its read on the
+    /// owner's result is what confirms it; the same rules hold as for
+    /// `.retries`.
+    #[test]
+    fn a_one_letter_field_read_holds_to_the_owner_result() {
+        let reads = |body: &str, assertion: &str| {
+            reads_owner_result_field(body, assertion, ".y", "origin_shift")
+        };
+        assert!(reads("", "assert_eq!(origin_shift(3).y, 1);"));
+        assert!(reads("let p = origin_shift(3);", "assert_eq!(p.y, 1);"));
+        // Another field, a longer name that starts with `y`, and an
+        // unrelated value's `y` are not the changed field.
+        assert!(!reads("", "assert_eq!(origin_shift(3).x, 3);"));
+        assert!(!reads("", "assert_eq!(origin_shift(3).yaw, 1);"));
+        assert!(!reads(
+            "let q = Point { x: 0, y: 1 };",
+            "assert_eq!(q.y, 1);"
+        ));
+        // A read copied into the expected literal compares the field with
+        // itself.
+        assert!(!reads(
+            "let p = origin_shift(3);",
+            "assert_eq!(p, Point { x: 3, y: p.y });"
         ));
     }
 

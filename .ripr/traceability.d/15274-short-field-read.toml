@@ -1,0 +1,7 @@
+# Registers the owner-result read of a changed one- or two-letter field
+# (#15274 repro 5) under RIPR-SPEC-0001.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/classify/activation.rs::tests::a_one_letter_field_read_holds_to_the_owner_result",
+]

@@ -2584,6 +2584,21 @@ fn analyze_related_assertions(
             .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
             .unwrap_or_default(),
     };
+    // #15274: a changed field of the owner's returned record whose name is
+    // too short to be a token (`y: 0` to `y: 1`) gives an assertion no
+    // name to share, so `assert_eq!(shift(3).y, 1)` could never confirm the
+    // change. Such a field confirms only through a `.y` read on the owner's
+    // own result (`reads_owner_result_field`), never by the bare name.
+    let short_record_fields: Vec<String> = match probe.family {
+        ProbeFamily::FieldConstruction => record_field.map(str::to_string).into_iter().collect(),
+        ProbeFamily::ReturnValue => changed_literal_fields(probe)
+            .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+    .into_iter()
+    .filter(|name| extract_identifier_tokens(name).is_empty())
+    .collect();
     let override_owner = probe
         .owner
         .as_ref()
@@ -3137,6 +3152,27 @@ fn analyze_related_assertions(
                 || (is_effect_family(&probe.family)
                     && implicit_observer.is_some()
                     && effect_observer_confirms(assertion));
+            // #15274: the short field's read on the owner's result, under the
+            // same direct-call defeats as the assigned-field read above. A
+            // builder override of that field is narrowed away below.
+            has_token_match |= !short_record_fields.is_empty()
+                && matched
+                && credits_oracle
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && !test_is_should_panic(test)
+                && match_context.owner_callee.is_some_and(|owner| {
+                    short_record_fields.iter().any(|field| {
+                        super::activation::reads_owner_result_field(
+                            &test.body,
+                            &assertion.text,
+                            &format!(".{field}"),
+                            owner,
+                        )
+                    })
+                });
             // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
             // the test overwrote before this assertion reads them, and ask
             // again whether anything else confirms.

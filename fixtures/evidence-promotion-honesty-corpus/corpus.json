@@ -21615,6 +21615,54 @@
       ]
     },
     {
+      "id": "rust_field_construction_short_field_name_other_field",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_field_construction_short_field_name_other_field",
+      "vector": "a_short_field_read_of_another_field_does_not_promote_the_changed_field",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_field_construction_short_field_name_other_field_return_value",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_field_construction_short_field_name_other_field",
+      "vector": "a_short_field_read_of_another_field_does_not_promote_the_changed_literal",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_appended_char_arm",
       "language": "rust",
       "tier": "pure",

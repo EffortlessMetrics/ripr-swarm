@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,5 +5,5 @@
+ }
+ 
+ pub fn origin_shift(dx: i32) -> Point {
+-    Point { x: dx, y: 0 }
++    Point { x: dx, y: 1 }
+ }
