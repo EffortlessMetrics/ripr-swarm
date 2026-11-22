@@ -1591,6 +1591,59 @@ fn pilot_keeps_the_package_guard_for_a_bare_call_imported_from_another_crate() -
     assert_comparison_unreached(&pilot)
 }
 
+/// A closure that shadows the imported `discount` is what the bare call
+/// runs, so the call cannot reach `wscore::discount`.
+#[test]
+fn pilot_keeps_the_package_guard_for_a_bare_call_shadowed_by_a_closure() -> Result<(), String> {
+    let pilot = pilot_for_app_test(
+        "use wscore::discount;\n\n#[test]\nfn t1() {\n    let discount = |price: u32| price + 1;\n    assert!(discount(5) > 0);\n}\n",
+    )?;
+    assert_comparison_unreached(&pilot)
+}
+
+/// A real call before a later shadowing closure still reaches the owner.
+#[test]
+fn pilot_credits_a_bare_call_made_before_a_later_shadow() -> Result<(), String> {
+    let pilot = pilot_for_app_test(
+        "use wscore::discount;\n\n#[test]\nfn t1() {\n    assert!(discount(5) > 0);\n    let discount = |price: u32| price + 1;\n    assert!(discount(6) > 0);\n}\n",
+    )?;
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2") && line.contains("tests only loosely check this")
+        }),
+        "the call before the shadow reaches the comparison:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// `stringify!` never evaluates its tokens, so an owner spelling inside it
+/// lends nothing while the call that runs is `pricing::discount`.
+#[test]
+fn pilot_keeps_the_package_guard_for_an_owner_spelled_only_in_stringify() -> Result<(), String> {
+    let pilot = pilot_for_app_test(
+        "#[test]\nfn t1() {\n    assert!(pricing::discount(5) > 0);\n    let _ = stringify!(wscore::discount(5));\n}\n",
+    )?;
+    assert_comparison_unreached(&pilot)
+}
+
+/// `ripr pilot` over the `WS_*` workspace with `app` also depending on
+/// `pricing`, `test` as `app/tests/t.rs`, and the change committed.
+fn pilot_for_app_test(test: &str) -> Result<String, String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_WITH_PRICING_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            ("app/tests/t.rs", test),
+        ],
+        WS_NEW,
+        true,
+    )?;
+    repo.ripr(&["pilot", "--root", "."])
+}
+
 const WS_APP_WITH_PRICING_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\npricing = \"1\"\n";
 const WS_TOTAL: &str = "pub fn total(price: u32) -> u32 {\n    discount(price)\n}\n";
 
@@ -1604,7 +1657,7 @@ fn assert_comparison_unreached(pilot: &str) -> Result<(), String> {
             line.contains("wscore/src/lib.rs:2")
                 && line.contains("ripr found no test that reaches this")
         }),
-        "a call that names another crate leaves the comparison unreached:\n{pilot}"
+        "a call that cannot reach the owner leaves the comparison unreached:\n{pilot}"
     );
     Ok(())
 }

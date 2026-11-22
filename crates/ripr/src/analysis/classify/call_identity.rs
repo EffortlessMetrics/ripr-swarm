@@ -2778,6 +2778,18 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
 /// [`call_qualifiers`] with each site's method-call flag, optionally counting
 /// method calls (`x.name(..)`, an empty qualifier) as sites.
 fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<String>>, bool)> {
+    call_site_offsets(body, name, with_methods)
+        .into_iter()
+        .map(|(qualifier, is_method, _)| (qualifier, is_method))
+        .collect()
+}
+
+/// [`call_sites`] with each site's byte offset of the name in `body`.
+fn call_site_offsets(
+    body: &str,
+    name: &str,
+    with_methods: bool,
+) -> Vec<(Option<Vec<String>>, bool, usize)> {
     let masked = mask_comments_and_strings(body);
     let mut calls = Vec::new();
     for (start, _) in masked.match_indices(name) {
@@ -2795,16 +2807,56 @@ fn call_sites(body: &str, name: &str, with_methods: bool) -> Vec<(Option<Vec<Str
         let head = masked[..start].trim_end();
         if head.ends_with('.') && !head.ends_with("..") {
             if with_methods {
-                calls.push((Some(Vec::new()), true));
+                calls.push((Some(Vec::new()), true, start));
             }
             continue;
         }
         if head_word(head) == "fn" {
             continue;
         }
-        calls.push((qualifier_before(head), false));
+        calls.push((qualifier_before(head), false, start));
     }
     calls
+}
+
+/// Byte ranges of `body` inside a `stringify!` token tree, whose tokens are
+/// never evaluated (#15278). `body` is read with comments and strings masked,
+/// so a delimiter inside either does not end the range; an unclosed tree runs
+/// to the end of `body`.
+fn stringify_ranges(body: &str) -> Vec<std::ops::Range<usize>> {
+    let masked = mask_comments_and_strings(body);
+    let bytes = masked.as_bytes();
+    let mut ranges = Vec::new();
+    for (start, _) in masked.match_indices("stringify") {
+        if ident_char_before(&masked, start) {
+            continue;
+        }
+        let rest = &masked[start + "stringify".len()..];
+        let Some(after_bang) = rest.trim_start().strip_prefix('!') else {
+            continue;
+        };
+        let open_at = masked.len() - after_bang.trim_start().len();
+        if !matches!(bytes.get(open_at), Some(b'(' | b'[' | b'{')) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = masked.len();
+        for (offset, byte) in bytes.iter().enumerate().skip(open_at) {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = offset + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        ranges.push(open_at..end);
+    }
+    ranges
 }
 
 /// Whether a call of this name may have the function's container kind (#12234).
@@ -3190,20 +3242,38 @@ pub(in crate::analysis) fn bare_owner_call_settles_on_owner(
     })
 }
 
-/// #15278: whether some call of the owner's name in `test` settles on the
-/// owner alone through the solo identity: a path spelled through a crate
-/// name the test's package imports the owner's library by
-/// (`wscore::discount(..)`), or a bare call bound by an import from it. A
-/// call spelled through another crate (`pricing::discount(..)`) or bound
-/// by an import from one settles elsewhere, and an unsettled reading does
-/// not count. Only a free owner has such an identity.
+/// #15278: whether some call site of the owner's name in `test` settles on
+/// the owner alone through the solo identity: a path spelled through a
+/// crate name the test's package imports the owner's library by
+/// (`wscore::discount(..)`), or an unshadowed bare call bound by an import
+/// from it. Each site is resolved on its own: a spelling inside a comment,
+/// a string or a `stringify!` token tree is not a site, and a bare call
+/// shadowed at its line by a local binding (`let discount = |p| ..;`) is
+/// refused. A call spelled through another crate (`pricing::discount(..)`)
+/// or bound by an import from one settles elsewhere, and an unsettled
+/// reading does not count. Only a free owner has such an identity.
 pub(in crate::analysis) fn test_call_settles_on_owner(
     index: &RustIndex,
     owner: &FunctionSummary,
     test: &TestSummary,
 ) -> bool {
-    shared_solo_owner_call_identity(index, owner)
-        .is_some_and(|identity| identity.resolve_test(test, index) == CallTarget::Owner)
+    let Some(identity) = shared_solo_owner_call_identity(index, owner) else {
+        return false;
+    };
+    let body: &str = &test.body;
+    let quoted = stringify_ranges(body);
+    call_site_offsets(body, &owner.name, false)
+        .into_iter()
+        .filter(|(_, _, at)| !quoted.iter().any(|range| range.contains(at)))
+        .any(|(qualifier, _, at)| match qualifier {
+            None => false,
+            Some(segments) if segments.is_empty() => {
+                let line = test.start_line + body[..at].matches('\n').count();
+                !bare_call_shadowed_by_local(index, owner, test, line)
+                    && identity.resolve_call(test, index, &[]) == CallTarget::Owner
+            }
+            Some(segments) => identity.resolve_call(test, index, &segments) == CallTarget::Owner,
+        })
 }
 
 /// Whether a bare call of the owner's name may supply a boundary input.
