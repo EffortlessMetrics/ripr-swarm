@@ -197,8 +197,15 @@ fn powershell_redirect(text: &str) -> Vec<u8> {
 }
 
 /// Drop the digits after each run-local stamp (`unix_ms:<n>`, the analyzer
-/// build's `process:<pid>:<nanos>`) so two runs over the same input compare.
+/// build's `process:<pid>:<nanos>`) and blank the wall-clock RFC3339 value of
+/// each `"generated_at"` string (the repo badge's `public_projection` stamps
+/// the second it ran), so two runs over the same input compare even when they
+/// straddle a second boundary.
 fn scrub(text: &str) -> String {
+    blank_generated_at(&scrub_stamps(text))
+}
+
+fn scrub_stamps(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = ["unix_ms:", "process:"]
@@ -212,6 +219,47 @@ fn scrub(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Replace the contents of every `"generated_at": "<value>"` string with
+/// `<scrubbed>`; non-string values (`null`) are left as they are.
+fn blank_generated_at(text: &str) -> String {
+    const KEY: &str = "\"generated_at\"";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find(KEY) {
+        out.push_str(&rest[..index + KEY.len()]);
+        rest = &rest[index + KEY.len()..];
+        let after_colon = rest.trim_start();
+        let Some(after_colon) = after_colon.strip_prefix(':') else {
+            continue;
+        };
+        let value = after_colon.trim_start();
+        let Some(body) = value.strip_prefix('"') else {
+            continue;
+        };
+        let Some(end) = body.find('"') else {
+            continue;
+        };
+        out.push_str(&rest[..rest.len() - body.len()]);
+        out.push_str("<scrubbed>");
+        rest = &body[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn scrub_blanks_generated_at_values_only() {
+    let control = "{\n  \"generated_at\": \"2026-11-22T23:44:55Z\",\n  \"stale_age_secs\": 0\n}";
+    let later = "{\n  \"generated_at\": \"2026-11-22T23:44:56Z\",\n  \"stale_age_secs\": 0\n}";
+    assert_eq!(scrub(control), scrub(later));
+    assert_eq!(
+        scrub(control),
+        "{\n  \"generated_at\": \"<scrubbed>\",\n  \"stale_age_secs\": 0\n}"
+    );
+    assert_eq!(scrub("{\"generated_at\":null}"), "{\"generated_at\":null}");
+    assert_ne!(scrub("{\"other\": \"a\"}"), scrub("{\"other\": \"b\"}"));
 }
 
 /// One command reading one artifact by path.
