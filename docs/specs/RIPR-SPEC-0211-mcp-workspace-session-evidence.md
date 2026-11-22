@@ -281,6 +281,19 @@ official SDK transport:
     snapshot carries them too (#13096 worktree leg); only the
     committed-specific `empty_scope_hint` below stays committed-only.
     Complete runs omit both fields.
+  - `worktree_base_hint` (#13096 worktree leg) is the worktree-source
+    counterpart for one state: a zero-item `no_behavioral_candidates`
+    snapshot, whose diff by definition has changed lines. That is most often a
+    tests-only saved edit after the production change was committed onto the
+    base, and without a route the agent reads `not_analyzed` and stops. The
+    object carries `why` (the shared saved-worktree cause sentence) and
+    `pass_base` (retry `ripr_refresh` with `base` set to a commit before the
+    production change, for example `{"base": "HEAD~1"}`). It is omitted for a
+    committed-source snapshot, for `no_scope` and `no_changed_lines`, and for
+    any snapshot with items. Like the committed hint it
+    is a named suggestion: the server does not detect which commit holds the
+    production change and never widens the base. It changes no outcome kind,
+    verdict or identity.
   - `empty_scope_hint.pass_base_last_commit` (#13096) names the concrete
     last-commit retry (`{"source": "committed", "base": "HEAD~1"}`) beside `pass_base` and
     `pass_source`. It is present only when the committed zero-item snapshot

@@ -17012,6 +17012,7 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/src/mcp/workspace.rs::tests::worktree_tests_only_snapshot_names_the_base_retry",
   "crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items",
   "crates/ripr/src/mcp/workspace.rs::tests::long_omitted_identities_are_byte_fitted_and_fully_walked",
   "crates/ripr/src/mcp/workspace.rs::tests::continuation_routes_preserve_the_other_axis",

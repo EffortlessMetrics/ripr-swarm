@@ -155,6 +155,14 @@ limitation instead of leaving that to the first failed refresh. The field is a
 bounded marker probe, not a Git invocation, and is absent when a plausible
 marker exists: absence does not mean Git accepted it.
 
+When a worktree refresh found changed files but no behavior candidate
+(`no_behavioral_candidates` with zero items; most often only tests were edited
+after the production change was committed onto the base), `ripr_refresh` adds a
+`worktree_base_hint` (`why`, `pass_base`, #13096). `pass_base` names the retry:
+`base` set to a commit before the production change, for example
+`{"base": "HEAD~1"}`. The server names it and never infers or widens the base.
+`ripr check` prints the matching hint for the same state.
+
 When a committed refresh analyzed nothing (`no_scope`, `no_changed_lines` or
 `no_behavioral_candidates` with zero items), `ripr_refresh` adds an
 `empty_scope_hint` (`why`, `pass_base`, `pass_source`, #11213): the default base
