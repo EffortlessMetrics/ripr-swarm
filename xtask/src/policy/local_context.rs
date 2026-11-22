@@ -15,7 +15,9 @@ mod tests {
     fn write(dir: &Path, name: &str, text: &str) -> Result<String, String> {
         let path = dir.join(name);
         fs::write(&path, text).map_err(|error| format!("write {path:?}: {error}"))?;
-        Ok(path.to_string_lossy().into_owned())
+        // Forward slashes, as `tracked_files` hands paths to the gate, so the
+        // file-name split behaves the same on Windows.
+        Ok(path.to_string_lossy().replace('\\', "/"))
     }
 
     /// Comments and blank lines are skipped, fields are trimmed, backslash
@@ -86,8 +88,10 @@ mod tests {
         Ok(())
     }
 
-    /// Every real-state marker is refused on its own, in any case; a generic
-    /// placeholder path and ordinary text are allowed.
+    /// Every real-state marker is refused on its own: the fixed markers in
+    /// any letter case (`.CODEX`, `MEMORY.md`), drive paths, and the two
+    /// home-directory prefixes as spelled. A generic placeholder path and
+    /// ordinary text are allowed.
     #[test]
     fn allowlist_pattern_refuses_each_real_state_marker_and_allows_generic_text() {
         for pattern in [
@@ -141,6 +145,10 @@ mod tests {
 
         let unscanned = write(&dir, "notes.png", &text)?;
         assert_eq!(local_context_findings_for_path(&unscanned)?, Vec::new());
+        // An unscanned type is not opened at all: a missing `.png` is not a
+        // read error.
+        let missing = format!("{}/missing.png", dir.to_string_lossy().replace('\\', "/"));
+        assert_eq!(local_context_findings_for_path(&missing)?, Vec::new());
 
         let runtime = write(&dir, concat!("CURRENT", "_STATE.md"), "clean text\n")?;
         let findings = local_context_findings_for_path(&runtime)?;
