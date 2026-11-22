@@ -50,6 +50,8 @@ pub(crate) enum Product {
     OwnerBranchIndex,
     ModuleDeclarationGate,
     OwnerMatchArms,
+    ClosedOwnerRead,
+    ExitRecordTypes,
 }
 
 impl Product {
@@ -79,6 +81,8 @@ impl Product {
             Self::OwnerBranchIndex => "owner_branch_index",
             Self::ModuleDeclarationGate => "module_declaration_gate",
             Self::OwnerMatchArms => "owner_match_arms",
+            Self::ClosedOwnerRead => "closed_owner_read",
+            Self::ExitRecordTypes => "exit_record_types",
         }
     }
 }

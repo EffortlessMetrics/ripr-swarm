@@ -2576,10 +2576,11 @@ fn zero_findings_diff_hedge(
     // A well-formed binary- or mode-only diff already got its own stderr note
     // from the pipeline; the generic "may not be a valid diff" hedge would
     // contradict it.
-    if outcome.limitations.iter().any(|limitation| {
-        limitation.kind == AnalysisLimitationKind::MalformedDiff
-            && limitation.bounded_detail.as_deref() == Some(crate::analysis::NON_TEXT_ONLY_DETAIL)
-    }) {
+    if outcome
+        .limitations
+        .iter()
+        .any(crate::analysis_outcome::AnalysisLimitation::is_non_text_only)
+    {
         return None;
     }
     let causes = outcome
