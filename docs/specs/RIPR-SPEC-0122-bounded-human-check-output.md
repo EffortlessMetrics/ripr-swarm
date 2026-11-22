@@ -125,7 +125,9 @@ either bucket has a reach stage that is not `yes` (or callee-only reach), the
 bucket says how many: `2 partly noticed (1 through a test link ripr could not
 confirm)`. The count uses the same rule as the per-finding reason `test reach
 to this change is not established`, so the Summary and the finding under it
-cannot disagree (#15295); a bucket with no such finding is unchanged.
+cannot disagree (#15295); a bucket with no such finding is unchanged. A
+finding withheld by a suppression policy or an owner opt-out has left its
+bucket and is not counted in the note either.
 Limitation lines on this
 surface likewise drop their parenthesized kind/stage and recovery tokens; a
 `language_adapter_unavailable` limitation renders as one `Not analyzed:` pointer

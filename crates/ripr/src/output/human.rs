@@ -718,12 +718,17 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
             // #15295: both of these bucket names claim a test gets to the
             // change. Say how many findings in each rest on a link ripr could
             // not confirm, so the line agrees with the reason under them.
+            // A finding a policy or an owner opt-out withholds has already
+            // left its bucket, so it must not be counted here either: the
+            // note would land on a finding whose reach is established.
+            let withheld = output.withheld_finding_ids();
             let unconfirmed = |class: crate::domain::ExposureClass, bucket: usize| {
                 let count = output
                     .findings
                     .iter()
                     .filter(|finding| {
                         finding.class == class
+                            && !withheld.contains(finding.id.as_str())
                             && sections::reach_claim_is_unsupported(&finding.class, &finding.ripr)
                     })
                     .count()

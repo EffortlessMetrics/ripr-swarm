@@ -167,3 +167,64 @@ fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// A withheld finding has left its Summary bucket, so the unconfirmed-link
+/// note must leave with it. Otherwise the note lands on the bucket's remaining
+/// member, whose reach is established (#15295).
+#[test]
+fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result<(), String> {
+    let name = "mixed_rust_typescript_preview";
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(name);
+    let summary_of = |policy: Option<&Path>| -> Result<String, String> {
+        // The CLI, not the library entry point: the fixture's `ripr.toml`
+        // enables the TypeScript preview, and the binary is what reads it.
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command
+            .current_dir(fixture.join("input"))
+            .args(["check", "--root", ".", "--diff"])
+            .arg(fixture.join("diff.patch"));
+        if let Some(policy) = policy {
+            command.arg("--suppression-policy").arg(policy);
+        }
+        let output = command.output().map_err(|error| error.to_string())?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        stdout
+            .lines()
+            .find(|line| line.starts_with("Summary: "))
+            .map(str::to_string)
+            .ok_or_else(|| {
+                format!(
+                    "{name}: no Summary line: {stdout}\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+            })
+    };
+
+    // Control: one Rust finding with established reach and one TypeScript
+    // finding with a heuristic link share the bucket.
+    let unsuppressed = summary_of(None)?;
+    assert!(
+        unsuppressed.contains("2 partly noticed (1 through a test link ripr could not confirm), "),
+        "{unsuppressed}"
+    );
+
+    let policy = Path::new(env!("CARGO_TARGET_TMPDIR")).join("weak_reach_hint_15295_policy.toml");
+    std::fs::write(
+        &policy,
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"web/discount.ts\"\nreason = \"accepted preview debt\"\nowner = \"team-web\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let suppressed = summary_of(Some(&policy))?;
+    assert!(
+        suppressed.contains("1 partly noticed, 0 reached but not noticed, "),
+        "{suppressed}"
+    );
+    assert!(!suppressed.contains("could not confirm"), "{suppressed}");
+    assert!(
+        suppressed.contains("1 suppressed by your settings"),
+        "{suppressed}"
+    );
+    Ok(())
+}
