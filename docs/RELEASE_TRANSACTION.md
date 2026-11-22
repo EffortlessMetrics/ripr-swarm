@@ -743,12 +743,19 @@ the authority path. #1470's amendments place authority in canonical packets
 (`ripr#1651`), bound to an exact tag or continuation event (`ripr#1652`) and
 consumed by one publication owner (`ripr#1646`, with `ripr#1644`/`#1649`), and
 say the record cannot authorize `cargo publish`, `gh release`, or another
-workflow generically. A template below runs only when the record names that
-exact command or workflow as the channel's path. Otherwise stop: the channel
-belongs to the source transaction the record names. `ripr#1637`'s 2026-08-30
-amendment also makes that bridge a precondition of
-`stable_ready_same_candidate`; its 2026-11-11 floor does not restate it, and
-this runbook does not settle which holds.
+workflow generically. `ripr#1637`'s 2026-08-30 amendment makes that bridge a
+precondition of `stable_ready_same_candidate`.
+
+**0.11.0: stable waits for that machinery.** The owner ruling of 2026-11-21
+(made in the project chat; `ripr-swarm#16012` is its repository record) is
+that `0.11.0` stable publication waits for `ripr#1651`, `ripr#1652`,
+`ripr#1646`, `ripr#1644`, and `ripr#1649`. The manual templates below are not
+the `0.11.0` stable path. Do
+not run an `[EXTERNAL-PUBLISHING]` template in this section for `0.11.0`, and
+do not ask for a #1470 record that names one. They stay as the reference for
+the order, the per-channel gates, and the receipts the source transaction must
+reproduce. For a later release, a template runs only when the #1470 record
+names that exact command or workflow as the channel's path; otherwise stop.
 
 The check also does not read the remaining RC evidence digests,
 artifact-attestation permissions, or each release secret/environment. Read
@@ -821,9 +828,10 @@ test "$(authorization_value STABLE_DECISION_RECEIPT_SHA256)" = "$STABLE_DECISION
 git -C "$SOURCE_ROOT" rev-parse "$SOURCE_RELEASE_HEAD"
 ```
 
-Publish one channel at a time, in #1470's order, and receipt it before the
-next: crates.io publish and verify, then the `v<VERSION>` tag, then the GitHub
-Release and server assets, then the VSIX and each marketplace. Each template
+The order, for the source transaction and for any template the record names,
+is #1470's, one channel at a time with a receipt before the next: crates.io
+publish and verify, then the `v<VERSION>` tag, then the GitHub Release and
+server assets, then the VSIX and each marketplace. Each template
 calls `require_authorized` for its own item and stops when that item is not
 exactly `authorized`. These templates require #1470; they are not permission
 to publish from this documentation PR.
