@@ -1108,10 +1108,10 @@ fn owner_names(function: &ast::Fn, name: &str) -> BTreeSet<String> {
 /// Whether some path in `files` names `owner_file`. An owner path that
 /// cannot be normalized counts as named whenever any file is.
 fn included(files: &BTreeSet<Vec<String>>, owner_file: &Path) -> bool {
-    // Case-insensitively (Unicode), as `#[path]` targets: a case-insensitive
-    // file system may resolve another spelling to the owner file.
+    // Case-insensitively, as `#[path]` targets: a case-insensitive file
+    // system may resolve another spelling to the owner file.
     let lower =
-        |path: &[String]| -> Vec<String> { path.iter().map(|part| part.to_lowercase()).collect() };
+        |path: &[String]| -> Vec<String> { path.iter().map(|part| case_fold(part)).collect() };
     match normalized_path(owner_file) {
         Some(owner) => files
             .iter()
@@ -2010,11 +2010,19 @@ fn normalized(path: &Path) -> Option<PathBuf> {
                     out.push("..");
                 }
             }
-            Component::Normal(name) => out.push(name.to_str()?.to_lowercase()),
+            Component::Normal(name) => out.push(case_fold(name.to_str()?)),
             Component::RootDir | Component::Prefix(_) => out.push(component.as_os_str()),
         }
     }
     Some(out)
+}
+
+/// `name` folded through its uppercase form and then lowercased, so the
+/// spellings a case-insensitive file system's uppercase table equates (such
+/// as `ſ`/`s`, `ς`/`σ` and the Kelvin sign/`k`) fold alike. Folding only adds
+/// matches, which only adds gates.
+fn case_fold(name: &str) -> String {
+    name.to_uppercase().to_lowercase()
 }
 
 /// Whether `file` is `src/lib.rs` or `src/main.rs` of some package.

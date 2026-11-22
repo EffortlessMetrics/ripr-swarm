@@ -415,6 +415,7 @@ fn gates_must_name_crate_local_paths() -> Result<(), String> {
         gap("self glob over the owner's module", prelude("mod prelude;\n#[cfg(unix)]\npub use self::prelude::*;\n")),
         gap("include resolving to the owner's file", direct("mod real;\n#[cfg(unix)]\nmod shim {\n    include!(\"real.rs\");\n}\n")),
         gap("include of the owner file in a Unicode case variant", lib("src/kit.rs", "mod kit;\n#[cfg(unix)]\nmod shim {\n    include!(\"\u{212A}it.rs\");\n}\n", "use crate::kit::ready;", none)),
+        gap("include of the owner file in a long-s case variant", lib("src/ser.rs", "mod ser;\n#[cfg(unix)]\nmod shim {\n    include!(\"\u{17F}er.rs\");\n}\n", "use crate::ser::ready;", none)),
     })
 }
 
