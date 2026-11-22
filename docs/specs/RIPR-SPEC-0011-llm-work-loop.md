@@ -1260,6 +1260,7 @@ is not decided here.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_made_stale_before_the_baseline_is_captured_binds_nothing` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
 - `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
