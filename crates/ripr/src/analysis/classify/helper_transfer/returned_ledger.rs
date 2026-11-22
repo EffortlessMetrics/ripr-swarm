@@ -410,6 +410,7 @@ mod tests {
             "fn record(errors: &mut Vec<PolicyError>) {\n    errors.push(PolicyError {\n        detail: format!(\"diagnostic\"),\n    });\n}",
         );
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:ledger".to_string()),
             location: SourceLocation::new("src/lib.rs", 3, 1),
             owner: Some(owner.id.clone()),

@@ -1969,6 +1969,7 @@ fn classify_change_for_owner_inner<'a>(
         probe_id.0.insert_str(separator + 1, marker);
     }
     let probe = Probe {
+        before_condition: None,
         id: probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner.symbol_id()),

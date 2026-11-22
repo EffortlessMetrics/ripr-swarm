@@ -132,6 +132,7 @@ pub(crate) fn unsupported_syntax_finding(
         1,
     );
     let probe = Probe {
+        before_condition: None,
         id: unsup_probe_id.clone(),
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: None,
@@ -250,6 +251,7 @@ pub(crate) fn enum_member_finding(
         1,
     );
     let probe = Probe {
+        before_condition: None,
         id: probe_id.clone(),
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: None,

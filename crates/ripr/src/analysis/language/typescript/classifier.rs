@@ -10122,6 +10122,7 @@ pub(crate) fn classify_resolved_owner(
         1,
     );
     let probe = Probe {
+        before_condition: None,
         id: ts_probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner_sym),

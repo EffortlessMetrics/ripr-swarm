@@ -839,10 +839,26 @@ edit reaches past the shape. When a predicate's block body changed too
 (`if total >= 100 { total - 10 }` to `if total > 200 { total - 25 }`), the
 human `Changed` block prints the whole old line and the new condition, with a
 note that the after side is the condition only and where the new line is
-(#15420), the same way a head-only match arm row does (#9244). The same
-`before` reaches the MCP `changed_behavior.before` field and the LSP
-diagnostic witness; `ripr check --format json` never serializes
-`probe.before`, so it is unchanged.
+(#15420), the same way a head-only match arm row does (#9244). For a Rust
+finding, the probe producer reads the old condition from the old and new
+lines together and carries it as `probe.before_condition`: the new line's one
+`if`/`while` head must hold the changed predicate as its condition, and the
+old line must have exactly one head with a plain condition. An
+`old condition:` row under `before:` then prints the old condition
+(`total >= 100`), so both sides can be read at one granularity. No row is
+printed when that pairing is not established: a second head anywhere on
+either line (also one nested in a call argument), an `if let` or `while let`,
+a match guard, a block expression inside the condition, a comparison or
+boolean operator outside the condition, a changed predicate that is not the
+new head's condition (a comparison the branch body gained), an old condition
+equal to the new one (only the branch bodies changed), or an old condition
+that does not start with the identifier the new one starts with. Display
+surfaces read the carried value and derive nothing from `before` themselves.
+The same `before` reaches the MCP `changed_behavior.before` field and the
+diagnostic witness (`ripr context`, LSP diagnostic data), unchanged; both add
+the old condition as an optional `before_condition` field under the same
+rule. `ripr check --format json` never serializes `probe.before` or
+`probe.before_condition`, so it is unchanged.
 
 ### Terminal safety
 
