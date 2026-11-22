@@ -877,6 +877,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     if let Some(before) = &witness.before {
         lines.push(format!("- before: `{before}`"));
     }
+    if let Some(condition) = &witness.before_condition {
+        lines.push(format!("- old condition: `{condition}`"));
+    }
     if let Some(after) = &witness.after {
         lines.push(format!("- after: `{after}`"));
     }
@@ -1814,6 +1817,7 @@ mod seam_hover_tests {
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,

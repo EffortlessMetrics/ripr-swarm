@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,7 +4,7 @@ pub trait Make {
+ pub struct Square(pub u32);
+ impl Make for Square {
+     fn make(n: u32) -> Self {
+-        Square(n * 2)
++        Square(n * 3)
+     }
+ }
+ #[cfg(test)]

@@ -3738,12 +3738,20 @@ pub(crate) fn classify_affected_path(path: &str) -> AffectedPath {
         }
         return AffectedPath::All;
     }
-    // The verdict-corpus harness itself is shared by every corpus.
-    if (path.starts_with("xtask/src/reports/verdict_corpus") && basename.ends_with(".rs"))
-        || matches!(
-            path,
-            "xtask/src/reports/fixtures.rs" | "xtask/src/command.rs" | "xtask/src/dispatch.rs"
-        )
+    // The scorer, fixture builders and process runner serve every corpus.
+    // A Rust file in those xtask modules can change a non-Rust fixture run.
+    if basename.ends_with(".rs")
+        && (path.starts_with("xtask/src/reports/verdict_corpus")
+            || path.starts_with("xtask/src/reports/fixtures/")
+            || path.starts_with("xtask/src/run/")
+            || matches!(
+                path,
+                "xtask/src/reports/fixtures.rs"
+                    | "xtask/src/run.rs"
+                    | "xtask/src/main.rs"
+                    | "xtask/src/command.rs"
+                    | "xtask/src/dispatch.rs"
+            ))
     {
         return AffectedPath::All;
     }
@@ -4180,3 +4188,7 @@ pub(crate) mod known_false;
 #[cfg(test)]
 #[path = "verdict_corpus_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "verdict_corpus_stage_axes_tests.rs"]
+mod stage_axes_tests;

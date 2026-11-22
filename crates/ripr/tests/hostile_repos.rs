@@ -409,10 +409,11 @@ fn awkward_file_names_each_produce_a_probe() -> Result<(), String> {
         reported_paths.push(path.strip_prefix("./").unwrap_or(path).to_owned());
     }
     // The renderer writes every path with forward slashes (and a leading
-    // `./`), so a literal backslash in a file name is reported as a separator.
+    // `./`). A literal backslash is a file-name byte on Unix and is spelled
+    // `%5C`, never reported as a separator (#15908).
     let mut expected_paths: Vec<String> = names
         .iter()
-        .map(|name| format!("src/{}", name.replace('\\', "/")))
+        .map(|name| format!("src/{}", name.replace('\\', "%5C")))
         .collect();
     expected_paths.sort();
     reported_paths.sort();
@@ -764,6 +765,120 @@ fn oversized_file_is_left_out_of_a_partial_scope_with_a_repair_route() -> Result
     Ok(())
 }
 
+/// #15484: a diff larger than the analysis-cost limit cannot be selected
+/// whole by any budget raise, so the partial disclosure names the route that
+/// completes (a PATH argument or a nearer base). Control: with the limit
+/// raised so the whole diff fits, only the raise is named.
+#[test]
+fn partial_scope_over_the_analysis_limit_names_the_narrowing_route() -> Result<(), String> {
+    let scratch = Scratch::new("narrow")?;
+    let root = scratch.path.join("r");
+    repo(&root, |root| {
+        change_lib(root)?;
+        let mut lib = String::from("pub fn total(a: u32) -> u32 { a + 1 }\n");
+        for name in ["a", "b", "c"] {
+            lib.push_str(&format!("pub mod {name};\n"));
+            let body = (0..60)
+                .map(|i| format!("pub fn {name}{i}(x: u32) -> u32 {{ x + {i} }}\n"))
+                .collect::<String>();
+            fs::write(root.join(format!("src/{name}.rs")), body)
+                .map_err(|e| format!("write failed: {e}"))?;
+        }
+        fs::write(root.join("src/lib.rs"), lib).map_err(|e| format!("write failed: {e}"))
+    })?;
+    let narrow = "narrow the diff with a PATH argument";
+    let over = ripr(
+        &root,
+        &["check"],
+        &[
+            ("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "100"),
+            ("RIPR_PARTIAL_DIFF_LINE_BUDGET", "70"),
+        ],
+    )?;
+    assert_sane(&over, "over the analysis limit")?;
+    if over.code != Some(0)
+        || !over
+            .stdout
+            .contains("RIPR_PARTIAL_DIFF_LINE_BUDGET to at least")
+        || !over.stdout.contains(narrow)
+    {
+        return Err(format!(
+            "expected a partial scope that names the narrowing route\n{:?}\n{}\n{}",
+            over.code, over.stdout, over.stderr
+        ));
+    }
+    let fits = ripr(
+        &root,
+        &["check"],
+        &[
+            ("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "1000"),
+            ("RIPR_PARTIAL_DIFF_LINE_BUDGET", "70"),
+        ],
+    )?;
+    assert_sane(&fits, "whole diff within the analysis limit")?;
+    if fits.code != Some(0)
+        || !fits.stdout.contains("to select the whole diff")
+        || fits.stdout.contains(narrow)
+    {
+        return Err(format!(
+            "expected only the budget raise when the whole diff fits\n{:?}\n{}\n{}",
+            fits.code, fits.stdout, fits.stderr
+        ));
+    }
+    Ok(())
+}
+
+/// #15484: an unresolved base that is a commit id or a version tag names the
+/// fetch that can supply it, which a branch fetch never does. Control: an
+/// ordinary branch name keeps the branch fetch advice.
+#[test]
+fn unresolved_commit_id_and_tag_bases_name_a_fetch_that_can_supply_them() -> Result<(), String> {
+    let scratch = Scratch::new("idbase")?;
+    let root = plain(&scratch, "r")?;
+    git(
+        &root,
+        &["remote", "add", "origin", "https://example.test/fork.git"],
+    )?;
+    let id = "0123456789abcdef0123456789abcdef01234567";
+    let cases = [
+        (id, format!("`git fetch origin {id}`")),
+        ("v9.9.9", "`git fetch --tags origin`".to_string()),
+        (
+            "no-such-branch",
+            "Fetch the ref (for example `git fetch origin`)".to_string(),
+        ),
+    ];
+    for (base, expected) in cases {
+        let ran = ripr(&root, &["check", "--base", base], &[])?;
+        assert_sane(&ran, base)?;
+        if ran.code != Some(2) || !ran.stderr.contains(&expected) {
+            return Err(format!(
+                "{base}: expected `{expected}`\n{:?}\n{}",
+                ran.code, ran.stderr
+            ));
+        }
+        let branch_advice = ran.stderr.contains("Fetch the ref");
+        if branch_advice != (base == "no-such-branch") {
+            return Err(format!("{base}: wrong advice family\n{}", ran.stderr));
+        }
+    }
+    // A branch that only looks like a tag keeps the fetched-branch advice
+    // once it exists as a remote-tracking ref.
+    git(&root, &["update-ref", "refs/remotes/origin/v2", "HEAD"])?;
+    let ran = ripr(&root, &["check", "--base", "v2"], &[])?;
+    assert_sane(&ran, "v2 tracking branch")?;
+    if ran.code != Some(2)
+        || !ran.stderr.contains("The fetched branch is `origin/v2`")
+        || ran.stderr.contains("git fetch --tags")
+    {
+        return Err(format!(
+            "v2: expected the fetched-branch advice\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
 /// A changed package larger than the 1,200-file narrowing threshold runs at
 /// default settings: that threshold bounds time, and only the higher
 /// `RIPR_MAX_DIFF_INDEX_FILES` memory guard refuses. Before the split, the
@@ -846,10 +961,13 @@ fn detached_head_worktree_and_submodule_roots_work() -> Result<(), String> {
 }
 
 #[test]
-fn dirty_submodule_is_a_skipped_pointer_not_a_non_source_file() -> Result<(), String> {
-    // A submodule with uncommitted edits diffs as `Subproject commit <sha>-dirty`
-    // with no mode header; it was reported as a non-source file whose empty
-    // result "is correct" (#10648).
+fn dirty_submodule_is_not_a_non_source_file_and_a_moved_one_is_a_skipped_pointer()
+-> Result<(), String> {
+    // A submodule with uncommitted edits once diffed as `Subproject commit
+    // <sha>-dirty` and was reported as a non-source file whose empty result
+    // "is correct" (#10648). Since #15101 ripr's git calls do not examine a
+    // submodule's working tree, so those edits are not part of the read at
+    // all; a moved submodule commit is still a disclosed pointer change.
     let scratch = Scratch::new("submodule-dirty")?;
     let inner = plain(&scratch, "inner")?;
     let outer = plain(&scratch, "outer")?;
@@ -865,14 +983,111 @@ fn dirty_submodule_is_a_skipped_pointer_not_a_non_source_file() -> Result<(), St
     text.push_str("// edited\n");
     fs::write(&inner_lib, text).map_err(|e| e.to_string())?;
 
-    let ran = ripr(&outer, &["check"], &[])?;
-    assert_sane(&ran, "dirty submodule")?;
     let notice = "skipped 1 submodule pointer change(s); ripr does not analyze submodule contents.";
+    let ran = ripr(&outer, &["check", "--worktree"], &[])?;
+    assert_sane(&ran, "dirty submodule")?;
+    if ran.code != Some(0) || ran.stderr.contains(notice) || ran.stderr.contains("non-source") {
+        return Err(format!(
+            "expected no submodule notice and no non-source claim; got {:?}\n{}\n{}",
+            ran.code, ran.stdout, ran.stderr
+        ));
+    }
+
+    git(&outer.join("vendor/dep"), &["commit", "-q", "-am", "move"])?;
+    let ran = ripr(&outer, &["check", "--worktree"], &[])?;
+    assert_sane(&ran, "moved submodule")?;
     if ran.code != Some(0) || !ran.stderr.contains(notice) || ran.stderr.contains("non-source") {
         return Err(format!(
             "expected the submodule notice and no non-source claim; got {:?}\n{}\n{}",
             ran.code, ran.stdout, ran.stderr
         ));
+    }
+    Ok(())
+}
+
+/// #15101: a populated submodule's own repository configuration can name a
+/// program (here a `filter.<driver>.clean`) that git runs while it examines
+/// the submodule's working tree. ripr's pins are computed from the analyzed
+/// repository's configuration only, so its git calls must not examine a
+/// submodule's working tree at all. The control shows plain git runs the
+/// planted program on the same fixture, so the stimulus is real.
+#[cfg(unix)]
+#[test]
+fn submodule_repository_helper_does_not_run() -> Result<(), String> {
+    let scratch = Scratch::new("submodule-helper")?;
+    let inner = plain(&scratch, "inner")?;
+    let outer = plain(&scratch, "outer")?;
+    let inner_arg = inner.to_string_lossy().into_owned();
+    git(
+        &outer,
+        &["submodule", "add", "-q", &inner_arg, "vendor/dep"],
+    )?;
+    git(&outer, &["commit", "-q", "-m", "add submodule"])?;
+    // The submodule is in the base, so a worktree read must decide whether it
+    // is modified; the superproject's own uncommitted edit gives `check` a
+    // change to analyze.
+    git(&outer, &["branch", "-f", "main", "HEAD"])?;
+    fs::write(outer.join("src/lib.rs"), BASE_LIB).map_err(|e| e.to_string())?;
+
+    // Plant the driver in the submodule's own configuration and attributes,
+    // neither of which the superproject's configuration listing reads.
+    let sub = outer.join("vendor/dep");
+    let marker = scratch.path.join("submodule-helper.ran");
+    let program = format!("touch '{}'; cat", marker.display());
+    git(&sub, &["config", "filter.planted.clean", &program])?;
+    let sub_git_dir =
+        PathBuf::from(fixture_git_output(&sub, &["rev-parse", "--absolute-git-dir"])?.trim_end());
+    fs::create_dir_all(sub_git_dir.join("info")).map_err(|e| e.to_string())?;
+    fs::write(
+        sub_git_dir.join("info/attributes"),
+        "src/lib.rs filter=planted\n",
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Rewrite the submodule file at its committed size each round, so git can
+    // only tell whether it changed by running the clean filter on it.
+    let sub_lib = sub.join("src/lib.rs");
+    let mut round = 0usize;
+    let mut restat = || -> Result<(), String> {
+        round += 1;
+        let body = if round.is_multiple_of(2) {
+            CHANGED_LIB
+        } else {
+            BASE_LIB
+        };
+        fs::write(&sub_lib, body).map_err(|e| e.to_string())
+    };
+    let take_marker = || {
+        let ran = marker.exists();
+        let _ = fs::remove_file(&marker);
+        ran
+    };
+
+    restat()?;
+    fixture_git_output(
+        &outer,
+        &["diff", "--ignore-submodules=none", "--raw", "main"],
+    )?;
+    if !take_marker() {
+        return Err("control: plain git diff did not run the submodule's filter".to_string());
+    }
+
+    for args in [
+        &["check"][..],
+        &["check", "--base", "main", "--worktree"][..],
+        &["check", "--format", "json"][..],
+        &["diff", "--base", "main"][..],
+        &["pilot", "--root", "."][..],
+    ] {
+        restat()?;
+        let ran = ripr(&outer, args, &[])?;
+        assert_sane(&ran, "submodule helper")?;
+        if take_marker() {
+            return Err(format!(
+                "ripr {args:?} ran the submodule's planted filter\n{}\n{}",
+                ran.stdout, ran.stderr
+            ));
+        }
     }
     Ok(())
 }
@@ -2445,6 +2660,84 @@ fn with_locked_rust_dir(
     result
 }
 
+/// Review guidance needs the full corpus for owner attribution.
+#[cfg(unix)]
+#[test]
+fn review_comments_discloses_incomplete_directory_evidence() -> Result<(), String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let scratch = Scratch::new("review-unreadable")?;
+    let root = plain(&scratch, "review")?;
+    let args = [
+        "review-comments",
+        "--base",
+        "main",
+        "--head",
+        "HEAD",
+        "--out",
+    ];
+    let run = |out| {
+        let mut argv = args.to_vec();
+        argv.push(out);
+        ripr(&root, &argv, &[])
+    };
+    let control = run("target/control/comments.json")?;
+    assert_sane(&control, "readable review-comments")?;
+    assert_eq!(control.code, Some(0), "{}", control.stderr);
+    assert!(root.join("target/control/comments.json").is_file());
+    let read_receipt = |path: &str| -> Result<serde_json::Value, String> {
+        let bytes = fs::read(root.join(path)).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+    };
+    let clean = read_receipt("target/control/run-receipt.json")?;
+    assert_eq!(clean["status"], "complete");
+    let clean_limitations = clean["limitations"]
+        .as_array()
+        .ok_or("missing limitations")?;
+    assert!(
+        clean_limitations
+            .iter()
+            .all(|entry| entry["category"] != "language_scope_unsupported"),
+        "{clean}"
+    );
+
+    let dir = root.join("src/unchanged");
+    fs::DirBuilder::new()
+        .mode(0o000)
+        .create(&dir)
+        .map_err(|e| e.to_string())?;
+    match fs::read_dir(&dir) {
+        Ok(_) => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {}
+        Err(e) => return Err(format!("unexpected fixture error: {e}")),
+    }
+    let refused = run("target/limited/comments.json");
+    fs::remove_dir(&dir).map_err(|e| e.to_string())?;
+    let refused = refused?;
+    assert_sane(&refused, "review-comments with unreadable directory")?;
+    assert_eq!(refused.code, Some(2), "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("evidence is incomplete"),
+        "{}",
+        refused.stderr
+    );
+    let receipt = read_receipt("target/limited/run-receipt.json")?;
+    assert_eq!(receipt["status"], "failed");
+    let limitations = receipt["limitations"]
+        .as_array()
+        .ok_or("missing limitations")?;
+    assert!(
+        limitations
+            .iter()
+            .any(|entry| entry["category"] == "language_scope_unsupported"
+                && entry["repair_route"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains("src/unchanged"))),
+        "{receipt}"
+    );
+    assert!(!root.join("target/limited/comments.json").exists());
+    Ok(())
+}
+
 /// `--format repo-exposure-json` skips the unreadable directory, keeps
 /// analyzing and reads `limited_seam_evidence`, never `complete`, naming the
 /// path through the existing `limitations[]` entry (#13624).
@@ -2643,5 +2936,61 @@ fn fifo_typescript_config_files_do_not_block_the_run() -> Result<(), String> {
         let ran = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
         assert_sane(&ran, &format!("FIFO {name}"))?;
     }
+    Ok(())
+}
+
+/// `--committed` judges HEAD, so a staged alternate layout of a path-less
+/// `[[bin]]` under `autobins = false` (`src/bin/extra/main.rs` beside the
+/// committed `src/bin/extra.rs`) must not drop the committed binary's root
+/// (#15892 review). Without the staged file the change is checked; with it,
+/// the committed-history run still checks the same change.
+#[test]
+fn committed_run_keeps_a_declared_bin_despite_a_staged_alternate_layout() -> Result<(), String> {
+    let scratch = Scratch::new("staged-bin-layout")?;
+    let root = scratch.path.join("repo");
+    let manifest = "[package]\nname = \"hx\"\nversion = \"0.0.0\"\nedition = \"2021\"\nautobins = false\n\n[[bin]]\nname = \"extra\"\n\n[workspace]\n";
+    let w = |rel: &str, body: &str| -> Result<(), String> {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+        }
+        fs::write(path, body).map_err(|e| format!("write {rel} failed: {e}"))
+    };
+    fs::create_dir_all(&root).map_err(|e| format!("mkdir root failed: {e}"))?;
+    git(&root, &["init", "-q", "-b", "main"])?;
+    w("Cargo.toml", manifest)?;
+    w("src/lib.rs", "pub fn unrelated() {}\n")?;
+    w(
+        "src/bin/extra.rs",
+        "fn bulk(qty: u32) -> bool {\n    qty > 10\n}\n\nfn main() {\n    println!(\"{}\", bulk(3));\n}\n",
+    )?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feat"])?;
+    w(
+        "src/bin/extra.rs",
+        "fn bulk(qty: u32) -> bool {\n    qty >= 10\n}\n\nfn main() {\n    println!(\"{}\", bulk(3));\n}\n",
+    )?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "change"])?;
+
+    let before = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&before, "committed bin before staging")?;
+    assert!(
+        summary_line(&before).starts_with("Summary: 2 changed behaviors checked: "),
+        "premise: the committed bin change is checked\n{}",
+        before.stdout
+    );
+
+    w("src/bin/extra/main.rs", "fn main() {}\n")?;
+    git(&root, &["add", "-A"])?;
+    let after = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+    assert_sane(&after, "committed bin with a staged alternate layout")?;
+    assert_eq!(
+        summary_line(&before),
+        summary_line(&after),
+        "a staged alternate layout must not change the committed run\n{}",
+        after.stdout
+    );
     Ok(())
 }

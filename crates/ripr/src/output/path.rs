@@ -51,6 +51,15 @@ pub(crate) fn display_path(path: &Path) -> String {
     display_path_for_host(&crate::analysis::stable_path_text(path), cfg!(windows))
 }
 
+/// [`display_path`] with the separator rule taken from `windows` instead of
+/// the host (see [`crate::analysis::stable_path_text_on`]).
+fn display_path_on(path: &Path, windows: bool) -> String {
+    display_path_for_host(
+        &crate::analysis::stable_path_text_on(path, windows),
+        windows,
+    )
+}
+
 /// Render a related-test or other source-file path without collapsing a literal
 /// Unix backslash into a directory separator (#7838).
 pub(crate) fn display_source_path(path: &Path) -> String {
@@ -104,6 +113,152 @@ pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
         displayed = stripped.to_string();
     }
     displayed
+}
+
+/// Where the analyzed root sits under its Git checkout's top level, for the
+/// surfaces whose consumers resolve a finding's file from that top level
+/// rather than from the invoking directory: GitHub workflow annotations
+/// (`file=` resolves against `GITHUB_WORKSPACE`) and SARIF uploads (code
+/// scanning resolves `artifactLocation.uri` against the repository root).
+///
+/// Without an anchor those surfaces print the file relative to `--root`
+/// (absolute root) or as the invoking spelling (relative root), so a run
+/// whose root is a workspace member below the top level (`--root
+/// "$PWD/crates/app"`, or `--root .` from inside `crates/app`) annotated
+/// `src/lib.rs`, a file that does not exist at the top level.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CheckoutAnchor {
+    /// The root's path below the top level (empty when the root is the top
+    /// level). `None` when no Git top level was established, for example a
+    /// `--diff` run outside any work tree: renderers then keep the
+    /// root-relative spelling of [`repository_display_path`].
+    root_prefix: Option<PathBuf>,
+}
+
+impl CheckoutAnchor {
+    /// No established top level: renderers keep their root-relative spelling.
+    pub(crate) fn unknown() -> Self {
+        Self { root_prefix: None }
+    }
+
+    /// The root is `prefix` below the checkout top level (empty for the top
+    /// level itself).
+    pub(crate) fn below_top_level(prefix: PathBuf) -> Self {
+        Self {
+            root_prefix: Some(prefix),
+        }
+    }
+
+    /// Ask Git where `root` sits under its work tree. Any failure (no work
+    /// tree, no Git, a root outside the discovered top level, a root Git
+    /// ignores or whose ignore status it cannot answer) yields
+    /// [`CheckoutAnchor::unknown`], never an invented prefix.
+    pub(crate) fn discover(root: &Path) -> Self {
+        let Ok(canonical_root) = std::fs::canonicalize(root) else {
+            return Self::unknown();
+        };
+        let Some(top_level) = crate::git::discovered_work_tree_toplevel(
+            &canonical_root,
+            std::time::Duration::from_secs(5),
+        ) else {
+            return Self::unknown();
+        };
+        let Ok(prefix) = canonical_root.strip_prefix(&top_level) else {
+            return Self::unknown();
+        };
+        // A root Git ignores (a scratch fixture under `target/`, a vendored
+        // tree) is not part of the checkout those consumers resolve against,
+        // so prefixing it would name a file the checkout does not carry.
+        // Only Git's negative answer admits the prefix.
+        if !prefix.as_os_str().is_empty()
+            && crate::git::work_tree_path_ignored(
+                &top_level,
+                prefix,
+                std::time::Duration::from_secs(5),
+            ) != Some(false)
+        {
+            return Self::unknown();
+        }
+        Self::below_top_level(prefix.to_path_buf())
+    }
+
+    /// `file` (a finding path) as a path relative to the checkout top level.
+    ///
+    /// Producers spell finding files two ways: Rust findings join the root
+    /// (`crates/app/src/lib.rs` under `--root crates/app`, `./src/lib.rs`
+    /// under `--root .`), while preview-language findings (Python,
+    /// TypeScript, JavaScript) are already root-relative (`src/app.py`).
+    /// A root-joined spelling strips the root; any other plain relative
+    /// spelling is root-relative. When both readings are lexically possible
+    /// (a root-relative file whose first directory repeats the root's
+    /// spelling) the file system decides: only a file that exists under the
+    /// root and not at the invoking-directory spelling is read
+    /// root-relative.
+    ///
+    /// Falls back to [`repository_relative_path`] when no top level is
+    /// known or neither reading is a plain path below the root (a `..`
+    /// remainder never resolves upward).
+    pub(crate) fn relative_path(&self, root: &Path, file: &Path) -> PathBuf {
+        if self.root_prefix.is_none() {
+            return repository_relative_path(root, file).to_path_buf();
+        }
+        let joined = file
+            .strip_prefix(root)
+            .ok()
+            .filter(|below_root| is_plain_relative(below_root));
+        let root_relative = (!file.has_root() && is_plain_relative(file)).then_some(file);
+        let below_root = match (joined, root_relative) {
+            (Some(joined), Some(root_relative)) => {
+                if root.join(root_relative).exists() && !file.exists() {
+                    root_relative
+                } else {
+                    joined
+                }
+            }
+            (Some(joined), None) => joined,
+            (None, Some(root_relative)) => root_relative,
+            (None, None) => return repository_relative_path(root, file).to_path_buf(),
+        };
+        self.root_relative_path(below_root)
+    }
+
+    /// `relative` (a path already relative to the root, such as a repo
+    /// seam's file) as a path relative to the checkout top level. Unchanged
+    /// when no top level is known or `relative` is not a plain relative path.
+    pub(crate) fn root_relative_path(&self, relative: &Path) -> PathBuf {
+        match &self.root_prefix {
+            Some(prefix) if is_plain_relative(relative) => {
+                let mut joined = prefix.clone();
+                for component in relative.components() {
+                    if let Component::Normal(part) = component {
+                        joined.push(part);
+                    }
+                }
+                joined
+            }
+            _ => relative.to_path_buf(),
+        }
+    }
+
+    /// [`CheckoutAnchor::relative_path`] as stable slash text without a
+    /// leading `./`, the anchored counterpart of [`repository_display_path`].
+    pub(crate) fn display_path(&self, root: &Path, file: &Path) -> String {
+        let mut displayed = display_path(&self.relative_path(root, file));
+        while let Some(stripped) = displayed.strip_prefix("./") {
+            displayed = stripped.to_string();
+        }
+        displayed
+    }
+}
+
+/// A nonempty relative path made only of plain names (and `.`), so joining
+/// it under a prefix can never climb above that prefix.
+fn is_plain_relative(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::Normal(_)))
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
 /// Display-only spelling of a path for LSP messages and editor globs: lossy
@@ -164,7 +319,7 @@ pub(crate) fn repository_relative_path_text_with(
             .components()
             .any(|component| matches!(component, Component::ParentDir))
     {
-        return display_path(relative);
+        return display_path_on(relative, windows);
     }
     if windows
         && let Some(relative) =
@@ -172,15 +327,15 @@ pub(crate) fn repository_relative_path_text_with(
     {
         // Re-encode through the shared stable renderer so `%` escaping
         // matches every other path rendering.
-        return display_path(&PathBuf::from(relative));
+        return display_path_on(&PathBuf::from(relative), windows);
     }
     if !windows
         && case_insensitive
         && let Some(relative) = strip_case_insensitive_root(root, file)
     {
-        return display_path(&relative);
+        return display_path_on(&relative, windows);
     }
-    display_path(file)
+    display_path_on(file, windows)
 }
 
 /// Component-wise, ASCII-case-insensitive root strip (ASCII-only by design:
@@ -276,7 +431,7 @@ fn windows_absolute_segments(path_text: &str) -> Option<Vec<String>> {
 /// Reduce a verbatim prefix to its plain form: `//?/X:` becomes `X:`,
 /// `//?/UNC/server/share` becomes `//server/share`. Any other `//?/` form
 /// (and non-verbatim text) is returned unchanged.
-fn strip_windows_verbatim_prefix(unified: &str) -> Option<String> {
+pub(crate) fn strip_windows_verbatim_prefix(unified: &str) -> Option<String> {
     let rest = unified.strip_prefix("//?/")?;
     let bytes = rest.as_bytes();
     if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
@@ -422,11 +577,12 @@ fn require_lossless_command_path(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use super::{
-        display_path, display_path_for_host, display_path_text, human_path_text,
-        repository_display_path, repository_relative_path_text_on, same_output_leaf,
+        CheckoutAnchor, display_path, display_path_for_host, display_path_on, display_path_text,
+        human_path_text, repository_display_path, repository_relative_path_text_on,
+        same_output_leaf,
     };
 
     #[test]
@@ -528,7 +684,11 @@ mod tests {
 
     #[test]
     fn display_path_normalizes_backslashes() {
-        assert_eq!(display_path(Path::new("a\\b\\c")), "a/b/c");
+        // A backslash is a separator on Windows and a file-name byte, spelled
+        // `%5C`, on Unix (#15908); the host-explicit form folds it anywhere.
+        let expected = if cfg!(unix) { "a%5Cb%5Cc" } else { "a/b/c" };
+        assert_eq!(display_path(Path::new("a\\b\\c")), expected);
+        assert_eq!(display_path_on(Path::new("a\\b\\c"), true), "a/b/c");
     }
 
     #[test]
@@ -574,6 +734,138 @@ mod tests {
             repository_display_path(Path::new("crates/app"), Path::new("crates/app/src/lib.rs")),
             "crates/app/src/lib.rs"
         );
+    }
+
+    #[test]
+    fn anchored_display_path_names_the_file_from_the_checkout_top_level() {
+        // A member root two levels below the top level, in every spelling a
+        // CI step or a developer uses: absolute, `.` from inside the member,
+        // a relative path with a `..` detour, and `..` from a sibling.
+        let member = CheckoutAnchor::below_top_level(PathBuf::from("crates/app"));
+        let absolute = std::env::temp_dir().join("ripr-anchor").join("crates/app");
+        let spellings = [
+            (absolute.clone(), absolute.join("src/lib.rs")),
+            (PathBuf::from("."), PathBuf::from("./src/lib.rs")),
+            (
+                PathBuf::from("crates/../crates/app"),
+                PathBuf::from("crates/../crates/app/src/lib.rs"),
+            ),
+            (PathBuf::from("../app"), PathBuf::from("../app/src/lib.rs")),
+        ];
+        for (root, file) in &spellings {
+            assert_eq!(
+                member.display_path(root, file),
+                "crates/app/src/lib.rs",
+                "root {} file {}",
+                root.display(),
+                file.display()
+            );
+        }
+        // Without an anchor the same spellings keep the root-relative
+        // rendering (the pre-anchor behavior), so the anchor is what moves
+        // them: an absolute member root used to annotate `src/lib.rs`.
+        assert_eq!(
+            CheckoutAnchor::unknown().display_path(&absolute, &absolute.join("src/lib.rs")),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            CheckoutAnchor::unknown().display_path(
+                Path::new("crates/../crates/app"),
+                Path::new("crates/../crates/app/src/lib.rs")
+            ),
+            "crates/../crates/app/src/lib.rs"
+        );
+        // The top level itself anchors with an empty prefix: unchanged text.
+        let top = CheckoutAnchor::below_top_level(PathBuf::new());
+        assert_eq!(
+            top.display_path(Path::new("."), Path::new("./src/lib.rs")),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            top.display_path(Path::new("crates/app"), Path::new("crates/app/src/lib.rs")),
+            "src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn anchored_paths_never_climb_or_invent_a_location() {
+        let member = CheckoutAnchor::below_top_level(PathBuf::from("crates/app"));
+        // A plain relative file that does not repeat the root's spelling is
+        // root-relative (the preview-language convention): it joins under
+        // the prefix whatever the root spelling.
+        for root in ["crates/app", ".", "/checkout/crates/app"] {
+            assert_eq!(
+                member.display_path(Path::new(root), Path::new("src/app.py")),
+                "crates/app/src/app.py",
+                "root {root}"
+            );
+        }
+        // A `..` remainder keeps the unanchored spelling instead of being
+        // joined under the prefix.
+        assert_eq!(
+            member.display_path(Path::new("."), Path::new("./../escape.rs")),
+            repository_display_path(Path::new("."), Path::new("./../escape.rs"))
+        );
+        // The root itself is not a file under it.
+        assert_eq!(
+            member.display_path(Path::new("."), Path::new(".")),
+            repository_display_path(Path::new("."), Path::new("."))
+        );
+        // Root-relative seam files join under the prefix; climbing or
+        // rooted paths stay as given.
+        assert_eq!(
+            member.root_relative_path(Path::new("src/lib.rs")),
+            PathBuf::from("crates/app/src/lib.rs")
+        );
+        assert_eq!(
+            member.root_relative_path(Path::new("../x.rs")),
+            PathBuf::from("../x.rs")
+        );
+        assert_eq!(
+            CheckoutAnchor::unknown().root_relative_path(Path::new("src/lib.rs")),
+            PathBuf::from("src/lib.rs")
+        );
+    }
+
+    #[test]
+    fn checkout_anchor_discovers_a_member_root_below_the_git_top_level() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock: {err}"))?
+            .as_nanos();
+        let top = std::env::temp_dir().join(format!("ripr-anchor-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&top).map_err(|err| format!("mkdir: {err}"))?;
+        // A root that does not exist cannot be placed: no invented prefix.
+        assert_eq!(
+            CheckoutAnchor::discover(&top.join("missing")),
+            CheckoutAnchor::unknown()
+        );
+        crate::git::run_git(&top, &["init", "-q", "repo"])
+            .map_err(|err| format!("git init: {err}"))?;
+        let repo = top.join("repo");
+        let repo_member = repo.join("crates").join("app");
+        std::fs::create_dir_all(&repo_member).map_err(|err| format!("mkdir: {err}"))?;
+        // A root Git ignores (a scratch fixture under `target/`) is not part
+        // of the checkout: it keeps the root-relative spelling.
+        std::fs::write(repo.join(".gitignore"), "target/\n")
+            .map_err(|err| format!("write .gitignore: {err}"))?;
+        let ignored_member = repo.join("target").join("fx");
+        std::fs::create_dir_all(&ignored_member).map_err(|err| format!("mkdir: {err}"))?;
+        let at_member = CheckoutAnchor::discover(&repo_member);
+        let at_top = CheckoutAnchor::discover(&repo);
+        let at_ignored = CheckoutAnchor::discover(&ignored_member);
+        let _ = std::fs::remove_dir_all(&top);
+        assert_eq!(at_ignored, CheckoutAnchor::unknown());
+        assert_eq!(
+            at_member,
+            CheckoutAnchor::below_top_level(PathBuf::from("crates").join("app"))
+        );
+        assert_eq!(at_top, CheckoutAnchor::below_top_level(PathBuf::new()));
+        assert_eq!(
+            at_member.display_path(&repo_member, &repo_member.join("src/lib.rs")),
+            "crates/app/src/lib.rs"
+        );
+        Ok(())
     }
 
     #[test]
@@ -833,7 +1125,8 @@ mod tests {
                 Path::new(&root_text),
                 Path::new(&verbatim_looking)
             ),
-            verbatim_looking.replace('\\', "/")
+            // A backslash is a file-name byte here, spelled `%5C` (#15908).
+            verbatim_looking.replace('\\', "%5C")
         );
     }
 

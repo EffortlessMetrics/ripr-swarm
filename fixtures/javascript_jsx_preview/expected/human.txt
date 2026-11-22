@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/javascript_jsx_preview/input
 config: <cwd>/fixtures/javascript_jsx_preview/input/ripr.toml
 
-Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 1 partly noticed (1 through a test link ripr could not confirm), 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
 
 Changed file(s) by language: javascript = 1
 
@@ -20,8 +20,9 @@ Start here:
   Why capped: preview adapter: infection/propagation not modeled (JavaScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
   Why weak: test reach to this change is not established
   Changed behavior: if (amount >= threshold) {
-  Missing check (1 of 2): Only heuristic TypeScript test links were found for `PriceLabel`; verify
-    the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
+  Missing check (1 of 2): Only heuristic TypeScript test links were found for the component
+    `PriceLabel`; verify the suggested test location or render `<PriceLabel .../>` in a Jest/Vitest
+    test with an exact-value assertion on the rendered output
   Related test: tests/price-label.test.jsx:1 renders discounted price
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
     check `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and

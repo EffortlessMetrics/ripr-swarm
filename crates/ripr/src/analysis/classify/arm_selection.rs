@@ -3409,6 +3409,7 @@ mod tests {
 
     fn arm_probe(expression: &str, line: usize) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:src_lib_rs:{line}:match_arm")),
             location: SourceLocation::new("src/lib.rs", line, 1),
             owner: Some(SymbolId("src/lib.rs::reason".to_string())),

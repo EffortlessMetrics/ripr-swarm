@@ -1,0 +1,13 @@
+# Registers the single saved-content quarantine marker per version (#15316) under RIPR-SPEC-0127.
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = [
+  "crates/ripr/src/lsp/tests.rs::framed_push_external_revert_publishes_one_saved_content_marker_per_version",
+  "crates/ripr/src/lsp/state.rs::tests::saved_but_unanalyzed_buffer_names_the_saved_content_reason",
+  "crates/ripr/src/lsp/state.rs::tests::quarantine_transitions_fold_into_one_net_edge",
+]
+code = [
+  "crates/ripr/src/lsp/state.rs",
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+]

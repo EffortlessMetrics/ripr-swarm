@@ -96,18 +96,37 @@ The gate is `seam_branch_reached_by_call` in
 answers `Some(true)`, `Some(false)` or `None` for one (seam, oracle) pair.
 
 - The compared operands are resolved through their `let` initializers first
-  (`assertion_operands`), so a call bound to a local is read.
+  (`assertion_operands`), so a call bound to a local is read. When the
+  assertion's text occurs once in the test body, the binding read is the last
+  plain `let` of the name before it whose block is still open there, so a
+  rebind (`let got = f(1); let got = f(2);`) resolves to the second call and a
+  `let` in a nested block that closed earlier is skipped (#14569). An
+  initializer that reads the name itself (`let got = got.unwrap();`) is not
+  resolved. Without that single anchor only a sole plain binding resolves.
 - Exactly one operand must be a call to the owner whose arguments all fold to
   integers: the bare `owner(..)` form, `owner(..).await`, or a
   single-identifier wrapper (`wrapper(owner(..))`), matching the sibling
   invisibility path. A wrapper that changes the arguments is not modelled
   and answers `None`.
+- For a same-file free call passing a literal one-field tuple struct, a
+  comparison such as `a.0 > 100` can select the other arm of a tail `if`.
+  The constructor and its primitive field type must be established, and both
+  numbers must fit that type. A diff can also read a directly resolved
+  `Add::add` this way, including `let a = Money(2); let b = Money(3);`
+  followed by `assert_eq!(a + b, Money(0))`. Every related call must skip
+  the edited arm before the diff loses credit. The assertion must compare
+  like-typed values, with derived value equality for the returned newtype.
+  A destructor that can run user code, a taken arm, a shadow, an unsupported
+  field, or an unreadable call preserves the prior reading (#15770).
 - The owner body is parsed. Every parameter must be a plain identifier and
   the argument count must match, or the answer is `None`.
 - If the owner body rebinds a parameter (`let name = ..`), assigns one
   (`name = ..`, `name += ..`) or binds one in a `for` pattern, anywhere in
   the body including a loop body, the answer is `None`: the call-argument
-  environment is stale.
+  environment is stale. A `let` whose enclosing block neither holds the
+  seam's `if` nor overlaps a condition on its path is out of scope for every
+  folded condition and does not count (#14569); assignments and mutable
+  borrows count wherever they are.
 - The seam expression must be the tail or a statement of exactly one `if`
   branch, matched by the seam's own line. Both arms holding it, or more than
   one `if` holding it, answers `None`. A seam whose own line is not inside an
@@ -203,6 +222,16 @@ refuses.
     before the gate) beside a `Weak` test that reaches the branch: the
     discriminate stage is not `Yes`, and its summary reads "kind matches; the
     call does not reach the seam's branch".
+15. `let got = discounted_total(50, 100); let got = discounted_total(100,
+    50); assert_eq!(got, 90);` on `if .. { return amount - 10; } else {
+    return amount; }`: the `return amount` seam is not `Yes` and the
+    `return amount - 10` seam is `Yes` (#14569).
+16. The same assertion reading an outer `let got = discounted_total(100, 50);`
+    past a closed `{ let got = discounted_total(50, 100); }`: the outer call
+    decides (#14569).
+17. An owner `{ let amount = 0; }` block that closes before the `if`, asserted
+    at `(50, 100) == 50`: the `return amount - 10` seam is not `Yes`. The same
+    `let` in a block holding the `if` keeps today's credit (#14569).
 
 ## Amendment (#13037): a reached computed tail is observed by its exact pin
 
@@ -223,6 +252,17 @@ answers no credit.
   operand is a bare owner call (no wrapper, no local argument) whose
   arguments are `true`/`false` or integer expressions that fold with no
   bindings (`100`, `50 + 50`).
+- An integration test may spell that owner call through the package's own
+  library path with no `use` (`shipping::shipping_cost(100, true)`,
+  `shipping::rates::shipping_cost(..)`). The path is read as the bare owner
+  call only when the relation's own-crate authority
+  (`own_crate_qualified_entry_path`, #8999/#9638) establishes it: the test
+  is a test-crate root under the root package's `tests/`, the owner is a
+  module-level item of that package's library, the path is exactly
+  `<library name>::<module path>::<owner>`, and nothing in the file or the
+  test body declares, imports, renames or globs the library name. Any other
+  qualified spelling (a rebound crate name, a longer or wrong path, a module
+  child of the test crate, another package) stays unevaluated.
 - The other compared operand is a value the test fixes itself: `true`,
   `false` or an integer expression that folds with no bindings, read through
   a `let` when it names one. An expected value computed by calling code
@@ -300,6 +340,11 @@ local wraps, so the call takes the other branch) and
 `fixtures/rust_computed_return_tail_primitive_alias` (not promoted: the
 same wrap through `pub type i32 = u8;`) pin both sides in the
 evidence-promotion honesty corpus.
+`fixtures/rust_computed_return_tail_crate_qualified` (promoted: the pin is
+spelled through the package's own library path) and
+`fixtures/rust_computed_return_tail_crate_rebound` (not promoted: the test
+file declares a module with the library's name) pin the own-crate spelling
+there too.
 
 ## Test Mapping
 
@@ -322,6 +367,13 @@ evidence-promotion honesty corpus.
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_is_strongly_gripped_by_a_reaching_test`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::branch_local_return_value_seam_in_the_taken_branch_stays_strong`
 - `crates/ripr/src/analysis/test_grip_evidence/tests.rs::committed_boundary_gap_fixture_stays_strongly_gripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_rebound_let_resolves_to_the_binding_the_assertion_reads`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_single_let_bound_reaching_call_keeps_its_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_let_in_a_closed_test_block_does_not_bind_the_asserted_value`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_brace_in_a_char_literal_or_comment_does_not_reopen_a_closed_block`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_let_in_a_comment_or_string_is_not_the_binding_read`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_owner_let_in_a_closed_block_does_not_keep_an_unreached_seams_grip`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::an_owner_let_in_a_block_holding_the_seam_keeps_its_grip`
 - `crates/ripr/tests/computed_return_tail_13037.rs::an_exact_pin_from_a_call_that_reaches_the_branch_is_exposed`
 - `crates/ripr/tests/computed_return_tail_13037.rs::a_pin_from_the_other_branch_only_is_not_credited`
 - `crates/ripr/tests/computed_return_tail_13037.rs::an_inequality_pins_no_value`
@@ -332,6 +384,18 @@ evidence-promotion honesty corpus.
 - `crates/ripr/tests/computed_return_tail_13037.rs::a_wrapping_local_a_static_or_a_shadowing_closure_is_not_credited`
 - `crates/ripr/tests/computed_return_tail_13037.rs::an_expected_value_the_test_computes_by_calling_code_is_not_credited`
 - `crates/ripr/tests/computed_return_tail_13037.rs::a_release_elided_assertion_or_a_glob_import_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_crate_qualified_exact_pin_that_reaches_the_branch_is_exposed`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::the_bare_imported_spelling_keeps_its_credit`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_crate_qualified_pin_through_a_library_module_is_exposed`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::the_library_target_name_is_the_spelling_that_counts`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_qualified_pin_from_the_other_branch_only_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_rebound_crate_name_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::another_path_ending_in_the_owner_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_transformed_or_wrapped_qualified_call_is_not_a_pin`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_test_outside_the_test_crate_root_is_not_credited`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::an_explicit_library_name_is_the_spelling_that_counts`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::an_expected_name_bound_twice_resolves_to_the_binding_in_scope`
+- `crates/ripr/tests/computed_return_tail_crate_qualified.rs::a_let_bound_qualified_call_reads_like_the_bare_let_bound_call`
 
 ## Implementation Mapping
 
@@ -343,6 +407,11 @@ evidence-promotion honesty corpus.
   downgrade in `best_oracle`.
 - `crates/ripr/src/analysis/test_grip_evidence/value_contradiction.rs`:
   `return_seam_tail_reached_by_call` (#13037).
+- `crates/ripr/src/analysis/classify/related_tests.rs`:
+  `own_crate_qualified_owner_path`, the own-crate spelling the admission
+  establishes; `return_seam_tail_reached_by_call` reads the assertion and
+  the test body with that path spelled bare (`spell_path_bare`), so a `let`
+  the assertion names is still selected by the assertion's position.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: the `reached_tail_pin`
   admission; `crates/ripr/src/analysis/classify/reveal.rs`: its use in
   observation confirmation.

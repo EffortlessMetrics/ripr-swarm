@@ -95,8 +95,16 @@ when one of its commands runs, or when a workspace folder root holds a project
 marker it can analyze: `Cargo.toml`, `ripr.toml`, a Python marker
 (`pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `pytest.ini`,
 `tox.ini`, `noxfile.py`), or `tsconfig.json`/`jsconfig.json`. The activation
-list and the markers the extension checks before starting analysis are the
-same set.
+list and the markers the extension checks at a folder root before starting
+analysis are the same set.
+
+A project below the root also starts analysis when one of its files opens:
+`Cargo.toml`, `pyproject.toml`, `setup.py`, `setup.cfg`, `pytest.ini`,
+`tsconfig.json` or `jsconfig.json` up to three folders down (for example
+`backend/Cargo.toml` or `packages/app/tsconfig.json`). Hidden folders and
+`target`, `node_modules`, `vendor`, `dist`, `build`, `venv`, `env`,
+`site-packages` and `__pycache__` are not searched, and the search stops after
+512 folders read. With no marker at either level the extension stays idle.
 
 When `ripr.server.version` is empty, the expected server version is the
 extension's own version from its manifest.
@@ -209,9 +217,10 @@ The extension passes `ripr.baseRef`, `ripr.check.mode`,
 `ripr.includeUnchangedTests`, `ripr.seamDiagnostics`, and
 `ripr.diagnosticProfile` to the language server as initialization options, and
 serves those five plus `ripr.gitTimeoutMs` and `ripr.refreshDeadlineMs` through
-`workspace/configuration`. `ripr.seamDiagnostics` and `ripr.diagnosticProfile` are
-forwarded only when a user, workspace or folder setting sets them, so
-`ripr.toml` `[lsp]` values apply when they are unset. Changing
+`workspace/configuration`. `ripr.check.mode`, `ripr.includeUnchangedTests`,
+`ripr.seamDiagnostics` and `ripr.diagnosticProfile` are forwarded only when a
+user, workspace or folder setting sets them, so `ripr.toml` `[analysis]` and
+`[lsp]` values apply when they are unset. Changing
 `ripr.enabled`, `ripr.server.*`, `ripr.check.mode`, or `ripr.baseRef` restarts
 the client so the next diagnostic refresh uses the new configuration.
 `ripr.trace.server` applies live. The server re-reads the other keys without a
@@ -557,7 +566,8 @@ guidance instead of `cargo install ripr`.
 
 When the download never reached its host (no DNS answer, a refused or dropped
 connection, or the 30-second fetch timeout), the message says so and names the
-offline route: check the network connection or proxy and retry, or set
+offline route: check the network connection and retry (behind a proxy, set VS Code
+`http.proxy` and keep `http.proxySupport` on), or set
 `ripr.server.path` to a `ripr` binary already on the machine
 (`ripr.server.downloadBaseUrl` for a mirror).
 

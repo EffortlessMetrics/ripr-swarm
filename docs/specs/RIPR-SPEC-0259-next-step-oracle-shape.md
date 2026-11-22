@@ -6,7 +6,8 @@ Owner: product-analysis
 
 Created: 2026-10-13
 
-Linked issues: [#7393](https://github.com/EffortlessMetrics/ripr-swarm/issues/7393).
+Linked issues: [#7393](https://github.com/EffortlessMetrics/ripr-swarm/issues/7393),
+[#13037](https://github.com/EffortlessMetrics/ripr-swarm/issues/13037).
 
 Support-tier impact: None
 
@@ -49,6 +50,30 @@ alone:
   can distinguish identical returns. When the finding carries a missing
   discriminator fact, the step appends it the way the predicate probe's
   evidence does (`Missing discriminator: \`...\``).
+- #13037 amendment: the same selection covers the families whose template
+  is "Strengthen the related assertion so it discriminates the changed
+  behavior" (`call_deletion`, `match_arm`, `field_construction`). An exact
+  assertion cannot be strengthened, so that template is not emitted when the
+  strongest eligible related oracle is already exact. The step names the test,
+  states that the gap is not the assertion shape, and names the link that is
+  not established: for `call_deletion`, whether the asserted value depends on
+  the changed call (if it does, the assertion may already notice the change,
+  which the static read could not confirm; if not, assert the effect the call
+  produces); for `match_arm`, whether the asserted value comes from the
+  changed arm (if it does, the same unconfirmed-observation sentence; if an
+  input selects the arm but its result is replaced before the assertion,
+  assert that result where it is still observable or test the arm
+  separately; if no related input selects the arm, add one and assert the
+  arm's exact value);
+  for `field_construction`, whether the asserted value includes the changed
+  field (if it does, the same sentence; if not, assert that field's exact
+  value). Each family states both branches so the reader is never left at a
+  dead end. The step claims no observation and the class stays
+  `weakly_exposed`. A related assertion that compares a value with a copy of
+  itself (`assert_eq!(b.0, b.0.clone())`, up to a trailing `.clone()`,
+  `.to_owned()`, `.to_vec()` or a leading borrow) never takes this step,
+  whatever strength the row carries: it cannot discriminate, so the family
+  template stands.
 - Only reach-establishing rows are eligible: the row's relation reason must
   establish reach to the changed owner
   (`RelationReason::establishes_reach`; `direct_owner_call`,
@@ -103,8 +128,9 @@ This spec does not change exposure classification, stage states, oracle
 admission, reach/observation evidence, or the Python/TypeScript preview
 adapters' own next-step producers. It does not attempt to derive the missing
 input from observed values when the finding carries no missing-discriminator
-fact, and it does not cover probe families outside `error_path` and
-`return_value`.
+fact, and it does not cover probe families outside `error_path`,
+`return_value`, `call_deletion`, `match_arm` and `field_construction`. The
+`predicate` and `side_effect` templates name a concrete action and stand.
 
 ## Acceptance Examples
 
@@ -116,6 +142,12 @@ fact, and it does not cover probe families outside `error_path` and
 - A `read_all` change whose only test asserts `assert_eq!(got.ok(), Some(10))`
   no longer advises replacing a nonexistent `is_err()`; the step asks for an
   input that executes the changed error arm.
+- A new `low_stock` method ending in `out.sort(); out`, pinned by
+  `assert_eq!(inv.low_stock(5), vec![..])`, no longer tells the user to
+  strengthen that assertion on the `out.sort()` finding; the step names the
+  test and asks whether the asserted value depends on the changed call. The
+  default human "Missing check" line reads "No assertion was tied to the
+  changed value".
 - A finding whose strongest related assertion is a bare `assert!(r.is_err())`
   keeps the "assert the exact error variant or payload instead of only
   is_err()" advice unchanged.
@@ -126,6 +158,9 @@ fact, and it does not cover probe families outside `error_path` and
   covers the error-path step with a missing discriminator.
 - `analysis::classify::decision::tests::exact_related_oracle_names_the_missing_input_for_return_value`
   covers the return-value step without one.
+- `analysis::classify::decision::tests::exact_related_oracle_replaces_the_strengthen_template`
+  covers the #13037 amendment for `call_deletion`, `match_arm` and
+  `field_construction`, with a downgraded exact oracle keeping the template.
 - `analysis::classify::decision::tests::non_exact_oracle_keeps_the_family_template`
   covers the broad-oracle, outranked, empty, and non-weak controls.
 - `analysis::classify::decision::tests::non_reach_rows_do_not_dictate_the_step`

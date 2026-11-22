@@ -438,6 +438,106 @@ decides both the relation gate and the wording. Repo-mode seams never come from
 a build script, so `test_grip_evidence` needs no guard. Fixture:
 `fixtures/rust_build_script_no_test_reach`.
 
+## A manifest `[lib] path` root names its modules (#14495)
+
+A package whose `[lib] path` names a root under `src/`
+(`path = "src/core/engine.rs"`) reads module paths from that root: the root
+file is the crate root, and a file below the root's directory takes its
+segments relative to that directory (`src/core/pricing.rs` is `pricing`,
+`my_pkg::pricing::discount`), as `src/lib.rs` owns `src/`. The directory
+shape (`my_pkg::core::pricing::discount`, which does not compile) no longer
+names the owner, and a same-named rival module (`my_pkg::legacy::discount`)
+settles away from it. A unit test's own module is read the same way, so a
+test in `src/core/pricing.rs` is in `pricing`, and a rival's unit test never
+collides with an owner whose directory shape it shares. An explicit
+`[lib] path = "src/lib.rs"` is the default layout. Files under the package's
+`tests/`, `benches/`, `examples/` and `src/bin/`, its `src/main.rs` and its
+`build.rs` keep their own targets; those paths are fixed relative to the
+package, so a nested root keeps a module named `main` or `tests`. A renamed import's target and a
+re-exporting module are placed in the same reading. A root outside `src/`
+is read the same way (next section); a `#[path]` remap keeps the rule off as
+before. In a package with
+`src/main.rs` and no `src/lib.rs`, the layout gives every `src/` module to
+the binary while the custom root may compose the same file as a library
+module; a file below the root then names no module path at all, so no spelled
+path names its owner (fail-closed, a missed credit rather than a false one). Fixture: `fixtures/rust_custom_lib_path_shaped_call`
+(honesty corpus: the directory-shaped call does not read `exposed`).
+
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::an_owner_in_the_declared_root_file_is_named_at_the_crate_root`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_module_below_the_declared_root_is_named_from_that_root`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_path_shaped_or_rival_module_path_never_names_the_owner`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_unit_test_beside_the_owner_reads_the_owner_module`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_unit_test_of_a_rival_module_never_names_the_owner`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_renamed_import_of_another_function_never_names_the_owner`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_reexport_is_found_in_the_module_read_from_the_declared_root`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_nested_root_keeps_a_module_named_like_another_target`
+- `crates/ripr/tests/custom_lib_path_module_identity.rs::a_binary_beside_a_custom_root_leaves_its_modules_unplaced`
+
+## A library root outside `src/` (#14495, #15909)
+
+A root outside `src/` names its modules the way a root under `src/` does. With
+`[lib] path = "source/entry.rs"`, `source/pricing.rs` is the library module
+`pricing` of that package, so a dependent's `core_lib::pricing::discount(100)`
+or the package's own `my_pkg::pricing::discount(100)` pairs with the owner and
+lends its boundary input, as `src/lib.rs` with `src/pricing.rs` does. A file
+below such a root belongs to the package that declares it (`core_lib/` for
+`core_lib/source/pricing.rs`), not to whichever package its path shape
+suggests. The directory shape (`my_pkg::source::pricing::discount`, which
+does not compile) and a same-named rival module never name the owner. A
+`src/main.rs` beside a root outside `src/` composes only `src/` modules, so
+the root's files stay placed; the fail-closed binary-only rule above applies
+only to files under the package's `src/`.
+
+A symlinked target path is read where it lands, because Git reports a change
+at the link target while Cargo names the target by the link. With `src ->
+real`, `real/lib.rs` is the crate root and `real/pricing.rs` its module
+`pricing`; `real/main.rs` and `real/bin/` stay binary targets. With
+`src/lib.rs -> ../real/lib.rs`, `real/lib.rs` is the crate root, but rustc
+loads its `mod` declarations beside the link, so `real/pricing.rs` is no
+module of that crate and never names an owner. A link that leaves the
+analysis root, or a target path that does not resolve, keeps the declared
+reading. Links are resolved in the working tree. A dependent names a member
+behind a symlinked `src` through the member's declared root
+(`core_lib/src/lib.rs`), which discovery indexes where the link lands. When a
+symlinked `src` also holds the binary root (`real/main.rs`), the `src/`
+layout scan cannot read the roots' declarations through the link, so the two
+roots are read where the link lands, as the plain layout reads them (#16068):
+a module only the library root declares stays the library's, and one both
+roots declare, or whose declarations are unreadable (`#[path]`, `include!`,
+incomplete items), names no module path (fail-closed).
+
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_module_below_a_root_outside_src_is_named_from_that_root`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_dependent_crate_names_a_member_whose_root_is_outside_src`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_directory_shaped_or_rival_path_never_names_an_outside_root_owner`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_binary_beside_a_root_outside_src_keeps_the_library_modules_placed`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_symlinked_src_directory_names_its_modules_from_the_link`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_symlinked_root_file_is_the_crate_root_but_lends_no_directory`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_dependent_crate_names_a_member_behind_a_symlinked_src`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_binary_in_a_symlinked_src_leaves_its_neighbours_unplaced`
+- `crates/ripr/tests/lib_root_outside_src_module_identity.rs::a_module_only_the_linked_library_declares_stays_the_librarys`
+
+## Declared test targets outside `tests/` (#15332)
+
+A `[[test]]` entry whose manifest `path` names a file outside both `tests/`
+and `src/` (`path = "checks/score_check.rs"`) roots an integration-test crate,
+as a `tests/` file does: a call spelled through the package's own library name
+(`my_pkg::clamp_score(..)`) names the owner, so the same-test boundary pairing
+(RIPR-SPEC-0186) reads it like the `tests/score.rs` control. Only the declared
+entry file itself is admitted, and only an entry `cargo test` runs through
+libtest: one spelling `test = false`, `harness = false` or any
+`required-features` keeps the path-shape reading, as do a file no `[[test]]`
+names and a `[[bin]]` entry. Only the analysis root's own package qualifies:
+a member or nested package's declared entry has no package prefix of its own
+in the path-shape keys, so it never reads as the root package's test. Other
+`tests/`-shape consumers (helper hops, `crate::` resolution) keep the
+path-shape reading. The manifest is read through the
+committed-source overlay (`MemberCrates::is_declared_test_target_entry`);
+absent manifest authority answers no.
+
+- `crates/ripr/tests/declared_test_target_crate_name.rs::a_declared_test_target_outside_tests_pairs_its_crate_named_call`
+- `crates/ripr/tests/declared_test_target_crate_name.rs::a_file_no_test_target_declares_stays_uncredited`
+- `crates/ripr/tests/declared_test_target_crate_name.rs::a_member_package_declared_test_never_reads_as_the_root_package`
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/related_tests.rs` —

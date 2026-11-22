@@ -229,6 +229,25 @@ fn a_call_that_may_never_run_is_not_reachable_unrevealed() -> Result<(), String>
     Ok(())
 }
 
+#[test]
+fn body_local_variant_items_keep_a_running_unary_tail_call_reached() -> Result<(), String> {
+    for body in [
+        "const None: Option<i32> = Some(1);\n        let Some(_) = None else { return Ok(()); };\n        let _ = f(5);",
+        "fn Err(_: ()) -> Result<(), ()> { Ok(()) }\n        Err(())?;\n        let _ = f(5);",
+    ] {
+        let lib = source(&owner("i32", "a"), &format!("{body}\n        Ok(())"))
+            .replace("fn checks_owner()", "fn checks_owner() -> Result<(), ()>");
+        let findings = TempRepo::create(&lib, &tail_diff("i32", "-a", "a"))?.findings()?;
+        let finding = tail_finding(&findings, 2, "a")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{body}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
 /// #14968: a short-circuited right operand, token text inside a macro that
 /// does not evaluate its input, and a call after a statement that always
 /// diverges do not show the input reached the owner either.
@@ -243,6 +262,7 @@ fn a_deferred_operand_macro_text_or_call_after_divergence_is_not_reachable_unrev
         "let _ = vec![stringify!(f(5))];",
         "let Some(_x) = None::<i32> else { return; };\n        let _ = f(5);",
         "let Ok(_x) = Err::<i32, i32>(1) else { return; };\n        let _ = f(5);",
+        "fn Err(_: ()) -> Result<(), ()> { Ok(()) }\n        { let Err = Result::<(), ()>::Err; Err(())?;\n        let _ = f(5); }",
         "Err::<(), i32>(1)?;\n        let _ = f(5);",
         "None::<i32>?;\n        let _ = f(5);",
         // #14968 review: an assertion message is formatted only on failure,

@@ -200,6 +200,69 @@ pub(crate) fn is_test_surface_path(path: &str) -> bool {
     file_name.starts_with("test_") && file_name.ends_with(".py")
 }
 
+/// Test-surface recognition with manifest authority (#15910): a path
+/// [`is_test_surface_path`] accepts, or the entry file of a Cargo `[[test]]`
+/// target the nearest package manifest declares outside the test layouts
+/// (`[[test]] path = "spec/pricing.rs"`).
+///
+/// The analysis already relates tests in such a file, so the repair route
+/// must be able to name it as the test to edit. The manifest half is
+/// deliberately narrow and fails closed:
+///
+/// - only a Rust file at a clean root-relative path;
+/// - only a file the layout does not read as production or as another
+///   target's evidence (`src/**`, `benches/`, `examples/`, `xtask/`, and the
+///   non-source directories never qualify, whatever the manifest says);
+/// - only a target `cargo test` builds and runs through libtest, that the
+///   manifest names as no other target's root
+///   ([`MemberCrates::is_declared_test_only_entry`]).
+///
+/// The manifest is read where the analysis reads it (the committed-source
+/// overlay when one is active, the working tree otherwise).
+///
+/// [`MemberCrates::is_declared_test_only_entry`]: crate::analysis::facts::member_crates::MemberCrates::is_declared_test_only_entry
+pub(crate) fn is_test_surface(root: &Path, path: &str) -> bool {
+    is_test_surface_path(path) || is_declared_cargo_test_surface(root, path)
+}
+
+/// The manifest half of [`is_test_surface`].
+pub(crate) fn is_declared_cargo_test_surface(root: &Path, path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    is_declared_cargo_test_surface_in(
+        &crate::analysis::facts::member_crates::MemberCrates::new(root),
+        Path::new(&normalized),
+    )
+}
+
+/// [`is_declared_cargo_test_surface`] against an analysis's own manifest
+/// authority, for the producer that records the answer on a related test
+/// (`TestKind::DeclaredIntegration`).
+pub(crate) fn is_declared_cargo_test_surface_in(
+    member_crates: &crate::analysis::facts::member_crates::MemberCrates,
+    relative: &Path,
+) -> bool {
+    if relative.extension() != Some(std::ffi::OsStr::new("rs"))
+        || !relative
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+        || is_test_surface_path(&relative.to_string_lossy())
+    {
+        return false;
+    }
+    let layout_owned = relative.components().any(|component| {
+        let name = component_name(&component);
+        name == "src"
+            || name == "xtask"
+            || name == "benches"
+            || name == "examples"
+            || NON_SOURCE_DIRECTORIES.contains(&name.as_str())
+    });
+    if layout_owned || classify(relative).seeds_production_findings() {
+        return false;
+    }
+    member_crates.is_declared_test_only_entry(relative)
+}
+
 /// Layout-only classification (context-free base shared by every
 /// consumer, including surfaces without Cargo metadata at hand).
 ///
@@ -334,8 +397,9 @@ fn is_repo_automation_subject(path: &Path, role: SourceRole) -> bool {
 /// ([`SourceRoleContext::module_graph_orphans`]) seeds nothing, whatever its
 /// layout (#4435).
 ///
-/// Repo mode keeps all three out of the seam inventory. Registered non-source
-/// directories (`fixtures/`, `target/`, ...) stay evidence even inside
+/// Repo mode keeps build scripts and `xtask/` out of the seam inventory and
+/// lists declared roots outside `src` ([`seeds_repo_seams`]). Registered
+/// non-source directories (`fixtures/`, `target/`, ...) stay evidence even inside
 /// `xtask/`, and other loose non-`src` files (panel subjects under
 /// `metrics/`, for example) are data Cargo never compiles.
 pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> bool {
@@ -345,8 +409,32 @@ pub(crate) fn seeds_diff_probes(path: &Path, context: &SourceRoleContext) -> boo
         SourceRole::ProductionLikeTestInfrastructure => true,
         _ if context.module_graph_orphans.contains(&normalize(path)) => false,
         role if role.seeds_production_findings() => true,
-        _ => diff_only_source(path, context).is_some(),
+        _ => declared_outside_src(path, context) || diff_only_source(path, context).is_some(),
     }
+}
+
+/// Whether `path` enters the repo seam inventory: a production role, or a
+/// crate root a manifest declares outside `src` and the files that package
+/// owns below it. A declared root is a library or binary target like
+/// `src/lib.rs`, so its seams are repairable from the package's tests, and
+/// `ripr check` offers a repair start only for a spot this inventory lists
+/// (#16045). Build scripts and `xtask/` stay out ([`DiffOnlySource`]): no
+/// test target exercises them, so a ranked seam there could never be
+/// repaired.
+pub(crate) fn seeds_repo_seams(path: &Path, context: &SourceRoleContext) -> bool {
+    classify_with(path, context).seeds_production_findings() || declared_outside_src(path, context)
+}
+
+/// A crate root a manifest declares outside `src`, or a file below it, that
+/// no module-graph evidence orphans and no manifest builds as a build script.
+fn declared_outside_src(path: &Path, context: &SourceRoleContext) -> bool {
+    let normalized = normalize(path);
+    matches!(
+        diff_only_candidate(path, context),
+        Some(DiffOnlyCandidate::Declarable)
+    ) && !context.module_graph_orphans.contains(&normalized)
+        && !context.build_scripts.contains(&normalized)
+        && context.declared_production_sources.contains(&normalized)
 }
 
 /// The evidence-role shapes [`seeds_diff_probes`] seeds when changed but
@@ -359,13 +447,11 @@ pub(crate) enum DiffOnlySource {
     BuildScript,
     /// Repository automation under the root `xtask/`.
     RepoAutomation,
-    /// A crate root a manifest declares outside `src`, or a file below it.
-    DeclaredOutsideSrc,
 }
 
-/// Which diff-only shape `path` is, if any: `None` for production files
-/// (they are in the inventory), test evidence, data, and files no module
-/// tree reaches.
+/// Which diff-only shape `path` is, if any: `None` for production files and
+/// declared roots outside `src` (they are in the inventory, #16045), test
+/// evidence, data, and files no module tree reaches.
 pub(crate) fn diff_only_source(path: &Path, context: &SourceRoleContext) -> Option<DiffOnlySource> {
     let normalized = normalize(path);
     if context.module_graph_orphans.contains(&normalized) {
@@ -375,11 +461,6 @@ pub(crate) fn diff_only_source(path: &Path, context: &SourceRoleContext) -> Opti
         DiffOnlyCandidate::Automation => Some(DiffOnlySource::RepoAutomation),
         DiffOnlyCandidate::Declarable if context.build_scripts.contains(&normalized) => {
             Some(DiffOnlySource::BuildScript)
-        }
-        DiffOnlyCandidate::Declarable
-            if context.declared_production_sources.contains(&normalized) =>
-        {
-            Some(DiffOnlySource::DeclaredOutsideSrc)
         }
         DiffOnlyCandidate::Declarable => None,
     }
@@ -900,19 +981,28 @@ mod tests {
             !super::seeds_diff_probes(Path::new("lib/odd.rs"), &SourceRoleContext::empty()),
             "without the manifest declaration a loose file stays non-production"
         );
+        // A declared root is in the repo inventory, so it is no diff-only
+        // shape pilot would name as left out (#16045).
         assert_eq!(
             super::diff_only_source(Path::new("lib/odd.rs"), &context),
-            Some(super::DiffOnlySource::DeclaredOutsideSrc)
+            None
         );
         assert_eq!(
             super::diff_only_source(Path::new("lib/fixtures/sample.rs"), &context),
             None
         );
-        // Repo mode is unchanged: the seam inventory still keys on layout.
+        // The layout role is unchanged; the repo seam inventory lists the
+        // declared root through `seeds_repo_seams` (#16045); a non-source
+        // directory below it stays out.
         assert_eq!(
             classify(Path::new("lib/odd.rs")),
             SourceRole::FixtureOrReceiptEvidence
         );
+        assert!(super::seeds_repo_seams(Path::new("lib/odd.rs"), &context));
+        assert!(!super::seeds_repo_seams(
+            Path::new("lib/fixtures/sample.rs"),
+            &context
+        ));
     }
 
     #[test]

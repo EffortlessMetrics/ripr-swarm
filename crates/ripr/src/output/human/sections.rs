@@ -106,7 +106,11 @@ fn plain_change_type(family: &ProbeFamily) -> &'static str {
         ProbeFamily::Predicate => "a condition or comparison changed",
         ProbeFamily::ReturnValue => "a returned value changed",
         ProbeFamily::ErrorPath => "error handling changed",
-        ProbeFamily::CallDeletion => "a call was removed",
+        // `call_deletion` names the probe ripr runs on a changed line that
+        // makes a call (would a test notice if the call were gone?), not the
+        // diff's edit: the call itself may be added, changed, removed, or
+        // untouched beside the edit (`f(x) > 0` -> `f(x) > 1`) (#15271).
+        ProbeFamily::CallDeletion => "a line that makes a call changed",
         ProbeFamily::FieldConstruction => "a constructed field changed",
         ProbeFamily::SideEffect => "a side effect changed",
         ProbeFamily::MatchArm => "a match arm changed",
@@ -317,7 +321,9 @@ pub(crate) fn render_finding_digest_with_config(
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
     let changed = crate::output::flow_sink_line::with_arm_result(finding, changed);
-    out.push_str(&format!("  Changed behavior: {}\n", one_line(&changed)));
+    let changed = evidence_value(finding, crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX)
+        .unwrap_or(&changed);
+    out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
     if let Some((label, value)) = &digest_missing {
         let prefix = format!("  {label}: ");
         if prefix.chars().count() + value.chars().count() <= LINE_BUDGET {
@@ -667,6 +673,28 @@ fn match_arm_head_only_note(
     ))
 }
 
+/// The note under a predicate's `after` row when `after` is only the new
+/// condition but `before` is the whole old line (#15420).
+///
+/// The producer cuts `before` to the old condition only when the edit stays
+/// inside it. When the block body changed too (`if total >= 100 { total - 10 }`
+/// to `if total > 200 { total - 25 }`), `before` stays the whole old line,
+/// because classifiers rebuild the old owner from it and a cut would hide the
+/// body change. The bare condition then reads as if the block were deleted,
+/// so the row says it is the condition and where the new line is. The block
+/// is located on comment/string-masked text, so a `{` inside a literal is not
+/// a block. Display only: `before` and `after` are printed unchanged.
+fn condition_only_note(finding: &Finding, root: &Path) -> Option<String> {
+    if !crate::analysis::before_is_whole_line_over_condition(finding) {
+        return None;
+    }
+    Some(format!(
+        "          (condition only; before is the whole old line; open {}:{} to read the new line)\n",
+        crate::analysis::finding_location_text(root, &finding.probe.location.file),
+        finding.probe.location.line
+    ))
+}
+
 pub(crate) fn render_finding_with_config(
     finding: &Finding,
     config: &RiprConfig,
@@ -711,10 +739,18 @@ pub(super) fn render_finding_with_shared_sections(
     let before_text = finding.probe.before.as_deref();
     if let Some(before) = &finding.probe.before {
         out.push_str(&wrapped_fragment("  before: ", before));
+        // #15420: the old condition at the granularity of `after`, when the
+        // whole old line has one readable `if`/`while` head.
+        if let Some(condition) = crate::analysis::old_condition_of_whole_line(finding) {
+            out.push_str(&wrapped_fragment("          old condition: ", &condition));
+        }
     }
     if let Some(after) = &finding.probe.after {
         out.push_str(&wrapped_fragment("  after:  ", after));
         if let Some(note) = match_arm_head_only_note(finding, before_text, after, root) {
+            out.push_str(&note);
+        }
+        if let Some(note) = condition_only_note(finding, root) {
             out.push_str(&note);
         }
     } else {
@@ -1626,6 +1662,20 @@ fn unresolved_fixture_hint(finding: &Finding) -> Option<String> {
     ))
 }
 
+/// Whether a finding sits in a class whose plain name claims a reaching test
+/// ("partly noticed", "reached but not noticed") while its reach stage does
+/// not establish one. The per-finding hint and the Summary line both ask
+/// this, so they cannot disagree (#15295).
+pub(in crate::output::human) fn reach_claim_is_unsupported(
+    class: &ExposureClass,
+    ripr: &RiprEvidence,
+) -> bool {
+    matches!(
+        class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) && (ripr.reach.state != StageState::Yes || is_callee_only_reach(&ripr.reach))
+}
+
 fn classification_hint(
     class: &ExposureClass,
     ripr: &RiprEvidence,
@@ -1637,11 +1687,7 @@ fn classification_hint(
     // weak-discriminator shortcut (#7330). Callee-only evidence explicitly
     // disclaims owner invocation even if its state were inconsistent (#7003).
     let callee_only = is_callee_only_reach(&ripr.reach);
-    if matches!(
-        class,
-        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
-    ) && (ripr.reach.state != StageState::Yes || callee_only)
-    {
+    if reach_claim_is_unsupported(class, ripr) {
         return Some(
             if callee_only {
                 NO_CALLING_TEST_HINT

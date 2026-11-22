@@ -64,6 +64,34 @@ enum Atom {
     },
 }
 
+/// The unchanged gate and the one comparison whose spelling changed.
+pub(in crate::analysis::classify) struct GuardedReturnChange<'a> {
+    pub(in crate::analysis::classify) gate_name: &'a str,
+    gate: &'a Operand,
+    open: bool,
+    before: &'a Operand,
+    after: &'a Operand,
+}
+
+impl GuardedReturnChange<'_> {
+    pub(in crate::analysis::classify) fn witnessed_by(
+        &self,
+        test: &TestSummary,
+        arguments: &[String],
+        line: usize,
+        owner: &str,
+    ) -> bool {
+        let Some(runs) = argument_runs(test, None, arguments, line, owner) else {
+            return false;
+        };
+        runs.iter().any(|row| {
+            self.gate.evaluate(row) == Some(self.open)
+                && matches!((self.before.evaluate(row), self.after.evaluate(row)),
+                    (Some(old), Some(new)) if old != new || self.before.is_reversed_form_of(self.after))
+        })
+    }
+}
+
 const COMPARISONS: &[&str] = &["==", "!=", "<=", ">=", "<", ">"];
 
 impl ShortCircuitTail {
@@ -88,6 +116,36 @@ impl ShortCircuitTail {
             .iter()
             .all(|operand| operand.string_compare_is_plain(&types))
             .then_some(chain)
+    }
+
+    /// A comparison edit with one unchanged Boolean parameter guarding its result.
+    pub(in crate::analysis::classify) fn comparison_gate<'a>(
+        &'a self,
+        before: &'a Self,
+    ) -> Option<GuardedReturnChange<'a>> {
+        if self.operator != before.operator
+            || self.operands.len() != 2
+            || before.operands.len() != 2
+        {
+            return None;
+        }
+        for (gate, changed) in [(0, 1), (1, 0)] {
+            if let OperandKind::Flag(parameter) = self.operands[gate].kind
+                && self.operands[gate] == before.operands[gate]
+                && self.operands[changed] != before.operands[changed]
+                && matches!(self.operands[changed].kind, OperandKind::Compare { .. })
+                && matches!(before.operands[changed].kind, OperandKind::Compare { .. })
+            {
+                return Some(GuardedReturnChange {
+                    gate_name: self.parameters.get(parameter)?,
+                    gate: &self.operands[gate],
+                    open: self.operator == "&&",
+                    before: &before.operands[changed],
+                    after: &self.operands[changed],
+                });
+            }
+        }
+        None
     }
 
     /// The owner's parameters in declaration order.
@@ -456,6 +514,34 @@ fn top_level_operands<'a>(text: &'a str, operator: &str) -> Option<Vec<&'a str>>
 }
 
 impl Operand {
+    /// A spelling-only reversal (e.g. `n >= 3` to `3 <= n`) has no
+    /// separating old/new input. Keep its existing comparison-pin reading
+    /// when that same observed row actually opens the gate.
+    fn is_reversed_form_of(&self, other: &Self) -> bool {
+        let OperandKind::Compare {
+            left,
+            operator,
+            right,
+        } = &self.kind
+        else {
+            return false;
+        };
+        let OperandKind::Compare {
+            left: other_left,
+            operator: other_op,
+            right: other_right,
+        } = &other.kind
+        else {
+            return false;
+        };
+        left == other_right
+            && right == other_left
+            && matches!(
+                (*operator, *other_op),
+                ("<", ">") | (">", "<") | ("<=", ">=") | (">=", "<=") | ("==", "==") | ("!=", "!=")
+            )
+    }
+
     /// Whether a comparison with a string literal compares a parameter
     /// declared as a plain string type (`&str`, `String`, `&String`) by
     /// `==` or `!=`.
@@ -1346,6 +1432,41 @@ mod tests {
                 "n != 0 && check(n, r#\"a  b\"#)"
             ),
             None
+        );
+    }
+
+    #[test]
+    fn whitespace_inside_a_raw_string_with_an_inner_quote_is_content() {
+        // #15021: an inner `"` inside a hashed raw string is content, not
+        // the literal's end, so the whitespace after it is content too. Read
+        // as a string boundary, the edit `"b"  c` -> `"b" c` would compact to
+        // the same operand and read as retained (a false agreement).
+        let pinned = r##"check(n,r#"a "b"  c"#)"##;
+        let edited = r##"check(n,r#"a "b" c"#)"##;
+        let function = format!("fn f(n: u32) -> bool {{\n    {edited}\n}}");
+        // The operands differ only by one space inside the literal.
+        assert_eq!(pinned.replacen("\"  c", "\" c", 1), edited);
+        assert_ne!(compact_operand(pinned), compact_operand(edited));
+        assert_eq!(compact_operand(pinned), pinned);
+        assert_eq!(
+            GuardOperandChange::read(&function, edited, &format!("n != 0 && {pinned}")),
+            None
+        );
+        // Two hashes, and a `"#` inside the literal that does not close it.
+        let deeper = r###"check(n,r##"a "# b"##)"###;
+        assert_eq!(compact_operand(deeper), deeper);
+        // Alternate: layout whitespace outside the same literal is ignored,
+        // so the retained operand still reads and only the guard differs.
+        let spaced = r##"check(n,   r#"a "b"  c"#)"##;
+        assert_eq!(compact_operand(spaced), pinned);
+        let change = GuardOperandChange::read(
+            &format!("fn f(n: u32) -> bool {{\n    {pinned}\n}}"),
+            pinned,
+            &format!("n != 0 && {spaced}"),
+        );
+        assert_eq!(
+            change.as_ref().map(|change| change.differing.len()),
+            Some(1)
         );
     }
 }

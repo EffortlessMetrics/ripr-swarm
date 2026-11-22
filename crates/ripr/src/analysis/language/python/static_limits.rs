@@ -3,10 +3,13 @@ use super::admission::PythonAssertionAdmission;
 use super::approx_band::{
     PythonBandReading, PythonBandSource, parse_expression, python_band_reading,
 };
-use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::assertion_selection::{
+    PythonAssertionFocus, is_result_pin_shape, select_relevant_assertion,
+};
 use super::callee_patch::callee_only_patch;
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
 use super::cli_subcommand::CliSubcommand;
+use super::collection_config::{COLLECT_IGNORE, UNEVALUATED_CONFTEST};
 use super::effect_alignment::ChangedEffect;
 use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
@@ -186,10 +189,24 @@ pub(super) fn static_limit_for_focused_change(
                 .any(|candidate| candidate.relation == PythonRelationKind::CliRunnerInvoke)
         })
         .map(CliSubcommand::decorator);
+    // A plain builtin `@property` stops being an indirection only once a
+    // related test's row-selected strong assertion compares a direct read of
+    // it with a literal (`property_read.rs`, #15490); a bare truthiness read,
+    // any other shape or any doubt about the builtin keeps the limit.
+    let read_property = owner.decorators.iter().any(|name| name == "property")
+        && super::property_read::property_read_credit(
+            owner,
+            owner_source,
+            line_text,
+            focus,
+            related_candidates,
+        )
+        .is_some();
     if let Some(decorator) = owner.decorators.iter().find(|decorator| {
         !is_transparent_owner_decorator_for_owner(decorator, owner)
             && !is_forwarding_decorator(decorator, owner, owner_source)
             && reached_subcommand_decorator.as_ref() != Some(*decorator)
+            && (!read_property || decorator.as_str() != "property")
     }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -268,10 +285,22 @@ pub(super) fn static_limit_for_focused_change(
                 "static_limit decorator_indirection: test activation for `{}` is controlled by `{decorator}`",
                 test.qualified_name
             ),
-            missing: format!(
-                "Static limit `decorator_indirection`: related test `{}` uses `{decorator}`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition.",
-                test.qualified_name
-            ),
+            missing: if decorator == UNEVALUATED_CONFTEST {
+                format!(
+                    "Static limit `decorator_indirection`: a `conftest.py` above related test `{}` sets `collect_ignore`, `collect_ignore_glob` or a collection hook in a form the Python preview adapter does not evaluate, so static evidence does not establish that pytest collects the test. Inspect that conftest, or give the ignore list as plain string literals.",
+                    test.qualified_name
+                )
+            } else if decorator == COLLECT_IGNORE {
+                format!(
+                    "Static limit `decorator_indirection`: a `conftest.py` `collect_ignore` / `collect_ignore_glob` entry (possibly behind a conditional) may exclude related test `{}`, so static evidence does not establish that pytest collects it. Add an independent collected test or inspect the conftest.",
+                    test.qualified_name
+                )
+            } else {
+                format!(
+                    "Static limit `decorator_indirection`: related test `{}` uses `{decorator}`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition.",
+                    test.qualified_name
+                )
+            },
         });
     }
     // A mocked test keeps the limit unless its substitutions are literal
@@ -328,7 +357,7 @@ pub(super) fn static_limit_for_focused_change(
             evidence:
                 "static_limit unresolved_pytest_fixture: related test uses fixture-sourced values"
                     .to_string(),
-            missing: "Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value.".to_string(),
+            missing: "Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture, and static analysis cannot tell whether it supplies an input that exercises the change or the value the test expects.".to_string(),
         });
     }
     if trimmed.chars().any(|ch| ch.is_ascii_digit())
@@ -351,6 +380,32 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `unsupported_syntax`: a related Python test compares the result with `approx(..., rel=..., abs=...)`; the preview adapter does not evaluate the tolerance band, so it cannot tell whether a numeric edit stays inside it. Verify with a runtime test or tighten the tolerance.".to_string(),
         });
     }
+    // #15250: for a logging-only edit the selection keeps a result-pin shape
+    // only when the assertion's text names `caplog`. If its gate (the strongest
+    // conjuncts) does not, the pin is what would grade it (`f(5) is False and
+    // "x" not in caplog.text`, or `caplog` only in a failure message), and that
+    // pin passes on both versions: abstain instead of crediting it.
+    if log_evidence.is_none()
+        && focus.withholds_result_pins()
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                select_relevant_assertion(&candidate.test.assertions, Some(focus))
+                    .assertion()
+                    .is_some_and(|assertion| {
+                        is_result_pin_shape(assertion.oracle_shape)
+                            && !assertion.gate_text.contains("caplog")
+                    })
+            })
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::UnsupportedSyntax,
+            evidence: "static_limit unsupported_syntax: related test pins the owner's result beside a `caplog` read of the changed log call"
+                .to_string(),
+            missing: "Static limit `unsupported_syntax`: a related Python test asserts the owner's result in the same assertion that reads `caplog`; the result does not change when only a logging call changes, and the preview adapter does not evaluate the captured-log part of that assertion. Assert the logged text in its own `assert` statement.".to_string(),
+        });
+    }
     if log_evidence.is_none()
         && changed_logging_call_literal(trimmed).is_some_and(|literal| {
             related_candidates_have_log_membership_limit(related_candidates, focus, literal)
@@ -371,7 +426,13 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.".to_string(),
         });
     }
-    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports) {
+    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports)
+        && !super::exception_variant::imported_raised_class_swap(
+            trimmed,
+            old_line_text.map(str::trim),
+            &owner.imports,
+        )
+    {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: "static_limit missing_import_graph: changed line calls an imported symbol"
@@ -421,6 +482,18 @@ pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     })
 }
 
+/// Whether `limit` is the implicit-dunder `dynamic_dispatch` limit: the one
+/// that states ripr "does not claim that no test reaches the owner". Its reach
+/// stage must read `unknown`, never `no` (#15339).
+pub(super) fn is_implicit_dunder_dispatch_limit(limit: &PythonStaticLimit) -> bool {
+    matches!(limit.kind, StaticLimitKind::DynamicDispatch)
+        && limit.evidence.contains(IMPLICIT_DUNDER_EVIDENCE_MARKER)
+}
+
+/// Shared by both producers in `implicit_dunder_dispatch_limit` so the
+/// predicate above cannot drift from their evidence wording.
+const IMPLICIT_DUNDER_EVIDENCE_MARKER: &str = "implicitly by";
+
 /// A dunder method owner (`Cache.__setitem__`) with no related test, in a
 /// workspace whose tests import the owner class or module. Python calls these
 /// methods through syntax (`cache[key] = value`, `Cache(...)`) on instances the
@@ -444,7 +517,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
             .then(|| PythonStaticLimit {
                 kind: StaticLimitKind::DynamicDispatch,
                 evidence: format!(
-                    "static_limit dynamic_dispatch: dunder method `{}` is invoked implicitly by Python syntax",
+                    "static_limit dynamic_dispatch: dunder method `{}` is invoked {IMPLICIT_DUNDER_EVIDENCE_MARKER} Python syntax",
                     owner.qualified_name
                 ),
                 missing: format!(
@@ -486,7 +559,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
     Some(PythonStaticLimit {
         kind: StaticLimitKind::DynamicDispatch,
         evidence: format!(
-            "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes implicitly by syntax",
+            "static_limit dynamic_dispatch: `{}` is called through `self.` from dunder method `{entry}`, which Python invokes {IMPLICIT_DUNDER_EVIDENCE_MARKER} syntax",
             owner.qualified_name
         ),
         missing: format!(
@@ -1471,9 +1544,19 @@ fn related_candidates_have_log_membership_limit(
                     // snapshot is the evaluator's question, not a reason to
                     // report a gap (#10151).
                     let gate_text = substitute_caplog_aliases(candidate.test, &assertion.gate_text);
+                    // The gate keeps only the strongest conjuncts, so a strong
+                    // result pin beside a caplog read (`f(5) is False and "x" in
+                    // caplog.text`) leaves the read in the full text only (#15250).
+                    let mut literals = caplog_membership_literals(&gate_text);
+                    if literals.is_empty() {
+                        literals = caplog_membership_literals(&substitute_caplog_aliases(
+                            candidate.test,
+                            &assertion.text,
+                        ));
+                    }
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    caplog_membership_literals(&gate_text)
+                    literals
                         .iter()
                         .any(|checked| {
                             words(&checked.literal)
@@ -1911,8 +1994,9 @@ pub(super) fn cross_module_reach_limit(
         });
     }
     // Helpers are only gathered when no test relates to the owner directly,
-    // so equal lengths mean every related candidate is a helper candidate;
-    // the check keeps the limit off if candidates are ever appended later.
+    // so equal lengths mean every related candidate is a helper candidate. A
+    // same-file value-helper row (#15350) can sit beside them; it reaches the
+    // owner from its own file, so the unequal lengths keep the limit off.
     if helper_callers.is_empty()
         || related_candidates.len() != helper_callers.len()
         || !helper_callers.iter().all(|helper| helper.cross_module)
@@ -2088,6 +2172,7 @@ pub(super) mod tests {
             decorator_lines: None,
             parameters: Vec::new(),
             reexport_modules: Vec::new(),
+            class_reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
             test_local_shadows: Vec::new(),

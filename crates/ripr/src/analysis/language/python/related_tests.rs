@@ -55,6 +55,12 @@ pub(super) enum PythonRelationKind {
     ConstructCall,
     ConstructorCall,
     LocalBinding,
+    /// The test reads a plain builtin `@property` owner as an attribute of a
+    /// construction of its class, or of a local bound once to one
+    /// (`property_read.rs`, #15490). Oracle-eligible, but only the strong
+    /// exact read `property_read_credit` establishes lifts the owner's
+    /// `decorator_indirection` limit.
+    PropertyRead,
     DunderProtocol,
     ProtocolEntryCall,
     /// The test's assertion statically depends on an edited module-level
@@ -95,6 +101,7 @@ impl PythonRelationKind {
             Self::ConstructCall => 4,
             Self::ConstructorCall => 4,
             Self::LocalBinding => 4,
+            Self::PropertyRead => 4,
             Self::DunderProtocol => 3,
             Self::ProtocolEntryCall => 4,
             Self::ModuleValueCall => 4,
@@ -119,6 +126,7 @@ impl PythonRelationKind {
                 | Self::ConstructCall
                 | Self::ConstructorCall
                 | Self::LocalBinding
+                | Self::PropertyRead
                 | Self::ProtocolEntryCall
                 | Self::ModuleValueCall
                 | Self::ModuleValueRead
@@ -138,6 +146,7 @@ impl PythonRelationKind {
             Self::ConstructCall => "construct_call",
             Self::ConstructorCall => "constructor_call",
             Self::LocalBinding => "local_binding",
+            Self::PropertyRead => "property_read",
             Self::DunderProtocol => "dunder_protocol",
             Self::ProtocolEntryCall => "protocol_entry_call",
             Self::ModuleValueCall => "module_value_call",
@@ -1012,6 +1021,9 @@ fn test_text_mentions(test: &PythonTest, name: &str) -> bool {
             .fixture_defs
             .iter()
             .any(|def| def.body_text.contains(name) || def.imports.iter().any(import_mentions))
+        || test.value_helpers.iter().any(|helper| {
+            helper.body_text.contains(name) || helper.imports.iter().any(import_mentions)
+        })
 }
 
 fn related_test_relation_scan(
@@ -1031,7 +1043,13 @@ fn related_test_relation_scan(
         if fixture_owner_call(test, owner) {
             return Some(PythonRelationKind::FixtureOwnerCall);
         }
-        return route.map(|_| PythonRelationKind::ApiClientRouteUnidentifiedApp);
+        if route.is_some() {
+            return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+        }
+        // A value helper resolves its own module's imports (#15350), so the
+        // test's binding of the name to another module does not decide it.
+        return value_helper_calls_owner(test, owner)
+            .then_some(PythonRelationKind::HelperOwnerCall);
     }
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
@@ -1058,6 +1076,9 @@ fn related_test_relation_scan(
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
     }
+    if super::property_read::property_read_relation(test, owner) {
+        return Some(PythonRelationKind::PropertyRead);
+    }
     if fixture_owner_call(test, owner) {
         return Some(PythonRelationKind::FixtureOwnerCall);
     }
@@ -1066,6 +1087,9 @@ fn related_test_relation_scan(
     }
     if route.is_some() {
         return Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    }
+    if value_helper_calls_owner(test, owner) {
+        return Some(PythonRelationKind::HelperOwnerCall);
     }
     // A test is related to an owner only when it references the owner
     // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
@@ -1087,6 +1111,53 @@ fn related_test_relation_scan(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether a same-file value helper the test calls (`value_helpers.rs`,
+/// #15350) calls the owner by the direct-call rules, read as a test whose body
+/// is the helper's and whose imports are the test's plus the helper's own (a
+/// helper-local import replaces the module's import of the same alias). A
+/// helper that binds the owner's name as a parameter or local never relates.
+/// Reach only: the helper's return is not shown to be the owner's result.
+fn value_helper_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.value_helpers.iter().any(|helper| {
+        let mut view = test.clone();
+        view.body_text.clone_from(&helper.body_text);
+        // The helper resolves names in its own module: the module's imports
+        // with its own imports over them, never the calling test's local
+        // imports.
+        view.imports.clone_from(&helper.imports);
+        // A parameter or local that rebinds the owner's name (or an alias the
+        // view imports it as) is not the owner.
+        let rebinds_owner = helper.local_names.iter().any(|local| {
+            *local == owner.name
+                || view.imports.iter().any(|import| {
+                    import.alias == *local && imports_owner_name(&import.imported, &owner.name)
+                })
+        });
+        if rebinds_owner {
+            return false;
+        }
+        view.assertions.clear();
+        // The helper's parameters stand where a test's fixtures do, so a
+        // parameter that shadows a module alias (`def run(core, n):
+        // return core.total(n)`) is read as rebinding it.
+        view.fixtures.clone_from(&helper.local_names);
+        view.fixture_defs.clear();
+        view.value_helpers.clear();
+        !bare_name_bound_to_other_module(&view, owner)
+            && (body_calls_owner(&view.body_text, owner) || import_alias_calls_owner(&view, owner))
+    })
+}
+
+/// Whether an imported spelling names `owner_name` itself: the bare name or a
+/// dotted path ending in it (`pkg.core.total`), never a longer name that only
+/// ends with it (`subtotal`).
+fn imports_owner_name(imported: &str, owner_name: &str) -> bool {
+    imported == owner_name
+        || imported
+            .strip_suffix(owner_name)
+            .is_some_and(|prefix| prefix.ends_with('.'))
 }
 
 /// Whether the test imports the free-function owner's name (under any alias)
@@ -2301,10 +2372,13 @@ pub(super) fn owner_result_locals(
         let (target, value) = (line[..eq].trim(), &line[eq + 1..]);
         let mut value_start = start + eq + 1 + (value.len() - value.trim_start().len());
         let mut value = value.trim_start();
-        if awaited
-            && let Some(rest) = value.strip_prefix("await")
-            && rest.starts_with([' ', '\t'])
-        {
+        if awaited {
+            let Some(rest) = value
+                .strip_prefix("await")
+                .filter(|rest| rest.starts_with([' ', '\t', '(']))
+            else {
+                continue;
+            };
             value_start += value.len() - rest.trim_start().len();
             value = rest.trim_start();
         }
@@ -2345,7 +2419,8 @@ fn whole_owner_call_end(body: &str, start: usize, callees: &[String]) -> Option<
             }
         }
     }
-    for wrapper in MATERIALIZING_WRAPPERS {
+    // An empty prefix is an ordinary parenthesized expression.
+    for wrapper in std::iter::once("").chain(MATERIALIZING_WRAPPERS) {
         let Some(rest) = value.strip_prefix(wrapper) else {
             continue;
         };
@@ -2357,7 +2432,8 @@ fn whole_owner_call_end(body: &str, start: usize, callees: &[String]) -> Option<
         let close = super::no_behavior::matching_call_paren(body, open)?;
         let inner = open + 1 + (body[open + 1..].len() - body[open + 1..].trim_start().len());
         let inner_end = whole_owner_call_end(body, inner, callees)?;
-        return body[inner_end..close]
+        return body
+            .get(inner_end..close)?
             .trim()
             .is_empty()
             .then_some(close + 1);
@@ -2932,8 +3008,17 @@ impl SrcModuleIndex {
                     });
                 }
             }
-            for module in &owner.reexport_modules {
-                if own.iter().any(|(own_module, _)| own_module == module) {
+            // A method's class exporters name its class in an import, so a
+            // rival project's package of the same name is as ambiguous for
+            // them as for a function's own exporters (#15967).
+            for module in owner
+                .reexport_modules
+                .iter()
+                .chain(&owner.class_reexport_modules)
+            {
+                if own.iter().any(|(own_module, _)| own_module == module)
+                    || ambiguous.iter().any(|record| &record.module == module)
+                {
                     continue;
                 }
                 // The re-exporting package is the one whose project root holds the
@@ -3062,7 +3147,11 @@ pub(super) fn import_source_module_matches_owner(
     let names_owner_module = owner_import_modules_for(owner, test_file).contains(&import.source_module)
         // `from humanize import naturaldelta`: the package re-exports the
         // owner under its own name, so the package path identifies it too.
-        || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module));
+        || (import.imported == owner.name && owner.reexport_modules.contains(&import.source_module))
+        // `from pluggy import PluginManager` for a method of the class
+        // `pluggy/_manager.py` defines: the package re-exports the class.
+        || (import.imported == owner.class_path
+            && owner.class_reexport_modules.contains(&import.source_module));
     names_owner_module && module_name_identifies_owner_for(owner, &import.source_module, test_file)
 }
 
@@ -3583,6 +3672,10 @@ pub(super) fn owner_class_locals(
                 .count()
                 == 1
             && import_module_may_be_owners(import, owner, &test.file)
+            // The import must name the owner's module or a package that
+            // re-exports the class: a same-named class from any other module
+            // is a different class.
+            && import_source_module_matches_owner(import, owner, &test.file)
         {
             locals.push(import.alias.clone());
         }
@@ -3595,8 +3688,46 @@ pub(super) fn owner_class_locals(
                 locals.push(qualified);
             }
         }
+        // The class through a package that re-exports it (`import pluggy`,
+        // then `pluggy.PluginManager`).
+        if let Some(receiver) = class_reexport_receiver(import, owner, class, &test.file) {
+            let qualified = format!("{receiver}.{class}");
+            if !test_rebinds_import_alias(test, &import.alias) && !locals.contains(&qualified) {
+                locals.push(qualified);
+            }
+        }
     }
     locals
+}
+
+/// The name an import binds to a package that re-exports the method owner's
+/// top-level `class` (`reexports.rs`): a plain `import` whose dotted path is
+/// one of the owner's `class_reexport_modules` and identifies the owner for
+/// this test (#4566, #13706).
+fn class_reexport_receiver<'i>(
+    import: &'i PythonImport,
+    owner: &PythonOwner,
+    class: &str,
+    test_file: &Path,
+) -> Option<&'i str> {
+    if owner.class_reexport_modules.is_empty()
+        || class != owner.class_path
+        || import.alias.is_empty()
+        || import.imported == "*"
+    {
+        return None;
+    }
+    // Only a plain `import pkg` binds the package itself. `from parent
+    // import pkg` takes whatever `parent/__init__.py` bound under the name,
+    // which this reader does not see.
+    if !import.source_module.is_empty() {
+        return None;
+    }
+    let bound = &import.imported;
+    (owner.class_reexport_modules.contains(bound)
+        && import_module_may_be_owners(import, owner, test_file)
+        && module_name_identifies_owner_for(owner, bound, test_file))
+    .then_some(import.alias.as_str())
 }
 
 /// Whether `body` calls `method` on a receiver statically bound to the owner class

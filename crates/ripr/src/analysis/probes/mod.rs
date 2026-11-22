@@ -9,9 +9,11 @@ mod ids;
 mod lexical;
 mod macro_definition;
 mod moved_item;
+mod old_condition;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;
+mod self_type_respelling;
 mod unchanged_code_line;
 mod verification_erased;
 
@@ -43,6 +45,7 @@ pub(crate) use ids::{
 };
 pub(crate) use lexical::{inline_const_assertion_lines, is_inline_const_assertion_line};
 pub(crate) use macro_definition::{verus_region_line_spans, verus_region_lines};
+pub(crate) use old_condition::{before_is_whole_line_over_condition, old_condition_of_whole_line};
 #[cfg(test)]
 pub(crate) use repo::probes_for_repo_file;
 pub(crate) use repo::probes_for_repo_file_seeded;
@@ -121,6 +124,8 @@ mod parameter_boundary_tests;
 mod record_field_boundary_tests;
 #[cfg(test)]
 mod replacement_identity_tests;
+#[cfg(test)]
+mod unsafe_interior_line_tests;
 #[cfg(test)]
 mod where_bound_boundary_tests;
 

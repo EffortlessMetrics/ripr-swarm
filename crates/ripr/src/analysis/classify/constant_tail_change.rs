@@ -49,7 +49,7 @@ use crate::analysis::diff::{ChangedFile, ModuleDeclarations};
 use crate::analysis::facts::FunctionSummary;
 use crate::analysis::rust_index::{RustIndex, find_file_facts};
 use crate::domain::{FlowSinkFact, FlowSinkKind, Probe, ProbeFamily};
-use ra_ap_syntax::{AstNode, SyntaxKind, ast};
+use ra_ap_syntax::{AstNode, SyntaxKind, ast, ast::HasArgList};
 
 /// Owners longer than this are not read.
 const MAX_OWNER_LINES: usize = 64;
@@ -162,6 +162,187 @@ pub(in crate::analysis) fn constant_tail_change(
         line: tail_line,
         text: new_tail.text,
     })
+}
+
+/// #14936: a deleted early-return guard whose returned constant is the
+/// value the candidate owner returns on every input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::analysis) struct DeletedGuardAgreement {
+    /// Raw text of the candidate owner's whole-body constant tail.
+    pub(in crate::analysis) tail: String,
+}
+
+impl DeletedGuardAgreement {
+    /// The discriminate-stage summary that replaces a credited oracle.
+    pub(in crate::analysis) fn summary(&self) -> String {
+        format!(
+            "Discriminator unconfirmed: the deleted early return gives the same value as the remaining tail `{}`, so a test whose input took the return sees the same value on both sides (deleted_guard_same_value)",
+            self.tail
+        )
+    }
+}
+
+/// #14936: whether the removed-only `return_value` probe `probe` is a
+/// deleted `if <cond> { return <constant>; }` guard whose constant equals
+/// what the candidate owner now returns for every input.
+///
+/// On the base side an input that takes the guard returns the guard's
+/// constant; on the candidate side every input returns the owner's
+/// whole-body constant tail. When the two fold to the same value, no
+/// assertion on the owner's return can tell the guard's deletion apart on the
+/// inputs it handled, so an exact pin is no discriminator for it.
+///
+/// This only ever withholds credit, so it reads more loosely than the
+/// admission in [`constant_tail_change`]: `Vec::new()` and `String::new()`
+/// read as empty values, and a possibly rebound `vec!` is not refused. It
+/// fails closed (keeps today's reading) on everything else:
+///
+/// - a probe that is not removed-only, or whose owner or file differ;
+/// - a candidate body that is not one constant tail (any statement, early
+///   return, binding or name);
+/// - a base-side item the shared owner
+///   [`crate::analysis::diff::verified_base_owner`] does not verify, or one
+///   it reports as gated;
+/// - a deleted line that is not the base body's first statement, not a
+///   guard with no `else` whose block is exactly one `return <constant>`,
+///   or not the removed line the probe stands on;
+/// - constants that do not fold to the same value.
+pub(in crate::analysis) fn deleted_guard_agreement(
+    probe: &Probe,
+    owner: &FunctionSummary,
+    changed: &ChangedFile,
+    index: &RustIndex,
+    modules: &ModuleDeclarations,
+) -> Option<DeletedGuardAgreement> {
+    if probe.family != ProbeFamily::ReturnValue
+        || probe.after.is_some()
+        || probe.owner.as_ref() != Some(&owner.id)
+        || !probe.location.file.ends_with(&owner.file)
+        || owner.end_line < owner.start_line
+        || owner.end_line - owner.start_line >= MAX_OWNER_LINES
+    {
+        return None;
+    }
+    let before = probe.before.as_deref()?;
+    if !before.contains("return") {
+        return None;
+    }
+    let facts = find_file_facts(index, &owner.file)?;
+    let new_source: &str = facts.source.as_ref();
+    let base = crate::analysis::diff::verified_base_owner(
+        new_source,
+        &owner.file,
+        changed,
+        modules,
+        &owner.name,
+        owner.start_line,
+        owner.end_line,
+    )?;
+    if base.cfg_gated {
+        return None;
+    }
+    let (tail_value, tail_text) = whole_body_agreement_tail(&base.new_text)?;
+    let (guard_value, guard_text, guard_offset) = first_statement_return_guard(&base.old_text)?;
+    let guard_line = base.old_first_line + base.old_text.get(..guard_offset)?.matches('\n').count();
+    // The guard is exactly the removed line this probe stands on.
+    // Compare trimmed text, not whitespace-collapsed text: a collapse would
+    // also merge whitespace inside string literals, so a second deleted guard
+    // returning `"a  b"` could borrow the first guard's `"a b"` agreement.
+    if guard_text.trim() != before.trim()
+        || !changed.removed_lines.iter().any(|line| {
+            line.line == guard_line
+                && line.new_side_line == probe.location.line
+                && line.text.trim() == before.trim()
+        })
+    {
+        return None;
+    }
+    (guard_value == tail_value).then_some(DeletedGuardAgreement { tail: tail_text })
+}
+
+/// The folded value and raw text of the tail of the one function in `text`
+/// when its body is that tail alone, with no attribute anywhere in it.
+fn whole_body_agreement_tail(text: &str) -> Option<(Const, String)> {
+    let parse = crate::analysis::syntax::parse_clean_source_file(text)?;
+    let mut items = parse.tree().syntax().children();
+    let function = ast::Fn::cast(items.next()?)?;
+    if items.next().is_some() {
+        return None;
+    }
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some()
+        || list
+            .syntax()
+            .descendants_with_tokens()
+            .any(|element| element.kind() == SyntaxKind::POUND)
+    {
+        return None;
+    }
+    let tail = list.tail_expr()?;
+    Some((
+        fold_agreement_value(&tail)?,
+        tail.syntax().text().to_string(),
+    ))
+}
+
+/// The folded returned constant, raw text and byte offset of the first
+/// statement of the one function in `text` when that statement is
+/// `if <cond> { return <constant>; }` with no `else`.
+fn first_statement_return_guard(text: &str) -> Option<(Const, String, usize)> {
+    let parse = crate::analysis::syntax::parse_clean_source_file(text)?;
+    let mut items = parse.tree().syntax().children();
+    let function = ast::Fn::cast(items.next()?)?;
+    if items.next().is_some() {
+        return None;
+    }
+    let list = function.body()?.stmt_list()?;
+    let first = list.statements().next()?;
+    let ast::Stmt::ExprStmt(statement) = first else {
+        return None;
+    };
+    let ast::Expr::IfExpr(guard) = statement.expr()? else {
+        return None;
+    };
+    if guard.else_branch().is_some() {
+        return None;
+    }
+    let block = guard.then_branch()?.stmt_list()?;
+    let mut statements = block.statements();
+    let returned = match (statements.next(), block.tail_expr()) {
+        (Some(ast::Stmt::ExprStmt(only)), None) if statements.next().is_none() => only.expr()?,
+        (None, Some(tail)) => tail,
+        _ => return None,
+    };
+    let ast::Expr::ReturnExpr(returned) = returned else {
+        return None;
+    };
+    let value = fold_agreement_value(&returned.expr()?)?;
+    let range = statement.syntax().text_range();
+    Some((
+        value,
+        statement.syntax().text().to_string(),
+        usize::from(range.start()),
+    ))
+}
+
+/// [`fold`], plus a bare `Vec::new()` or `String::new()` read as the empty
+/// value. Used only where a match withholds credit.
+fn fold_agreement_value(expr: &ast::Expr) -> Option<Const> {
+    if let ast::Expr::CallExpr(call) = expr
+        && call.arg_list()?.args().next().is_none()
+        && let Some(ast::Expr::PathExpr(path)) = call.expr()
+    {
+        return match compact(&path.syntax().text().to_string()).as_str() {
+            "Vec::new" => Some(Const::List {
+                vec: true,
+                elements: Vec::new(),
+            }),
+            "String::new" => Some(Const::Str(String::new())),
+            _ => None,
+        };
+    }
+    let mut uses_vec = false;
+    fold(expr, 0, &mut uses_vec)
 }
 
 /// `vec` plus the standard assertion macros. The binding scan reads the
@@ -750,6 +931,7 @@ mod tests {
             return Err("fixture premise: diff adds nothing".into());
         }
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:tail".into()),
             location: SourceLocation::new(path, line, 5),
             owner: Some(function.id.clone()),
@@ -1259,6 +1441,151 @@ mod tests {
             let new = format!("pub fn ratio() -> f64 {{\n    {new_tail}\n}}\n");
             assert_eq!(read(&old, &new, "ratio", new_tail)?, None, "{new_tail}");
         }
+        Ok(())
+    }
+
+    /// The #14936 reading for the removed-only `return_value` probe on the
+    /// deleted base line `deleted` of owner `owner`, with the diff
+    /// `old` → `new`.
+    fn read_deleted_guard(
+        old: &str,
+        new: &str,
+        owner: &str,
+        deleted: &str,
+    ) -> Result<Option<DeletedGuardAgreement>, String> {
+        let path = "src/lib.rs";
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new(path), new)?;
+        let changed_file =
+            crate::analysis::diff::parse_unified_diff(&unified_diff_at(path, old, new))
+                .into_iter()
+                .next()
+                .ok_or("fixture premise: diff did not parse")?;
+        let removed = changed_file
+            .removed_lines
+            .iter()
+            .find(|line| line.text.trim() == deleted)
+            .ok_or("fixture premise: deleted line is not a removed line")?;
+        let line = removed.new_side_line;
+        let function = facts
+            .functions
+            .iter()
+            .find(|function| {
+                function.name == owner && (function.start_line..=function.end_line).contains(&line)
+            })
+            .cloned()
+            .ok_or("fixture premise: owner not indexed")?;
+        let mut index = RustIndex::default();
+        index.insert_file(PathBuf::from(path), facts, true);
+        let modules = ModuleDeclarations::read(
+            std::iter::once((Path::new(path), new)),
+            std::iter::once((
+                &changed_file,
+                find_file_facts(&index, Path::new(path)).map(|facts| facts.data().source.as_ref()),
+            )),
+        );
+        let probe = Probe {
+            before_condition: None,
+            id: ProbeId("probe:src_lib_rs:guard".into()),
+            location: SourceLocation::new(path, line, 5),
+            owner: Some(function.id.clone()),
+            family: ProbeFamily::ReturnValue,
+            delta: DeltaKind::Value,
+            before: Some(deleted.into()),
+            after: None,
+            expression: deleted.into(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        Ok(deleted_guard_agreement(
+            &probe,
+            &function,
+            &changed_file,
+            &index,
+            &modules,
+        ))
+    }
+
+    const GUARD: &str = "if x == 0 { return Vec::new(); }";
+
+    #[test]
+    fn deleted_guard_returning_the_remaining_tail_value_agrees() -> Result<(), String> {
+        // #14936: `pick(0)` returns an empty vector on both sides.
+        let old = format!("pub fn pick(x: u32) -> Vec<u32> {{\n    {GUARD}\n    vec![]\n}}\n");
+        let new = "pub fn pick(x: u32) -> Vec<u32> {\n    vec![]\n}\n";
+        let agreement =
+            read_deleted_guard(&old, new, "pick", GUARD)?.ok_or("same-value guard refused")?;
+        assert_eq!(agreement.tail, "vec![]");
+        assert!(agreement.summary().contains("deleted_guard_same_value"));
+        // The tail the diff also changed (the fixture's `vec![9]` -> `vec![]`)
+        // is read on the candidate side, where the guard's inputs now go.
+        let old = format!("pub fn pick(x: u32) -> Vec<u32> {{\n    {GUARD}\n    vec![9]\n}}\n");
+        assert!(read_deleted_guard(&old, new, "pick", GUARD)?.is_some());
+        // Either spelling of the empty value on either side.
+        let old = "pub fn pick(x: u32) -> Vec<u32> {\n    if x == 0 { return vec![]; }\n    Vec::new()\n}\n";
+        let new = "pub fn pick(x: u32) -> Vec<u32> {\n    Vec::new()\n}\n";
+        assert!(read_deleted_guard(old, new, "pick", "if x == 0 { return vec![]; }")?.is_some());
+        let old = "pub fn flag(x: u32) -> bool {\n    if x == 0 { return !true; }\n    false\n}\n";
+        let new = "pub fn flag(x: u32) -> bool {\n    false\n}\n";
+        assert!(read_deleted_guard(old, new, "flag", "if x == 0 { return !true; }")?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_guard_whose_value_differs_or_is_unread_keeps_today() -> Result<(), String> {
+        let new_nine = "pub fn pick(x: u32) -> Vec<u32> {\n    vec![9]\n}\n";
+        // A remaining tail that differs: the guard's inputs now see `[9]`.
+        let old = format!("pub fn pick(x: u32) -> Vec<u32> {{\n    {GUARD}\n    vec![9]\n}}\n");
+        assert_eq!(read_deleted_guard(&old, new_nine, "pick", GUARD)?, None);
+        // A tail that names a parameter can differ on the guard's inputs.
+        let old = "pub fn pick(x: u32) -> u32 {\n    if x == 0 { return 0; }\n    x\n}\n";
+        let new = "pub fn pick(x: u32) -> u32 {\n    x\n}\n";
+        assert_eq!(
+            read_deleted_guard(old, new, "pick", "if x == 0 { return 0; }")?,
+            None
+        );
+        // A candidate body with a statement before its tail.
+        let old = "pub fn pick(x: u32) -> u32 {\n    if x == 0 { return 0; }\n    if x == 1 { return 1; }\n    0\n}\n";
+        let new = "pub fn pick(x: u32) -> u32 {\n    if x == 1 { return 1; }\n    0\n}\n";
+        assert_eq!(
+            read_deleted_guard(old, new, "pick", "if x == 0 { return 0; }")?,
+            None
+        );
+        // A guard that is not the base body's first statement.
+        let old = "pub fn pick(x: u32) -> u32 {\n    let _y = x;\n    if x == 0 { return 0; }\n    0\n}\n";
+        let new = "pub fn pick(x: u32) -> u32 {\n    let _y = x;\n    0\n}\n";
+        assert_eq!(
+            read_deleted_guard(old, new, "pick", "if x == 0 { return 0; }")?,
+            None
+        );
+        // A guard with an `else`, or a returned value the folder cannot read.
+        let old = "pub fn pick(x: u32) -> u32 {\n    if x == 0 { return 0; } else {}\n    0\n}\n";
+        let new = "pub fn pick(x: u32) -> u32 {\n    0\n}\n";
+        assert_eq!(
+            read_deleted_guard(old, new, "pick", "if x == 0 { return 0; } else {}")?,
+            None
+        );
+        let old = "pub fn pick(x: u32) -> u32 {\n    if x == 0 { return zero(); }\n    0\n}\n";
+        assert_eq!(
+            read_deleted_guard(old, new, "pick", "if x == 0 { return zero(); }")?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_second_deleted_guard_differing_only_inside_a_string_borrows_no_agreement()
+    -> Result<(), String> {
+        // Both guards are deleted and share one candidate-side line. Only the
+        // first returns the tail's value; the second differs only by the
+        // whitespace inside its string literal.
+        let first = "if x == \"a b\" { return \"a b\"; }";
+        let second = "if x == \"a  b\" { return \"a  b\"; }";
+        let old = format!(
+            "pub fn pick(x: &str) -> &'static str {{\n    {first}\n    {second}\n    \"a b\"\n}}\n"
+        );
+        let new = "pub fn pick(x: &str) -> &'static str {\n    \"a b\"\n}\n";
+        assert!(read_deleted_guard(&old, new, "pick", first)?.is_some());
+        assert_eq!(read_deleted_guard(&old, new, "pick", second)?, None);
         Ok(())
     }
 }

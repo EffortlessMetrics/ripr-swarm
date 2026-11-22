@@ -9,7 +9,7 @@ Changed file(s) by language: python = 1
 
 Analysis outcome: limitations below (analysis incomplete)
   Zero findings is not a clean result because the analyzed scope is incomplete.
-  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).
+  Not analyzed: 1 changed Python file, a language ripr is not set up to analyze (see the note below).
 
 No findings reported: the analysis was incomplete, so this is not a clean result.
 
@@ -18,4 +18,4 @@ Note: this diff contains 1 Python file. The Python adapter is preview and not en
 To enable, add to ripr.toml:
 
 [languages]
-enabled = ["python"]
+enabled = ["rust", "python"]

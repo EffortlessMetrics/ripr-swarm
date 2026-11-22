@@ -1,5 +1,32 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.189 for std-rooted imports beside generated tests (#12876)
+
+A macro-generated test beside an import of std's own item under an exempt
+macro name (`use std::panic;`) keeps its invocation scopes, which bumps the
+analyzer cache schema to 1.189 (1.188 is left for #13041). Move the portable
+unchanged-attempt snapshots to 1.189, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
+## Pending — corpus cache generation 1.187 for attribute-macro generated tests (#12857)
+
+A macro-generated test that carries an unrecognised attribute macro takes no
+invocation scopes, which bumps the analyzer cache schema to 1.187. Move the
+portable unchanged-attempt snapshots to 1.187, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
+## Pending — explicit Cargo harness path identity (#15846)
+
+Classified cache generation 1.185 binds a harness flag to the selected Cargo
+target. The portable unchanged-attempt pair and its verification and receipt
+commitments were refreshed. The pair retains its original seam classifications.
+
 ## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 
 A macro-generated test that sits beside a rebound std macro name takes no

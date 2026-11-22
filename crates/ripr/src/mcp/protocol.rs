@@ -76,7 +76,7 @@ pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status`, then 
 
 const STATUS_TOOL_DESCRIPTION: &str = "Call this first. Reports repository-root discovery (ready or unavailable, with why), authority facts (source edit, verification, mutation and model provider are all none) and session state: attempt (no_snapshot, in_flight, completed, failed), last completed snapshot, last-known-good, freshness and config profile. `workspace_state: ready` means only that a root was found, not that analysis ran or found nothing. No gap evidence: call ripr_refresh to analyze. It never edits source, runs tests or mutation, or executes verification commands.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (retry later), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Analyze the diff against the default branch (or `base`) through shared check authority and store the completed snapshot. By default, like `ripr check`: saved tracked edits if any, else committed; `source: \"committed\"`/`source: \"worktree\"` forces one (see INSTRUCTIONS). Cards require established producer custody; otherwise withheld with the cause. Readiness depends on per-item gates. Call before reading evidence and again after edits. Blocks until completed (snapshot identity), failed (isError with code and recovery; last-known-good kept), in_flight (poll status), workspace_unavailable (restart with `--root <repository>`) or unsupported_profile. Can take minutes; ripr_workspace_status still answers. After a timeout do not re-send: poll status. An unresolvable default branch fails with analysis_failed naming candidate branches: retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes; a superseded attempt is never committed. It never edits source, executes verification or mutation commands, or prepares a repair.";
 
 const LIST_GAPS_TOOL_DESCRIPTION: &str = "After ripr_refresh, return the deterministic bounded working set: counts, omitted identities with reasons, one summary per item. Same selection as the CLI and editor; never truncates silently, infers no business risk. Without class, already-gripped exposed items are omitted and counted in exposed_omitted. Filters narrow before paging; follow page.next_offset. Failures: no_snapshot, stale_snapshot, workspace_unavailable, invalid_argument, result_too_large. Detail: ripr_get_gap, or ripr_get_repair_card to repair.";
 
@@ -645,7 +645,12 @@ fn gap_brief_text(document: &Value, item: &Value) -> String {
         identity(document.get("snapshot_id")),
     ));
     let changed = item.get("changed_behavior");
-    let before = changed.and_then(|changed| changed.get("before"));
+    // #15420: the brief pairs the old condition with the new one when the
+    // producer read it; `before` (the whole old line) stays in the full JSON.
+    let before = changed
+        .and_then(|changed| changed.get("before_condition"))
+        .filter(|condition| condition.is_string())
+        .or_else(|| changed.and_then(|changed| changed.get("before")));
     let after = changed.and_then(|changed| changed.get("after"));
     let mut changed_line = match (
         before.and_then(Value::as_str),
@@ -2849,6 +2854,23 @@ mod tests {
         if brief_text_of(arm)?.contains("arm result") {
             return Err("a null arm result must not be rendered".into());
         }
+        // #15420: an old condition, when the producer reads one, replaces
+        // the whole old line on the brief's changed line; a non-string one
+        // is ignored.
+        let mut whole = brief_gap_document();
+        whole["item"]["changed_behavior"]["before"] =
+            json!("if total >= 100 { total - 10 } else { total }");
+        whole["item"]["changed_behavior"]["after"] = json!("total > 200");
+        whole["item"]["changed_behavior"]["before_condition"] = json!("total >= 100");
+        if !brief_text_of(whole.clone())?.contains("changed: total >= 100 -> total > 200") {
+            return Err("an old condition in the document must reach the brief".into());
+        }
+        whole["item"]["changed_behavior"]["before_condition"] = Value::Null;
+        if !brief_text_of(whole)?
+            .contains("changed: if total >= 100 { total - 10 } else { total } -> total > 200")
+        {
+            return Err("without an old condition the brief keeps the old line".into());
+        }
         Ok(())
     }
 
@@ -3171,7 +3193,7 @@ mod tests {
         // inventory's 580 bytes.
         let mut budgets = std::collections::BTreeMap::from([
             ("tool ripr_workspace_status", 555),
-            ("tool ripr_refresh", 1085),
+            ("tool ripr_refresh", 1185),
             ("tool ripr_list_gaps", 530),
             ("tool ripr_get_gap", 490),
             ("tool ripr_get_top_limitation", 440),
@@ -3260,8 +3282,93 @@ mod tests {
         // well as the ceilings. #14461: the instructions state each
         // route once and safety boundaries the annotations and instructions
         // already carry are not repeated per read tool.
-        assert_eq!(total, 10673);
+        assert_eq!(total, 10773);
         Ok(())
+    }
+
+    /// #14864: every `description` string inside a tool's `inputSchema`
+    /// (argument descriptions, including nested ones) rides each `tools/list`
+    /// like the tool description itself, so it is fixed per-session context.
+    /// Enumerate the published schemas rather than a parallel list.
+    fn argument_description_bytes(tools: &Value) -> Result<usize, String> {
+        fn walk(value: &Value, total: &mut usize) {
+            match value {
+                Value::Object(map) => {
+                    for (key, child) in map {
+                        match child {
+                            Value::String(text) if key == "description" => *total += text.len(),
+                            _ => walk(child, total),
+                        }
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| walk(item, total)),
+                _ => {}
+            }
+        }
+        let rows = tools["tools"].as_array().ok_or("tool catalog lost tools")?;
+        let mut total = 0;
+        for row in rows {
+            let name = row["name"].as_str().ok_or("unnamed tool")?;
+            let schema = row
+                .get("inputSchema")
+                .ok_or_else(|| format!("tool {name} lost its inputSchema"))?;
+            walk(schema, &mut total);
+        }
+        if total > 1700 {
+            return Err(format!(
+                "tool argument descriptions total {total} UTF-8 bytes, over 1700"
+            ));
+        }
+        Ok(total)
+    }
+
+    #[test]
+    fn argument_description_bytes_keep_session_context_lean() -> Result<(), String> {
+        // Reconciled on main 332729ac after #14475 shortened five argument
+        // descriptions (ripr_list_gaps 721, ripr_refresh 484, the rest 410).
+        // Slim only drops outputSchema, so both modes serve the same input
+        // schemas; pin both so a mode-specific change cannot slip past.
+        for mode in [ToolsListMode::Slim, ToolsListMode::Full] {
+            let total = argument_description_bytes(&tools_list_result_for(mode))?;
+            assert_eq!(
+                total, 1615,
+                "tool argument descriptions total for {mode:?} moved; reconcile the pin"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn argument_description_budget_rejects_one_lengthened_argument() -> Result<(), String> {
+        let mut tools = tools_list_result_for(ToolsListMode::Slim);
+        let limit = tools["tools"]
+            .as_array_mut()
+            .and_then(|rows| rows.iter_mut().find(|row| row["name"] == "ripr_list_gaps"))
+            .and_then(|row| row.pointer_mut("/inputSchema/properties/limit/description"))
+            .ok_or("ripr_list_gaps lost its limit argument description")?;
+        let grown = format!("{} More words.", limit.as_str().ok_or("limit description")?);
+        *limit = json!(grown);
+        let total = argument_description_bytes(&tools)?;
+        // " More words." is 12 bytes: the total moves by exactly that, so a
+        // walker that skipped or double-counted the argument would fail here.
+        if total != 1615 + 12 {
+            return Err(format!(
+                "a lengthened argument description moved the total to {total}, not 1627"
+            ));
+        }
+        // Growth past the ceiling is refused with the named total.
+        let padded = format!("{grown}{}", "a".repeat(200));
+        if let Some(limit) = tools["tools"]
+            .as_array_mut()
+            .and_then(|rows| rows.iter_mut().find(|row| row["name"] == "ripr_list_gaps"))
+            .and_then(|row| row.pointer_mut("/inputSchema/properties/limit/description"))
+        {
+            *limit = json!(padded);
+        }
+        match argument_description_bytes(&tools) {
+            Err(error) if error.contains("tool argument descriptions total") => Ok(()),
+            other => Err(format!("ceiling growth escaped its diagnosis: {other:?}")),
+        }
     }
 
     #[test]
@@ -3445,6 +3552,9 @@ mod tests {
                     "omitting `base` returns to the default branch",
                     "A `base` starting with `-` or naming no commit fails closed",
                     "never edits source, executes verification or mutation commands",
+                    // #15983: what an agent must know before a client-side
+                    // timeout: status answers, and a repeat is not the fix.
+                    "Can take minutes; ripr_workspace_status still answers. After a timeout do not re-send: poll status.",
                     "cancelled attempt still commits as a completed snapshot when it finishes",
                     "a superseded attempt is never committed",
                     "workspace_unavailable",

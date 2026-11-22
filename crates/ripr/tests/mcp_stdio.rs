@@ -985,10 +985,12 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        // Every null refusal says null is the problem and that the fix is to
+        // leave the field out.
         let message_matches = if *kind == "integer" {
             message.starts_with(expected_message.as_str()) && message.ends_with(", not null")
         } else {
-            message == expected_message
+            message == format!("{expected_message}, not null; omit {field} to use its default")
         };
         require_invalid_argument(rejected, &format!("{tool}.{field} null"))?;
         if !message_matches || rejected.get("id") != Some(&json!(format!("{index}-null"))) {
@@ -3520,6 +3522,186 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
     Ok(())
 }
 
+/// #15983 over real stdio: while one `ripr_refresh` runs, workspace status
+/// (tool and resource) and the catalog answer at once, a repeated refresh is
+/// refused `analysis_in_flight` without starting a second analysis, and a
+/// snapshot read written during the refresh is answered after it, bound to the
+/// snapshot it committed, ahead of the status call written behind it.
+///
+/// The refresh is held inside its own `git diff` by a PATH shim until every
+/// during-refresh reply has been read, so each reply below was produced while
+/// the attempt was running. Before the fix none arrives until the release.
+#[cfg(unix)]
+#[test]
+fn running_refresh_answers_status_and_orders_snapshot_reads() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let timeout = Duration::from_secs(30);
+    let root = install_gap_filter_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let control = root.with_extension("refresh-hold");
+    let _control_guard = FixtureGuard {
+        root: control.clone(),
+    };
+    std::fs::create_dir_all(&control).map_err(|error| error.to_string())?;
+    let path = std::env::var_os("PATH").ok_or("PATH unavailable")?;
+    let git = std::env::split_paths(&path)
+        .map(|directory| directory.join("git"))
+        .find(|candidate| candidate.is_file())
+        .ok_or("git executable unavailable")?;
+    let git = git
+        .to_str()
+        .filter(|text| !text.contains('\''))
+        .ok_or("git executable cannot be quoted in the shim")?;
+    // Only the first `git diff` after `armed` exists is held, so discovery,
+    // startup status and the default-source probe are never the held call.
+    // The loop also ends when the control directory is removed, so a failed
+    // run leaves no polling shim behind.
+    let shim = format!(
+        "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = diff ] && [ -e \"$RIPR_REFRESH_HOLD/armed\" ] && mkdir \"$RIPR_REFRESH_HOLD/held\" 2>/dev/null; then\n    while [ -d \"$RIPR_REFRESH_HOLD\" ] && [ ! -e \"$RIPR_REFRESH_HOLD/release\" ]; do sleep 0.05; done\n  fi\ndone\nexec '{git}' \"$@\"\n"
+    );
+    std::fs::write(control.join("git"), shim).map_err(|error| error.to_string())?;
+    std::fs::set_permissions(control.join("git"), std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+    let shimmed_path =
+        std::env::join_paths(std::iter::once(control.clone()).chain(std::env::split_paths(&path)))
+            .map_err(|error| error.to_string())?;
+    let shimmed_path = shimmed_path.to_str().ok_or("PATH is not UTF-8")?;
+    let control_text = control.to_str().ok_or("control path is not UTF-8")?;
+    let mut session = SequentialStdio::spawn_with_env(
+        &root,
+        &[
+            ("PATH", shimmed_path),
+            ("RIPR_REFRESH_HOLD", control_text),
+            // A known git deadline longer than the hold, whatever is ambient.
+            ("RIPR_GIT_TIMEOUT", "300"),
+        ],
+    )?;
+    let discovery = session.call("discover-hold", "server/discover", json!({}), timeout)?;
+    if discovery.get("result").is_none() {
+        return Err(format!("discovery failed: {discovery}"));
+    }
+    std::fs::write(control.join("armed"), b"").map_err(|error| error.to_string())?;
+    let tool_line = |id: &str, name: &str, arguments: Value| {
+        line(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments, "_meta": current_meta() }
+        }))
+    };
+    session.send_raw(&tool_line(
+        "held-refresh",
+        "ripr_refresh",
+        json!({ "source": "committed" }),
+    )?)?;
+    let deadline = Instant::now() + timeout;
+    while !control.join("held").is_dir() {
+        if Instant::now() > deadline {
+            return Err("the refresh never reached its held git diff".into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let status = session.call_tool("status-during", "ripr_workspace_status", json!({}), timeout)?;
+    let status = structured_tool_success(&status, "status during refresh")?;
+    if status.pointer("/session/attempt_state") != Some(&json!("in_flight")) {
+        return Err(format!(
+            "status during a refresh is not in_flight: {status}"
+        ));
+    }
+    let resource = session.call(
+        "resource-during",
+        "resources/read",
+        json!({ "uri": "ripr://workspace/status" }),
+        timeout,
+    )?;
+    if resource.pointer("/result/contents/0/uri") != Some(&json!("ripr://workspace/status")) {
+        return Err(format!(
+            "status resource was not answered during a refresh: {resource}"
+        ));
+    }
+    // The one-trailing-slash spelling the server also serves is an observer.
+    let slashed = session.call(
+        "resource-slash-during",
+        "resources/read",
+        json!({ "uri": "ripr://workspace/status/" }),
+        timeout,
+    )?;
+    if slashed.pointer("/result/contents/0/uri").is_none() {
+        return Err(format!(
+            "the trailing-slash status resource was not answered during a refresh: {slashed}"
+        ));
+    }
+    let catalog = session.call("catalog-during", "tools/list", json!({}), timeout)?;
+    if catalog.pointer("/result/tools/0/name").is_none() {
+        return Err(format!(
+            "tools/list was not answered during a refresh: {catalog}"
+        ));
+    }
+    let repeated = session.call_tool(
+        "refresh-repeated",
+        "ripr_refresh",
+        json!({ "source": "committed" }),
+        timeout,
+    )?;
+    if repeated.pointer("/result/isError") != Some(&json!(true))
+        || repeated.pointer("/result/structuredContent/failure/code")
+            != Some(&json!("analysis_in_flight"))
+    {
+        return Err(format!(
+            "a repeated refresh was not refused in flight: {repeated}"
+        ));
+    }
+
+    // A snapshot read waits for the refresh, and nothing behind it is read.
+    session.send_raw(&tool_line("list-behind", "ripr_list_gaps", json!({}))?)?;
+    session.send_raw(&tool_line(
+        "status-behind",
+        "ripr_workspace_status",
+        json!({}),
+    )?)?;
+    if let Ok(early) = session.next_reply(Duration::from_millis(500)) {
+        return Err(format!(
+            "a reply arrived while the refresh was still held: {early}"
+        ));
+    }
+    std::fs::write(control.join("release"), b"").map_err(|error| error.to_string())?;
+
+    let refresh = session.next_reply(Duration::from_mins(3))?;
+    if refresh.get("id") != Some(&json!("held-refresh")) {
+        return Err(format!(
+            "the refresh reply was not the first after release: {refresh}"
+        ));
+    }
+    let refresh = structured_tool_success(&refresh, "held refresh")?;
+    let snapshot = refresh
+        .pointer("/snapshot/snapshot_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("the held refresh committed no snapshot: {refresh}"))?
+        .to_owned();
+    let list = session.next_reply(timeout)?;
+    if list.get("id") != Some(&json!("list-behind")) {
+        return Err(format!("the held read was not answered next: {list}"));
+    }
+    let list = structured_tool_success(&list, "list behind refresh")?;
+    if list.pointer("/snapshot_id") != Some(&json!(snapshot)) {
+        return Err(format!("the held read did not bind {snapshot}: {list}"));
+    }
+    let after = session.next_reply(timeout)?;
+    if after.get("id") != Some(&json!("status-behind")) {
+        return Err(format!(
+            "the status behind the held read was not last: {after}"
+        ));
+    }
+    let after = structured_tool_success(&after, "status behind refresh")?;
+    if after.pointer("/session/attempt_state") != Some(&json!("completed"))
+        || after.pointer("/session/last_completed_snapshot/snapshot_id") != Some(&json!(snapshot))
+    {
+        return Err(format!(
+            "status after the refresh is not completed on {snapshot}: {after}"
+        ));
+    }
+    Ok(())
+}
+
 /// A successful raw-stdio discriminator, including actual continuation replay.
 /// Dropping only the forwarded filter after validation must return excluded
 /// subjects and fail these literal ID/count oracles. No synthetic snapshot is
@@ -3689,6 +3871,50 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
                 "complete filtered page must close its window: {document}"
             ));
         }
+    }
+    // An agent usually holds the absolute path its editor gave it. Under the
+    // root it narrows exactly as the relative spelling does and the echo
+    // names the relative form the server applied; outside the root it is
+    // refused instead of answering with an empty page that reads like "no
+    // gaps in that file".
+    let canonical_root = std::fs::canonicalize(&root).map_err(|error| error.to_string())?;
+    let absolute = canonical_root.join("src").join("pricing.rs");
+    let absolute = absolute.to_str().ok_or("fixture root is not UTF-8")?;
+    let reply = session.call_tool(
+        "filtered-absolute",
+        "ripr_list_gaps",
+        json!({"file": absolute}),
+        timeout,
+    )?;
+    let document = structured_tool_success(&reply, "absolute file filter")?;
+    check_filtered_gap_page(&document, &[DISCOUNT, FEE], selected, 2, snapshot_id)?;
+    if document["filters"]["file"] != json!("src/pricing.rs") {
+        return Err(format!(
+            "absolute filter must echo the applied relative path: {document}"
+        ));
+    }
+    let outside = canonical_root
+        .parent()
+        .ok_or("fixture root has no parent")?
+        .join("ripr-mcp-outside-root")
+        .join("src")
+        .join("pricing.rs");
+    let outside = outside.to_str().ok_or("fixture root is not UTF-8")?;
+    let reply = session.call_tool(
+        "filtered-outside",
+        "ripr_list_gaps",
+        json!({"file": outside}),
+        timeout,
+    )?;
+    require_invalid_argument(&reply, "absolute file filter outside the root")?;
+    let detail = reply
+        .pointer("/result/structuredContent/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !detail.contains("relative to the repository root") || detail.contains(outside) {
+        return Err(format!(
+            "outside-root refusal must name the relative form and echo no host path: {reply}"
+        ));
     }
     let first_args = json!({"file":"src/pricing.rs", "class":"exposed", "language":"rust", "repair_ready":true, "limit":1, "snapshot_id":snapshot_id});
     let first = session.call_tool("filtered-first", "ripr_list_gaps", first_args, timeout)?;
@@ -7197,6 +7423,46 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         return Err(format!("explicit committed must equal omitted: {explicit}"));
     }
 
+    // #13096 worktree leg over the real producer and wire: before any saved
+    // edit, a worktree refresh captures an empty saved diff. Its primary
+    // snapshot, list outcome, and status summary must say `not_analyzed`,
+    // while the committed-specific `empty_scope_hint` stays absent.
+    let clean_worktree = refresh(&mut session, "wt-clean", json!({ "source": "worktree" }))?;
+    if clean_worktree.pointer("/snapshot/outcome_kind") != Some(&json!("no_scope"))
+        || clean_worktree.pointer("/snapshot/source") != Some(&json!("worktree"))
+        || clean_worktree.pointer("/snapshot/analysis_status") != Some(&json!("not_analyzed"))
+        || clean_worktree.pointer("/snapshot/clean") != Some(&json!(false))
+        || clean_worktree.get("empty_scope_hint").is_some()
+    {
+        return Err(format!(
+            "clean worktree refresh must disclose its empty scope without the committed hint: {clean_worktree}"
+        ));
+    }
+    let clean_listed = session.call_tool("list-wt-clean", "ripr_list_gaps", json!({}), TIMEOUT)?;
+    let clean_listed = structured_tool_success(&clean_listed, "ripr_list_gaps")?;
+    if clean_listed.pointer("/outcome/analysis_status") != Some(&json!("not_analyzed"))
+        || clean_listed.pointer("/outcome/clean") != Some(&json!(false))
+    {
+        return Err(format!(
+            "clean worktree list must say not_analyzed on the same snapshot: {clean_listed}"
+        ));
+    }
+    let clean_status = session.call_tool(
+        "status-wt-clean",
+        "ripr_workspace_status",
+        json!({}),
+        TIMEOUT,
+    )?;
+    let clean_status = structured_tool_success(&clean_status, "ripr_workspace_status")?;
+    if clean_status.pointer("/session/last_completed_snapshot/analysis_status")
+        != Some(&json!("not_analyzed"))
+        || clean_status.pointer("/session/last_completed_snapshot/clean") != Some(&json!(false))
+    {
+        return Err(format!(
+            "clean worktree status must say not_analyzed on the same snapshot: {clean_status}"
+        ));
+    }
+
     // Unstaged-only saved edit.
     std::fs::write(
         &source,
@@ -8120,6 +8386,222 @@ fn brief_get_gap_text_projects_the_served_document_over_stdio() -> Result<(), St
             "brief get_gap text must be a projection under half the JSON copy: {} vs {}",
             brief_text.len(),
             default_text.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Committed inline-test fixture: `main` holds the old comparison, the
+/// checked-out `journey` branch changes it, and the production file owns the
+/// only (weak) tests.
+fn install_inline_fixture(
+    label: &str,
+    base_source: &str,
+    changed_source: &str,
+) -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-{label}-{}-{stamp}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-inline-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(".gitignore"), "target/\n").map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), base_source).map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "base")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])?;
+    std::fs::write(root.join("src/lib.rs"), changed_source).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "change")?;
+    Ok(root)
+}
+
+const ERRVAR_BASE: &str = "#[derive(Debug, PartialEq)]\npub enum E { Empty, TooLong }\npub fn check(s: &str) -> Result<usize, E> {\n    if s.is_empty() { return Err(E::Empty); }\n    Ok(s.len())\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn empty_is_err() { assert!(check(\"\").is_err()); }\n    #[test]\n    fn ok_len() { assert_eq!(check(\"abc\"), Ok(3)); }\n}\n";
+
+const BOUNDARY_BASE: &str = "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn far_above() { assert!(is_adult(50)); }\n    #[test]\n    fn far_below() { assert!(!is_adult(3)); }\n}\n";
+
+/// One item's readiness as every MCP surface reports it.
+struct ItemReadiness {
+    list_ready: bool,
+    list_ineligibility: Value,
+    prepare: Value,
+    card_reply: Value,
+}
+
+fn item_readiness_over_stdio(root: &Path, id_fragment: &str) -> Result<ItemReadiness, String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let mut session = SequentialStdio::spawn(root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let item = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.pointer("/canonical_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| id.contains(id_fragment))
+            })
+        })
+        .ok_or_else(|| format!("no item names {id_fragment}: {list}"))?
+        .clone();
+    let canonical_id = item
+        .pointer("/canonical_id")
+        .and_then(Value::as_str)
+        .ok_or("item omitted canonical_id")?
+        .to_string();
+    let prepare = session.call_tool(
+        "prepare",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
+    let card_reply = session.call_tool(
+        "card",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    Ok(ItemReadiness {
+        list_ready: item
+            .pointer("/repair_packet_ready")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        list_ineligibility: item
+            .pointer("/repair_ineligibility")
+            .cloned()
+            .unwrap_or(Value::Null),
+        prepare,
+        card_reply,
+    })
+}
+
+/// The card's `readiness.repair_ready` when it served a card, `None` when it
+/// refused (a refusal never claims ready).
+fn served_card_repair_ready(reply: &Value) -> Option<bool> {
+    let result = reply.get("result")?;
+    if result.pointer("/isError").and_then(Value::as_bool) == Some(true) {
+        return None;
+    }
+    result
+        .pointer("/structuredContent/card/readiness/repair_ready")
+        .and_then(Value::as_bool)
+}
+
+/// An `error_variant` gap whose `probe:` finding id does not re-mint from the
+/// seam must still resolve through the readable gap id, so list, prepare and
+/// the card agree it is ready, exactly as `ripr repair` starts it.
+#[test]
+fn error_variant_item_readiness_agrees_across_list_prepare_and_card() -> Result<(), String> {
+    let changed = ERRVAR_BASE.replace("Err(E::Empty)", "Err(E::TooLong)");
+    let root = install_inline_fixture("errvar-ready", ERRVAR_BASE, &changed)?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let state = item_readiness_over_stdio(&root, "err_e_toolong")?;
+    let prepare_ready = state.prepare.pointer("/repair_packet_ready") == Some(&json!(true));
+    let card_ready = served_card_repair_ready(&state.card_reply) == Some(true);
+    // The card's seam is the Err-variant seam of this very item, not another
+    // finding's seam the gap id happens to name.
+    let card = state
+        .card_reply
+        .pointer("/result/structuredContent/card")
+        .ok_or("card missing")?;
+    let subject_gap = card
+        .pointer("/subject/canonical_gap_id")
+        .and_then(Value::as_str);
+    let fix_file = state
+        .prepare
+        .pointer("/fix_site/file")
+        .and_then(Value::as_str);
+    if subject_gap.is_none_or(|id| !id.contains("err_e_toolong"))
+        || card
+            .pointer("/subject/seam_id")
+            .and_then(Value::as_str)
+            .is_none()
+        || fix_file != Some("src/lib.rs")
+    {
+        return Err(format!(
+            "card/prepare name another subject: gap {subject_gap:?} fix {fix_file:?}: {card}"
+        ));
+    }
+    if !state.list_ready || !prepare_ready || !card_ready {
+        return Err(format!(
+            "list_ready={} (ineligibility {}) prepare_ready={prepare_ready} card_ready={card_ready}: {}",
+            state.list_ready, state.list_ineligibility, state.prepare
+        ));
+    }
+    Ok(())
+}
+
+/// An uncommitted edit of the inline test target holds the repair start: list
+/// and prepare refuse, the card never claims ready, and the next step names
+/// the commit (#11397).
+#[test]
+fn uncommitted_inline_target_refuses_every_surface_and_names_the_commit() -> Result<(), String> {
+    let changed = BOUNDARY_BASE.replace("age > 18", "age >= 18");
+    let root = install_inline_fixture("inline-held", BOUNDARY_BASE, &changed)?;
+    let _guard = FixtureGuard { root: root.clone() };
+    // An uncommitted edit of the production file that owns the inline tests;
+    // it adds no boundary pin, so the gap stays open.
+    let edited = changed.replace(
+        "    #[test]\n    fn far_below()",
+        "    #[test]\n    fn unrelated_note() { assert!(is_adult(99)); }\n    #[test]\n    fn far_below()",
+    );
+    std::fs::write(root.join("src/lib.rs"), edited).map_err(|error| error.to_string())?;
+    let state = item_readiness_over_stdio(&root, "is_adult")?;
+    if state.list_ready
+        || state.list_ineligibility != json!("seam_gate_refused")
+        || state.prepare.pointer("/repair_packet_ready") != Some(&json!(false))
+    {
+        return Err(format!(
+            "the held item must be refused by list and prepare: {} {}",
+            state.list_ineligibility, state.prepare
+        ));
+    }
+    if let Some(ready) = served_card_repair_ready(&state.card_reply) {
+        return Err(format!(
+            "the card served repair_ready={ready} for a seam the gate refuses: {}",
+            state.card_reply
+        ));
+    }
+    let next = state
+        .prepare
+        .pointer("/next")
+        .ok_or("prepare omitted next")?;
+    let detail = next
+        .pointer("/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if next.pointer("/kind") != Some(&json!("commit_then_refresh"))
+        || !detail.contains("commit or stash `src/lib.rs`")
+        || next.pointer("/mcp/tool") != Some(&json!("ripr_refresh"))
+        || !next
+            .pointer("/after_editing_tests")
+            .is_some_and(Value::is_null)
+    {
+        return Err(format!(
+            "next must name the commit, not a recheck loop: {next}"
+        ));
+    }
+    let card_text = state.card_reply.to_string();
+    if !card_text.contains("commit or stash") {
+        return Err(format!(
+            "card refusal must name the commit step: {card_text}"
         ));
     }
     Ok(())

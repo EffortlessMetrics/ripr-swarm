@@ -181,6 +181,7 @@ mod tests {
             id: "probe:pkg_mod_py:7:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pkg_mod_py:7:predicate".to_string()),
                 location: SourceLocation::new("pkg/mod.py", 7, 1),
                 owner: None,

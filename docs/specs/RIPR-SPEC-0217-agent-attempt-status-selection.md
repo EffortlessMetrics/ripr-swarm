@@ -165,6 +165,11 @@ receipt strength, and currentness as separate facts:
   blocked-outside and eligible-outside hints, which would argue with
   `ripr check`'s "nothing to repair". A gripped spot beside an open finding on
   the change is counted as a different check, never cited as its verdict.
+  "Already gripped" comes from tests anywhere in the repository, but
+  `ripr check` judges the changed line, so a changed gripped spot that the
+  same default check reads as anything but exposed is reopened with check's
+  reading and a by-hand next step (#15278); when check cannot run, those
+  spots are opened with a reason that makes no claim about check.
   The closing next step follows the same scope (#11111 burn-down): when every
   changed spot is already checked it says there is nothing to do for the
   change; when the changed Rust lines touch no seam the refusal leads with
@@ -184,10 +189,13 @@ receipt strength, and currentness as separate facts:
 - That diff's base is inferred the way a bare `ripr check` infers it, through
   the shared base resolver (#11246), so a change committed on a branch scopes
   repair like the same change left uncommitted (already true before #11246;
-  pinned by regression tests). Inference only narrows: when
-  no base resolves, or nothing differs from the inferred base (for example on
-  the default branch itself), the selection stays unscoped and the refusal
-  says first that ripr could not tell which lines changed. `--base REF`, as on
+  pinned by regression tests). On a clean checkout of the default branch,
+  where bare human `ripr check` analyzes the last commit, repair reads that
+  same range; the decision is check's own, so repair rescopes exactly when
+  check does (#16082). Inference only narrows: when no base resolves, or
+  nothing differs from the inferred base and check does not rescope (for
+  example a root commit on the default branch), the selection stays unscoped
+  and the refusal says first that ripr could not tell which lines changed. `--base REF`, as on
   `ripr check`, names the base explicitly and wins over inference; it is
   refused together with an item, which is never scoped. The note leads a
   refusal (including the zero-seam one). An unscoped menu or single start

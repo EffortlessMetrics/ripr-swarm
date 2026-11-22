@@ -1,0 +1,8 @@
+diff --git a/src/log.js b/src/log.js
+--- a/src/log.js
++++ b/src/log.js
+@@ -1,3 +1,3 @@
+ export function logLine(buf, msg) {
+-  buf.push(msg);
++  buf.push(msg.toUpperCase());
+ }

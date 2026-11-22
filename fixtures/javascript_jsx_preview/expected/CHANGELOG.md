@@ -827,3 +827,26 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — javascript_jsx_preview (40)
+
+Reason:
+RIPR-SPEC-0243: component owners with only a heuristic test link advise rendering the component (#15295)
+
+Command:
+`cargo xtask goldens bless javascript_jsx_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — javascript_jsx_preview (41)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless javascript_jsx_preview --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -1,0 +1,4 @@
+[package]
+name = "predicate_constant_of_other_function"
+version = "0.1.0"
+edition = "2024"

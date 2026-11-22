@@ -94,6 +94,9 @@ fn entry_names(owner_source: &str, owner: &str) -> Vec<String> {
             candidate
                 .module_entries
                 .into_iter()
+                // Factories of the owner's class are another fact
+                // (`instance_factory_tests`), not a caller entry.
+                .filter(|entry| !entry.instance_factory)
                 .map(|entry| entry.name)
                 .collect()
         })

@@ -64,6 +64,10 @@ pub(crate) struct TypeScriptModuleEntry {
     /// relation ignores it.
     #[serde(default)]
     pub(crate) instance_factory: bool,
+    /// How an `instance_factory` entry yields the instance (#15924);
+    /// meaningless on any other entry.
+    #[serde(default)]
+    pub(crate) instance_kind: TypeScriptInstanceKind,
     /// Call edges from this entry's code to the owner (same-module entries),
     /// or across the whole import chain (cross-module entries). `0` for
     /// entries that are not call-graph reach (class members, decorated
@@ -75,6 +79,35 @@ pub(crate) struct TypeScriptModuleEntry {
     /// the owner's own module.
     #[serde(default)]
     pub(crate) cross_module: Option<TypeScriptCrossModuleLink>,
+}
+
+/// What an `instance_factory` entry names (#15924).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub(crate) enum TypeScriptInstanceKind {
+    /// An exported function of the owner's module whose every return is
+    /// `new Class(...)` (#10402). `name` is the exported name.
+    #[default]
+    ExportedFactory,
+    /// A static method of the owner's own class whose every return is `new
+    /// Class(...)`, called through the class binding (`Cart.make()`). `name`
+    /// is the static method's name.
+    StaticFactory,
+    /// A class that inherits the owner's member unchanged; a test builds the
+    /// instance with `new Subclass(...)`. `name` is the subclass's name,
+    /// `exported_as_default` its default-export state and `cross_module`
+    /// its file with every module on the `extends` chain.
+    Subclass,
 }
 
 /// Where a cross-module entry lives and which modules and bindings its reach
@@ -386,6 +419,7 @@ fn record_export(
             class_member: None,
             decorated: None,
             instance_factory: false,
+            instance_kind: TypeScriptInstanceKind::default(),
             hops: 0,
             cross_module: None,
         });

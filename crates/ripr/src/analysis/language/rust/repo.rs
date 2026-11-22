@@ -86,10 +86,7 @@ impl RustAdapter {
         };
         let production_files = analyzable_rust_files
             .iter()
-            .filter(|path| {
-                workspace::classify_with(path, &repo_source_role_context)
-                    .seeds_production_findings()
-            })
+            .filter(|path| workspace::seeds_repo_seams(path, &repo_source_role_context))
             .cloned()
             .collect::<Vec<_>>();
 
@@ -142,6 +139,7 @@ impl RustAdapter {
         );
         let unindexed_manifests = BTreeSet::new();
         let dependency_edges = classify::DependencyEdgeContext {
+            test_host_manifests: Default::default(),
             adjacency: &dependency_adjacency,
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,
@@ -194,6 +192,7 @@ impl RustAdapter {
                         &probe.expression,
                     );
                 }
+                dependency_edges.disclose_dependent_test_host(&mut finding, path);
                 push_retained_finding(&mut findings, finding);
             }
         }

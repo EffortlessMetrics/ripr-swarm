@@ -1,0 +1,6 @@
+# A non-pipe stdout write failure keeps exit 2 with a named write failure (#15369).
+[[extend]]
+id = "RIPR-SPEC-0190"
+tests = [
+  "crates/ripr/tests/cli_smoke/closed_stderr.rs::full_stdout_reports_a_write_failure_not_an_internal_error",
+]

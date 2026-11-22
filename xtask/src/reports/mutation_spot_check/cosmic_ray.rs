@@ -249,6 +249,7 @@ pub(crate) fn parse_cosmic_ray_dump(
             location.unwrap_or((String::new(), start_cp, end_cp));
         entry.1.push(SyntheticMutant {
             id: job_id.to_string(),
+            genre: operator.clone(),
             mutator: operator,
             replacement,
             start_line,

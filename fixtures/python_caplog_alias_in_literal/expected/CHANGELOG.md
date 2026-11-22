@@ -189,3 +189,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_caplog_alias_in_literal (16)
+
+Reason:
+RIPR-SPEC-0238: is False is now a strong exact pin (#15250); a logging-only edit passes it over as another behavior's assertion
+
+Command:
+`cargo xtask goldens bless python_caplog_alias_in_literal --reason "..."`
+
+Updated:
+- `expected/check.json`

@@ -2,13 +2,19 @@
 
 Tracks [#4478](https://github.com/EffortlessMetrics/ripr-swarm/issues/4478) and
 [#7818](https://github.com/EffortlessMetrics/ripr-swarm/issues/7818).
-`github_delivery.rs` is the entire unchanged source from
+`github_delivery.rs.txt` is the entire unchanged source of `src/github_delivery.rs` from
 `EffortlessMetrics/ub-review` PR #1440 head
 `bcc008f67cbe9753ede6daf8a2eb914de42adfad`, blob
 `e29796eaa0181ffb9a00e0462985e3c1ad72c857`. `receipt.json.full_diff` preserves its full source-file
 diff from `2b8e66ebe5f11608fb9e85da4af7c5747252f86f`. Preserve the real helper,
 both callers, transport factory and native `ensure!` assertions. The diff is
 JSON-encoded to retain exact context whitespace without whitespace lint noise.
+
+The frozen source keeps a `.txt` extension so it is data, not a Rust file of
+this workspace. No Cargo target compiles it, but as a `.rs` file ripr indexed
+it, and its `ensure!` calls counted as possible assertion-macro bindings for
+every test in the workspace (#14116). The bytes are unchanged; only the name
+differs.
 
 Run the public API witness:
 

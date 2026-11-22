@@ -347,3 +347,27 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — collection_argument_rebound (27)
+
+Reason:
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless collection_argument_rebound --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — collection_argument_rebound (28)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless collection_argument_rebound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

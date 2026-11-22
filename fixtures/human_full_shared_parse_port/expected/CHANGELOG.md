@@ -382,3 +382,43 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — human_full_shared_parse_port (30)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (31)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm and field_construction exact-oracle steps add an if-it-does branch naming the unconfirmed observation link; static class unchanged
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (32)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm exact-oracle step names an arm whose result is replaced before the assertion; static class unchanged
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+- `expected/library-human-lines.json` (hand-edited: not covered by goldens bless; the two match_arm next-step lines)

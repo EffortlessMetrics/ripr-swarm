@@ -79,7 +79,11 @@ diverging statement: a removed single-line `None => return R,` arm and the
 added `return R;` seed no probe on either side when the `match` scrutinee and
 the `let ... else` scrutinee are the same text, the added statement is the
 first added line after its opener, and each text occurs exactly once in the
-window (#14428). A changed scrutinee, a changed return value, a multi-line
+window (#14428). The added pattern must use the unqualified spelling
+`Some(...)`, with no space before the opening parenthesis. An added
+`let None = option else {` diverges on the opposite variant. The pairing
+also leaves `Option::Some(x)` and `Some (x)` unpaired. All three forms keep
+both probes (#14498). A changed scrutinee, a changed return value, a multi-line
 `None => { .. }` arm, or a repeated statement keeps both probes. A pattern
 that itself holds ` = ` inside a string literal (`let Some("a = b") = s else
 { .. }`) is not split from its scrutinee, so it fails closed and both probes
@@ -196,6 +200,29 @@ in a `let`-`else` `else` block refuses; one in its initializer still counts. An 
 nested macro or a control-flow keyword refuses too, even when the call would
 run (`assert!(true && f(5) == 5)`), because the parser does not read inside
 macro input (#14968).
+
+A predicate whose `if` (or `else if`) condition became the literal `true` or
+`false` reads its infection from the two owner versions (#14816), but only
+for a free owner when, inside the owner's span, the diff replaces exactly the
+condition's line and nothing else, and the two lines differ only by that one
+condition: a bare bool literal on the current side, and on the base side a
+single-line condition that is not itself a bool literal and holds no `let`
+(an `if let` pattern binds and tests, which a literal cannot stand in for). A
+condition spanning lines, two conditions starting on one line, or an
+attribute in the owner's body refuses. The base-side item must pass the same
+base-owner identity the unary-tail reading uses (same function, not
+`cfg`-gated, equal to the current item with the line restored), and the
+reading refuses when another function, import rename, `include!` or
+`macro_rules!` may answer the owner's name. The infection stage then folds
+both versions at the related tests' literal calls: `yes` when an exact
+assertion pins a call whose folded result differs, or every owner call in
+every related test that names it is such a call; `weak` when only a
+relational or inequality assertion separates them, or every asserted input
+already took the forced branch on the base side; `unknown` when the fold
+cannot read an argument, the condition or the body, or the workspace rebinds
+an assertion macro. An ignored or `should_panic` test supplies no reaching
+call. Infection credit does not confirm the predicate's reveal pairing, so an
+exact pin at a separating input stays `weakly_exposed`, not `exposed`.
 
 A removed line that is one bare literal (a number, `true`/`false`, or one
 quoted string or char, optionally followed by `,` or `;`) adds no removed-side
@@ -390,6 +417,13 @@ repeats byte for byte, and a malformed pin refuses the run), and
 the human digest's one-time first-run legend (#10481), which is intended
 state. Rerun commands carry the absolute root, so output also differs by
 checkout location (#14230).
+
+The same pin sets a receipt's `written_at` and the report commands'
+`generated_at`, which are otherwise the only bytes that differ between two
+writes of one receipt or report; a malformed pin refuses those commands
+before anything is written (#14230). The pin never moves a deadline
+judgment: `ripr zero status`, which judges review deadlines against its own
+stamp, stays on the current time.
 
 ## Classifications
 
@@ -1064,6 +1098,7 @@ Fixture coverage:
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
 - `a_manual_let_else_rewrite_pairs_its_diverging_statement`
 - `manual_let_else_pairing_is_fail_closed`
+- `manual_let_else_pairing_requires_an_unqualified_adjacent_some_pattern`
 - `a_reversed_let_else_pattern_never_pairs`
 - `a_neighbouring_functions_arm_never_pairs`
 - `a_scrutinee_with_an_equals_sign_still_pairs`
@@ -1116,6 +1151,21 @@ closer on or inside a function span (including its `end_line`) keeps its probe
 (#4216), and so does any file with no indexed function or no file facts. The
 helper checks the line's position, not the kind of item it closes. The removed
 side is unchanged.
+
+A closers-only added line that is its function's `end_line` also seeds no probe
+when Git's diff slider moved it (#15270). This happens when an item such as
+`agent stub --write`'s test module is appended right after a function. Git then
+reports the function's unchanged `}` as the first added line and leaves the
+appended item's identical closer as context. All of the following must hold:
+
+- the line starts a contiguous added run of more than one line;
+- the line right after that run is unchanged;
+- that context line is byte-identical to the added line, ignoring only a CRLF
+  carriage return;
+- that context line is an item-level closer in the sense above.
+
+Any other function-end closer keeps its probe. That includes an indented
+method closer followed by its `impl`'s closer, and a closer whose run has a gap.
 
 A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
 no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header

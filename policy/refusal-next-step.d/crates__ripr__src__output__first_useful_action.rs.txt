@@ -1,0 +1,27 @@
+crates/ripr/src/output/first_useful_action.rs|analysis outcome artifact is unavailable: {error}
+crates/ripr/src/output/first_useful_action.rs|analysis outcome semantic digest commitment does not match receipt
+crates/ripr/src/output/first_useful_action.rs|cannot read verify artifact `{verify_path}`: {err}
+crates/ripr/src/output/first_useful_action.rs|cannot read {name}: {err}
+crates/ripr/src/output/first_useful_action.rs|cannot resolve first-action root: {err}
+crates/ripr/src/output/first_useful_action.rs|cannot resolve receipt repo_root: {err}
+crates/ripr/src/output/first_useful_action.rs|cannot resolve report root: {err}
+crates/ripr/src/output/first_useful_action.rs|cannot resolve {label} `{path}`: {err}
+crates/ripr/src/output/first_useful_action.rs|missing inputs.agent_verify_json
+crates/ripr/src/output/first_useful_action.rs|missing provenance.repo_root
+crates/ripr/src/output/first_useful_action.rs|missing provenance.seam_id
+crates/ripr/src/output/first_useful_action.rs|missing provenance.{name}.path
+crates/ripr/src/output/first_useful_action.rs|missing provenance.{name}.sha256
+crates/ripr/src/output/first_useful_action.rs|missing typed inputs
+crates/ripr/src/output/first_useful_action.rs|missing typed provenance
+crates/ripr/src/output/first_useful_action.rs|receipt does not contain a complete analysis outcome
+crates/ripr/src/output/first_useful_action.rs|receipt has unsupported schema_version
+crates/ripr/src/output/first_useful_action.rs|receipt is missing analysis outcome semantic digest
+crates/ripr/src/output/first_useful_action.rs|receipt repo_root does not match first-action root
+crates/ripr/src/output/first_useful_action.rs|receipt verify path does not match inputs.agent_verify_json
+crates/ripr/src/output/first_useful_action.rs|verify artifact commitment does not match receipt
+crates/ripr/src/output/first_useful_action.rs|verify artifact has no `{movement}` record for seam {seam_id}
+crates/ripr/src/output/first_useful_action.rs|verify artifact is missing currentness
+crates/ripr/src/output/first_useful_action.rs|verify artifact is stale or unsupported ({currentness})
+crates/ripr/src/output/first_useful_action.rs|verify artifact summary does not confirm improved movement
+crates/ripr/src/output/first_useful_action.rs|verify artifact summary does not confirm unchanged movement
+crates/ripr/src/output/first_useful_action.rs|{name} commitment does not match receipt

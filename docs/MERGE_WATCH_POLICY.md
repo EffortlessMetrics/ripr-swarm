@@ -107,8 +107,10 @@ direct expected-head squash is refused (#14247), so a local merge from any
 worktree cannot land a PR. Re-read the remote PR state before enqueueing, and do
 not move local branch refs.
 
-Do not enqueue or arm auto-merge before that final judgment: the queue squashes
-the PR as soon as its own run passes. GitHub enforces the normal merge
+Do not enqueue before that final judgment: the queue squashes the PR as soon as
+its own run passes. Do not arm auto-merge as a wait at any point; the REST
+auto-merge call is allowed only as an immediate enqueue under the
+[enqueue interface](MERGE_FLOW.md#enqueue-interface) conditions. GitHub enforces the normal merge
 requirements; report a concrete rejection without guessing its cause, bypassing
 it, or changing settings.
 
@@ -148,3 +150,31 @@ git worktree remove <task-worktree>
 
 Do not remove unrelated worktrees, delete remote branches, or clean shared
 build directories unless the maintainer explicitly asks.
+
+
+## Operator queue-conflict observation contract
+
+The operator report compares each captured PR head with the same captured main
+commit. A refused head fetch must leave other fetchable heads independently
+examinable within the command deadline. A Git conflict without unmerged file
+names remains a conflict with unknown paths. File/directory relocations use
+stable merge-side labels when verifying continuous first-parent transitions.
+The evidence directory must restrict access to the operating account. On
+Windows, choose a parent with a private ACL. The command creates its directory
+with owner-only permissions on Unix.
+
+The [operator guide](CI.md#inspect-queued-heads-against-main) describes invocation
+and retention. [Native queue conflict tests](../xtask/src/reports/merge_queue/conflicts/tests.rs)
+exercise the [operator implementation](../xtask/src/reports/merge_queue/conflicts.rs)
+against real Git objects, independent heads, checked-in attributes and a
+configured external driver. This contract belongs to the local observer.
+Scheduled notices and native queue protection retain their existing owners.
+
+A maintainer may preview or explicitly post a notice for one observed
+main/head pair under [RIPR-SPEC-0454](specs/RIPR-SPEC-0454-operator-queue-conflict-notice.md). The command authenticates queue membership,
+reproduces the Git conflict and its path transitions, and reads existing
+notices before a local post. Treat the comment as advisory evidence for those
+commits. The [notice guide](CI.md#preview-or-post-one-queued-conflict-notice)
+describes serial retries and the final-read race. The [notice regression
+tests](../xtask/src/reports/merge_queue/conflicts/notice/tests.rs) cover
+withdrawn and replaced entries, unavailable evidence, and repeated requests.

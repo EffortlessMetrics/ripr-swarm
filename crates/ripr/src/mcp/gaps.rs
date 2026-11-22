@@ -121,6 +121,10 @@ pub(crate) struct RepairReadiness {
     /// The shared repair validator's own explanation when the seam-level
     /// admission refused an otherwise finding-ready item (#8717).
     pub(crate) seam_detail: Option<String>,
+    /// The inline test target whose uncommitted changes hold the seam's repair
+    /// start (typed, from the shared held-target predicate); set only with
+    /// `seam_gate_refused`, never parsed from `seam_detail`.
+    pub(crate) held_file: Option<String>,
     /// The producer-owned new-test proposal the seam's repair follows
     /// (#13204): the shared projection. When it also takes a fix-site shape
     /// (#13538) it is the item's fix site and the item is ready.
@@ -146,6 +150,14 @@ impl RepairReadiness {
             self.fix_site = None;
             self.ineligibility = Some(*code);
             self.seam_detail = Some(detail.clone());
+            self.held_file = None;
+        }
+        if let Some(SeamVerdict::Held { file, detail }) = verdict {
+            self.ready = false;
+            self.fix_site = None;
+            self.ineligibility = Some(crate::mcp::repair_admission::SEAM_GATE_REFUSED);
+            self.seam_detail = Some(detail.clone());
+            self.held_file = Some(file.clone());
         }
         // A fix site on the seam's own production file is not a test surface,
         // but the shared validator admitted that seam with its one governed
@@ -254,7 +266,7 @@ impl RepairReadiness {
             // condition (strength and relation confidence are applied by
             // `fix_site_candidates`); the test-surface predicate is re-applied
             // here so swapping candidates can never widen the edit surface.
-            Some(candidate) if !crate::analysis::is_test_surface_path(&candidate.file) => {
+            Some(candidate) if !fix_site_is_test_surface(root, &candidate.file) => {
                 self.ready = false;
                 self.fix_site = Some(candidate);
                 self.ineligibility = Some("fix_site_not_test_surface");
@@ -288,6 +300,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("not_candidate_actionable"),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         }
@@ -311,6 +324,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("missing_discriminator"),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         }
@@ -335,6 +349,7 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some(ineligibility),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         }
@@ -357,18 +372,20 @@ impl RepairReadiness {
                 fix_site: None,
                 ineligibility: Some("fix_site_not_established"),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         };
         let Some(fix_site) = candidates
             .into_iter()
-            .find(|site| crate::analysis::is_test_surface_path(&site.file))
+            .find(|site| fix_site_is_test_surface(root, &site.file))
         else {
             return Self {
                 ready: false,
                 fix_site: Some(first),
                 ineligibility: Some("fix_site_not_test_surface"),
                 seam_detail: None,
+                held_file: None,
                 proposed_new_test: None,
             };
         };
@@ -377,6 +394,7 @@ impl RepairReadiness {
             fix_site: Some(fix_site),
             ineligibility: None,
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         }
     }
@@ -440,6 +458,16 @@ impl RepairReadiness {
     }
 }
 
+/// Whether a fix site's file is a test surface. The site spells its file as
+/// stable path text (`%` escaped as `%25`), while the manifest authority
+/// compares native names, so `spec/discount%.rs` is decoded before it asks
+/// (#15910). A name that is not UTF-8 is not admitted.
+fn fix_site_is_test_surface(root: &Path, file: &str) -> bool {
+    crate::analysis::decode_stable_path_text(file)
+        .to_str()
+        .is_some_and(|native| crate::analysis::is_test_surface(root, native))
+}
+
 /// High-confidence directly-related tests that can be the fix site, strongest
 /// oracle first (stable within a strength, so first-match among equals). A
 /// weakly exposed finding that names its missing discriminator also accepts
@@ -485,7 +513,7 @@ pub(crate) struct GapItem {
     pub(crate) file: String,
     /// Exposure class wire token (`exposed`, `weakly_exposed`, ...) captured
     /// at projection time, so list filters re-read stored facts (#7464).
-    class: String,
+    pub(super) class: String,
     /// Language wire string (`rust`, `python`, ...) or `None` when the
     /// producer populated no language; stored for the same filter route.
     language: Option<String>,
@@ -505,6 +533,10 @@ pub(crate) struct GapItem {
     /// `ripr_prepare_repair` carries it in `next` for `seam_not_found` and
     /// `seam_ambiguous` (#11622); it is not part of any served document.
     pub(crate) stub_route: Option<(String, usize, &'static str)>,
+    /// The changed seam's id when `--at` on `stub_route`'s line would refuse as
+    /// ambiguous; the refusal's stub command then names `--seam-id` instead.
+    /// An ambiguous line with no single validated seam has no `stub_route`.
+    pub(crate) stub_seam_id: Option<String>,
     /// Complete bounded evidence document (without the per-request snapshot
     /// binding and links, which are injected at serve time). The repair
     /// projection reads `changed_behavior` and the discriminator from it.
@@ -573,12 +605,10 @@ pub(crate) fn canonical_id_of(finding: &Finding) -> String {
 }
 
 impl GapItem {
-    /// `root` is the analyzed workspace root: item locations render through
-    /// the shared finding-location owner (#5996), so an MCP item names the
-    /// finding's file with the same workspace-relative string the check,
-    /// context and LSP surfaces emit. Related-test and fix-site files keep
-    /// the repository-relative renderer (#5254 item 6), which additionally
-    /// tolerates verbatim/UNC/case spelling drift.
+    /// `root` is the analyzed workspace root. Item locations use the shared
+    /// finding-location renderer with a bare workspace-relative spelling.
+    /// Related tests and fix sites use the repository-relative renderer
+    /// (#5254 item 6), which also tolerates verbatim/UNC/case spelling drift.
     #[cfg(test)]
     pub(crate) fn from_finding(finding: &Finding, root: &Path) -> Result<Self, String> {
         Self::from_finding_admitted(finding, root, &SeamAdmission::unevaluated())
@@ -595,6 +625,8 @@ impl GapItem {
     ) -> Result<Self, String> {
         let canonical_id = canonical_id_of(finding);
         let file = crate::analysis::finding_location_text(root, &finding.probe.location.file);
+        let served_file =
+            crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
         let class = finding.class.as_str().to_string();
         let language = finding
             .language
@@ -610,7 +642,7 @@ impl GapItem {
             "canonical_id": canonical_id,
             "class": class,
             "language": language,
-            "file": file,
+            "file": served_file,
             "line": line,
             "repair_packet_ready": repair_readiness.ready,
             "repair_ineligibility": repair_readiness.ineligibility,
@@ -629,6 +661,23 @@ impl GapItem {
         }
         let list_summary_bytes = serialized_bytes(&list_summary)?;
 
+        // Only the stub-routed refusals print a stub command, so only they pay
+        // for the ambiguity probe. An ambiguous `--at` line names the
+        // validated seam id, or drops the route when no single seam stubs.
+        let stub_route = crate::app::test_stub::stub_route_location(finding, root);
+        let (stub_route, stub_seam_id) = if stub_route.is_some()
+            && matches!(
+                repair_readiness.ineligibility,
+                Some("seam_not_found" | "seam_ambiguous")
+            ) {
+            match crate::app::test_stub::stub_route_seam_choice(root, finding) {
+                crate::app::test_stub::StubRouteSeamChoice::Location => (stub_route, None),
+                crate::app::test_stub::StubRouteSeamChoice::SeamId(id) => (stub_route, Some(id)),
+                crate::app::test_stub::StubRouteSeamChoice::Unrunnable => (None, None),
+            }
+        } else {
+            (stub_route, None)
+        };
         let evidence_core = gap_evidence_core(finding, &canonical_id, root, &repair_readiness)?;
         let (evidence_bytes, evidence_sha256) = serialized_evidence_identity(&evidence_core)?;
         Ok(Self {
@@ -639,7 +688,8 @@ impl GapItem {
             language,
             list_summary,
             list_summary_bytes,
-            stub_route: crate::app::test_stub::stub_route_location(finding, root),
+            stub_route,
+            stub_seam_id,
             evidence_core,
             evidence_bytes,
             candidate_actionable: finding.is_candidate_actionable(),
@@ -656,6 +706,16 @@ impl GapItem {
 
     pub(crate) fn class(&self) -> &str {
         &self.class
+    }
+
+    /// The gap is closed: an `exposed` item the shared seam gate refused as
+    /// `seam_already_gripped` (existing tests already check the seam). The one
+    /// predicate behind the default list exclusion and every "nothing to do"
+    /// wording.
+    pub(crate) fn is_closed_gap(&self) -> bool {
+        self.class == crate::domain::ExposureClass::Exposed.as_str()
+            && self.repair_readiness.ineligibility
+                == Some(crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED)
     }
 
     /// Whether this item is reached only by a proof harness ripr does not
@@ -739,6 +799,11 @@ impl GapItem {
                     "{}; keep the snapshot's explicit `base`, if any, in the refresh request, then re-read this limitation against the new snapshot",
                     self.repair_readiness.detail()
                 )
+            } else if self.is_closed_gap() {
+                // The gap is closed: the same decision `ripr_prepare_repair`
+                // words as `nothing_to_do`. "Make the test change it implies"
+                // would contradict it.
+                "nothing to do: existing tests already grip this seam, so the change is already pinned; refresh only after further edits".to_string()
             } else if let Some(step) = advisory_next_step {
                 format!("{step}; then {refresh_recovery}")
             } else {
@@ -930,6 +995,15 @@ fn gap_evidence_core(
     ) {
         object.insert("arm_result".to_string(), Value::from(result));
     }
+    // #15420: a predicate whose `before` is the whole old line also names
+    // the old `if`/`while` condition, at the granularity of `after`. Present
+    // only when read; `before` keeps the whole old line.
+    if let (Some(condition), Some(object)) = (
+        crate::analysis::old_condition_of_whole_line(finding),
+        changed_behavior.as_object_mut(),
+    ) {
+        object.insert("before_condition".to_string(), Value::from(condition));
+    }
     let source_currentness = serde_json::to_value(finding.source_currentness)
         .map_err(|error| format!("serialize source currentness: {error}"))?;
     let static_limitation = finding
@@ -959,7 +1033,7 @@ fn gap_evidence_core(
         "class": finding.class.as_str(),
         "language": finding.language.as_ref().map(|language| language.as_str()),
         "location": {
-            "file": crate::analysis::finding_location_text(root, &finding.probe.location.file),
+            "file": crate::analysis::finding_location_text_bare(root, &finding.probe.location.file),
             "line": finding.probe.location.line,
             "column": finding.probe.location.column,
         },
@@ -1008,10 +1082,11 @@ pub(super) fn finding_guidance(item: &GapItem) -> Value {
 
 /// Budget items for the shared [`crate::lsp::diagnostic_budget`] authority.
 /// Eligibility is the producer's candidate-actionability predicate captured
-/// at projection time; MCP does not invent its own filter or ranking. The
-/// selection key uses the same unset (128) ranks the LSP delivery bridge
-/// uses, so the budget's evidence-owned order (selection key, then canonical
-/// id, then document) is the only ordering applied.
+/// at projection time; MCP does not invent its own filter or ranking. Every
+/// item here is a gap from the analyzed change, so they share one unset
+/// (128) selection key and the budget's canonical-id-then-document order is
+/// the only ordering applied. (The LSP bridge ranks the same findings ahead
+/// of repository seam inventory rows, which this list never carries.)
 pub(crate) fn budget_items(
     items: &[GapItem],
 ) -> Vec<crate::lsp::diagnostic_budget::DiagnosticBudgetItem> {
@@ -1022,6 +1097,7 @@ pub(crate) fn budget_items(
         .iter()
         .map(|item| DiagnosticBudgetItem {
             canonical_id: item.canonical_id.clone(),
+            // Budget buckets keep the shared finding-location spelling.
             document: item.file.clone(),
             payload_bytes: item.list_summary_bytes(),
             inline_detail_bytes: item
@@ -1222,6 +1298,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             normalized_discriminator: "total == 10000".to_string(),
         }),
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:test:1".to_string()),
             location: SourceLocation::new("src/lib.rs", 12, 5),
             owner: Some(crate::domain::SymbolId("symbol:checkout".to_string())),
@@ -1488,13 +1565,9 @@ mod tests {
         Ok(())
     }
 
-    /// #5996: one finding, one location string on every surface. The MCP
-    /// item file must join byte-for-byte with the check JSON `probe.file`,
-    /// the context packet `probe.file` and the human finding header for the
-    /// same finding — including when the analyzed root is a verbatim Windows
-    /// path (the MCP server's root spelling), which previously leaked the
-    /// raw `//?/` producer join no other surface produced and no editor
-    /// resolves.
+    /// #5996: a verbatim Windows analysis root must not leak into finding
+    /// locations. MCP gap locations use the bare spelling (#15645). Check
+    /// JSON, context and the human header keep their `./` spelling.
     ///
     /// #8743 scope note: the packet here is rendered with the default
     /// configuration, and this test claims parity only for fields that are
@@ -1504,8 +1577,7 @@ mod tests {
     /// carry a different `severity` value under a user override; full-packet
     /// parity is only claimed when the effective configurations match.
     #[test]
-    fn one_finding_renders_one_location_string_on_every_surface_under_default_config()
-    -> Result<(), String> {
+    fn finding_location_keeps_each_surface_spelling_under_default_config() -> Result<(), String> {
         // check-local-context forbids drive-letter path literals; assemble
         // the verbatim root from parts (the `//?/` text lives in the owner's
         // own unit tests).
@@ -1522,7 +1594,7 @@ mod tests {
         let item = GapItem::from_finding(&finding, &root)?;
         if item.file != expected {
             return Err(format!(
-                "MCP item file must be workspace-relative: {}",
+                "MCP diagnostic budget key must keep the shared spelling: {}",
                 item.file
             ));
         }
@@ -1537,7 +1609,7 @@ mod tests {
                     item.evidence_core
                 )
             })?;
-        if location_file != expected {
+        if location_file != "src/main.rs" {
             return Err(format!(
                 "MCP gap location file must be workspace-relative: {location_file}"
             ));
@@ -2151,6 +2223,7 @@ mod tests {
             }),
             ineligibility: None,
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         }
     }
@@ -2394,6 +2467,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         }
         .with_seam_verdict(Some(&refused));
@@ -2419,6 +2493,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("missing_discriminator"),
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         }
         .with_seam_verdict(Some(&withheld));
@@ -2517,6 +2592,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("discriminator_not_populated_for_language"),
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         };
         let truncated = unready.clone().with_seam_verdict(Some(&refused));
@@ -2529,6 +2605,36 @@ mod tests {
             code: "seam_gate_refused",
             detail: "gate".to_string(),
         };
+        // The held-target file is typed: only a `Held` verdict carries it; an
+        // ordinary `seam_gate_refused` (even one whose prose names a file)
+        // yields none.
+        let prose = SeamVerdict::Refused {
+            code: "seam_gate_refused",
+            detail: crate::app::task_first::held_inline_reason("src/lib.rs"),
+        };
+        if unready
+            .clone()
+            .with_seam_verdict(Some(&prose))
+            .held_file
+            .is_some()
+            || unready
+                .clone()
+                .with_seam_verdict(Some(&ordinary))
+                .held_file
+                .is_some()
+        {
+            return Err("a non-held refusal must carry no held file".to_string());
+        }
+        let held = SeamVerdict::Held {
+            file: "src/lib.rs".to_string(),
+            detail: "held".to_string(),
+        };
+        let held = unready.clone().with_seam_verdict(Some(&held));
+        if held.held_file.as_deref() != Some("src/lib.rs")
+            || held.ineligibility != Some("seam_gate_refused")
+        {
+            return Err(format!("a held verdict must type its file: {held:?}"));
+        }
         let outranked = unready.clone().with_seam_verdict(Some(&ordinary));
         if outranked.ineligibility != Some("seam_gate_refused") || outranked.seam_detail.is_none() {
             return Err(format!(
@@ -2596,6 +2702,7 @@ mod tests {
             fix_site: None,
             ineligibility: Some("fix_site_not_test_surface"),
             seam_detail: None,
+            held_file: None,
             proposed_new_test: None,
         };
         let reason = readiness.reason();
@@ -2787,6 +2894,32 @@ mod tests {
         let other = GapItem::from_finding(&unlimited, Path::new("."))?;
         let other = other.limitation_document("snapshot:sha256:abc");
         assert_ne!(limitation_field(&other, "stage")?, "producer_static_limit");
+        Ok(())
+    }
+
+    /// Closed gap: an already-gripped `exposed` item's limitation says nothing
+    /// remains to do, while an already-gripped non-exposed item keeps the
+    /// edit-and-refresh recovery.
+    #[test]
+    fn already_gripped_exposed_limitation_says_nothing_to_do() -> Result<(), String> {
+        let refused = |class: &str| -> Result<Value, String> {
+            let mut item = GapItem::from_finding(&finding()?, Path::new("."))?;
+            item.class = class.to_string();
+            item.repair_readiness =
+                ready_readiness().with_seam_verdict(Some(&SeamVerdict::Refused {
+                    code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+                    detail: "the seam is already gripped".to_string(),
+                }));
+            Ok(item.limitation_document("snapshot:sha256:abc"))
+        };
+        let exposed = refused("exposed")?;
+        let recovery = limitation_field(&exposed, "recovery")?;
+        assert!(recovery.starts_with("nothing to do"), "{recovery}");
+        assert!(!recovery.contains("make the test change"), "{recovery}");
+        let weak = refused("weakly_exposed")?;
+        let weak_recovery = limitation_field(&weak, "recovery")?;
+        assert!(!weak_recovery.starts_with("nothing to do"), "{weak}");
+        assert!(weak_recovery.contains("ripr_refresh"), "{weak}");
         Ok(())
     }
 
@@ -3253,32 +3386,31 @@ mod tests {
 
     #[test]
     fn gap_projection_renders_every_served_file_root_relative() -> Result<(), String> {
-        // #5254 item 6: the observed wire leak was a canonicalized finding
-        // file served verbatim. Every served file renders relative to the
-        // analyzed root: the item, the list summary, and the evidence
-        // location through the shared finding-location owner (#5996, with
-        // its `./` prefix), related tests and the fix site through the
-        // repository-relative renderer. Host-native absolute roots (no
-        // filesystem touch) so the test pins the threading on every host;
-        // the verbatim/case spelling matrix lives portably with the
-        // renderer in `output::path`.
+        // #5254 item 6 and #15645: the list and evidence spell the same
+        // file under an absolute root and with both relative input forms.
         let root = std::env::temp_dir().join("ripr-gap-path-root");
         let mut finding = finding()?;
-        finding.probe.location.file = root.join("src/lib.rs");
         finding.related_tests[0].file = root.join("tests/checkout.rs");
 
+        for (root, file) in [
+            (root.as_path(), root.join("src/lib.rs")),
+            (Path::new("."), PathBuf::from("./src/lib.rs")),
+            (Path::new("."), PathBuf::from("src/lib.rs")),
+        ] {
+            finding.probe.location.file = file;
+            let item = GapItem::from_finding(&finding, root)?;
+            let expected =
+                crate::analysis::finding_location_text(root, &finding.probe.location.file);
+            let budget = budget_items(std::slice::from_ref(&item));
+            assert_eq!(budget[0].document, expected);
+            assert_eq!(item.list_summary["file"], "src/lib.rs");
+            assert_eq!(item.evidence_core["location"]["file"], "src/lib.rs");
+            assert_eq!(item.list_summary["canonical_id"], "gap:test:1");
+            assert_eq!(item.evidence_core["canonical_id"], "gap:test:1");
+        }
+
+        finding.probe.location.file = root.join("src/lib.rs");
         let item = GapItem::from_finding(&finding, &root)?;
-        assert_eq!(item.file, "./src/lib.rs");
-        assert_eq!(
-            item.list_summary.pointer("/file").and_then(Value::as_str),
-            Some("./src/lib.rs")
-        );
-        assert_eq!(
-            item.evidence_core
-                .pointer("/location/file")
-                .and_then(Value::as_str),
-            Some("./src/lib.rs")
-        );
         assert_eq!(
             item.evidence_core
                 .pointer("/related_tests/0/file")
@@ -3313,11 +3445,10 @@ mod tests {
         finding.probe.location.file = elsewhere.join("lib.rs");
 
         let item = GapItem::from_finding(&finding, &root)?;
-        assert!(
-            item.file.contains("ripr-gap-path-elsewhere") && item.file.ends_with("lib.rs"),
-            "an out-of-root file must keep its full stable spelling, got: {}",
-            item.file
-        );
+        let expected = crate::analysis::finding_location_text(&root, &finding.probe.location.file);
+        assert_eq!(item.file, expected);
+        assert_eq!(item.list_summary["file"], expected.as_str());
+        assert_eq!(item.evidence_core["location"]["file"], expected.as_str());
         Ok(())
     }
 
@@ -3361,6 +3492,36 @@ mod tests {
         let core = gap_evidence_core(&predicate, "gap:test:1", root, &ready_readiness())?;
         if core["changed_behavior"].get("arm_result").is_some() {
             return Err(format!("non-arm probe named: {}", core["changed_behavior"]));
+        }
+        Ok(())
+    }
+
+    /// #15420: `ripr_get_gap` names the old condition when `before` is the
+    /// whole old line and the producer carried one, and leaves the field out
+    /// when `before` is already the condition. `before` is unchanged either way.
+    #[test]
+    fn get_gap_names_the_old_condition_of_a_whole_old_line() -> Result<(), String> {
+        let mut finding = finding()?;
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
+        finding.probe.after = Some("total > 200".to_string());
+        finding.probe.before_condition = Some("total >= 100".to_string());
+        let root = Path::new("repo");
+        let core = gap_evidence_core(&finding, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"]["before_condition"] != "total >= 100"
+            || core["changed_behavior"]["before"] != "if total >= 100 { total - 10 } else { total }"
+        {
+            return Err(format!(
+                "old condition not named: {}",
+                core["changed_behavior"]
+            ));
+        }
+
+        let mut cut = finding;
+        cut.probe.before = Some("total >= 100".to_string());
+        let core = gap_evidence_core(&cut, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"].get("before_condition").is_some() {
+            return Err(format!("cut before named: {}", core["changed_behavior"]));
         }
         Ok(())
     }

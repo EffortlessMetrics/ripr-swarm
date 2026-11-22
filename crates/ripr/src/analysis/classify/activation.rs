@@ -4614,6 +4614,7 @@ pub(in crate::analysis) fn repo_seam_unselected_arm(
         .trim()
         .to_string();
     let probe = Probe {
+        before_condition: None,
         id: ProbeId(format!("repo-seam-arm:{}:{line}", file.display())),
         location: SourceLocation::new(file, line, 1),
         owner: Some(owner.id.clone()),
@@ -5218,7 +5219,7 @@ fn in_use_item(before: &str) -> bool {
 
 /// The standard assertion and formatting macros whose expansion cannot
 /// call the owner.
-const READ_MACROS: &[&str] = &[
+pub(super) const READ_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
     "assert_ne",
@@ -9999,6 +10000,12 @@ fn owner_row_argument_values(
     if let Some(value) = scope.property_argument(argument) {
         return vec![value];
     }
+    // RIPR-SPEC-0158: `level("12")` through the file's one closed parse helper
+    // is the number it parses to. The helper call is no literal-carrying
+    // argument, so this reads first.
+    if let Some(value) = super::argument_fold::folded_parse_argument(&test.body, argument, scope) {
+        return vec![value];
+    }
     let values = owner_argument_values_in(test, argument, text_cells);
     if values.is_empty() {
         // RIPR-SPEC-0158: arithmetic over the test's own literal bindings
@@ -11732,6 +11739,7 @@ mod tests {
             generated: None,
         };
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib.rs:predicate:eval".to_string()),
             location: SourceLocation::new("src/lib.rs", 4, 1),
             owner: Some(SymbolId("src/lib.rs::split_after".to_string())),
@@ -12555,6 +12563,7 @@ mod tests {
         );
         activation_and_boundary_input(
             &Probe {
+                before_condition: None,
                 id: ProbeId("probe:src/lib.rs:field-boundary".to_string()),
                 location: SourceLocation::new("src/lib.rs", probe_line, 5),
                 owner: None,
@@ -14083,6 +14092,7 @@ assert_eq!(input.amount, 100);"#
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src/lib.rs:2:score".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: None,
