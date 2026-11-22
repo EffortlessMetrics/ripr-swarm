@@ -707,6 +707,11 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
         String::from_utf8_lossy(&checked.stderr)
     );
     assert!(String::from_utf8_lossy(&checked.stderr).contains("source_currentness_unavailable"));
+    assert!(
+        String::from_utf8_lossy(&checked.stderr).contains("run `ripr first-pr` again with"),
+        "the refusal must name the command that recomposes the packet: {}",
+        String::from_utf8_lossy(&checked.stderr)
+    );
     let direct_ledger = a.join("target/same-ledger.json");
     let retained_ledger = fs::read(&direct_ledger).map_err(|e| e.to_string())?;
     historical["inputs"]

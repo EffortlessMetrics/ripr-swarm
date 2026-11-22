@@ -1,0 +1,6 @@
+# `ripr outcome` snapshot-shape refusals name the snapshot command (#16019).
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/raw_error_next_step.rs::outcome_snapshot_shape_refusals_name_the_snapshot_to_pass",
+]

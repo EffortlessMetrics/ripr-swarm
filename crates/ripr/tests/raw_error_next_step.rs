@@ -336,3 +336,36 @@ fn cache_export_missing_root_names_the_flag() -> Result<(), String> {
     let _ = fs::remove_dir_all(&dir);
     result
 }
+
+#[test]
+fn outcome_snapshot_shape_refusals_name_the_snapshot_to_pass() -> Result<(), String> {
+    let dir = workspace("outcome-shape")?;
+    let seamless = assert_refusal(
+        &dir,
+        &[
+            "outcome",
+            "--before",
+            "art/file.json",
+            "--after",
+            "art/file.json",
+        ],
+        "static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array; pass a snapshot written by `ripr check --format repo-exposure-json` or `ripr check --json`",
+    );
+    let partial_seam = fs::write(dir.join("art/seam.json"), "{\"seams\":[{\"seam_id\":\"x\"}]}\n")
+        .map_err(|error| format!("write seam: {error}"))
+        .and_then(|()| {
+            assert_refusal(
+                &dir,
+                &[
+                    "outcome",
+                    "--before",
+                    "art/seam.json",
+                    "--after",
+                    "art/seam.json",
+                ],
+                "repo exposure seam is missing string field `kind`; regenerate the snapshot with `ripr check --format repo-exposure-json`",
+            )
+        });
+    let _ = fs::remove_dir_all(&dir);
+    seamless.and(partial_seam)
+}
