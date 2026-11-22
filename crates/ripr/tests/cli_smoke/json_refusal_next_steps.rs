@@ -267,3 +267,24 @@ fn an_empty_command_name_json_refusal_carries_no_token() -> TestResult {
     assert_eq!(value["error"]["next"]["command"], "ripr --help", "{value}");
     Ok(())
 }
+
+/// #15985: a word after `--version` is a stray positional, so a JSON request
+/// gets the `unknown_argument` document naming it, and an empty word carries
+/// no token. Without the request stdout stays empty and no version prints.
+#[test]
+fn a_word_after_version_json_refusal_names_the_word() -> TestResult {
+    let value = document(&run_ripr(&["--version", "extra", "--json"]), 2)?;
+    assert_eq!(value["status"], "refused", "{value}");
+    assert_eq!(value["error"]["code"], "unknown_argument", "{value}");
+    assert_eq!(value["error"]["token"], "extra", "{value}");
+    assert_eq!(value["error"]["next"]["command"], "ripr --help", "{value}");
+
+    let value = document(&run_ripr(&["--json", "--version", ""]), 2)?;
+    assert_eq!(value["error"]["code"], "unknown_argument", "{value}");
+    assert!(value["error"].get("token").is_none(), "{value}");
+
+    let plain = run_ripr(&["--version", "extra"]);
+    assert_eq!(plain.status.code(), Some(2));
+    assert!(plain.stdout.is_empty(), "{plain:?}");
+    Ok(())
+}

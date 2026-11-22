@@ -70,11 +70,13 @@ pub(super) fn reset() {
 }
 
 /// Note an unknown flag or positional. `pointer` is the command's help route.
+/// An empty positional has no token to report (the contract requires a
+/// non-empty `token`).
 pub(crate) fn note_unknown_argument(token: &str, message: &str, pointer: &str) {
     record(RefusalBlock {
         code: CODE_UNKNOWN_ARGUMENT.to_string(),
         message: message.to_string(),
-        token: Some(token.to_string()),
+        token: (!token.is_empty()).then(|| token.to_string()),
         next: Some(RefusalNext {
             purpose: PURPOSE_LIST_ARGUMENTS,
             command: pointer.to_string(),

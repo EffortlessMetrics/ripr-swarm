@@ -250,9 +250,12 @@ pub(super) fn parse_args(args: Vec<String>) -> Result<CliCommand, String> {
         // command or a slip the version query would silently discard
         // (#15985), as `--help --all` refuses extras (#9867).
         if let Some(extra) = args.iter().skip(1).find(|arg| !arg.starts_with('-')) {
-            return Err(format!(
+            let message = format!(
                 "usage: ripr --version (this route accepts no other arguments, and {extra:?} follows it); drop {extra:?} to print the version, or run `ripr --help` to list commands"
-            ));
+            );
+            // A JSON-requested run gets the stray-positional document.
+            super::usage_refusal::note_unknown_argument(extra, &message, "ripr --help");
+            return Err(message);
         }
         return Ok(CliCommand::Version);
     }

@@ -278,10 +278,15 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
 }
 
 /// Where a seam id comes from, for the missing-`--seam-id` errors of
-/// `agent card`, `agent packet`, `agent start` and `agent brief`. One copy so
-/// the messages cannot drift.
+/// `agent card` and `agent packet`. One copy so the messages cannot drift.
 pub(crate) const SEAM_ID_SOURCE_HINT: &str =
     "Use an id that `ripr check` or `ripr pilot --root <dir>` printed";
+
+/// Where the id comes from for `agent start` and `agent brief`, which take an
+/// exact seam id and do not resolve a `ripr check` finding id the way
+/// `agent packet` does. Naming `ripr check` alone would send the reader to a
+/// `probe:...` id these two refuse (#15985).
+pub(crate) const EXACT_SEAM_ID_SOURCE_HINT: &str = "Use an id that `ripr pilot --root <dir>` lists, or the spot id on the `ripr repair` line that `ripr check` prints; a `probe:...` finding id is not accepted here";
 
 fn parse_agent_start_command(args: &[String]) -> Result<AgentCommand, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -853,7 +858,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
             crate::cli::usage_refusal::missing_required(
                 "--seam-id",
                 &format!(
-                    "agent start requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}"
+                    "agent start requires --seam-id; add `--seam-id <id>`. {EXACT_SEAM_ID_SOURCE_HINT}"
                 ),
             )
         })?,
@@ -933,7 +938,7 @@ pub(super) fn parse_agent_brief_options(args: &[String]) -> Result<AgentBriefOpt
             crate::cli::usage_refusal::missing_required(
                 "--diff",
                 &format!(
-                    "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev>` to brief the changes since that revision, or `--seam-id <id>` for one seam. {SEAM_ID_SOURCE_HINT}"
+                    "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev> --json` to brief the changes since that revision, or `--seam-id <id> --json` for one seam. {EXACT_SEAM_ID_SOURCE_HINT}"
                 ),
             )
         })?
@@ -2553,7 +2558,7 @@ mod tests {
         assert_eq!(
             parse_agent_start_options(&args(&[])),
             Err(format!(
-                "agent start requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}"
+                "agent start requires --seam-id; add `--seam-id <id>`. {EXACT_SEAM_ID_SOURCE_HINT}"
             ))
         );
         assert_eq!(
@@ -2701,7 +2706,7 @@ mod tests {
         assert_eq!(
             parse_agent_brief_options(&args(&["--json"])),
             Err(format!(
-                "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev>` to brief the changes since that revision, or `--seam-id <id>` for one seam. {SEAM_ID_SOURCE_HINT}"
+                "agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev> --json` to brief the changes since that revision, or `--seam-id <id> --json` for one seam. {EXACT_SEAM_ID_SOURCE_HINT}"
             ))
         );
         assert_eq!(

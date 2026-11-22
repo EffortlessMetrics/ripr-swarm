@@ -54,12 +54,12 @@ const CASES: &[Case] = &[
     Case {
         args: &["agent", "start"],
         exit: 2,
-        stderr: "ripr: agent start requires --seam-id; add `--seam-id <id>`. Use an id that `ripr check` or `ripr pilot --root <dir>` printed\n",
+        stderr: "ripr: agent start requires --seam-id; add `--seam-id <id>`. Use an id that `ripr pilot --root <dir>` lists, or the spot id on the `ripr repair` line that `ripr check` prints; a `probe:...` finding id is not accepted here\n",
     },
     Case {
-        args: &["agent", "brief", "--json"],
+        args: &["agent", "brief"],
         exit: 2,
-        stderr: "ripr: agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev>` to brief the changes since that revision, or `--seam-id <id>` for one seam. Use an id that `ripr check` or `ripr pilot --root <dir>` printed\n",
+        stderr: "ripr: agent brief requires exactly one of --diff, --base, --files, or --seam-id; pass `--base <rev> --json` to brief the changes since that revision, or `--seam-id <id> --json` for one seam. Use an id that `ripr pilot --root <dir>` lists, or the spot id on the `ripr repair` line that `ripr check` prints; a `probe:...` finding id is not accepted here\n",
     },
     // #15985: an empty command name is named as empty, not echoed as `""`.
     Case {
