@@ -18,11 +18,18 @@
 //!   (dataclass-like fields, inherited or metaclass readers);
 //! - the name is a dunder (`__nonzero__ = __bool__` dispatches through the
 //!   interpreter, not through a method call a test spells);
-//! - another class-body statement, a nested class or a dunder method
-//!   (`__init__`, `__str__`, ...) reads the name or a reader;
+//! - the old or new value is not a plain value (a call, a subscript, a
+//!   comprehension: its evaluation can have effects a test reads);
+//! - another class-body statement (an alias such as `annual = years`), a
+//!   nested class or a dunder method (`__init__`, `__str__`, ...) reads the
+//!   name or a reader;
 //! - no method of the class reads the name (it is read elsewhere, if at all);
 //! - code of the same file outside the class mentions the name or a reader;
 //! - any test mentions the name, related to the class or not.
+//!
+//! Known limit: a test that reaches a reader only through a helper in
+//! another source file is not seen, so that test reads as not observing the
+//! value.
 
 use super::admission::mentions_word;
 use super::class_attr_pin::ClassAttrPinGap;
@@ -48,6 +55,11 @@ pub(super) fn python_class_attr_reader_gap(
         return None;
     }
     let source = owner_source?;
+    // Cheap check before the module parse: the owner must be a class.
+    let header = source.lines().nth(owner.start_line.checked_sub(1)?)?;
+    if !header.trim_start().starts_with("class ") {
+        return None;
+    }
     let Ok(Mod::Module(module)) = parse_module_result(Path::new("<class-attr-reader>"), source)
     else {
         return None;
@@ -127,8 +139,33 @@ fn assigned_value(line: &str) -> Option<(String, String)> {
     {
         return None;
     }
+    // A call or other effectful initializer can change state a test reads
+    // without reading the attribute, so only plain values are read here.
+    if !is_plain_value(value) {
+        return None;
+    }
     let text = trimmed.get(usize::from(value.start())..usize::from(value.end()))?;
     Some((name.id.to_string(), text.to_string()))
+}
+
+/// A value whose evaluation has no effect besides the value: a non-string
+/// constant, a name or dotted name, and unary, binary or container forms of
+/// those.
+fn is_plain_value(value: &Expr) -> bool {
+    match value {
+        Expr::Constant(constant) => !matches!(constant.value, ast::Constant::Str(_)),
+        Expr::Name(_) => true,
+        Expr::Attribute(attribute) => {
+            matches!(attribute.value.as_ref(), Expr::Name(_) | Expr::Attribute(_))
+                && is_plain_value(&attribute.value)
+        }
+        Expr::UnaryOp(unary) => is_plain_value(&unary.operand),
+        Expr::BinOp(binary) => is_plain_value(&binary.left) && is_plain_value(&binary.right),
+        Expr::Tuple(tuple) => tuple.elts.iter().all(is_plain_value),
+        Expr::List(list) => list.elts.iter().all(is_plain_value),
+        Expr::Set(set) => set.elts.iter().all(is_plain_value),
+        _ => false,
+    }
 }
 
 /// The innermost class whose body holds, as a direct statement, the
@@ -175,6 +212,7 @@ fn readers_of(
         return None;
     }
     let mut methods = Vec::new();
+    let mut others = Vec::new();
     for member in &class.body {
         let text = source.get(usize::from(member.start())..usize::from(member.end()))?;
         match member {
@@ -184,7 +222,7 @@ fn readers_of(
             // Another class-body statement (a derived constant, a nested
             // class) reads the value outside any method.
             _ if mentions_word(text, name) => return None,
-            _ => {}
+            _ => others.push(text),
         }
     }
     let mut readers = BTreeSet::new();
@@ -214,6 +252,14 @@ fn readers_of(
             grew = true;
         }
         if !grew {
+            // A class-body alias (`annual = years`) or other statement that
+            // names a reader publishes it under a name not listed here.
+            if others
+                .iter()
+                .any(|text| readers.iter().any(|reader| mentions_word(text, reader)))
+            {
+                return None;
+            }
             return Some(readers);
         }
     }

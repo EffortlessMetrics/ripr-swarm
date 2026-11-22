@@ -331,9 +331,13 @@ one changed raise only (#12952); the general class-only table row stays weak.
    reason lists the reading methods. The rule keeps the existing verdict
    when the readers cannot be listed from the class alone: the class has a
    decorator, a base other than `object` or a keyword; the name is a
-   dunder; another class-body statement, a nested class or a dunder method
-   reads the name or a reader; no method reads the name; or code of the
-   same file outside the class mentions the name or a reader.
+   dunder; the old or new value is not a plain value (a non-string
+   constant, a name or dotted name, or unary, binary, tuple, list or set
+   forms of those); another class-body statement (an alias such as
+   `annual = years`), a nested class or a dunder method reads the name or a
+   reader; no method reads the name; or code of the same file outside the
+   class mentions the name or a reader. A test that reaches a reader only
+   through a helper in another source file is not seen.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns

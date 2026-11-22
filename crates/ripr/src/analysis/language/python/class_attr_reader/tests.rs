@@ -13,14 +13,24 @@ const DAYS_TEST: &str =
     "from clock import Clock\n\n\ndef test_days():\n    assert Clock(48).days() == 2\n";
 
 fn classify(source: &str, line: usize, tests: &str) -> Result<Finding, String> {
+    classify_lines(source, line, OLD_LINE, NEW_LINE, tests)
+}
+
+fn classify_lines(
+    source: &str,
+    line: usize,
+    old_line: &str,
+    new_line: &str,
+    tests: &str,
+) -> Result<Finding, String> {
     let file = Path::new("clock.py");
     let owners = extract_owners(file, source);
     let tests = extract_tests(Path::new("tests/test_clock.py"), tests);
     classify_change_with_source(
         file,
         line,
-        NEW_LINE,
-        Some(OLD_LINE),
+        new_line,
+        Some(old_line),
         &owners,
         &tests,
         Some(source),
@@ -84,6 +94,8 @@ fn class_attribute_value_fails_open_when_readers_are_not_all_in_the_class() -> R
         CLOCK.replace("class Clock:", "class Clock(Base):"),
         // Same-file code calls a reader on an instance the test never names.
         format!("{CLOCK}\n\ndef yearly(clock):\n    return clock.years(36)\n"),
+        // A class-body alias publishes a reader under another name.
+        format!("{CLOCK}\n    annual = years\n"),
     ];
     for source in &cases {
         let line = if source.starts_with('@') { 3 } else { 2 };
@@ -103,5 +115,28 @@ fn class_attribute_value_fails_open_when_readers_are_not_all_in_the_class() -> R
             "{source}: {finding:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn class_attribute_value_with_an_effectful_initializer_fails_open() -> Result<(), String> {
+    // The initializer's call can change state `days` reads, so a test on
+    // `days` may observe the edit without reading `_PER_YEAR`.
+    let source = "REGISTRY = {}\n\n\nclass Clock:\n    _PER_YEAR = REGISTRY.setdefault(\"months\", 13)\n\n    def days(self):\n        return REGISTRY[\"months\"]\n\n    def years(self, months):\n        return months // self._PER_YEAR\n";
+    let finding = classify_lines(
+        source,
+        5,
+        "    _PER_YEAR = REGISTRY.setdefault(\"months\", 12)",
+        "    _PER_YEAR = REGISTRY.setdefault(\"months\", 13)",
+        "from clock import Clock\n\n\ndef test_days():\n    assert Clock().days() == 13\n",
+    )?;
+    assert!(
+        !finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|missing| missing.value.starts_with("class attribute `_PER_YEAR`")),
+        "{finding:?}"
+    );
     Ok(())
 }
