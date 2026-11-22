@@ -61,7 +61,7 @@ fn config() -> Config {
 /// step by the exhaustive match in `static_limit_kind_ordinal`: a new variant
 /// fails to compile there, and a variant added to the match but not to this
 /// array fails `static_limit_kind_list_is_complete_and_ordered`.
-const STATIC_LIMIT_KINDS: [StaticLimitKind; 37] = [
+const STATIC_LIMIT_KINDS: [StaticLimitKind; 38] = [
     StaticLimitKind::DynamicDispatch,
     StaticLimitKind::Metaprogramming,
     StaticLimitKind::MissingImportGraph,
@@ -99,6 +99,7 @@ const STATIC_LIMIT_KINDS: [StaticLimitKind; 37] = [
     StaticLimitKind::RustFutureNeverPolled,
     StaticLimitKind::ActivationBoundaryInputUnresolved,
     StaticLimitKind::RustGatedDoctestUnread,
+    StaticLimitKind::RustUnownedLiteralReaderUnresolved,
 ];
 
 fn static_limit_kind_ordinal(kind: StaticLimitKind) -> usize {
@@ -140,12 +141,13 @@ fn static_limit_kind_ordinal(kind: StaticLimitKind) -> usize {
         StaticLimitKind::RustFutureNeverPolled => 34,
         StaticLimitKind::ActivationBoundaryInputUnresolved => 35,
         StaticLimitKind::RustGatedDoctestUnread => 36,
+        StaticLimitKind::RustUnownedLiteralReaderUnresolved => 37,
     }
 }
 
 /// The largest ordinal `static_limit_kind_ordinal` assigns. Keep it equal to
 /// the last arm; the test below checks the array reaches it.
-const MAX_STATIC_LIMIT_KIND_ORDINAL: usize = 36;
+const MAX_STATIC_LIMIT_KIND_ORDINAL: usize = 37;
 
 #[test]
 fn static_limit_kind_list_is_complete_and_ordered() {
@@ -157,7 +159,7 @@ fn static_limit_kind_list_is_complete_and_ordered() {
     // the match but missing from the array fails here.
     assert_eq!(STATIC_LIMIT_KINDS.len(), MAX_STATIC_LIMIT_KIND_ORDINAL + 1);
     assert_eq!(
-        static_limit_kind_ordinal(StaticLimitKind::RustGatedDoctestUnread),
+        static_limit_kind_ordinal(StaticLimitKind::RustUnownedLiteralReaderUnresolved),
         MAX_STATIC_LIMIT_KIND_ORDINAL
     );
 }

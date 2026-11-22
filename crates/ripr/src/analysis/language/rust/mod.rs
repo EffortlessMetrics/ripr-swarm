@@ -1882,6 +1882,10 @@ fn apply_probe_and_oracle_limits(
     // item macro, or called inside an executor helper has no call ripr can
     // pair with the assertion; that is a limit, not a missing assertion.
     classify::withhold_indirect_owner_gap(finding, index);
+    // RIPR-SPEC-0240 / #13843: string-literal text outside every function,
+    // related only by file or name token, has no reader ripr follows. After
+    // the generated-owner rule above, which names an item macro's own limit.
+    classify::withhold_unowned_literal_gap(finding, index);
     // RIPR-SPEC-0352: an inherent receiver blocked only by an unverifiable
     // assertion macro (target placement unavailable) is a named limit.
     classify::withhold_receiver_unestablished_gap(finding, index);

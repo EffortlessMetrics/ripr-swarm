@@ -551,6 +551,14 @@ pub enum StaticLimitKind {
     /// is credited; this names the unread example, not a coverage claim.
     /// See RIPR-SPEC-0240 (#14935).
     RustGatedDoctestUnread,
+    /// A changed Rust string literal sits outside every function (a row of a
+    /// `static` help table, a `const` array) and no test is seen reading it:
+    /// the related tests only share its file or a name token. ripr does not
+    /// follow the item to the code that reads it, so a test that compares the
+    /// text (a golden file, rendered help output) is not seen either. The
+    /// gap is withheld and the class is `static_unknown`; nothing is
+    /// credited. See RIPR-SPEC-0240 (#13843).
+    RustUnownedLiteralReaderUnresolved,
 }
 
 impl StaticLimitKind {
@@ -634,6 +642,9 @@ impl StaticLimitKind {
                 "activation_boundary_input_unresolved"
             }
             StaticLimitKind::RustGatedDoctestUnread => "rust_gated_doctest_unread",
+            StaticLimitKind::RustUnownedLiteralReaderUnresolved => {
+                "rust_unowned_literal_reader_unresolved"
+            }
         }
     }
 
@@ -851,6 +862,12 @@ impl StaticLimitKind {
                 "Doc example not read: the changed Rust function is compiled only under a cfg \
                  ripr cannot evaluate, and a doc example in the same library is gated by that \
                  cfg, so ripr did not read the example that may check it. ripr does not claim \
+                 a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustUnownedLiteralReaderUnresolved => {
+                "String literal reader not resolved: the change is string-literal text outside \
+                 every function, and the related tests only share its file or a name token. \
+                 ripr does not follow the text to the code that reads it, so it does not claim \
                  a gap; this is a named limitation, not a coverage claim."
             }
         }
@@ -1257,6 +1274,10 @@ mod tests {
             StaticLimitKind::RustGatedDoctestUnread.as_str(),
             "rust_gated_doctest_unread"
         );
+        assert_eq!(
+            StaticLimitKind::RustUnownedLiteralReaderUnresolved.as_str(),
+            "rust_unowned_literal_reader_unresolved"
+        );
     }
 
     #[test]
@@ -1299,6 +1320,7 @@ mod tests {
             StaticLimitKind::RustFutureNeverPolled,
             StaticLimitKind::ActivationBoundaryInputUnresolved,
             StaticLimitKind::RustGatedDoctestUnread,
+            StaticLimitKind::RustUnownedLiteralReaderUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests and closed consumers (for example the renderer
     /// category set in #14965, which must not shadow a typed token) can walk
     /// the vocabulary. The ordinal test keeps this list in step with the enum.
-    pub const ALL: [StaticLimitKind; 37] = [
+    pub const ALL: [StaticLimitKind; 38] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -55,6 +55,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustFutureNeverPolled,
         StaticLimitKind::ActivationBoundaryInputUnresolved,
         StaticLimitKind::RustGatedDoctestUnread,
+        StaticLimitKind::RustUnownedLiteralReaderUnresolved,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -221,6 +222,11 @@ impl StaticLimitKind {
                 "Check the doc examples and tests that run under the owner's cfg (for example a \
                  nightly-only example) for an assertion on the changed behavior; ripr does not \
                  read examples behind that gate. Add a test only if none asserts on it."
+            }
+            StaticLimitKind::RustUnownedLiteralReaderUnresolved => {
+                "Check whether a test compares the changed text, for example a golden file or \
+                 rendered help output; ripr does not follow a string literal outside every \
+                 function to the code that reads it. Add a test only if none compares it."
             }
         }
     }
@@ -391,9 +397,10 @@ mod tests {
                 StaticLimitKind::RustFutureNeverPolled => 34,
                 StaticLimitKind::ActivationBoundaryInputUnresolved => 35,
                 StaticLimitKind::RustGatedDoctestUnread => 36,
+                StaticLimitKind::RustUnownedLiteralReaderUnresolved => 37,
             }
         }
-        const COUNT: usize = 37;
+        const COUNT: usize = 38;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(

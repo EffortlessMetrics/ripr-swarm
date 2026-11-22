@@ -122,6 +122,7 @@ stage_state|weak|RIPR stage state value.
 stage_state|yes|RIPR stage state value.
 static_limit_kind|activation_boundary_input_unresolved|Typed static limitation value.
 static_limit_kind|rust_gated_doctest_unread|Typed static limitation value.
+static_limit_kind|rust_unowned_literal_reader_unresolved|Typed static limitation value.
 static_limit_kind|cross_language_oracle_visibility_unresolved|Typed static limitation value.
 static_limit_kind|decorator_indirection|Typed static limitation value.
 static_limit_kind|dynamic_dispatch|Typed static limitation value.

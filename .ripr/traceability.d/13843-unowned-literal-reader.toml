@@ -1,0 +1,8 @@
+# Registers the string-literal-outside-every-function withholding (#13843)
+# under RIPR-SPEC-0240.
+[[extend]]
+id = "RIPR-SPEC-0240"
+tests = [
+  "crates/ripr/tests/unowned_literal_edit.rs::a_help_table_copy_edit_is_withheld_not_a_gap",
+  "crates/ripr/tests/unowned_literal_edit.rs::each_missing_link_keeps_its_own_reading",
+]
