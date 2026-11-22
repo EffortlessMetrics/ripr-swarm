@@ -189,19 +189,22 @@ fn the_crate_s_own_test_still_relates() -> Result<(), String> {
         related(&with_unit_test, "ticks + 2", PUBLIC_SLEEP_TEST)?,
         names(&["sleeps_inside"])
     );
-    // A test that reaches the function only through the public entry in
-    // front of it is read the same whether or not it also calls the public
-    // namesake: the namesake call lends it no relation of its own.
-    let entry = |argument: &str| {
-        format!(
-            "#[test]\nfn runs_the_entry() {{\n    assert_eq!(private::run({argument}), 404);\n}}\n"
-        )
-    };
-    let private = lib("", "pub(crate) ");
-    assert_eq!(
-        related(&private, "ticks + 2", &entry("private::time::sleep(200)"))?,
-        related(&private, "ticks + 2", &entry("200"))?
-    );
+    // A test that reaches the function through the public entry in front of
+    // it keeps that relation whether or not it also calls a namesake: the
+    // namesake call neither lends a relation nor takes one away.
+    let behind_entry = "mod jspi {\n    pub(crate) fn sleep(ticks: u64) -> u64 { ticks + 2 }\n}\n\n\
+         pub fn run(ticks: u64) -> u64 {\n    if ticks > 100 { jspi::sleep(ticks) } else { ticks }\n}\n";
+    for namesake in ["", "    std::thread::sleep(std::time::Duration::ZERO);\n"] {
+        let entry = format!(
+            "#[test]\nfn runs_the_entry() {{\n{namesake}    assert_eq!(private::run(200), 202);\n}}\n"
+        );
+        assert_eq!(
+            related(behind_entry, "ticks + 2", &entry)?,
+            names(&["runs_the_entry"]),
+            "`private::run` reaches the function (namesake call: {})",
+            !namesake.is_empty()
+        );
+    }
     Ok(())
 }
 
@@ -246,5 +249,21 @@ fn an_unexported_inherent_method_relates_no_integration_test() -> Result<(), Str
             "`{vis}fn sleep(&self)` is not nameable from tests/"
         );
     }
+    // A namesake call takes nothing away either. A method entry
+    // (`timer.run(..)`) is not yet a relation from `tests/` on its own, for a
+    // `pub` method as well, so the reading is the same with and without it.
+    let through_entry = |namesake: &str| {
+        format!(
+            "#[test]\nfn timer_runs() {{\n    let timer = private::Timer;\n{namesake}    assert_eq!(timer.run(200), 202);\n}}\n"
+        )
+    };
+    assert_eq!(
+        related(
+            &lib("pub(crate) "),
+            "ticks + 2",
+            &through_entry("    std::thread::sleep(std::time::Duration::ZERO);\n")
+        )?,
+        related(&lib("pub(crate) "), "ticks + 2", &through_entry(""))?
+    );
     Ok(())
 }

@@ -1465,7 +1465,12 @@ fn package_compiles_files_in_place(index: &RustIndex, file: &Path) -> bool {
 /// of a package that compiles every file in place, so it sees only what
 /// other crates export.
 pub(super) fn is_plain_integration_test(index: &RustIndex, test: &TestSummary) -> bool {
-    under_tests_dir(&test.file) && package_compiles_files_in_place(index, &test.file)
+    is_plain_integration_test_file(index, &test.file)
+}
+
+/// [`is_plain_integration_test`] for any function of the file.
+pub(super) fn is_plain_integration_test_file(index: &RustIndex, file: &Path) -> bool {
+    under_tests_dir(file) && package_compiles_files_in_place(index, file)
 }
 
 /// Whether every `path = ..` in `source` is followed by a string literal
@@ -1536,13 +1541,13 @@ pub(super) fn owner_is_private_to_its_crate(index: &RustIndex, owner: &FunctionS
     let Some(declaration) = super::transitive_reach::indexed_declaration(index, owner) else {
         return false;
     };
-    // `cfg(..)` parses as its own meta kind with no path.
-    let inert = |attribute: ast::Attr| match attribute.path() {
-        None => attribute.simple_name().as_deref() == Some("cfg"),
-        Some(path) => {
-            let path = path.syntax().text().to_string().replace(' ', "");
-            path == "cfg" || super::reach::owner_attribute_is_inert(&path)
-        }
+    // Every inert attribute is a single-segment name; `unsafe(..)` reads as
+    // the attribute it wraps and `cfg_attr(..)` as itself, so neither is
+    // inert.
+    let inert = |attribute: ast::Attr| {
+        attribute
+            .simple_name()
+            .is_some_and(|name| name == "cfg" || super::reach::owner_attribute_is_inert(&name))
     };
     declaration
         .visibility()

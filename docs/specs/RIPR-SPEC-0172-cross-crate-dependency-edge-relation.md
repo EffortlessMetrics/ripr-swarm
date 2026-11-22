@@ -543,10 +543,13 @@ or inherent method declared without `pub` (private, `pub(crate)`,
 `pub(super)`, `pub(in ..)`) cannot be re-exported. A call of its name in such
 a test runs another function (`tokio::time::sleep`, not the crate-private
 `runtime::jspi::sleep`), and a test named after it is named after that other
-function. Neither relates the test to the changed function. An equality or
-operator dispatch, a call of a public entry on the helper chain, a same-file
-or path-token relation, and every test inside the owner's own crate are read
-as before.
+function. Neither relates the test to the changed function. The call counts
+as no call at all: it does not make the test a caller on the helper chain
+either, so a test that also calls a public entry in front of the function
+(`run(..)` beside `std::thread::sleep(..)`) keeps the helper relation it has
+without the namesake call. An equality or operator dispatch, a same-file or
+path-token relation, and every test inside the owner's own crate are read as
+before.
 
 The rule answers only when the files settle it. It stays off, keeping the
 name-only reading, when:
