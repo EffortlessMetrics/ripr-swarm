@@ -9830,8 +9830,18 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
         // glob keeps its dedicated rule.
         ("mod global;\npub use global::prelude::*;\n", false),
         ("mod global;\npub use global::{self, *};\n", false),
-        // The standard roots keep their dedicated rules.
-        ("mod std;\nuse std::*;\n", false),
+        // #16060: a standard crate's name declared as this file's module is
+        // that module, as `mod core; use core::*;` in `cli/help.rs`.
+        ("mod std;\nuse std::*;\n", true),
+        ("mod core;\nuse core::*;\n", true),
+        ("mod alloc;\npub use alloc::*;\n", true),
+        // The same refusals hold for those names: an inline module, a
+        // nested glob, or another item taking the name.
+        ("mod core {}\nuse core::*;\n", false),
+        ("mod core;\nmod inner { pub use core::*; }\n", false),
+        ("mod core;\nextern crate core;\nuse core::*;\n", false),
+        ("mod core;\nuse dep as core;\nuse core::*;\n", false),
+        ("#[path = \"x.rs\"]\nmod std;\nuse std::*;\n", false),
     ] {
         let sites = sites_in_widest_context(source, &["assert_eq"]);
         let candidates = stored_candidates(source)?;

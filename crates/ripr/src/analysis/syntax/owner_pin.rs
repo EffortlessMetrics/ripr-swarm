@@ -726,7 +726,12 @@ fn glob_is_root_sibling_module(import: &ast::Use, item: &ast::UseTree, root: &st
         return false;
     }
     let root = root.trim_start_matches("r#");
-    if root.is_empty() || matches!(root, "std" | "core" | "alloc") {
+    // A module named `core`, `std` or `alloc` that this file declares is
+    // still this file's module: a local item shadows the extern prelude
+    // without ambiguity, so `mod core; use core::*;` globs the local module
+    // on editions 2018 through 2024 (#16060). The checks below already
+    // refuse every other item or import that could take the name.
+    if root.is_empty() {
         return false;
     }
     let Some(parent) = import

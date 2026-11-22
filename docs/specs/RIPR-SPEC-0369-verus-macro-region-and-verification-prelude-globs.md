@@ -188,8 +188,10 @@ does, and the module's definitions and public imports are reported at their own
 file. It stays foreign when the module is inline (its imports are scoped to it),
 mounted with `#[path]`, declared twice (for example under exclusive `cfg`s),
 shadowed by an `extern crate`, `use` or other item of the same name, written
-with a longer path, a group or a leading `::`, nested in a module, reached next
-to an item-position macro, or one of `std`/`core`/`alloc`. Without this a
+with a longer path, a group or a leading `::`, nested in a module, or reached
+next to an item-position macro. A module named `std`, `core` or `alloc` takes
+the same rule (#16060): a local item shadows the extern prelude without
+ambiguity, so `mod core; use core::*;` globs the local module. Without this a
 re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
 in the crate's tests macro-binding unestablished.
 
