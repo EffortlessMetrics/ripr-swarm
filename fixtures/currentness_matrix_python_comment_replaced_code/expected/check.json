@@ -1,0 +1,290 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/currentness_matrix_python_comment_replaced_code/input",
+  "config_path": "<cwd>/fixtures/currentness_matrix_python_comment_replaced_code/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":3,"findings":3,"exposed":3,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:6865f76b1f82dc2a","base_revision":null,"input_identity":"sha256:f4213ed021b02f2cb8d71cace949f857506ec7aab0cf955beed19dfa8937a9aa","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":7,"candidate_line_count":1,"probe_count":3,"finding_count":3},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_cart.py:python_preview:2659736e",
+      "canonical_gap_id": "gap:python:src/cart.py:capped_total:predicate_boundary:predicate:total>cap",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/cart.py:capped_total:predicate_boundary:predicate:total>cap",
+        "language": "python",
+        "file": "src/cart.py",
+        "owner": "capped_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "total>cap"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_cart.py:python_preview:2659736e",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/cart.py",
+        "line": 6,
+        "expression": "    if total > CAP:",
+        "owner": "python:src/cart.py::capped_total"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `capped_total`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if total > CAP:`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `capped_total`", "infection yes: Changed Python predicate can alter branch selection: `if total > CAP:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if total > CAP: (line 6)", "related test tests/test_cart.py:4 test_capped_total_stops_at_the_cap uses strong exact value oracle: assert capped_total([1, 2]) == 3"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if total > CAP:","line":6}
+      ],
+      "evidence": ["owner: capped_total", "owner_kind: function", "boundary_activation_unresolved: no strong related test call to `capped_total` binds a literal argument, so static evidence cannot place an input at the changed boundary of `total > CAP`", "test_framework: pytest (test_capped_total_stops_at_the_cap)", "test_verify_command: python -m pytest tests/test_cart.py::test_capped_total_stops_at_the_cap (test_capped_total_stops_at_the_cap)", "related_test_relation: syntactic_call (test_capped_total_stops_at_the_cap)", "test_oracle: exact_value strong (test_capped_total_stops_at_the_cap)"],
+      "missing": ["Related Python test reaches `capped_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_capped_total_stops_at_the_cap",
+          "file": "tests/test_cart.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert capped_total([1, 2]) == 3"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "total, CAP",
+      "observed_sink": "assert capped_total([80, 50]) == 100",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_cart.py:python_preview:86d51153",
+      "canonical_gap_id": "gap:python:src/cart.py:capped_total:return_value:return_value:total=cap",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/cart.py:capped_total:return_value:return_value:total=cap",
+        "language": "python",
+        "file": "src/cart.py",
+        "owner": "capped_total",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "total=cap"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_cart.py:python_preview:86d51153",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/cart.py",
+        "line": 6,
+        "expression": "        total = CAP",
+        "owner": "python:src/cart.py::capped_total"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `capped_total`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python expression can alter preview-classified predicate behavior: `total = CAP`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `capped_total`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `total = CAP`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: total = CAP (line 6)", "related test tests/test_cart.py:4 test_capped_total_stops_at_the_cap uses strong exact value oracle: assert capped_total([1, 2]) == 3"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"total = CAP","line":6}
+      ],
+      "evidence": ["owner: capped_total", "owner_kind: function", "test_framework: pytest (test_capped_total_stops_at_the_cap)", "test_verify_command: python -m pytest tests/test_cart.py::test_capped_total_stops_at_the_cap (test_capped_total_stops_at_the_cap)", "related_test_relation: syntactic_call (test_capped_total_stops_at_the_cap)", "test_oracle: exact_value strong (test_capped_total_stops_at_the_cap)"],
+      "missing": ["Related Python test reaches `capped_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_capped_total_stops_at_the_cap",
+          "file": "tests/test_cart.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert capped_total([1, 2]) == 3"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "total, CAP",
+      "observed_sink": "assert capped_total([80, 50]) == 100",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "base_deleted"
+    },
+    {
+      "id": "probe:src_cart.py:python_preview:39b28b4c",
+      "canonical_gap_id": "gap:python:src/cart.py:clamped_double:return_value:return_value:max_min_x*2_cap_0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/cart.py:clamped_double:return_value:return_value:max_min_x*2_cap_0",
+        "language": "python",
+        "file": "src/cart.py",
+        "owner": "clamped_double",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "max_min_x*2_cap_0"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_cart.py:python_preview:39b28b4c",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/cart.py",
+        "line": 13,
+        "expression": "    return max(min(x * 2, CAP), 0)",
+        "owner": "python:src/cart.py::clamped_double"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `clamped_double`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return max(min(x * 2, CAP), 0)`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"yes","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `clamped_double`", "infection yes: Changed Python return expression can alter the owner return value: `return max(min(x * 2, CAP), 0)`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return max(min(x * 2, CAP), 0) (line 13)", "related test tests/test_cart.py:9 test_clamped_double_doubles uses strong exact value oracle: assert clamped_double(2) == 4"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return max(min(x * 2, CAP), 0)","line":13}
+      ],
+      "evidence": ["owner: clamped_double", "owner_kind: function", "test_framework: pytest (test_clamped_double_doubles)", "test_verify_command: python -m pytest tests/test_cart.py::test_clamped_double_doubles (test_clamped_double_doubles)", "related_test_relation: syntactic_call (test_clamped_double_doubles)", "test_oracle: exact_value strong (test_clamped_double_doubles)"],
+      "missing": ["Related Python test reaches `clamped_double` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_clamped_double_doubles",
+          "file": "tests/test_cart.py",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert clamped_double(2) == 4"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "max, min, CAP",
+      "observed_sink": "assert clamped_double(2) == 4",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/cart.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/cart.py","digest":"sha256:78183b6da190808e0325d24c08fb17d8cc3ba7ff3ad739262a0f271d4e9b18e3"}]}
+}

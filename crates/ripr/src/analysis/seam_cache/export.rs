@@ -335,6 +335,9 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
     let name = output
         .file_name()
         .ok_or("export output needs a new directory name")?;
+    // Refusals name the path as the user gave it (made absolute); the
+    // canonical join below can carry a Windows verbatim `\\?\` prefix.
+    let requested_output = output.clone();
     let output = parent.join(name);
     if output.starts_with(&source) || source.starts_with(&output) {
         return Err("export output must not overlap source cache; choose an output directory outside the source cache".to_owned());
@@ -342,7 +345,7 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
     let config = load_for_root(root)?;
     let (key, files) = current_cache_keys_at(root, &config)?;
     fs::create_dir(&output).map_err(|error| {
-        let shown = shown_path(&output);
+        let shown = shown_path(&requested_output);
         if error.kind() == std::io::ErrorKind::AlreadyExists {
             format!(
                 "cache export --out {shown} already exists; --out must name a new directory that does not exist yet, so pass a fresh path (the export never merges into or replaces an existing one)"

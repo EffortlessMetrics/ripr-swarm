@@ -229,6 +229,12 @@ pub(crate) enum TestTargetCurrentness {
 pub(crate) enum TestKind {
     InlineUnit,
     Integration,
+    /// An integration test in the entry file of a `[[test]]` target the
+    /// package manifest declares outside the test layouts (`[[test]] path =
+    /// "spec/pricing.rs"`, #15910). The manifest, not the path, makes the
+    /// file a test file, so the repair route may name it as the test to
+    /// edit ([`crate::analysis::is_test_surface`]).
+    DeclaredIntegration,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -4028,13 +4034,15 @@ fn boundary_operand_is_iterator_derived(owner_fn: &FunctionSummary, operand: &st
 
 fn boundary_operand_is_closure_derived(owner_fn: &FunctionSummary, operand: &str) -> bool {
     let operand_root = boundary_operand_root_identifier(operand);
-    if operand_root.is_empty() {
+    // A numeric literal is never a closure parameter; reading the body for
+    // one cost a full scan per arm of a long `else if` chain (#15189).
+    if operand_root.is_empty() || local_operand_alias::is_numeric_literal(&operand_root) {
         return false;
     }
-    owner_fn
-        .body
-        .lines()
-        .any(|line| closure_binds_operand_root(line, &operand_root))
+    local_operand_alias::body_closure_binds_operand_root(&owner_fn.body, &operand_root, |body| {
+        body.lines()
+            .any(|line| closure_binds_operand_root(line, &operand_root))
+    })
 }
 
 fn boundary_operand_root_identifier(operand: &str) -> String {
@@ -6737,6 +6745,11 @@ fn test_target_evidence_memo<'a>(
         function.start_line,
         if function.file == seam.file() || context.is_default_unit_test_file(&function.file) {
             TestKind::InlineUnit
+        } else if crate::analysis::workspace::is_declared_cargo_test_surface_in(
+            &index.member_crates,
+            &function.file,
+        ) {
+            TestKind::DeclaredIntegration
         } else {
             TestKind::Integration
         },

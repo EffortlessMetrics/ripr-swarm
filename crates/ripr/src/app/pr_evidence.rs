@@ -1372,10 +1372,13 @@ mod tests {
         // baseline states context and color explicitly so ambient
         // `diff.context` / color configuration cannot move it while the
         // packet command stays pinned; on ordinary repositories this is
-        // exactly what the pre-repair argv emitted.
+        // exactly what the pre-repair argv emitted, except that `index`
+        // lines carry full blob ids since #15954 (`--full-index`), so the
+        // recorded bytes no longer depend on `core.abbrev` or clone size.
         let baseline = &[
             "diff",
             "--binary",
+            "--full-index",
             "--no-ext-diff",
             "--unified=3",
             "--no-color",
