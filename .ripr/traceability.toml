@@ -22783,7 +22783,8 @@ tests = [
   "crates/ripr/tests/self_type_respelling.rs::self_for_the_implementing_type_seeds_no_probe_in_either_direction",
   "crates/ripr/tests/self_type_respelling.rs::a_real_change_beside_the_respelling_keeps_its_probe",
   "crates/ripr/tests/self_type_respelling.rs::a_spelling_the_files_do_not_prove_equivalent_stays_probed",
-  "crates/ripr/tests/self_type_respelling.rs::a_generic_type_keeps_its_respelling_probed",
+  "crates/ripr/tests/self_type_respelling.rs::a_name_the_scope_does_not_declare_as_a_plain_type_stays_probed",
+  "crates/ripr/tests/self_type_respelling.rs::a_bare_value_path_needs_the_struct_that_owns_the_name",
 ]
 fixtures = []
 code = [

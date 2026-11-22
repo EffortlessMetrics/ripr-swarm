@@ -22,12 +22,20 @@
 //! - the `impl`, that associated item and every module around the `impl`
 //!   carry only attributes that never read their tokens, so no attribute
 //!   macro can observe the spelling;
-//! - neither file declares the type with generic parameters (a defaulted
-//!   parameter makes `Shell::new()` infer what `Self::new()` fixes).
+//! - the scope that holds the `impl` (the file, the module or the block)
+//!   itself declares the name as a `struct`, `enum` or `union` without
+//!   generic parameters, and declares or imports nothing else under that
+//!   name. A defaulted parameter makes `Shell::new()` infer what
+//!   `Self::new()` fixes, and an alias or an import can hide one; a function
+//!   or constant of the same name beside a type alias makes the bare value
+//!   `Shell(n)` another item than `Self(n)`;
+//! - a path that is the name alone in value position (`Shell(n)`, a
+//!   `Shell(x)` pattern) additionally needs that declaration to be a tuple
+//!   or unit `struct`, which owns the name as a value too.
 //!
 //! Anything else (a different type name, a line that also changes another
-//! token, a token inside `matches!` or `assert!`, an `impl` for a reference)
-//! stays probed.
+//! token, a token inside `matches!` or `assert!`, an `impl` for a reference,
+//! a type declared in another file) stays probed.
 
 use crate::analysis::diff::ChangedFile;
 use ra_ap_syntax::ast::{HasGenericArgs, HasName};
@@ -93,9 +101,6 @@ pub(super) fn self_type_respelled_lines(
         return result;
     };
     for (new_line, old_line, swaps) in candidates {
-        if new.declares_generic(&swaps.type_name) || old.declares_generic(&swaps.type_name) {
-            continue;
-        }
         let established = swaps.columns.iter().all(|swap| {
             new.names_impl_self_type(new_line, swap.added_column, swap.added, &swaps.type_name)
                 && old.names_impl_self_type(
@@ -227,24 +232,6 @@ impl ParsedSide {
         })
     }
 
-    /// Whether this file declares `name` as a type with generic parameters.
-    fn declares_generic(&self, name: &str) -> bool {
-        self.root.descendants().any(|node| {
-            let (declared, generics) = if let Some(item) = ast::Struct::cast(node.clone()) {
-                (item_name(&item), generic_params(&item))
-            } else if let Some(item) = ast::Enum::cast(node.clone()) {
-                (item_name(&item), generic_params(&item))
-            } else if let Some(item) = ast::Union::cast(node.clone()) {
-                (item_name(&item), generic_params(&item))
-            } else if let Some(item) = ast::TypeAlias::cast(node) {
-                (item_name(&item), generic_params(&item))
-            } else {
-                return false;
-            };
-            generics && declared.as_deref() == Some(name)
-        })
-    }
-
     /// Whether the token spelled `spelled` at `column` of 1-based `line` is
     /// an unqualified path start that names the self type of its innermost
     /// `impl`, and that `impl` implements exactly the bare `type_name`.
@@ -266,7 +253,7 @@ impl ParsedSide {
         if token.text() != spelled || token.kind() != expected_kind {
             return false;
         }
-        unqualified_path_start(&token) && governed_by_impl_of(&token, type_name)
+        path_start_use(&token).is_some_and(|usage| governed_by_impl_of(&token, type_name, usage))
     }
 
     fn token_at(&self, line: usize, column: usize) -> Option<SyntaxToken> {
@@ -276,44 +263,55 @@ impl ParsedSide {
     }
 }
 
-fn item_name(item: &impl ast::HasName) -> Option<String> {
-    item.name().map(|name| name.text().to_string())
+/// The namespace a path start is looked up in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PathStartUse {
+    /// A type: the first segment of a longer path (`Shell::Bash`), a type
+    /// position (`-> Shell`) or a record literal or pattern (`Shell { .. }`).
+    Type,
+    /// A value: the name alone as an expression or pattern (`Shell(n)`).
+    Value,
 }
 
-fn generic_params(item: &impl ast::HasGenericParams) -> bool {
-    item.generic_param_list().is_some()
-}
-
-/// Whether `token` is the whole first segment of a path: no qualifier
-/// before it (`crate::Shell`, `<T as Tr>::Shell`) and no generic arguments
-/// on it (`Shell::<T>`).
-fn unqualified_path_start(token: &SyntaxToken) -> bool {
-    let Some(segment) = token
+/// How `token` is used when it is the whole first segment of a path: no
+/// qualifier before it (`crate::Shell`, `<T as Tr>::Shell`) and no generic
+/// arguments on it (`Shell::<T>`). `None` for any other token, and for a
+/// lone name in a position this rule does not read.
+fn path_start_use(token: &SyntaxToken) -> Option<PathStartUse> {
+    let segment = token
         .parent()
         .and_then(ast::NameRef::cast)
         .and_then(|name| name.syntax().parent())
-        .and_then(ast::PathSegment::cast)
-    else {
-        return false;
-    };
+        .and_then(ast::PathSegment::cast)?;
     if segment.generic_arg_list().is_some() || segment.coloncolon_token().is_some() {
-        return false;
+        return None;
     }
-    segment
-        .syntax()
-        .parent()
-        .and_then(ast::Path::cast)
-        .is_some_and(|path| path.qualifier().is_none())
+    let path = segment.syntax().parent().and_then(ast::Path::cast)?;
+    if path.qualifier().is_some() {
+        return None;
+    }
+    let user = path.syntax().parent()?;
+    match user.kind() {
+        SyntaxKind::PATH
+        | SyntaxKind::PATH_TYPE
+        | SyntaxKind::RECORD_EXPR
+        | SyntaxKind::RECORD_PAT => Some(PathStartUse::Type),
+        SyntaxKind::PATH_EXPR | SyntaxKind::PATH_PAT | SyntaxKind::TUPLE_STRUCT_PAT => {
+            Some(PathStartUse::Value)
+        }
+        _ => None,
+    }
 }
 
 /// Whether the innermost `impl` around `token` implements the bare
 /// `type_name` and nothing between the two can change what `Self` or the
 /// name means.
-fn governed_by_impl_of(token: &SyntaxToken, type_name: &str) -> bool {
+fn governed_by_impl_of(token: &SyntaxToken, type_name: &str, usage: PathStartUse) -> bool {
     let mut holder: Option<SyntaxNode> = None;
     for node in token.parent_ancestors() {
         if let Some(implementation) = ast::Impl::cast(node.clone()) {
             return impl_names_bare_type(&implementation, type_name)
+                && scope_declares_plain_type(&node, type_name, usage)
                 && token_blind_attributes(&implementation)
                 // An attribute macro on an enclosing module receives the
                 // whole `impl` as tokens.
@@ -367,6 +365,95 @@ fn impl_names_bare_type(implementation: &ast::Impl, type_name: &str) -> bool {
         })
 }
 
+/// Whether the scope holding `implementation` declares `type_name` as a
+/// `struct`, `enum` or `union` without generic parameters and gives the name
+/// no other meaning. A local declaration wins over every glob import and
+/// the prelude, so the `impl` header and the respelled path both name it.
+/// For a value use the declaration must also own the name as a value.
+fn scope_declares_plain_type(
+    implementation: &SyntaxNode,
+    type_name: &str,
+    usage: PathStartUse,
+) -> bool {
+    let Some(scope) = implementation.parent() else {
+        return false;
+    };
+    let mut declared = false;
+    for item in scope.children() {
+        match scope_item_naming(&item, type_name) {
+            Naming::Absent => {}
+            Naming::PlainType { owns_value } => {
+                if usage == PathStartUse::Value && !owns_value {
+                    return false;
+                }
+                declared = true;
+            }
+            Naming::Other => return false,
+        }
+    }
+    declared
+}
+
+/// What one item of a scope does with a name.
+enum Naming {
+    Absent,
+    /// A non-generic `struct`, `enum` or `union`; `owns_value` for a tuple
+    /// or unit `struct`, whose constructor takes the name as a value.
+    PlainType {
+        owns_value: bool,
+    },
+    /// A generic type, an alias, an import or any other item of that name.
+    Other,
+}
+
+fn scope_item_naming(item: &SyntaxNode, type_name: &str) -> Naming {
+    let spells = |name: &str| name.strip_prefix("r#").unwrap_or(name) == type_name;
+    if ast::Use::can_cast(item.kind()) {
+        let binds = item
+            .descendants()
+            .filter_map(ast::UseTree::cast)
+            .any(|tree| match tree.rename() {
+                Some(rename) => rename.name().is_some_and(|name| spells(name.text())),
+                None => tree
+                    .path()
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|name| spells(name.text())),
+            });
+        return if binds { Naming::Other } else { Naming::Absent };
+    }
+    let named = item
+        .children()
+        .filter_map(ast::Name::cast)
+        .any(|name| spells(name.text()));
+    if !named {
+        // An `extern crate x as Shell;` binds through its rename.
+        let renamed = item
+            .children()
+            .filter_map(ast::Rename::cast)
+            .any(|rename| rename.name().is_some_and(|name| spells(name.text())));
+        return if renamed {
+            Naming::Other
+        } else {
+            Naming::Absent
+        };
+    }
+    let generic = item
+        .children()
+        .any(|child| ast::GenericParamList::can_cast(child.kind()));
+    match item.kind() {
+        SyntaxKind::STRUCT if !generic => Naming::PlainType {
+            owns_value: !item
+                .children()
+                .any(|child| ast::RecordFieldList::can_cast(child.kind())),
+        },
+        SyntaxKind::ENUM | SyntaxKind::UNION if !generic => Naming::PlainType { owns_value: false },
+        // A macro definition lives in its own namespace.
+        SyntaxKind::MACRO_RULES | SyntaxKind::MACRO_DEF => Naming::Absent,
+        _ => Naming::Other,
+    }
+}
+
 fn held_directly(item: &SyntaxNode, implementation: &ast::Impl) -> bool {
     implementation
         .assoc_item_list()
@@ -416,7 +503,8 @@ fn token_blind_attributes(item: &impl ast::HasAttrs) -> bool {
 
 fn attribute_is_token_blind(attribute: &ast::Attr) -> bool {
     let Some(path) = attribute.meta().and_then(|meta| meta.path()) else {
-        return false;
+        // `cfg(..)` parses as its own meta kind with no path.
+        return attribute.simple_name().as_deref() == Some("cfg");
     };
     let spelled = path.syntax().text().to_string();
     // A tool lint namespace (`clippy::use_self`) appears only as the

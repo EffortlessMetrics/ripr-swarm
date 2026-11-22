@@ -55,7 +55,11 @@ fn git_probes(before: &str, after: &str) -> Result<Vec<(usize, String)>, String>
     let write = |path: &str, text: &str| {
         std::fs::write(root.join(path), text).map_err(|error| format!("write {path}: {error}"))
     };
-    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    // `create_dir` refuses a path that already exists, so a directory or
+    // link someone else placed under the shared temp dir is never written.
+    std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+    std::fs::create_dir(root).map_err(|error| format!("create {}: {error}", root.display()))?;
+    std::fs::create_dir(root.join("src")).map_err(|error| error.to_string())?;
     write(
         "Cargo.toml",
         "[package]\nname = \"self-type-respelling\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
@@ -149,6 +153,13 @@ fn self_for_the_implementing_type_seeds_no_probe_in_either_direction() -> Result
     assert_ne!(after, BEFORE, "the fixture must respell something");
     assert_eq!(git_probes(BEFORE, &after)?, Vec::new());
     assert_eq!(git_probes(&after, BEFORE)?, Vec::new());
+    // A `cfg` or lint attribute reads no tokens, so it changes nothing.
+    let gated = BEFORE.replace(
+        "impl Shell {",
+        "#[cfg(not(target_os = \"none\"))]\n#[allow(clippy::use_self)]\nimpl Shell {",
+    );
+    assert_ne!(gated, BEFORE, "the fixture must gain the attributes");
+    assert_eq!(git_probes(&gated, &respelled(&gated))?, Vec::new());
     Ok(())
 }
 
@@ -249,7 +260,7 @@ fn a_spelling_the_files_do_not_prove_equivalent_stays_probed() -> Result<(), Str
             shaped(
                 "pub trait Make {\n    fn make(n: u8) -> Self;\n}\n\
                  impl Make for Shell {\n    fn make(n: u8) -> Shell {\n        Shell(n)\n    }\n}\n\
-                 impl Other {\n    pub fn twice<Shell: Make>(n: u8) -> Shell {",
+                 impl Shell {\n    pub fn twice<Shell: Make>(n: u8) -> Shell {",
                 "    }\n}",
             ),
         ),
@@ -308,23 +319,137 @@ fn a_spelling_the_files_do_not_prove_equivalent_stays_probed() -> Result<(), Str
     Ok(())
 }
 
-/// A type declared with generic parameters: `Wrap::new()` infers what
-/// `Self::new()` fixes, so the pair is not established.
+/// The scope around the `impl` must itself declare the name as one plain
+/// type. A type with generic parameters makes `Wrap::make()` infer what
+/// `Self::make()` fixes, and an alias, an import or a raw spelling can hide
+/// one; a type declared in another file is not read at all.
 #[test]
-fn a_generic_type_keeps_its_respelling_probed() -> Result<(), String> {
-    let file = |line: &str| {
+fn a_name_the_scope_does_not_declare_as_a_plain_type_stays_probed() -> Result<(), String> {
+    let file = |declaration: &str, name: &str, line: &str| {
         format!(
-            "pub struct Wrap<T = u8>(pub T);\n\nimpl Wrap {{\n    pub fn make(n: u8) -> Wrap {{\n\
-             \x20       Wrap(n)\n    }}\n\n    pub fn twice(n: u8) -> Wrap {{\n{line}\n    }}\n}}\n"
+            "{declaration}\n\nimpl {name} {{\n    pub fn make(n: u8) -> {name} {{\n\
+             \x20       loop {{}}\n    }}\n\n    pub fn twice(n: u8) -> {name} {{\n{line}\n    }}\n}}\n"
         )
     };
-    let before = file("        Wrap::make(n + n)");
-    let after = file("        Self::make(n + n)");
-    let probes = git_probes(&before, &after)?;
+    let pair = |declaration: &str, name: &str| {
+        (
+            file(declaration, name, &format!("        {name}::make(n + n)")),
+            file(declaration, name, "        Self::make(n + n)"),
+        )
+    };
+    let probed_twice = |(before, after): &(String, String)| -> Result<bool, String> {
+        let probes = git_probes(before, after)?;
+        Ok(probed(&probes, line_of(after, "Self::make(n + n)")?))
+    };
     assert!(
-        probed(&probes, line_of(&after, "Self::make(n + n)")?),
-        "{:?}",
-        probes
+        !probed_twice(&pair("pub struct Wrap(pub u8);", "Wrap"))?,
+        "the plain declaration beside the impl must drop the probe"
     );
+    let cases = [
+        (
+            "generic parameters",
+            pair("pub struct Wrap<T = u8>(pub T);", "Wrap"),
+        ),
+        (
+            "generic parameters under a raw name",
+            pair("pub struct r#Wrap<T = u8>(pub T);", "Wrap"),
+        ),
+        (
+            "a renamed import of a generic type",
+            pair(
+                "mod inner {\n    pub struct Wrap<T = u8>(pub T);\n}\nuse inner::Wrap as Wrapper;",
+                "Wrapper",
+            ),
+        ),
+        (
+            "a type alias",
+            pair(
+                "pub struct Inner<T = u8>(pub T);\npub type Wrap = Inner;",
+                "Wrap",
+            ),
+        ),
+        (
+            "an import beside a plain declaration elsewhere in the file",
+            pair(
+                "mod inner {\n    pub struct Wrap(pub u8);\n}\nuse inner::Wrap;",
+                "Wrap",
+            ),
+        ),
+        (
+            "a declaration in another file",
+            pair("use crate::other::Wrap;", "Wrap"),
+        ),
+        (
+            "no declaration at all",
+            pair("use crate::other::*;", "Wrap"),
+        ),
+    ];
+    let mut unprobed = Vec::new();
+    for (case, files) in &cases {
+        if !probed_twice(files)? {
+            unprobed.push(*case);
+        }
+    }
+    assert_eq!(unprobed, Vec::<&str>::new());
+    Ok(())
+}
+
+/// The name alone in value position: `Shell(n)` is the tuple constructor
+/// only when a tuple or unit `struct` beside the `impl` owns the name. A
+/// function of that name beside a type alias is another item than `Self(n)`.
+#[test]
+fn a_bare_value_path_needs_the_struct_that_owns_the_name() -> Result<(), String> {
+    let file = |declaration: &str, line: &str| {
+        format!(
+            "{declaration}\n\nimpl Shell {{\n    pub fn twice(n: u8) -> Inner {{\n{line}\n    }}\n}}\n"
+        )
+    };
+    let pair = |declaration: &str| {
+        (
+            file(declaration, "        Shell(n + n)"),
+            file(declaration, "        Self(n + n)"),
+        )
+    };
+    let probed_twice = |(before, after): &(String, String)| -> Result<bool, String> {
+        let forward = git_probes(before, after)?;
+        let backward = git_probes(after, before)?;
+        Ok(probed(&forward, line_of(after, "Self(n + n)")?)
+            && probed(&backward, line_of(before, "Shell(n + n)")?))
+    };
+    let owned = pair("pub struct Shell(pub u8);\npub type Inner = Shell;");
+    assert_eq!(
+        (
+            git_probes(&owned.0, &owned.1)?,
+            git_probes(&owned.1, &owned.0)?
+        ),
+        (Vec::new(), Vec::new()),
+        "the tuple struct beside the impl owns the value name"
+    );
+    let cases = [
+        (
+            "a function shares the alias's name",
+            pair(
+                "pub struct Inner(pub u8);\npub type Shell = Inner;\n\
+                 #[allow(non_snake_case)]\npub fn Shell(n: u8) -> Inner {\n    Inner(n.wrapping_add(1))\n}",
+            ),
+        ),
+        (
+            "a record struct leaves the value name to a glob import",
+            pair(
+                "pub struct Shell {\n    pub n: u8,\n}\npub type Inner = Shell;\nuse crate::other::*;",
+            ),
+        ),
+        (
+            "an enum owns no value of its own name",
+            pair("pub enum Shell {\n    One,\n}\npub type Inner = Shell;"),
+        ),
+    ];
+    let mut unprobed = Vec::new();
+    for (case, files) in &cases {
+        if !probed_twice(files)? {
+            unprobed.push(*case);
+        }
+    }
+    assert_eq!(unprobed, Vec::<&str>::new());
     Ok(())
 }

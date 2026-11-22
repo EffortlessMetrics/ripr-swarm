@@ -186,14 +186,19 @@ all of these hold on each side:
   item, the `impl` and every module around it carry only token-blind
   attributes (`inline`, `cfg`,
   `allow`, `doc`, ...), so no attribute macro receives the spelling;
-- neither file declares the type with generic parameters (a defaulted
-  parameter lets `Wrap::new()` infer what `Self::new()` fixes);
+- the scope that holds the `impl` (file, module or block) itself declares
+  the name as a `struct`, `enum` or `union` without generic parameters, and
+  declares or imports nothing else under that name. A defaulted parameter
+  lets `Wrap::new()` infer what `Self::new()` fixes, and a type alias or a
+  renamed import can hide one;
+- a path that is the name alone in value position (`Shell(n)`, a `Shell(x)`
+  pattern) additionally needs that declaration to be a tuple or unit
+  `struct`. Beside a type alias, a function of the same name makes
+  `Shell(n)` another item than `Self(n)`;
 - both files parse without error and neither line holds a position macro.
 
-Known residual: a type declared with generic parameters in another file is
-not seen. `impl Wrap` for such a type is legal only when every parameter has
-a default, and the two spellings then differ only where inference picks a
-non-default argument.
+Non-claim: a type declared in another file than its `impl` is not read, so
+its respelling stays probed.
 
 ## Required Evidence
 
@@ -235,7 +240,9 @@ non-default argument.
 9. The same respelling for another type's name, with another token changed,
    inside `dbg!`, in an `impl` for `&Shell`, in a nested `impl`, under a
    shadowing generic parameter, under an attribute macro, outside any
-   `impl`, or for a type declared with generic parameters: still probed.
+   `impl`, for a type declared with generic parameters, behind an alias or
+   an import, or in another file, or as the bare value `Shell(n)` where no
+   tuple or unit `struct` beside the `impl` owns the name: still probed.
 
 ## Test Mapping
 
@@ -269,8 +276,9 @@ non-default argument.
   real Git fixtures):
   `self_for_the_implementing_type_seeds_no_probe_in_either_direction` and
   `a_real_change_beside_the_respelling_keeps_its_probe` (example 8),
-  `a_spelling_the_files_do_not_prove_equivalent_stays_probed` and
-  `a_generic_type_keeps_its_respelling_probed` (example 9).
+  `a_spelling_the_files_do_not_prove_equivalent_stays_probed`,
+  `a_name_the_scope_does_not_declare_as_a_plain_type_stays_probed` and
+  `a_bare_value_path_needs_the_struct_that_owns_the_name` (example 9).
 
 ## Implementation Mapping
 
