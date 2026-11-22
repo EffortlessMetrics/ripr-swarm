@@ -309,8 +309,9 @@ changed body. The identity reports a gate when any of these holds:
   `/src/real.rs`), and every owner otherwise: any other macro argument
   (`include!(src_file!("unused.rs"))`), arguments not ending in a literal, a
   literal with escapes, or a run after another argument that spells no `/`
-  (#15035). A bare `concat!` is trusted only while no workspace file may bind
-  a macro named `concat` (`macro_rules! concat`, `macro concat`, `as concat`
+  (#15035). A bare `concat!` is trusted only while no file of its package
+  (any file once one mentions `macro_export`, or once a `#[path]` may move a
+  file between packages) may bind a macro named `concat` (`macro_rules! concat`, `macro concat`, `as concat`
   in an item or macro tokens, a `use` leaf named `concat`, or any
   `#[macro_use] extern crate`; a glob bringing one in is not read), and a
   `core::`/`std::` qualified one only while nothing binds `core` or `std`

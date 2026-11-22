@@ -819,11 +819,19 @@ impl ModuleDeclarations {
         // A shadow reaches only an `include!` of its own package, unless
         // its file exports macros (#15035 round-9: a `#[macro_use] extern
         // crate` in one member does not rebind `concat!` in another).
-        let shadowed: BTreeSet<MacroScope> = reading
+        // A `#[path]` may compile a shadow's file into another package, so
+        // with any retarget every shadow reaches every package.
+        let mut shadowed: BTreeSet<MacroScope> = reading
             .concat_shadowed
             .union(&reading.changed_concat_shadow)
             .cloned()
             .collect();
+        if (reading.retargeted || reading.changed_retarget) && !shadowed.is_empty() {
+            shadowed.insert(MacroScope::Workspace);
+            if !reading.changed_concat_shadow.is_empty() {
+                reading.changed_concat_shadow.insert(MacroScope::Workspace);
+            }
+        }
         if scopes_meet(&shadowed, &reading.bare_concat_include) {
             reading.retargeted = true;
             reading.retarget_opaque = true;
