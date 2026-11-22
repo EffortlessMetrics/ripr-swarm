@@ -396,6 +396,18 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
+    // #15278: a free function that is the only function of its name in the
+    // index is what a free call of that name reaches, also from a test in
+    // another package (`crates/a/tests/t.rs` calling `b::fee(..)`). The
+    // finding-level relation lifts its package guard for the same call
+    // (#2971), so the inventory no longer reads "no test reaches this"
+    // beside a `ripr check` finding that names the test. Every weaker
+    // relation keeps the package guard.
+    let prefix = if owner.free_function && owner.same_name_count == 1 {
+        None
+    } else {
+        prefix
+    };
     for (position, test_index) in indices.iter().enumerate() {
         if position.is_multiple_of(32) && cancellation::checkpoint().is_err() {
             return;

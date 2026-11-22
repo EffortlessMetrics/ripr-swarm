@@ -1431,3 +1431,75 @@ fn seam_id_for_expression(repo: &Repo, expression: &str) -> Result<String, Strin
         )),
     }
 }
+
+/// #15278 item 3: the only test of `wscore::discount` lives in `app/tests`
+/// and calls it directly. `ripr check` names that test, so `ripr pilot` must
+/// not say no test reaches the changed code.
+#[test]
+fn pilot_credits_a_direct_call_from_a_test_in_another_package() -> Result<(), String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            (
+                "app/tests/t.rs",
+                "#[test]\nfn t1() {\n    assert!(wscore::discount(5) > 0);\n}\n",
+            ),
+        ],
+        WS_NEW,
+        false,
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: weak") && check.contains("app/tests/t.rs:2 t1"),
+        "precondition, check names the cross-package test on a weak gap:\n{check}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("wscore/src/lib.rs:2"),
+        "precondition, pilot ranks the changed comparison:\n{pilot}"
+    );
+    assert!(
+        !pilot.contains("ripr found no test that reaches this")
+            && !pilot.contains("no test is seen calling"),
+        "pilot must not say no test reaches code check sees t1 reach:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// The control: two free functions share the name, and the test calls the
+/// one in its own package. Nothing says which `discount` a call reaches
+/// across packages, so the other package's function stays unreached.
+#[test]
+fn pilot_keeps_the_package_guard_when_the_function_name_is_shared() -> Result<(), String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_TOML),
+            (
+                "app/src/lib.rs",
+                "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+            ),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            (
+                "app/tests/t.rs",
+                "#[test]\nfn t1() {\n    assert!(app::discount(5) > 0);\n}\n",
+            ),
+        ],
+        WS_NEW,
+        false,
+    )?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2")
+                && line.contains("ripr found no test that reaches this")
+        }),
+        "the shared name keeps wscore's comparison unreached:\n{pilot}"
+    );
+    Ok(())
+}

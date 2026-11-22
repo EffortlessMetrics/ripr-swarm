@@ -1,0 +1,10 @@
+# Registers the #15278 item 3 screens under RIPR-SPEC-0407: the seam
+# inventory credits a direct call of a uniquely named free function from a
+# test in another workspace package, and keeps the package guard for a
+# shared name.
+[[extend]]
+id = "RIPR-SPEC-0407"
+tests = [
+  "crates/ripr/tests/check_repair_agree.rs::pilot_credits_a_direct_call_from_a_test_in_another_package",
+  "crates/ripr/tests/check_repair_agree.rs::pilot_keeps_the_package_guard_when_the_function_name_is_shared",
+]
