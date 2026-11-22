@@ -25,12 +25,28 @@
 //!   relative (`./`, `../`) regular file inside the workspace root; an
 //!   inherited `baseUrl` stays anchored at the config that declares it, as
 //!   `tsc` does (#11204); an explicit `null` clears an inherited value.
-//!   `references`, package-name `extends`, bases outside the root or behind
+//!   Package-name `extends`, bases outside the root or behind
 //!   a symlinked file or directory, cycles, and missing targets fail closed,
 //!   except that an unfollowable base is ignored when the extending config
 //!   declares a non-null `baseUrl` and `paths` itself (a cycle never is). A
 //!   config that declares `paths` without `baseUrl` is not self-sufficient:
 //!   the base it cannot read could supply the `baseUrl` that anchors them.
+//! - `references` on the selected config are read one level deep. `tsc`
+//!   compiles each referenced project with its own options, so a referenced
+//!   config in the SAME directory (the Vite `tsconfig.app.json` /
+//!   `tsconfig.node.json` layout) is compiled as a sibling project with its
+//!   own map. Which project owns an importer (`include`/`files`) is not
+//!   modeled; instead a specifier resolves only when every project whose
+//!   `paths` claim it resolve it to the same file, and no project without a
+//!   claim would resolve it as a workspace package. A solution-style config
+//!   (`"files": []`, no `include`, no `extends`) compiles no file itself, so
+//!   its own `paths` are not a project. A referenced config in another
+//!   directory governs its own importers through the nearest-config walk
+//!   above and is not consulted here. A reference that is not a regular
+//!   in-root file, a malformed `references` value, or a sibling project that
+//!   cannot be compiled or has `references` of its own fails closed.
+//!   `references` on an `extends` base are ignored, as `tsc` never inherits
+//!   them.
 //! - Resolution succeeds ONLY when a specifier matches a SINGLE existing
 //!   workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
 //!   Zero or >1 matches → `None`.
@@ -68,11 +84,15 @@ use super::bounded_read::read_config_capped;
 #[serde(rename_all = "camelCase")]
 struct RawTsConfig {
     compiler_options: Option<RawCompilerOptions>,
-    // `extends` targets outside the supported relative in-root chain and
-    // `references` are never followed; their presence is detected here and
-    // fails closed downstream.
+    // `extends` targets outside the supported relative in-root chain are
+    // never followed; their presence is detected here and fails closed
+    // downstream.
     extends: Option<serde_json::Value>,
+    // Read for the selected config only ([`referenced_sibling_configs`]).
     references: Option<serde_json::Value>,
+    // Only whether this config compiles any file itself ([`is_solution_only`]).
+    files: Option<serde_json::Value>,
+    include: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -163,8 +183,17 @@ pub(crate) struct TsAliasMap {
     /// selected config and the bases its `extends` chain followed, minus any
     /// base whose own `paths` a later config replaced. Lexically normalized.
     /// A sibling such as `tsconfig.spec.json` or the unselected
-    /// `jsconfig.json` is never here (#12760).
+    /// `jsconfig.json` is never here (#12760). Includes the configs of every
+    /// entry in `referenced_projects`.
     modeled_configs: Vec<PathBuf>,
+    /// Same-directory projects the selected config `references`, each
+    /// compiled from its own config chain. Empty for a config without
+    /// such references; never nested.
+    referenced_projects: Vec<TsAliasMap>,
+    /// `true` for a solution-style config, which compiles no file itself:
+    /// its own entries above are then not a project, and only
+    /// `referenced_projects` answer.
+    solution_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -225,7 +254,7 @@ impl TsAliasUnresolveCause {
                 "add a compilerOptions.paths key matching this specifier for credit",
             ),
             Self::CandidateUnresolved => (
-                "the matched pattern's candidate did not resolve to exactly one in-root workspace file (zero or multiple files, an unsupported template, a target without a leading `./` in a config that sets no baseUrl, or an out-of-root candidate rejected before probing)",
+                "the matched pattern's candidate did not resolve to exactly one in-root workspace file (zero or multiple files, an unsupported template, a target without a leading `./` in a config that sets no baseUrl, referenced projects that map it differently, or an out-of-root candidate rejected before probing)",
                 "point the matched template at exactly one existing workspace file for credit (start it with `./` when the config sets no compilerOptions.baseUrl)",
             ),
         }
@@ -254,8 +283,8 @@ pub(crate) enum TsAliasMapLoadGap {
         config: &'static str,
         detail: String,
     },
-    /// The config uses `extends`/`references`, which single-hop resolution
-    /// deliberately does not follow. `config` names the loaded file.
+    /// The config uses an `extends`/`references` form resolution cannot
+    /// follow exactly. `config` names the loaded file.
     ExtendsUnsupported { config: &'static str },
     /// The config parsed but its chain sets neither `compilerOptions.paths`
     /// nor `compilerOptions.baseUrl`, so there is no alias to resolve.
@@ -290,7 +319,7 @@ impl TsAliasMapLoadGap {
             ),
             Self::ExtendsUnsupported { config } => (
                 format!(
-                    "the {config} at the workspace root uses an `extends`/`references` form alias resolution cannot follow exactly (package-name, symlinked or out-of-workspace base, cycle, missing target, or `references`)"
+                    "the {config} at the workspace root uses an `extends`/`references` form alias resolution cannot follow exactly (package-name, symlinked or out-of-workspace base, cycle, missing target, or a `references` entry that is not a readable config inside the workspace or names a project with `references` of its own)"
                 ),
                 format!(
                     "inline the extended compilerOptions.paths into the workspace-root {config} for credit; extends chains are followed only for relative bases inside the workspace that are regular files"
@@ -343,6 +372,10 @@ impl TsAliasMap {
         self.base_url.hash(&mut first);
         self.base_url_absolute.hash(&mut first);
         self.tsconfig_loaded.hash(&mut first);
+        self.solution_only.hash(&mut first);
+        for project in &self.referenced_projects {
+            project.cache_digest().hash(&mut first);
+        }
         self.templates_must_be_relative.hash(&mut first);
         self.directory_index.hash(&mut first);
         self.config_dir.hash(&mut first);
@@ -375,6 +408,10 @@ impl TsAliasMap {
             value.hash(&mut second);
         }
         self.tsconfig_loaded.hash(&mut second);
+        self.solution_only.hash(&mut second);
+        for project in &self.referenced_projects {
+            project.cache_digest().hash(&mut second);
+        }
         self.templates_must_be_relative.hash(&mut second);
         self.directory_index.hash(&mut second);
         self.base_url_absolute.hash(&mut second);
@@ -424,7 +461,8 @@ impl TsAliasMap {
     /// conventional config (both `tsconfig.json` and `jsconfig.json` declaring
     /// is an unmodeled selection), or the config is unreadable, unparseable,
     /// uses an unsupported `extends`/`references` form, or has an unsafe
-    /// `baseUrl`. Workspace package names remain shared with the root map.
+    /// `baseUrl`. Same-directory projects the config `references` are
+    /// compiled with it. Workspace package names remain shared with the root map.
     pub(crate) fn nested_for(&self, config_dir: &Path) -> Result<Self, ()> {
         let declaring: Vec<PathBuf> = ["tsconfig.json", "jsconfig.json"]
             .iter()
@@ -483,9 +521,33 @@ impl TsAliasMap {
             && normalize_lexically(path).is_some_and(|path| self.modeled_configs.contains(&path))
     }
 
+    /// `true` when a `baseUrl` is in effect for this config or a project it
+    /// references. `tsc` then resolves a bare specifier no `paths` key
+    /// matches under that anchor, which this map does not model, so a caller
+    /// must not read "no key matches" as "names nothing in the workspace".
+    pub(crate) fn base_url_in_effect(&self) -> bool {
+        self.tsconfig_loaded
+            && (!self.templates_must_be_relative
+                || self
+                    .referenced_projects
+                    .iter()
+                    .any(|project| !project.templates_must_be_relative))
+    }
+
     /// `true` when this map has no entries (opt-out / parse-failure path).
     pub(crate) fn is_empty(&self) -> bool {
-        self.literal_entries.is_empty() && self.glob_entries.is_empty()
+        self.projects()
+            .all(|project| project.literal_entries.is_empty() && project.glob_entries.is_empty())
+    }
+
+    /// The projects whose `paths` can govern an importer of this config's
+    /// directory: the config itself unless it is solution-style, then each
+    /// same-directory project it references.
+    fn projects(&self) -> impl Iterator<Item = &TsAliasMap> {
+        (!self.solution_only)
+            .then_some(self)
+            .into_iter()
+            .chain(&self.referenced_projects)
     }
 
     /// `true` when `baseUrl` was absolute (or contained non-normal path
@@ -493,14 +555,14 @@ impl TsAliasMap {
     /// surfaces this as the named limitation
     /// `typescript_base_url_absolute_unsupported`.
     pub(crate) fn base_url_absolute(&self) -> bool {
-        self.base_url_absolute
+        self.projects().any(|project| project.base_url_absolute)
     }
 
     /// The typed fail-closed cause for a specifier that did not resolve,
     /// so the `typescript_path_alias_unresolved` advice can name the real
     /// reason instead of a generic message.
     pub(crate) fn unresolve_cause_for(&self, specifier: &str) -> TsAliasUnresolveCause {
-        if self.base_url_absolute {
+        if self.base_url_absolute() {
             return TsAliasUnresolveCause::BaseUrlAbsolute;
         }
         if self.is_empty() {
@@ -548,6 +610,12 @@ impl TsAliasMap {
     /// #12754 slice) consults this to withhold the root map when a nearer
     /// config owns the specifier's compilation unit.
     pub(crate) fn paths_key_matches(&self, specifier: &str) -> bool {
+        self.projects()
+            .any(|project| project.own_key_matches(specifier))
+    }
+
+    /// Whether this one project's own `paths` keys own `specifier`.
+    fn own_key_matches(&self, specifier: &str) -> bool {
         self.literal_entries.contains_key(specifier)
             || self
                 .glob_entries
@@ -555,8 +623,46 @@ impl TsAliasMap {
                 .any(|entry| match_glob(specifier, &entry.prefix, &entry.suffix).is_some())
     }
 
+    /// Resolve through every project that may own the importer. Project
+    /// membership (`include`/`files`) is not modeled, so the answer must not
+    /// depend on it: every project whose keys claim the specifier has to
+    /// name the same file, and a project without a claim must not be able to
+    /// resolve the specifier some other way.
     fn resolve_paths(&self, specifier: &str) -> Option<PathBuf> {
-        if self.is_empty() {
+        if self.referenced_projects.is_empty() && !self.solution_only {
+            return self.own_resolve_paths(specifier);
+        }
+        let mut agreed: Option<PathBuf> = None;
+        let mut unclaimed = false;
+        for project in self.projects() {
+            if !project.own_key_matches(specifier) {
+                // With a `baseUrl` in effect `tsc` tries the bare specifier
+                // under that anchor before anything else, so this project
+                // may name a different file unless nothing sits there.
+                if !project.templates_must_be_relative
+                    && !project.provably_absent(&strip_ts_ext(specifier))
+                {
+                    return None;
+                }
+                unclaimed = true;
+                continue;
+            }
+            let found = project.own_resolve_paths(specifier)?;
+            if agreed.as_ref().is_some_and(|previous| *previous != found) {
+                return None;
+            }
+            agreed = Some(found);
+        }
+        // A project with no matching key falls back to module resolution; a
+        // workspace package of that name is then a second, different answer.
+        if unclaimed && self.packages.names_package(specifier) {
+            return None;
+        }
+        agreed
+    }
+
+    fn own_resolve_paths(&self, specifier: &str) -> Option<PathBuf> {
+        if self.literal_entries.is_empty() && self.glob_entries.is_empty() {
             return None;
         }
 
@@ -752,7 +858,7 @@ impl TsAliasMap {
 /// - Neither file exists.
 /// - JSON parse error.
 /// - The chain sets neither `baseUrl` nor `paths`.
-/// - `references` present, or an `extends` form outside the supported
+/// - A `references` entry that cannot be read exactly, or an `extends` form outside the supported
 ///   relative in-root chain (package name, symlinked or out-of-root base,
 ///   cycle, missing target unless the config is self-sufficient, or deeper
 ///   than `MAX_EXTENDS_DEPTH`).
@@ -930,7 +1036,7 @@ fn parse_raw_tsconfig(text: &str) -> Result<RawTsConfig, TsAliasMapBlocker> {
 /// `root` when the target is a regular file (not a symlink), up to
 /// [`MAX_EXTENDS_DEPTH`] hops; an inherited `baseUrl` stays anchored at its
 /// declaring config (#11204). Fail-closed as `ExtendsUnsupported` for
-/// `references`, a cycle, an over-deep chain, and any target this loader
+/// a cycle, an over-deep chain, and any target this loader
 /// cannot read exactly (package-name or `node_modules` base, a target outside
 /// `root`, a symlink, a missing, unreadable or invalid base) — EXCEPT when
 /// the extending config itself declares both `baseUrl` and `paths`: nothing
@@ -998,10 +1104,9 @@ fn merge_chain_level(
     visited: &mut Vec<PathBuf>,
     depth: usize,
 ) -> Result<ChainOptions, TsAliasMapBlocker> {
+    // `references` are not inherited through `extends`, so a base's are
+    // irrelevant here; the selected config's are handled by `parse_alias_map`.
     let raw = parse_raw_tsconfig(text)?;
-    if raw.references.is_some() {
-        return Err(TsAliasMapBlocker::ExtendsUnsupported);
-    }
     let config_dir = config_path
         .parent()
         .ok_or(TsAliasMapBlocker::ExtendsUnsupported)?;
@@ -1180,12 +1285,110 @@ fn normalize_lexically(path: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
+/// Maximum `references` entries read from the selected config.
+const MAX_REFERENCES: usize = 32;
+
 fn parse_alias_map(
     root: &Path,
     config_path: &Path,
     text: &str,
 ) -> Result<TsAliasMap, TsAliasMapBlocker> {
+    let raw = parse_raw_tsconfig(text)?;
+    let (mut map, own_declares) = compile_project(root, config_path, text)?;
+    let Some(references) = &raw.references else {
+        return own_declares
+            .then_some(map)
+            .ok_or(TsAliasMapBlocker::IncompleteConfig);
+    };
+    map.solution_only = is_solution_only(&raw);
+    let mut declares = own_declares && !map.solution_only;
+    for sibling in referenced_sibling_configs(root, config_path, references)? {
+        // Any sibling this loader cannot state exactly leaves the importer's
+        // project unknown, so the whole config is refused.
+        let unsupported = TsAliasMapBlocker::ExtendsUnsupported;
+        let Ok(sibling_text) = read_config_capped(&sibling) else {
+            return Err(unsupported);
+        };
+        match parse_raw_tsconfig(&sibling_text) {
+            Ok(sibling_raw) if sibling_raw.references.is_none() => {}
+            _ => return Err(unsupported),
+        }
+        let Ok((project, project_declares)) = compile_project(root, &sibling, &sibling_text) else {
+            return Err(unsupported);
+        };
+        declares |= project_declares;
+        map.modeled_configs
+            .extend(project.modeled_configs.iter().cloned());
+        map.referenced_projects.push(project);
+    }
+    declares
+        .then_some(map)
+        .ok_or(TsAliasMapBlocker::IncompleteConfig)
+}
+
+/// `true` for a solution-style config: `"files": []` with no `include`
+/// entries, which compiles no file itself. A config with `extends` could
+/// inherit `include`, so it is treated as compiling files; that only adds a
+/// project that must agree.
+fn is_solution_only(raw: &RawTsConfig) -> bool {
+    let empty_array = |value: &serde_json::Value| value.as_array().is_some_and(Vec::is_empty);
+    raw.extends.is_none()
+        && raw.files.as_ref().is_some_and(empty_array)
+        && raw.include.as_ref().is_none_or(empty_array)
+}
+
+/// The same-directory configs `references` names, lexically normalized.
+///
+/// `tsc` reads `path` as a config file when it ends in `.json` and as a
+/// directory holding `tsconfig.json` otherwise. Every entry must name a
+/// regular, non-symlinked file inside `root`, or the whole value is refused:
+/// an entry this loader cannot read is a project it cannot rule out. Entries
+/// in other directories are checked and then left to the nearest-config walk.
+fn referenced_sibling_configs(
+    root: &Path,
+    config_path: &Path,
+    references: &serde_json::Value,
+) -> Result<Vec<PathBuf>, TsAliasMapBlocker> {
+    let unsupported = || TsAliasMapBlocker::ExtendsUnsupported;
+    let items = references.as_array().ok_or_else(unsupported)?;
+    if items.len() > MAX_REFERENCES {
+        return Err(unsupported());
+    }
+    let root = normalize_lexically(root).ok_or_else(unsupported)?;
+    let config_path = normalize_lexically(config_path).ok_or_else(unsupported)?;
+    let config_dir = config_path.parent().ok_or_else(unsupported)?;
+    let mut siblings: Vec<PathBuf> = Vec::new();
+    for item in items {
+        let path = item
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(unsupported)?;
+        let named = normalize_lexically(&config_dir.join(path)).ok_or_else(unsupported)?;
+        let target = if path.ends_with(".json") {
+            named
+        } else {
+            named.join("tsconfig.json")
+        };
+        if target == config_path || !regular_file_without_symlinks(&root, &target) {
+            return Err(unsupported());
+        }
+        if target.parent() == Some(config_dir) && !siblings.contains(&target) {
+            siblings.push(target);
+        }
+    }
+    Ok(siblings)
+}
+
+/// Compile one config's own alias map from its `extends` chain, ignoring
+/// `references`. The flag is `false` when the chain sets neither `baseUrl`
+/// nor `paths`: the map is then empty and anchored at the config directory.
+fn compile_project(
+    root: &Path,
+    config_path: &Path,
+    text: &str,
+) -> Result<(TsAliasMap, bool), TsAliasMapBlocker> {
     let merged = merge_compiler_options(root, config_path, text, &mut Vec::new(), 0)?;
+    let declares = merged.base_url.is_some() || merged.paths.is_some();
     // With no effective `baseUrl`, `tsc` resolves each template against the
     // directory of the config that declares `paths`, and rejects a template
     // that is not relative (TS5090). Such a template keeps its key below as a
@@ -1195,9 +1398,10 @@ fn parse_alias_map(
         .paths
         .as_ref()
         .and_then(|declared| declared.config.parent().map(Path::to_path_buf));
+    let own_dir = config_path.parent().map(Path::to_path_buf);
     let (declaring_dir, raw_base_url) = merged
         .base_url
-        .or_else(|| paths_dir.map(|dir| (dir, ".".to_string())))
+        .or_else(|| paths_dir.or(own_dir).map(|dir| (dir, ".".to_string())))
         .ok_or(TsAliasMapBlocker::IncompleteConfig)?;
     let paths = merged
         .paths
@@ -1261,7 +1465,7 @@ fn parse_alias_map(
         // Multi-`*` keys → silently skipped (fail-closed).
     }
 
-    Ok(TsAliasMap {
+    let map = TsAliasMap {
         root: root.to_path_buf(),
         base_url,
         base_url_absolute,
@@ -1276,7 +1480,10 @@ fn parse_alias_map(
         parent_digest: None,
         nested_configs: 0,
         modeled_configs: merged.modeled_configs,
-    })
+        referenced_projects: Vec::new(),
+        solution_only: false,
+    };
+    Ok((map, declares))
 }
 
 /// `tsc`'s `pathIsRelative`: `.`, `..`, or a `./` / `../` prefix.
@@ -1567,28 +1774,55 @@ pub(crate) fn nested_configs_fingerprint(root: &Path, files: &[PathBuf]) -> Opti
                 continue;
             };
             text.hash(&mut hasher);
-            // Hash the merged chain too: an edit to a followed
-            // `extends` base changes resolution without touching `text`.
-            match merge_compiler_options(root, &path, &text, &mut Vec::new(), 0) {
-                Ok(merged) => {
-                    merged.base_url.hash(&mut hasher);
-                    merged.directory_index.hash(&mut hasher);
-                    // The declaring config anchors the templates when no
-                    // `baseUrl` is in effect (#12760).
-                    let (declared_in, entries) = match merged.paths {
-                        Some(declared) => (Some(declared.config), declared.entries),
-                        None => (None, HashMap::new()),
-                    };
-                    declared_in.hash(&mut hasher);
-                    let mut paths: Vec<_> = entries.into_iter().collect();
-                    paths.sort();
-                    paths.hash(&mut hasher);
+            // A same-directory project the config references resolves its
+            // importers, so its text and chain move the digest too.
+            let siblings = parse_raw_tsconfig(&text)
+                .ok()
+                .and_then(|raw| raw.references)
+                .and_then(|references| referenced_sibling_configs(root, &path, &references).ok())
+                .unwrap_or_default();
+            for sibling in siblings {
+                sibling.hash(&mut hasher);
+                match read_config_capped(&sibling) {
+                    Ok(sibling_text) => {
+                        sibling_text.hash(&mut hasher);
+                        hash_merged_chain(root, &sibling, &sibling_text, &mut hasher);
+                    }
+                    Err(_read_err) => "unreadable".hash(&mut hasher),
                 }
-                Err(_blocker) => "unmodeled".hash(&mut hasher),
             }
+            hash_merged_chain(root, &path, &text, &mut hasher);
         }
     }
     found.then(|| hasher.finish())
+}
+
+/// Hash the merged `extends` chain of one config: an edit to a followed base
+/// changes resolution without touching the config's own text.
+fn hash_merged_chain(
+    root: &Path,
+    path: &Path,
+    text: &str,
+    hasher: &mut std::collections::hash_map::DefaultHasher,
+) {
+    use std::hash::Hash;
+    match merge_compiler_options(root, path, text, &mut Vec::new(), 0) {
+        Ok(merged) => {
+            merged.base_url.hash(hasher);
+            merged.directory_index.hash(hasher);
+            // The declaring config anchors the templates when no `baseUrl`
+            // is in effect (#12760).
+            let (declared_in, entries) = match merged.paths {
+                Some(declared) => (Some(declared.config), declared.entries),
+                None => (None, HashMap::new()),
+            };
+            declared_in.hash(hasher);
+            let mut paths: Vec<_> = entries.into_iter().collect();
+            paths.sort();
+            paths.hash(hasher);
+        }
+        Err(_blocker) => "unmodeled".hash(hasher),
+    }
 }
 
 /// Whether the paths-owning config(s) in `config_dir` may claim `specifier`
@@ -1640,7 +1874,12 @@ pub(crate) fn package_config_claims(root: &Path, config_dir: &Path, specifier: &
 /// unresolved instead). An `extends`-only config that parses but whose chain
 /// declares no followable `paths` (package-name, symlinked or out-of-root
 /// base, cycle) does NOT claim ownership, so today's root fallback is kept for it (#12754).
+/// A config also owns `paths` when a same-directory project it `references` does.
 pub(crate) fn config_file_owns_paths(root: &Path, path: &Path) -> bool {
+    config_owns_paths(root, path, true)
+}
+
+fn config_owns_paths(root: &Path, path: &Path, follow_references: bool) -> bool {
     let Ok(text) = read_config_capped(path) else {
         return true;
     };
@@ -1661,6 +1900,17 @@ pub(crate) fn config_file_owns_paths(root: &Path, path: &Path) -> bool {
         || (raw.extends.is_some()
             && merge_compiler_options(root, path, &text, &mut Vec::new(), 0)
                 .is_ok_and(|merged| merged.paths.is_some()))
+        // A same-directory project it references owns `paths` for the
+        // importers here. Unreadable `references` keep the root fallback, as
+        // an unfollowable `extends` does.
+        || (follow_references
+            && raw.references.as_ref().is_some_and(|references| {
+                referenced_sibling_configs(root, path, references).is_ok_and(|siblings| {
+                    siblings
+                        .iter()
+                        .any(|sibling| config_owns_paths(root, sibling, false))
+                })
+            }))
 }
 
 /// Strip the file extension from a path string, preserving the rest.
@@ -2235,6 +2485,370 @@ mod tests {
             r#"{"references":[{"path":"./pkg"}],"compilerOptions":{"baseUrl":".","paths":{}}}"#,
         );
         assert!(load_alias_map(&root).is_none());
+    }
+
+    /// The Vite template layout: a solution-style root that references
+    /// `tsconfig.app.json` and `tsconfig.node.json` beside it.
+    fn solution_root(label: &str, app: &str) -> PathBuf {
+        let root = temp_dir(label);
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.node.json"}]}"#,
+        );
+        write(&root, "tsconfig.app.json", app);
+        write(
+            &root,
+            "tsconfig.node.json",
+            r#"{"compilerOptions":{"strict":true},"include":["vite.config.ts"]}"#,
+        );
+        write(&root, "src/owner.ts", "export const owner = 1;\n");
+        root
+    }
+
+    #[test]
+    fn solution_style_root_resolves_through_its_referenced_sibling() -> Result<(), String> {
+        for (label, app) in [
+            (
+                "references-no-base-url",
+                r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}},"include":["src"]}"#,
+            ),
+            (
+                "references-base-url",
+                r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+            ),
+        ] {
+            let root = solution_root(label, app);
+            let map = load_alias_map(&root).ok_or("the solution config must load")?;
+            assert_eq!(
+                resolved(&map, "@/owner").as_deref(),
+                Some("src/owner.ts"),
+                "{label}"
+            );
+            assert_eq!(resolved(&map, "@/missing"), None, "{label}");
+            assert!(map.paths_key_matches("@/owner") && !map.is_empty());
+            for config in ["tsconfig.json", "tsconfig.app.json", "tsconfig.node.json"] {
+                assert!(map.models_config(&root.join(config)), "{label}: {config}");
+            }
+            assert!(!map.models_config(&root.join("tsconfig.spec.json")));
+            assert!(config_file_owns_paths(&root, &root.join("tsconfig.json")));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn solution_style_root_own_paths_are_not_a_project() -> Result<(), String> {
+        // `"files": []` compiles nothing, so the root's own `paths` govern no
+        // importer: only the referenced project answers.
+        let root = solution_root(
+            "references-solution-own-paths",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        write(&root, "other/owner.ts", "export const decoy = 1;\n");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"files":[],"compilerOptions":{"paths":{"@/*":["./other/*"],"root-only":["./other/owner.ts"]}},"references":[{"path":"./tsconfig.app.json"}]}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the solution config must load")?;
+        assert_eq!(resolved(&map, "@/owner").as_deref(), Some("src/owner.ts"));
+        assert_eq!(resolved(&map, "root-only"), None);
+        assert!(!map.paths_key_matches("root-only"));
+
+        // Without `"files": []` the root compiles files too, so it is a
+        // project whose different answer must be respected.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./other/*"]}},"references":[{"path":"./tsconfig.app.json"}]}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the referencing config must load")?;
+        assert_eq!(resolved(&map, "@/owner"), None);
+        assert!(map.paths_key_matches("@/owner"));
+        // An `extends` could inherit `include`, so `"files": []` alone does
+        // not make the config solution-style.
+        write(&root, "base.json", r#"{"include":["other"]}"#);
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./base.json","files":[],"compilerOptions":{"paths":{"@/*":["./other/*"]}},"references":[{"path":"./tsconfig.app.json"}]}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the extending config must load")?;
+        assert_eq!(resolved(&map, "@/owner"), None);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn referenced_siblings_must_agree_on_a_specifier() -> Result<(), String> {
+        let root = solution_root(
+            "references-disagree",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"],"app-only/*":["./src/*"]}}}"#,
+        );
+        write(&root, "spec/owner.ts", "export const decoy = 1;\n");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.spec.json"}]}"#,
+        );
+        // Same key, different file: which one applies depends on project
+        // membership, which is not modeled.
+        write(
+            &root,
+            "tsconfig.spec.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./spec/*"]}}}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the solution config must load")?;
+        assert_eq!(resolved(&map, "@/owner"), None);
+        assert_eq!(
+            map.unresolve_cause_for("@/owner"),
+            TsAliasUnresolveCause::CandidateUnresolved
+        );
+        // A key only one project declares is still answered by that project.
+        assert_eq!(
+            resolved(&map, "app-only/owner").as_deref(),
+            Some("src/owner.ts")
+        );
+        // One claiming project that cannot resolve leaves it unresolved.
+        write(
+            &root,
+            "tsconfig.spec.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./nowhere/*"]}}}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the solution config must load")?;
+        assert_eq!(resolved(&map, "@/owner"), None);
+        // Agreement, here through a shared base both siblings extend.
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        for sibling in ["tsconfig.app.json", "tsconfig.spec.json"] {
+            write(&root, sibling, r#"{"extends":"./tsconfig.base.json"}"#);
+        }
+        let map = load_alias_map(&root).ok_or("the solution config must load")?;
+        assert_eq!(resolved(&map, "@/owner").as_deref(), Some("src/owner.ts"));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn siblings_extending_the_referencing_root_inherit_its_paths() -> Result<(), String> {
+        // The Angular layout: the root declares `paths` and references
+        // projects that extend it. A base's `references` are not inherited.
+        let root = temp_dir("references-angular");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"files":[],"compilerOptions":{"baseUrl":"./","paths":{"@app/*":["src/app/*"]}},"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.spec.json"}]}"#,
+        );
+        for sibling in ["tsconfig.app.json", "tsconfig.spec.json"] {
+            write(&root, sibling, r#"{"extends":"./tsconfig.json"}"#);
+        }
+        write(&root, "src/app/owner.ts", "export const owner = 1;\n");
+        let map = load_alias_map(&root).ok_or("the Angular layout must load")?;
+        assert_eq!(
+            resolved(&map, "@app/owner").as_deref(),
+            Some("src/app/owner.ts")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn an_unclaiming_project_with_a_base_url_can_still_answer() -> Result<(), String> {
+        // The tools project has no key for `lib/*`, but its `baseUrl` makes
+        // `tsc` look for `tools/lib/owner` first. Membership is not modeled,
+        // so the app's alias is credited only when nothing sits there.
+        let app = r#"{"compilerOptions":{"paths":{"lib/*":["./src/*"]}}}"#;
+        let root = solution_root("references-base-url-competes", app);
+        write(
+            &root,
+            "tsconfig.node.json",
+            r#"{"compilerOptions":{"baseUrl":"./tools"},"include":["tools"]}"#,
+        );
+        let map = load_alias_map(&root).ok_or("the solution-style root must load")?;
+        assert_eq!(resolved(&map, "lib/owner").as_deref(), Some("src/owner.ts"));
+        write(&root, "tools/lib/owner.ts", "export const owner = 2;\n");
+        assert_eq!(resolved(&map, "lib/owner"), None);
+        assert!(map.paths_key_matches("lib/owner"));
+        // A declaration file there is just as much an answer.
+        let _ = fs::remove_file(root.join("tools/lib/owner.ts"));
+        assert_eq!(resolved(&map, "lib/owner").as_deref(), Some("src/owner.ts"));
+        write(&root, "tools/lib/owner.d.ts", "export {};\n");
+        assert_eq!(resolved(&map, "lib/owner"), None);
+        assert!(map.base_url_in_effect());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_or_nested_references_fail_closed() {
+        let app = r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#;
+        for (label, root_config, extra) in [
+            (
+                "missing-target",
+                r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.gone.json"}]}"#,
+                None,
+            ),
+            (
+                "outside-root",
+                r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"../outside/tsconfig.json"}]}"#,
+                None,
+            ),
+            (
+                "not-an-array",
+                r#"{"files":[],"references":{"path":"./tsconfig.app.json"}}"#,
+                None,
+            ),
+            (
+                "entry-without-path",
+                r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{}]}"#,
+                None,
+            ),
+            (
+                "self-reference",
+                r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.json"}]}"#,
+                None,
+            ),
+            (
+                "sibling-with-references",
+                r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.lib.json"}]}"#,
+                Some((
+                    "tsconfig.lib.json",
+                    r#"{"references":[{"path":"./tsconfig.app.json"}]}"#,
+                )),
+            ),
+            (
+                "sibling-unparseable",
+                r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.lib.json"}]}"#,
+                Some(("tsconfig.lib.json", "{ not json")),
+            ),
+            (
+                "sibling-package-extends",
+                r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.lib.json"}]}"#,
+                Some(("tsconfig.lib.json", r#"{"extends":"@scope/tsconfig"}"#)),
+            ),
+        ] {
+            let root = solution_root(&format!("references-closed-{label}"), app);
+            // Control: the same root loads before the reference is broken,
+            // so a refusal below is about the reference and not the setup.
+            assert!(load_alias_map(&root).is_some(), "{label}: control");
+            write(&root, "tsconfig.json", root_config);
+            assert_eq!(
+                fs::read_to_string(root.join("tsconfig.json"))
+                    .ok()
+                    .as_deref(),
+                Some(root_config),
+                "{label}: fixture"
+            );
+            if let Some((name, body)) = extra {
+                write(&root, name, body);
+                assert_eq!(
+                    fs::read_to_string(root.join(name)).ok().as_deref(),
+                    Some(body),
+                    "{label}: fixture"
+                );
+            }
+            assert!(load_alias_map(&root).is_none(), "{label}");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    #[test]
+    fn references_to_other_directories_leave_the_config_its_own_paths() -> Result<(), String> {
+        let root = temp_dir("references-other-dirs");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}},"references":[{"path":"./packages/lib"},{"path":"packages/tool/tsconfig.build.json"}]}"#,
+        );
+        write(
+            &root,
+            "packages/lib/tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./lib-src/*"]}}}"#,
+        );
+        write(&root, "packages/tool/tsconfig.build.json", "{}");
+        write(&root, "src/owner.ts", "export const owner = 1;\n");
+        let map = load_alias_map(&root).ok_or("in-root references must not refuse the config")?;
+        assert_eq!(resolved(&map, "@/owner").as_deref(), Some("src/owner.ts"));
+        assert!(!map.models_config(&root.join("packages/lib/tsconfig.json")));
+        // A solution-style root with no same-directory project declares
+        // nothing an importer here could use.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"files":[],"references":[{"path":"./packages/lib"}]}"#,
+        );
+        assert!(load_alias_map(&root).is_none());
+        // `references` on an `extends` base are never inherited.
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json"}"#,
+        );
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}},"references":[{"path":"./tsconfig.gone.json"}]}"#,
+        );
+        let map = load_alias_map(&root).ok_or("a base's references must be ignored")?;
+        assert_eq!(resolved(&map, "@/owner").as_deref(), Some("src/owner.ts"));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn nested_fingerprint_and_digest_follow_a_referenced_sibling() -> Result<(), String> {
+        let root = temp_dir("references-fingerprint");
+        let files = vec![PathBuf::from("packages/a/src/owner.ts")];
+        write(
+            &root,
+            "packages/a/tsconfig.json",
+            r#"{"files":[],"references":[{"path":"./tsconfig.app.json"}]}"#,
+        );
+        write(
+            &root,
+            "packages/a/tsconfig.app.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./src/*"]}}}"#,
+        );
+        write(
+            &root,
+            "packages/a/src/owner.ts",
+            "export const owner = 1;\n",
+        );
+        write(
+            &root,
+            "packages/a/lib/owner.ts",
+            "export const other = 1;\n",
+        );
+        let empty = TsAliasMap::workspace_packages_only(&root, Default::default());
+        let nested = empty
+            .nested_for(&root.join("packages/a"))
+            .map_err(|()| "the package solution config must compile")?;
+        assert_eq!(
+            resolved(&nested, "@/owner").as_deref(),
+            Some("packages/a/src/owner.ts")
+        );
+        let first = nested_configs_fingerprint(&root, &files).ok_or("the sibling owns paths")?;
+        write(
+            &root,
+            "packages/a/tsconfig.app.json",
+            r#"{"compilerOptions":{"paths":{"@/*":["./lib/*"]}}}"#,
+        );
+        let second = nested_configs_fingerprint(&root, &files).ok_or("the sibling owns paths")?;
+        assert_ne!(first, second, "a sibling edit must move the fingerprint");
+        let edited = empty
+            .nested_for(&root.join("packages/a"))
+            .map_err(|()| "the edited package config must compile")?;
+        assert_eq!(
+            resolved(&edited, "@/owner").as_deref(),
+            Some("packages/a/lib/owner.ts")
+        );
+        assert_ne!(nested.cache_digest(), edited.cache_digest());
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]

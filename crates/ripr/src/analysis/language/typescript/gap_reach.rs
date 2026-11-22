@@ -210,6 +210,12 @@ impl<'a> GapReach<'a> {
             if map.workspace_package_dir_for(specifier).is_some() {
                 return Follow::MayReach;
             }
+            // A `paths` key claims the specifier but names no single file
+            // (a tie, or projects that disagree). The compiler still takes
+            // the alias, not the manifest export, so the target is unknown.
+            if map.has_tsconfig() && map.paths_key_matches(specifier) {
+                return Follow::MayReach;
+            }
         }
         let Some(exports) = &self.package_exports else {
             return Follow::MayReach;
@@ -412,8 +418,11 @@ fn resolution_config_hides_imports(root: &Path, alias_map: Option<&TsAliasMap>) 
                 // bases it followed, are visible. A sibling such as
                 // `tsconfig.spec.json`, or the unselected `jsconfig.json`,
                 // can remap resolution without the map knowing (#12760).
-                let loaded_root =
-                    depth == 0 && alias_map.is_some_and(|map| map.models_config(&path));
+                // An inherited `baseUrl` is the exception: it resolves bare
+                // specifiers no key matches, which the map does not model.
+                let loaded_root = depth == 0
+                    && alias_map
+                        .is_some_and(|map| map.models_config(&path) && !map.base_url_in_effect());
                 if resolves && !loaded_root {
                     if depth == 0 {
                         return ConfigHiding::everywhere();
@@ -1165,6 +1174,134 @@ mod tests {
             r#"{"compilerOptions":{"paths":{"lib/*":["./src/*"]}}}"#,
         )?;
         let map = load()?;
+        assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn an_inherited_base_url_keeps_the_disclosure_for_a_modeled_config() -> Result<(), String> {
+        // The base is not named `tsconfig*.json`, so the scan never reads
+        // its `baseUrl` directly; the map that modeled the chain has to say
+        // that bare specifiers can resolve under an anchor it does not model.
+        let root = temp_root("inherited-base-url")?;
+        std::fs::create_dir_all(root.join("configs")).map_err(|err| format!("dirs: {err}"))?;
+        let write = |name: &str, text: &str| {
+            std::fs::write(root.join(name), text).map_err(|err| format!("write {name}: {err}"))
+        };
+        write(
+            "tsconfig.json",
+            r#"{"extends":"./configs/options.json","compilerOptions":{"paths":{"@app/*":["./src/*"]}}}"#,
+        )?;
+        write(
+            "configs/options.json",
+            r#"{"compilerOptions":{"strict":true}}"#,
+        )?;
+        let map = super::super::tsconfig::load_alias_map(&root).ok_or("the chain must load")?;
+        assert!(map.models_config(&root.join("tsconfig.json")));
+        let hiding = resolution_config_hides_imports(&root, Some(&map));
+        assert!(!hiding.everywhere && hiding.dirs.is_empty());
+
+        write(
+            "configs/options.json",
+            r#"{"compilerOptions":{"baseUrl":"../src"}}"#,
+        )?;
+        let map = super::super::tsconfig::load_alias_map(&root).ok_or("the chain must load")?;
+        assert!(map.models_config(&root.join("tsconfig.json")));
+        assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn a_self_import_a_paths_key_claims_but_cannot_resolve_may_reach() -> Result<(), String> {
+        let root = temp_root("self-import-claimed")?;
+        for dir in ["src", "public"] {
+            std::fs::create_dir_all(root.join(dir)).map_err(|err| format!("dirs: {err}"))?;
+        }
+        let write = |name: &str, text: &str| {
+            std::fs::write(root.join(name), text).map_err(|err| format!("write {name}: {err}"))
+        };
+        write(
+            "package.json",
+            r#"{"name": "widget", "exports": {"./pricing": "./public/pricing.ts"}}"#,
+        )?;
+        write("public/pricing.ts", "export default function run() {}\n")?;
+        // Two files at the alias target: the key owns the import, but the
+        // map cannot say which file it names.
+        write("src/pricing.ts", "export default function run() {}\n")?;
+        write("src/pricing.js", "export default function run() {}\n")?;
+        let entries = [
+            ("test/a.test.ts", "import run from 'widget/pricing';\n"),
+            ("public/pricing.ts", "export default function run() {}\n"),
+            ("src/pricing.ts", "export default function run() {}\n"),
+        ];
+        let (owned, ()) = files(&entries);
+        let sources: HashMap<String, &String> = owned
+            .iter()
+            .map(|(path, source)| (path.clone(), source))
+            .collect();
+        let reaches = |map: &TsAliasMap| {
+            GapReach::new(
+                &sources,
+                &["src/pricing.ts".to_string()],
+                std::iter::empty(),
+                Some(map),
+                &root,
+                false,
+            )
+            .may_reach(Path::new("test/a.test.ts"))
+        };
+
+        // Control: no key claims the specifier, so the manifest export is
+        // the only target and it does not reach the change.
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"@app/*":["./src/*"]}}}"#,
+        )?;
+        let map = super::super::tsconfig::load_alias_map(&root).ok_or("the config must load")?;
+        assert!(!reaches(&map));
+
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions":{"paths":{"widget/pricing":["./src/pricing"]}}}"#,
+        )?;
+        let map = super::super::tsconfig::load_alias_map(&root).ok_or("the config must load")?;
+        assert!(map.paths_key_matches("widget/pricing"));
+        assert!(map.resolve("widget/pricing").is_none());
+        assert!(reaches(&map));
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn a_referenced_sibling_project_is_exempt_only_when_the_map_compiled_it() -> Result<(), String>
+    {
+        let root = temp_root("referenced-sibling-identity")?;
+        let write = |name: &str, text: &str| {
+            std::fs::write(root.join(name), text).map_err(|err| format!("write {name}: {err}"))
+        };
+        write(
+            "tsconfig.json",
+            r#"{"files":[],"references":[{"path":"./tsconfig.app.json"},{"path":"./tsconfig.node.json"}]}"#,
+        )?;
+        write(
+            "tsconfig.app.json",
+            r#"{"compilerOptions":{"paths":{"@app/*":["./src/*"]}},"include":["src"]}"#,
+        )?;
+        write("tsconfig.node.json", r#"{"include":["vite.config.ts"]}"#)?;
+        let map = super::super::tsconfig::load_alias_map(&root)
+            .ok_or("the solution-style root must load")?;
+        let hiding = resolution_config_hides_imports(&root, Some(&map));
+        assert!(!hiding.everywhere && hiding.dirs.is_empty());
+
+        // A project config nobody references is not part of the map.
+        write(
+            "tsconfig.spec.json",
+            r#"{"compilerOptions":{"paths":{"lib/*":["./src/*"]}}}"#,
+        )?;
+        let map = super::super::tsconfig::load_alias_map(&root)
+            .ok_or("the solution-style root must still load")?;
         assert!(resolution_config_hides_imports(&root, Some(&map)).everywhere);
         let _ = std::fs::remove_dir_all(&root);
         Ok(())

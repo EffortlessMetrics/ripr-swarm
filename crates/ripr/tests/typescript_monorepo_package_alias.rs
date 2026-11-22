@@ -111,8 +111,9 @@ fn package_only_config_resolves_without_a_root_tsconfig() -> Result<(), String> 
 
 #[test]
 fn unmodelable_package_config_stays_unresolved() -> Result<(), String> {
-    // `references` is never followed, so the package config cannot be
-    // modeled exactly even though it declares its own baseUrl and paths.
+    // The `references` entry names a project config that does not exist, so
+    // the package config cannot be modeled exactly even though it declares
+    // its own baseUrl and paths.
     let subject = Subject::create(
         Some(ROOT),
         "{\"references\":[{\"path\":\"../b\"}],\"compilerOptions\":{\"baseUrl\":\".\",\"paths\":{\"@/*\":[\"src/*\"]}}}",
