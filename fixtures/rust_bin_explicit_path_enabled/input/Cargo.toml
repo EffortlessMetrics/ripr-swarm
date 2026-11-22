@@ -1,0 +1,11 @@
+[package]
+name = "rust_bin_explicit_path_enabled_fixture"
+version = "0.0.0"
+edition = "2024"
+autobins = false
+
+[workspace]
+
+[[bin]]
+name = "rust_bin_explicit_path_enabled_fixture"
+path = "src/main.rs"
