@@ -294,3 +294,42 @@ fn a_macro_that_may_write_the_method_withholds_the_relation() -> Result<(), Stri
     }
     Ok(())
 }
+
+/// A standard trait's provided method is written nowhere in the workspace,
+/// and `Iterator::count(self)` takes an owned `Shelf` before a workspace
+/// `fn count(&self)` does. The name alone withholds the relation; the same
+/// impl under another name, and the standard trait's own impl, keep it.
+#[test]
+fn a_standard_trait_method_of_the_name_withholds_the_relation() -> Result<(), String> {
+    let shelf = |method: &str| {
+        format!(
+            "pub struct Shelf {{ left: usize }}\n\
+             impl Shelf {{\n    pub fn stocked(left: usize) -> Shelf {{ Shelf {{ left }} }}\n}}\n\
+             impl Iterator for Shelf {{\n    type Item = usize;\n    fn next(&mut self) -> Option<usize> {{ if self.left > 0 {{ self.left -= 1; Some(self.left) }} else {{ None }} }}\n}}\n\
+             pub trait Stock {{\n    fn {method}(&self) -> usize;\n}}\n\
+             impl Stock for Shelf {{\n    fn {method}(&self) -> usize {{ if self.left > 3 {{ 1 }} else {{ 0 }} }}\n}}\n"
+        )
+    };
+    for method in ["count", "into_iter", "into", "to_string", "last"] {
+        let body = format!("let _ = Shelf::stocked(5).{method}();");
+        assert!(
+            !direct(
+                &shelf(method),
+                &format!("impl Stock for Shelf::{method}"),
+                &body
+            )?,
+            "{method}"
+        );
+    }
+    assert!(direct(
+        &shelf("on_hand"),
+        "impl Stock for Shelf::on_hand",
+        "let _ = Shelf::stocked(5).on_hand();"
+    )?);
+    assert!(direct(
+        &shelf("on_hand"),
+        "impl Iterator for Shelf::next",
+        "let _ = Shelf::stocked(5).next();"
+    )?);
+    Ok(())
+}
