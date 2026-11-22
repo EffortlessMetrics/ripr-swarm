@@ -17,16 +17,16 @@ pub fn normalized(doc: &str) -> String {
 /// One documented `ripr ...` invocation: the leading lowercase words (the
 /// candidate command path) and every `--flag` it passes.
 #[derive(Debug, PartialEq)]
-struct DocInvocation {
+pub(super) struct DocInvocation {
     line: usize,
-    words: Vec<String>,
-    flags: Vec<String>,
+    pub(super) words: Vec<String>,
+    pub(super) flags: Vec<String>,
 }
 
 /// Extract `ripr ...` invocations that pass at least one flag. A command
 /// ends at a code-span, pipe, or shell separator; a trailing `\` joins the
 /// next line so multi-line Bash examples are read whole.
-fn doc_invocations(doc: &str) -> Vec<DocInvocation> {
+pub(super) fn doc_invocations(doc: &str) -> Vec<DocInvocation> {
     let lf = doc.replace("\r\n", "\n");
     let lines: Vec<&str> = lf.lines().collect();
     let mut found = Vec::new();

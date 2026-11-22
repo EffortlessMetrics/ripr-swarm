@@ -266,7 +266,7 @@ impl RepairReadiness {
             // condition (strength and relation confidence are applied by
             // `fix_site_candidates`); the test-surface predicate is re-applied
             // here so swapping candidates can never widen the edit surface.
-            Some(candidate) if !crate::analysis::is_test_surface_path(&candidate.file) => {
+            Some(candidate) if !fix_site_is_test_surface(root, &candidate.file) => {
                 self.ready = false;
                 self.fix_site = Some(candidate);
                 self.ineligibility = Some("fix_site_not_test_surface");
@@ -378,7 +378,7 @@ impl RepairReadiness {
         };
         let Some(fix_site) = candidates
             .into_iter()
-            .find(|site| crate::analysis::is_test_surface_path(&site.file))
+            .find(|site| fix_site_is_test_surface(root, &site.file))
         else {
             return Self {
                 ready: false,
@@ -456,6 +456,16 @@ impl RepairReadiness {
             }
         }
     }
+}
+
+/// Whether a fix site's file is a test surface. The site spells its file as
+/// stable path text (`%` escaped as `%25`), while the manifest authority
+/// compares native names, so `spec/discount%.rs` is decoded before it asks
+/// (#15910). A name that is not UTF-8 is not admitted.
+fn fix_site_is_test_surface(root: &Path, file: &str) -> bool {
+    crate::analysis::decode_stable_path_text(file)
+        .to_str()
+        .is_some_and(|native| crate::analysis::is_test_surface(root, native))
 }
 
 /// High-confidence directly-related tests that can be the fix site, strongest
@@ -1063,10 +1073,11 @@ pub(super) fn finding_guidance(item: &GapItem) -> Value {
 
 /// Budget items for the shared [`crate::lsp::diagnostic_budget`] authority.
 /// Eligibility is the producer's candidate-actionability predicate captured
-/// at projection time; MCP does not invent its own filter or ranking. The
-/// selection key uses the same unset (128) ranks the LSP delivery bridge
-/// uses, so the budget's evidence-owned order (selection key, then canonical
-/// id, then document) is the only ordering applied.
+/// at projection time; MCP does not invent its own filter or ranking. Every
+/// item here is a gap from the analyzed change, so they share one unset
+/// (128) selection key and the budget's canonical-id-then-document order is
+/// the only ordering applied. (The LSP bridge ranks the same findings ahead
+/// of repository seam inventory rows, which this list never carries.)
 pub(crate) fn budget_items(
     items: &[GapItem],
 ) -> Vec<crate::lsp::diagnostic_budget::DiagnosticBudgetItem> {

@@ -75,6 +75,16 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
             ));
         }
     }
+    if let Some(branches) = schema.get("anyOf").and_then(Value::as_array)
+        && !branches
+            .iter()
+            .any(|branch| check(value, branch, root, location).is_ok())
+    {
+        return Err(format!(
+            "{location}: matched none of {} anyOf branches",
+            branches.len()
+        ));
+    }
     if let Some(negated) = schema.get("not")
         && check(value, negated, root, location).is_ok()
     {
@@ -379,6 +389,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "$schema",
     "additionalProperties",
     "allOf",
+    "anyOf",
     "const",
     "description",
     "else",
@@ -426,7 +437,7 @@ fn collect_unsupported(schema: &Value, found: &mut Vec<String>) {
             "items" | "if" | "then" | "else" | "not" | "additionalProperties" => {
                 collect_unsupported(nested, found)
             }
-            "allOf" | "oneOf" | "prefixItems" => {
+            "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
                 for member in nested.as_array().into_iter().flatten() {
                     collect_unsupported(member, found);
                 }

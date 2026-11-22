@@ -141,6 +141,7 @@ pub(in crate::analysis) fn missing_evidence(
     // generic line; the typed shape, not a `==` string match, decides.
     if matches!(probe.family, ProbeFamily::Predicate)
         && infect.state != StageState::Yes
+        && !super::infection::is_opaque_boundary_input(infect)
         && !activation.missing_discriminators.iter().any(|fact| {
             matches!(
                 fact.shape,

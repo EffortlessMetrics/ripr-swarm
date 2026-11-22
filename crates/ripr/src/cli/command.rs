@@ -313,6 +313,12 @@ fn unknown_command_error(command: &str) -> String {
 }
 
 fn unknown_command_message(command: &str) -> String {
+    // An empty command name is nearly always an unset shell variable
+    // (`ripr $CMD`). Echoing `""` back says nothing about that (#15985).
+    if command.trim().is_empty() {
+        return "the command name is empty, which usually means an unset shell variable. Run `ripr --help` to list commands."
+            .to_string();
+    }
     // A flag in command position means options were put before the command.
     if command.starts_with('-') {
         if let Some(flag) = closest_flag(command) {
@@ -688,6 +694,19 @@ mod tests {
             unknown_command_error("--base"),
             "unknown command \"--base\"; options go after the command, e.g. `ripr check --base ...`"
         );
+    }
+
+    /// #15985: an empty or whitespace-only command name is named as empty
+    /// instead of echoed back as `unknown command ""`.
+    #[test]
+    fn an_empty_command_name_is_named_as_empty() {
+        for typed in ["", " ", "\t"] {
+            assert_eq!(
+                CliCommand::from_parts(Some(typed), Vec::new()),
+                Err("the command name is empty, which usually means an unset shell variable. Run `ripr --help` to list commands.".to_string()),
+                "{typed:?}"
+            );
+        }
     }
 
     #[test]
