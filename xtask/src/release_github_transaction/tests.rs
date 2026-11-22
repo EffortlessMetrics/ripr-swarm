@@ -7,11 +7,15 @@ use super::model::{
     ExpectedSubject, GitHubReleaseTransactionRequest, Mode, REQUEST_SCHEMA, WithheldChannels,
     subject_inventory_sha256,
 };
-use super::plan::{Decision, Step, StopKind, VerifiedAuthorization, decide};
+use super::plan::{AuthorizedSubject, Decision, Step, StopKind, VerifiedAuthorization, decide};
 use std::collections::BTreeSet;
 
 const CANDIDATE: &str = "1111111111111111111111111111111111111111";
 const OTHER_SHA: &str = "2222222222222222222222222222222222222222";
+/// The annotated tag object the authorization event pushes.
+const TAG_OBJECT: &str = "3333333333333333333333333333333333333333";
+/// Another annotated tag object (other tagger or message) at the candidate.
+const FOREIGN_TAG_OBJECT: &str = "4444444444444444444444444444444444444444";
 
 fn hex64(seed: char) -> String {
     std::iter::repeat_n(seed, 64).collect()
@@ -71,12 +75,25 @@ fn authorization(
 ) -> Result<VerifiedAuthorization, String> {
     Ok(VerifiedAuthorization {
         authorization_id: format!("sha256:{}", hex64('f')),
+        profile: match request.mode {
+            Mode::PublicRc => "public_rc",
+            Mode::Stable => "stable_core",
+        }
+        .to_string(),
+        transaction_kind: "github".to_string(),
         transaction_request_id: request.request_id()?,
+        source_commit: request.candidate_sha.clone(),
+        event_ref: format!("refs/tags/{}", request.tag),
+        expected_tag_object: TAG_OBJECT.to_string(),
         allowed_operations: operations.iter().map(|name| name.to_string()).collect(),
         subjects: request
             .subjects
             .iter()
-            .map(|subject| (subject.name.clone(), subject.sha256.clone()))
+            .map(|subject| AuthorizedSubject {
+                name: subject.name.clone(),
+                class: subject.kind.clone(),
+                digest: format!("sha256:{}", subject.sha256),
+            })
             .collect(),
     })
 }
@@ -99,6 +116,7 @@ fn empty_remote() -> RemoteInventory {
 
 fn exact_tag() -> TagObservation {
     TagObservation::Present {
+        object_sha: TAG_OBJECT.to_string(),
         peeled_sha: CANDIDATE.to_string(),
         annotated: true,
     }
@@ -198,7 +216,7 @@ fn admissible_requests_have_no_violations_and_a_stable_identity() -> Result<(), 
 #[test]
 fn each_inadmissible_request_field_is_named() -> Result<(), String> {
     type Mutation = fn(&mut GitHubReleaseTransactionRequest);
-    let cases: [(&str, bool, Mutation, &str); 17] = [
+    let cases: [(&str, bool, Mutation, &str); 18] = [
         ("schema", false, |r| r.schema.push('x'), "schema"),
         (
             "repository",
@@ -283,6 +301,12 @@ fn each_inadmissible_request_field_is_named() -> Result<(), String> {
             false,
             |r| r.subjects[1].name = "RIPR-0.11.0.VSIX".to_string(),
             "duplicated",
+        ),
+        (
+            "crate subject in a GitHub transaction",
+            false,
+            |r| r.subjects[0].kind = "crate".to_string(),
+            "not a GitHub asset class",
         ),
         (
             "subjects out of order",
@@ -509,15 +533,62 @@ fn each_step_needs_its_own_authorized_operation() -> Result<(), String> {
 #[test]
 fn an_authorization_for_another_request_or_subject_set_is_refused() -> Result<(), String> {
     let request = rc_request()?;
-    let mut other_request = authorization(&request, &RC_OPERATIONS)?;
-    other_request.transaction_request_id = stable_request()?.request_id()?;
-    let mut other_bytes = authorization(&request, &RC_OPERATIONS)?;
-    other_bytes.subjects[0].1 = hex64('9');
-    let mut fewer = authorization(&request, &RC_OPERATIONS)?;
-    fewer.subjects.pop();
-    for authorization in [other_request, other_bytes, fewer] {
+    let exact = authorization(&request, &RC_OPERATIONS)?;
+    assert!(matches!(
+        decide(&request, &exact, &empty_remote()).decision,
+        Decision::Proceed { .. }
+    ));
+    let variants: Vec<(&str, fn(&mut VerifiedAuthorization) -> Result<(), String>)> = vec![
+        ("other request", |a| {
+            a.transaction_request_id = stable_request()?.request_id()?;
+            Ok(())
+        }),
+        ("other profile", |a| {
+            a.profile = "stable_core".to_string();
+            Ok(())
+        }),
+        ("other transaction kind", |a| {
+            a.transaction_kind = "probe".to_string();
+            Ok(())
+        }),
+        ("other source commit", |a| {
+            a.source_commit = OTHER_SHA.to_string();
+            Ok(())
+        }),
+        ("other tag ref", |a| {
+            a.event_ref = "refs/tags/v0.11.0".to_string();
+            Ok(())
+        }),
+        ("unusable tag object", |a| {
+            a.expected_tag_object = "sha256:abc".to_string();
+            Ok(())
+        }),
+        ("other bytes", |a| {
+            a.subjects[0].digest = format!("sha256:{}", hex64('9'));
+            Ok(())
+        }),
+        ("bare-hex digest", |a| {
+            a.subjects[0].digest = hex64('a');
+            Ok(())
+        }),
+        ("other class", |a| {
+            a.subjects[0].class = "attestation_bundle".to_string();
+            Ok(())
+        }),
+        ("fewer subjects", |a| {
+            a.subjects.pop();
+            Ok(())
+        }),
+    ];
+    for (label, change) in variants {
+        let mut authorization = exact.clone();
+        change(&mut authorization)?;
         let planned = decide(&request, &authorization, &empty_remote());
-        assert_eq!(stop_of(&planned.decision)?, StopKind::AuthorizationMismatch);
+        assert_eq!(
+            stop_of(&planned.decision)?,
+            StopKind::AuthorizationMismatch,
+            "{label}"
+        );
     }
     Ok(())
 }
@@ -558,13 +629,22 @@ fn conflicting_remote_objects_stop_and_are_never_replaced() -> Result<(), String
     let authorization = authorization(&request, &RC_OPERATIONS)?;
     let mut moved_tag = empty_remote();
     moved_tag.tag = TagObservation::Present {
+        object_sha: TAG_OBJECT.to_string(),
         peeled_sha: OTHER_SHA.to_string(),
         annotated: true,
     };
     let mut lightweight_tag = empty_remote();
     lightweight_tag.tag = TagObservation::Present {
+        object_sha: CANDIDATE.to_string(),
         peeled_sha: CANDIDATE.to_string(),
         annotated: false,
+    };
+    // Annotated and at the candidate, but not the authorized tag object.
+    let mut foreign_tag = empty_remote();
+    foreign_tag.tag = TagObservation::Present {
+        object_sha: FOREIGN_TAG_OBJECT.to_string(),
+        peeled_sha: CANDIDATE.to_string(),
+        annotated: true,
     };
     let mut other_bytes = exact_asset(1, &request.subjects[0]);
     other_bytes.bytes = BytesObservation::Downloaded { sha256: hex64('9') };
@@ -603,6 +683,7 @@ fn conflicting_remote_objects_stop_and_are_never_replaced() -> Result<(), String
     let cases = [
         ("tag at another commit", moved_tag),
         ("lightweight tag", lightweight_tag),
+        ("foreign annotated tag object at the candidate", foreign_tag),
         (
             "asset with other bytes",
             remote_with(&request, true, vec![other_bytes], true),
@@ -697,7 +778,13 @@ fn no_combination_of_remote_states_yields_a_replacing_or_premature_step() -> Res
         TagObservation::Absent,
         exact_tag(),
         TagObservation::Present {
+            object_sha: TAG_OBJECT.to_string(),
             peeled_sha: OTHER_SHA.to_string(),
+            annotated: true,
+        },
+        TagObservation::Present {
+            object_sha: FOREIGN_TAG_OBJECT.to_string(),
+            peeled_sha: CANDIDATE.to_string(),
             annotated: true,
         },
         TagObservation::Unavailable {
@@ -750,7 +837,8 @@ fn no_combination_of_remote_states_yields_a_replacing_or_premature_step() -> Res
                             _ => {}
                         }
                         combinations += 1;
-                        let classified = classify(&request, &remote);
+                        let classified =
+                            classify(&request, &authorization.expected_tag_object, &remote);
                         let Decision::Proceed { step } =
                             decide(&request, &authorization, &remote).decision
                         else {
@@ -804,7 +892,7 @@ fn no_combination_of_remote_states_yields_a_replacing_or_premature_step() -> Res
             }
         }
     }
-    assert_eq!(combinations, 4 * 4 * 5 * 5 * 2);
+    assert_eq!(combinations, 5 * 4 * 5 * 5 * 2);
     // The sweep reached every kind of step, so the assertions above gripped.
     assert_eq!(proposed.len(), 5, "{proposed:?}");
     Ok(())
@@ -832,6 +920,7 @@ fn plan_command_exits_nonzero_for_a_stop_and_refuses_loose_arguments() -> Result
     let fresh = write("fresh.json", json(&empty_remote())?)?;
     let mut conflict = empty_remote();
     conflict.tag = TagObservation::Present {
+        object_sha: TAG_OBJECT.to_string(),
         peeled_sha: OTHER_SHA.to_string(),
         annotated: true,
     };

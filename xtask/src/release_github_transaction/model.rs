@@ -8,6 +8,16 @@ use std::collections::BTreeSet;
 
 pub(crate) const REQUEST_SCHEMA: &str = "ripr.release.github_transaction.request.v1";
 
+/// Subject classes a GitHub authorization packet may carry (ripr#1651). A
+/// subject `kind` is one of these and must equal the packet subject's class.
+const GITHUB_SUBJECT_KINDS: [&str; 5] = [
+    "server_archive",
+    "server_manifest",
+    "checksums",
+    "vsix",
+    "attestation_bundle",
+];
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Mode {
@@ -77,7 +87,7 @@ pub(crate) struct GitHubReleaseTransactionRequest {
     pub(crate) withheld_channels: WithheldChannels,
 }
 
-fn is_hex(value: &str, len: usize) -> bool {
+pub(crate) fn is_hex(value: &str, len: usize) -> bool {
     value.len() == len
         && value
             .bytes()
@@ -232,8 +242,11 @@ impl GitHubReleaseTransactionRequest {
             if !seen.insert(normalized_name(&subject.name)) {
                 violations.push(format!("subject name `{}` is duplicated", subject.name));
             }
-            if subject.kind.trim().is_empty() {
-                violations.push(format!("subject `{}` has no kind", subject.name));
+            if !GITHUB_SUBJECT_KINDS.contains(&subject.kind.as_str()) {
+                violations.push(format!(
+                    "subject `{}` kind `{}` is not a GitHub asset class",
+                    subject.name, subject.kind
+                ));
             }
             if subject.size == 0 || !is_hex(&subject.sha256, 64) {
                 violations.push(format!(

@@ -7,20 +7,101 @@
 use super::inventory::{
     AssetState, AttestationState, Classified, ReleaseState, RemoteInventory, TagState, classify,
 };
-use super::model::{GitHubReleaseTransactionRequest, Operation};
+use super::model::{GitHubReleaseTransactionRequest, Mode, Operation, is_hex};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// What the release authorization verifier (ripr#1651) established. This
-/// module trusts it only as far as these fields; producing it is not done here.
+/// One subject as the authorization packet names it.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuthorizedSubject {
+    pub(crate) name: String,
+    /// The packet's subject class. It must equal the request subject's `kind`.
+    pub(crate) class: String,
+    /// The packet's digest form: `sha256:` followed by 64 lowercase hex. The
+    /// request holds bare hex; `decide` compares the two forms exactly.
+    pub(crate) digest: String,
+}
+
+/// What the release authorization verifier (ripr#1651) established, copied
+/// field for field from the verified packet. This module trusts it only as far
+/// as these fields and compares each with the request; producing it is not
+/// done here.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct VerifiedAuthorization {
     pub(crate) authorization_id: String,
+    /// Packet `profile`: `public_rc` for a public RC, `stable_core` for stable.
+    pub(crate) profile: String,
+    /// Packet `transaction.kind`: must be `github`.
+    pub(crate) transaction_kind: String,
     pub(crate) transaction_request_id: String,
+    /// Packet `source.commit`: must be the request's candidate.
+    pub(crate) source_commit: String,
+    /// Packet `event.ref`: must be `refs/tags/<request tag>`.
+    pub(crate) event_ref: String,
+    /// Id of the annotated tag object the authorization event pushes
+    /// (ripr#1652). Its bytes derive from the packet, so the id is known
+    /// before the push. It lives here rather than in the request because the
+    /// packet names the request id, and the reverse would be a digest cycle.
+    pub(crate) expected_tag_object: String,
     pub(crate) allowed_operations: BTreeSet<String>,
-    /// `(name, sha256)` of every subject the packet names, in packet order.
-    pub(crate) subjects: Vec<(String, String)>,
+    /// Every subject the packet names. A GitHub packet's subject catalog is
+    /// limited to GitHub asset classes, so the set must equal the request's.
+    pub(crate) subjects: Vec<AuthorizedSubject>,
+}
+
+impl VerifiedAuthorization {
+    /// Every way this authorization fails to name `request`. Empty means it
+    /// names exactly this transaction.
+    fn mismatches(
+        &self,
+        request: &GitHubReleaseTransactionRequest,
+        request_id: &str,
+    ) -> Vec<String> {
+        let mut mismatches = Vec::new();
+        let expected_profile = match request.mode {
+            Mode::PublicRc => "public_rc",
+            Mode::Stable => "stable_core",
+        };
+        if self.profile != expected_profile {
+            mismatches.push(format!(
+                "the authorization profile `{}` does not match mode {:?}",
+                self.profile, request.mode
+            ));
+        }
+        if self.transaction_kind != "github" {
+            mismatches.push("the authorization is not for a github transaction".to_string());
+        }
+        if self.transaction_request_id != request_id {
+            mismatches.push("the authorization names another transaction request".to_string());
+        }
+        if self.source_commit != request.candidate_sha {
+            mismatches.push("the authorization names another source commit".to_string());
+        }
+        if self.event_ref != format!("refs/tags/{}", request.tag) {
+            mismatches.push("the authorization names another tag ref".to_string());
+        }
+        if !is_hex(&self.expected_tag_object, 40) {
+            mismatches.push("expected_tag_object must be 40 lowercase hex".to_string());
+        }
+        let mut expected: Vec<AuthorizedSubject> = request
+            .subjects
+            .iter()
+            .map(|subject| AuthorizedSubject {
+                name: subject.name.clone(),
+                class: subject.kind.clone(),
+                digest: format!("sha256:{}", subject.sha256),
+            })
+            .collect();
+        expected.sort();
+        let mut authorized = self.subjects.clone();
+        authorized.sort();
+        if authorized != expected {
+            mismatches.push("the authorization names a different subject set".to_string());
+        }
+        mismatches
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -106,7 +187,7 @@ fn decide_classified(
         TagState::ConflictingTargetOrObject => {
             return stop(
                 StopKind::RemoteConflict,
-                "the tag exists but is not an annotated tag at the candidate",
+                "the tag exists but is not the authorized annotated tag object at the candidate",
             );
         }
         TagState::Absent | TagState::ExactCandidate => {}
@@ -253,34 +334,15 @@ pub(crate) fn decide(
         Ok(id) => id,
         Err(error) => return planned(None, None, stop(StopKind::RequestRejected, error)),
     };
-    if authorization.transaction_request_id != request_id {
+    let mismatches = authorization.mismatches(request, &request_id);
+    if !mismatches.is_empty() {
         return planned(
             Some(request_id),
             None,
-            stop(
-                StopKind::AuthorizationMismatch,
-                "the authorization names another transaction request",
-            ),
+            stop(StopKind::AuthorizationMismatch, mismatches.join("; ")),
         );
     }
-    let expected: Vec<(String, String)> = request
-        .subjects
-        .iter()
-        .map(|subject| (subject.name.clone(), subject.sha256.clone()))
-        .collect();
-    let mut authorized_subjects = authorization.subjects.clone();
-    authorized_subjects.sort();
-    if authorized_subjects != expected {
-        return planned(
-            Some(request_id),
-            None,
-            stop(
-                StopKind::AuthorizationMismatch,
-                "the authorization names a different subject set",
-            ),
-        );
-    }
-    let classified = classify(request, inventory);
+    let classified = classify(request, &authorization.expected_tag_object, inventory);
     let decision = decide_classified(request, authorization, inventory, &classified);
     planned(Some(request_id), Some(classified), decision)
 }
