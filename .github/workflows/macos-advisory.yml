@@ -98,11 +98,12 @@ jobs:
           rustc --version
           cargo --version
 
-      # 34 minutes, under the 40-minute job limit: a step that hits its own
+      # 37 minutes, under the 40-minute job limit: a step that hits its own
       # deadline fails the job as missing evidence and still uploads its log.
+      # Observed clippy times range from 18 to over 34 minutes.
       - name: Clippy (advisory outcome)
         if: matrix.check == 'clippy'
-        timeout-minutes: 34
+        timeout-minutes: 37
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/macos-advisory"
@@ -111,9 +112,8 @@ jobs:
           echo "${PIPESTATUS[0]}" > "$RUNNER_TEMP/macos-advisory/clippy.status"
           exit 0
 
-      # This job only builds, so the step may use the job's 40 minutes less
-      # setup and upload. The one `rustc` needs about 14 GB on a 7 GB runner;
-      # observed builds took 28 to over 34 minutes.
+      # Same deadline as clippy. The one `rustc` needs about 14 GB on a 7 GB
+      # runner; observed builds took 24 to 36 minutes.
       - name: Build the library test executable (advisory outcome)
         if: matrix.check == 'lib-build'
         timeout-minutes: 37
