@@ -201,6 +201,120 @@ fn review_comments(root: &Path) -> Result<Value, String> {
     read_json(&root.join(COMMENTS_JSON))
 }
 
+/// Run both fixture tests against each polarity. Only the owner-operand
+/// control should fail when the return value changes.
+fn verify_predicate_mutant(root: &Path, kills_inversion: bool) -> Result<(), String> {
+    let source_path = root.join("src/lib.rs");
+    let original = std::fs::read_to_string(&source_path).map_err(|e| e.to_string())?;
+    let exe = root.join(format!("predicate-tests{}", std::env::consts::EXE_SUFFIX));
+    for inverted in [false, true] {
+        if inverted {
+            std::fs::write(&source_path, original.replace("n >= 5", "n < 5"))
+                .map_err(|e| e.to_string())?;
+        }
+        let build = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .args(["--edition=2024", "--test"])
+            .arg(&source_path)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !build.status.success() {
+            return Err(diagnose("fixture rustc", &build));
+        }
+        let run = Command::new(&exe).output().map_err(|e| e.to_string())?;
+        let expects_red = inverted && kills_inversion;
+        let summary = if expects_red {
+            "1 passed; 1 failed"
+        } else {
+            "2 passed; 0 failed"
+        };
+        if run.status.success() == expects_red
+            || !String::from_utf8_lossy(&run.stdout).contains(summary)
+        {
+            return Err(diagnose("fixture tests", &run));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn working_set_cards_only_refuse_closed_unrelated_assertions() -> Result<(), String> {
+    let source = r#"pub fn admitted(n: i32) -> bool {
+    n > 4
+}
+pub fn quoted(n: i32) -> i32 { n }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn smoke() {
+        let seen = super::admitted(6);
+        assert_eq!(super::quoted(9), 9);
+    }
+    #[test]
+    fn admitted_is_correct() {
+        assert_eq!(super::quoted(9), 9);
+    }
+}
+"#;
+    let assertion = "assert_eq!(super::quoted(9), 9);";
+    for (label, input, expected_oracle) in [
+        ("discarded", source.to_owned(), None),
+        (
+            "owner-operand",
+            source.replacen(
+                assertion,
+                "assert_eq!(super::quoted(9), if seen { 9 } else { 8 });",
+                1,
+            ),
+            Some("whole_object_equality"),
+        ),
+        (
+            "guarded",
+            source.replacen(assertion, "if seen { assert_eq!(super::quoted(9), 9); }", 1),
+            Some("exact_value"),
+        ),
+        (
+            "unproven-purity",
+            source.replace("i32 { n }", "i32 { std::hint::black_box(n) }"),
+            Some("exact_value"),
+        ),
+    ] {
+        let fixture = build_repo_from_source(label, &input, "n > 4", "n >= 5")?;
+        let review = review_comments(&fixture.0)?;
+        let predicate = "e49f8011f2288c94";
+        let rows = |field: &str| review[field].as_array().into_iter().flatten();
+        let card = rows("comments").find(|row| row["seam_id"] == predicate);
+        match expected_oracle {
+            None => {
+                let withheld = rows("suppressed").any(|row| {
+                    row["seam_id"] == predicate
+                        && row["reason"] == "static_limitation"
+                        && row["class"] == "reachable_unrevealed"
+                });
+                if !withheld || card.is_some() {
+                    return Err(format!(
+                        "unrelated assertion still lends owner credit: {review}"
+                    ));
+                }
+            }
+            Some(kind) => {
+                let card = card.ok_or_else(|| format!("lost {label} card: {review}"))?;
+                if card["oracle_kind"] != kind
+                    || card["oracle_strength"] != "strong"
+                    || card["suggested_test"]["near_test"] != "smoke"
+                {
+                    return Err(format!("{label} changed its original oracle: {card}"));
+                }
+            }
+        }
+        if matches!(label, "discarded" | "owner-operand") {
+            verify_predicate_mutant(&fixture.0, label == "owner-operand")?;
+        }
+    }
+    Ok(())
+}
+
 /// Every `(file, line)` guidance carries: cards by placement or seam
 /// location, suppressed entries by their own location.
 fn guidance_locations(comments: &Value) -> Vec<(String, u64)> {

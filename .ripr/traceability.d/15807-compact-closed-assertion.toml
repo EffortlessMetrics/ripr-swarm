@@ -1,0 +1,5 @@
+[[extend]]
+id = "RIPR-SPEC-0068"
+tests = [
+  "crates/ripr/tests/check_guidance_parity.rs::working_set_cards_only_refuse_closed_unrelated_assertions",
+]
