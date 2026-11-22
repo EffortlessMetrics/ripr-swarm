@@ -8,6 +8,21 @@ repository.workspace = true
 description = "Internal contract types for the ripr facade: domain DTOs and adapter result shells (ADR 0027). Implementation package; the public API is the ripr crate."
 keywords = ["mutation-testing", "testing", "static-analysis"]
 categories = ["development-tools", "development-tools::testing"]
+# Development tests and Kani proof harnesses stay out of the source package:
+# Cargo packages files, not modules, so `#[cfg(test)]` and `#[cfg(kani)]`
+# modules declared out of line are excluded here. `cargo xtask
+# publish-dry-run` reads the packaged members and refuses any module that only
+# a test or Kani build compiles (#15216). The `test-fixtures` modules stay:
+# that feature builds them for downstream tests.
+exclude = [
+  "src/**/tests.rs",
+  "src/**/tests/**",
+  "src/**/*_tests.rs",
+  "src/**/kani_proofs.rs",
+  "src/**/*_kani.rs",
+  "src/domain/language_capability_drift.rs",
+  "src/domain/proof_domains.rs",
+]
 
 [features]
 default = ["lang-rust", "lang-typescript", "lang-python"]

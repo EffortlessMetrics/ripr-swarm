@@ -68,6 +68,10 @@ this repository's license, one per test library or library feature:
   generator function; dunder methods (`__add__`, `__eq__`, `__lt__`,
   `__repr__`, `__str__`, `__bool__`); a context-manager class; `match`
   statements; and relative imports through a package `__init__` re-export.
+- `authored-py-pytest-membership`: RIPR-SPEC-0238 rule 34 (#15632), a
+  `to_bool` owner whose membership collections lose one member; parametrize
+  rows pass some spellings and not others, so one removal survives and one is
+  caught.
 - `authored-py-pytest-idioms`: test-library idioms beyond the first seven.
   `MagicMock` call expectations, `patch`, `monkeypatch.setenv`, doctests
   collected with `--doctest-modules`, `pytest.approx`, `pytest.raises(match=)`,

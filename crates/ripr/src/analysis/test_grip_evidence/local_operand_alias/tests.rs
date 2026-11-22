@@ -128,3 +128,96 @@ fn every_seam_of_a_long_owner_is_answered_in_linear_time() -> Result<(), String>
     }
     Ok(())
 }
+
+#[test]
+fn a_numeric_literal_aliases_no_parameter_and_skips_the_scan() -> Result<(), String> {
+    for literal in ["17", "-1", " 0x1F ", "2u8", "- 3"] {
+        if !super::is_numeric_literal(literal) {
+            return Err(format!("{literal:?} is a numeric literal"));
+        }
+    }
+    for operand in ["a", "_17", "x1", "amount.len()", "-a", ""] {
+        if super::is_numeric_literal(operand) {
+            return Err(format!("{operand:?} is not a numeric literal"));
+        }
+    }
+    // A literal pattern binds nothing: `17` is no local of `amount`.
+    let parameters = owned(&["amount"]);
+    for body in [
+        "if let Some(17) = amount {\n}",
+        "match amount {\n    Some(17) => 1,\n}",
+    ] {
+        if boundary_local_operand_parameter_index(body, &parameters, "17").is_some()
+            || scan_local_operand_parameter_index(body, &parameters, "17").is_some()
+        {
+            return Err(format!("the literal `17` aliased `amount` in {body:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn every_right_literal_of_a_long_computed_chain_is_answered_in_linear_time() -> Result<(), String> {
+    // The #15189 fixture's shape: `a` is computed, so no left operand
+    // resolves and every seam asks about its own right literal. Each
+    // literal was a fresh memo key and a full body scan.
+    const ARMS: usize = 20_000;
+    let mut body = String::from("{\n    let a = amount + 1;\n    if a == 0 { 0 }\n");
+    for arm in 1..ARMS {
+        body.push_str(&format!("    else if a == {arm} {{ {arm} }}\n"));
+    }
+    body.push_str("    else { a }\n}\n");
+    let parameters = owned(&["amount", "years"]);
+    let started = std::time::Instant::now();
+    for arm in 0..ARMS {
+        if boundary_local_operand_parameter_index(&body, &parameters, "a").is_some() {
+            return Err("a computed `a` aliases nothing".to_string());
+        }
+        let literal = arm.to_string();
+        if boundary_local_operand_parameter_index(&body, &parameters, &literal).is_some() {
+            return Err(format!(
+                "seam {arm}: the literal `{literal}` aliases nothing"
+            ));
+        }
+    }
+    let elapsed = started.elapsed();
+    if elapsed > std::time::Duration::from_secs(20) {
+        return Err(format!("{ARMS} seams took {elapsed:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn the_closure_root_memo_answers_per_body_and_root_and_scans_each_once() -> Result<(), String> {
+    let first = "{\n    let f = |a| a + 1;\n}".repeat(64);
+    let second = "{\n    let f = |b| b + 1;\n}".repeat(64);
+    let scans = std::cell::Cell::new(0usize);
+    let ask = |body: &str, root: &str| {
+        super::body_closure_binds_operand_root(body, root, |text| {
+            scans.set(scans.get() + 1);
+            text.contains(&format!("|{root}|"))
+        })
+    };
+    for _seam in 0..100 {
+        if !ask(&first, "a") || ask(&first, "b") {
+            return Err("the first body binds `a` alone".to_string());
+        }
+    }
+    if scans.get() != 2 {
+        return Err(format!(
+            "two questions on one body scanned {} times",
+            scans.get()
+        ));
+    }
+    // A different body replaces the remembered one and is scanned afresh.
+    if ask(&second, "a") || !ask(&second, "b") || !ask(&first, "a") {
+        return Err("a remembered answer leaked to another body".to_string());
+    }
+    if scans.get() != 5 {
+        return Err(format!(
+            "alternating bodies scanned {} times, not 5",
+            scans.get()
+        ));
+    }
+    Ok(())
+}

@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.exposed|probe:src_load.ts:typescript_preview:fd09bc48|probe:src_load.ts:typescript_preview:fd09bc48|src/load.ts"
+            "riprFingerprintV1": "ripr.finding.exposed|probe:src_load.ts:typescript_preview:fd09bc48|probe:src_load.ts:typescript_preview:fd09bc48|fixtures/typescript_rejects_literal_equality/input/src/load.ts"
           },
           "level": "note",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/load.ts"
+                  "uri": "fixtures/typescript_rejects_literal_equality/input/src/load.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "exposed static exposure for error_path probe:     throw \"TOKEN_REQUIRED\";. Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.exposed|probe:src_load.ts:typescript_preview:fd09bc48|probe:src_load.ts:typescript_preview:fd09bc48|src/load.ts"
+            "riprFingerprintV1": "ripr.finding.exposed|probe:src_load.ts:typescript_preview:fd09bc48|probe:src_load.ts:typescript_preview:fd09bc48|fixtures/typescript_rejects_literal_equality/input/src/load.ts"
           },
           "properties": {
             "changed_expression": "    throw \"TOKEN_REQUIRED\";",
@@ -184,14 +184,14 @@
         },
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_load.ts:typescript_preview:2209cfc8|probe:src_load.ts:typescript_preview:2209cfc8|src/load.ts"
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_load.ts:typescript_preview:2209cfc8|probe:src_load.ts:typescript_preview:2209cfc8|fixtures/typescript_rejects_literal_equality/input/src/load.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/load.ts"
+                  "uri": "fixtures/typescript_rejects_literal_equality/input/src/load.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -204,7 +204,7 @@
             "text": "infection_unknown static exposure for return_value probe:   return \"ready\";. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_load.ts:typescript_preview:2209cfc8|probe:src_load.ts:typescript_preview:2209cfc8|src/load.ts"
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_load.ts:typescript_preview:2209cfc8|probe:src_load.ts:typescript_preview:2209cfc8|fixtures/typescript_rejects_literal_equality/input/src/load.ts"
           },
           "properties": {
             "changed_expression": "  return \"ready\";",

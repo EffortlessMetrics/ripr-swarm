@@ -36,6 +36,11 @@ shell family of the host that printed them. On Windows:
   platform.
 - Git is the authority for what changed. Diffs from Git for Windows work as
   they do elsewhere.
+- A diff saved with `git diff > change.diff` in Windows PowerShell 5.1 is
+  UTF-16 with a byte-order mark. `ripr check --diff change.diff` reads it.
+  PowerShell 5.1 re-encodes git's output on the way, so non-ASCII text inside
+  changed lines may already be altered in that file;
+  `git diff --output=change.diff` writes git's own bytes.
 
 ## Line endings
 

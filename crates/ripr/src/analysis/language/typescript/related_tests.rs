@@ -74,8 +74,8 @@ pub(crate) struct ReExportIndex {
     /// export. Kept separate from discovery, which still owns path precedence.
     indexed_modules: HashSet<String>,
     /// Extension stripping can collapse distinct real files. General owner
-    /// discovery keeps its existing behavior; strict enum identity refuses.
-    ambiguous_enum_modules: HashSet<String>,
+    /// discovery keeps its existing behavior; default-import and enum identity refuse.
+    ambiguous_modules: HashSet<String>,
     /// Actual runtime enum declarations and their statically named members.
     /// Export-list mentions and unresolved re-exports cannot create these facts.
     enum_bindings: HashMap<(String, String), Vec<String>>,
@@ -130,6 +130,22 @@ enum ExportResolution {
     Found(String, String),
     /// The chain is too deep, ambiguous, or otherwise not decidable.
     Unknown,
+}
+
+#[derive(Clone, Copy)]
+enum ExportLookup<'a> {
+    Owner,
+    DeclaredDefault,
+    Enum(&'a EnumBindingContext<'a>),
+}
+
+impl<'a> ExportLookup<'a> {
+    fn enum_context(self) -> Option<&'a EnumBindingContext<'a>> {
+        match self {
+            Self::Enum(context) => Some(context),
+            Self::Owner | Self::DeclaredDefault => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -242,7 +258,7 @@ impl ReExportIndex {
             .collect();
         let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
-        let mut ambiguous_enum_modules = HashSet::new();
+        let mut ambiguous_modules = HashSet::new();
         let mut outbound_calls: Vec<(PathBuf, OutboundImportCall)> = Vec::new();
         let mut commonjs_forwards: HashMap<String, String> = HashMap::new();
         let mut commonjs_own_names: HashMap<String, HashSet<String>> = HashMap::new();
@@ -254,7 +270,7 @@ impl ReExportIndex {
                 .insert(module.clone(), path.clone())
                 .is_some_and(|previous| previous != path)
             {
-                ambiguous_enum_modules.insert(module);
+                ambiguous_modules.insert(module);
             }
         }
         for relative in workspace_files {
@@ -330,7 +346,7 @@ impl ReExportIndex {
             local_exports,
             modules,
             indexed_modules,
-            ambiguous_enum_modules,
+            ambiguous_modules,
             enum_bindings,
             enum_imports,
             unstable_enum_roots,
@@ -658,7 +674,7 @@ impl ReExportIndex {
             return None;
         };
         let module = normalized_module_path(file);
-        if self.ambiguous_enum_modules.contains(&module) {
+        if self.ambiguous_modules.contains(&module) {
             return None;
         }
         // Owner.imports also carries synthetic re-export records for call
@@ -727,7 +743,7 @@ impl ReExportIndex {
                 0,
                 &mut stack,
                 &mocked,
-                Some(&context),
+                ExportLookup::Enum(&context),
             )
         } else {
             self.enum_local_binding(&binding_module, &name, 0, &mut stack, &context)
@@ -772,7 +788,7 @@ impl ReExportIndex {
     ) -> ExportResolution {
         let module = self.canonical_module(module);
         if (context.mocked)(&module)
-            || self.ambiguous_enum_modules.contains(&module)
+            || self.ambiguous_modules.contains(&module)
             || (context.check_stability
                 && self
                     .unstable_enum_roots
@@ -816,7 +832,7 @@ impl ReExportIndex {
             hops + 1,
             stack,
             context.mocked,
-            Some(context),
+            ExportLookup::Enum(context),
         )
     }
 
@@ -862,7 +878,7 @@ impl ReExportIndex {
                         0,
                         &mut Vec::new(),
                         context.mocked,
-                        Some(&raw_context),
+                        ExportLookup::Enum(&raw_context),
                     ) {
                         ExportResolution::Found(module, name) => {
                             module == desired.0 && name == desired.1
@@ -989,7 +1005,7 @@ impl ReExportIndex {
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
     ) -> ExportResolution {
-        self.resolve_export_with_context(module, name, hops, stack, mocked, None)
+        self.resolve_export_with_context(module, name, hops, stack, mocked, ExportLookup::Owner)
     }
 
     fn resolve_export_with_context(
@@ -999,8 +1015,9 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
-        enum_context: Option<&EnumBindingContext<'_>>,
+        lookup: ExportLookup<'_>,
     ) -> ExportResolution {
+        let enum_context = lookup.enum_context();
         let module = self.canonical_module(module);
         if !self.indexed_modules.contains(&module) {
             // Unknown is contagious across star siblings; NotFound would
@@ -1008,7 +1025,7 @@ impl ReExportIndex {
             return ExportResolution::Unknown;
         }
         if mocked(&module)
-            || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
+            || (!matches!(lookup, ExportLookup::Owner) && self.ambiguous_modules.contains(&module))
             || (enum_context.is_some_and(|context| context.check_stability)
                 && self
                     .unstable_enum_roots
@@ -1025,8 +1042,7 @@ impl ReExportIndex {
             return ExportResolution::NotFound;
         }
         stack.push(frame);
-        let mut resolution =
-            self.resolve_export_frame(&module, name, hops, stack, mocked, enum_context);
+        let mut resolution = self.resolve_export_frame(&module, name, hops, stack, mocked, lookup);
         if let (Some(context), ExportResolution::Found(target_module, target_name)) =
             (enum_context, &resolution)
             && context.check_stability
@@ -1060,8 +1076,9 @@ impl ReExportIndex {
         hops: usize,
         stack: &mut Vec<(String, String)>,
         mocked: &dyn Fn(&str) -> bool,
-        enum_context: Option<&EnumBindingContext<'_>>,
+        lookup: ExportLookup<'_>,
     ) -> ExportResolution {
+        let enum_context = lookup.enum_context();
         if let Some((original, source)) = self.entries.get(&(module.to_string(), name.to_string()))
         {
             if source == module {
@@ -1080,13 +1097,16 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 // An explicit `export { N } from './A'` asserts that A
                 // exports N; when A records no deeper fact for it, A's own
                 // binding is the named target.
-                ExportResolution::NotFound if enum_context.is_none() => {
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::Owner) => {
                     ExportResolution::Found(self.canonical_module(source), original.clone())
+                }
+                ExportResolution::NotFound if matches!(lookup, ExportLookup::DeclaredDefault) => {
+                    ExportResolution::Unknown
                 }
                 resolved => resolved,
             };
@@ -1118,7 +1138,7 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 // The forward asserts the source's `module.exports` is this
                 // module's: an unrecorded name is the source's own binding
@@ -1152,7 +1172,7 @@ impl ReExportIndex {
                 hops + 1,
                 stack,
                 mocked,
-                enum_context,
+                lookup,
             ) {
                 ExportResolution::NotFound => {}
                 ExportResolution::Unknown => return ExportResolution::Unknown,
@@ -1196,6 +1216,11 @@ impl ReExportIndex {
             return false;
         };
         let owner_module = normalized_module_path(&owner.file);
+        // Default imports only gain a barrel relation across distinct modules.
+        // A direct import (including a directory index) keeps its own rules.
+        if imported_name == "default" && self.canonical_module(&import_module) == owner_module {
+            return false;
+        }
         // The import names the owner module directly. A plain same-name
         // import is owned by the direct/imported-call relations (with their
         // own identity guards); only an owner-file RENAME export
@@ -1213,9 +1238,21 @@ impl ReExportIndex {
         };
         let mocked = |module: &str| mock_names_module(test, &mocked_modules, module);
         let mut stack = Vec::new();
-        let ExportResolution::Found(target_module, target_name) =
-            self.resolve_export(&import_module, imported_name, 0, &mut stack, &mocked)
-        else {
+        // Default imports need an observed export at the end of the chain.
+        // An explicit forwarding clause can request a name its source never exports.
+        let lookup = if imported_name == "default" {
+            ExportLookup::DeclaredDefault
+        } else {
+            ExportLookup::Owner
+        };
+        let ExportResolution::Found(target_module, target_name) = self.resolve_export_with_context(
+            &import_module,
+            imported_name,
+            0,
+            &mut stack,
+            &mocked,
+            lookup,
+        ) else {
             return false;
         };
         // The chain must land on the owner's file and the owner's name.
@@ -2489,6 +2526,12 @@ pub(crate) fn owner_call_relation(
     if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default) {
         return None;
     }
+    // #15939: the test file swaps the owner function on its
+    // module object (`sinon.stub(ns, 'owner')`, `ns.owner = fake`, a spy
+    // fabricated in a hook), so the calls below run the substitute.
+    if super::function_replacement::owner_function_replaced_in_file(test, owner) {
+        return None;
+    }
     let observes_generic_call = || {
         test.assertions.iter().any(|assertion| {
             assertion
@@ -2590,8 +2633,10 @@ pub(crate) fn owner_call_relation(
         let Some(imported_name) = import.imported.as_deref() else {
             return false;
         };
-        if imported_name == "default" {
-            return false; // default imports are out of scope for re-export tracing
+        if imported_name == "default"
+            && (!owner.exported_as_default || owner.commonjs_default_export)
+        {
+            return false;
         }
         // The local alias in the test is what gets called; check the call site.
         let local = &import.local;
@@ -2600,7 +2645,11 @@ pub(crate) fn owner_call_relation(
         }
         // Shadow guard (#4102): a test-body declaration of the local name
         // reaches the shadow, not the re-exported owner.
-        if local_identifier_declared_in_test_body(&test.body_text, local) {
+        if local_identifier_declared_in_test_body(&test.body_text, local)
+            || (imported_name == "default"
+                && (local_destructured_in_test_body(&test.body_text, local)
+                    || body_declares_class_named(&test.body_text, local)))
+        {
             return false;
         }
         // An enclosing `describe`/`beforeEach` binding of the local name
@@ -4244,11 +4293,24 @@ pub(crate) fn root_relative_mock_names_module(source: &str, module: &str) -> boo
 
 /// Fabrication method shapes that replace a spy's observed value (#4103
 /// shape 4).
-const SPY_FABRICATION_SHAPES: [&str; 4] = [
+const SPY_FABRICATION_SHAPES: [&str; 15] = [
     ".mockReturnValue(",
     ".mockImplementation(",
     ".mockResolvedValue(",
     ".mockRejectedValue(",
+    // A `*Once` fabrication still replaces the call a one-call test asserts.
+    ".mockReturnValueOnce(",
+    ".mockImplementationOnce(",
+    ".mockResolvedValueOnce(",
+    ".mockRejectedValueOnce(",
+    ".mockReturnThis(",
+    // Jasmine spy strategies.
+    ".and.returnValue(",
+    ".and.returnValues(",
+    ".and.callFake(",
+    ".and.throwError(",
+    ".and.resolveTo(",
+    ".and.rejectWith(",
 ];
 
 /// #4103 shape 4: `true` when the test body spies on the owner name
@@ -4292,7 +4354,7 @@ pub(crate) fn test_spies_owner_with_fabrication_for_owner(
 /// `call_start` (with `after_open` the body right after the call's open
 /// paren) fabricates its value: a fabrication shape chained directly after
 /// the call closes, or invoked on the variable the spy result is bound to.
-fn owner_spy_call_fabricated(body: &str, call_start: usize, after_open: &str) -> bool {
+pub(crate) fn owner_spy_call_fabricated(body: &str, call_start: usize, after_open: &str) -> bool {
     let Some(close_rel) = spy_call_close_offset(after_open) else {
         return false;
     };
@@ -4348,6 +4410,23 @@ fn spy_call_close_offset(after_open: &str) -> Option<usize> {
 /// optional `await` and the needle's `vi.` / `jest.` qualifier). A member
 /// tail (`obj.spy = ...`), a compound operator (`==`, `=>`), or any other
 /// prefix returns `None` (conservative: only clear bindings count).
+/// The name a `const` / `let` / `var` declaration with a type annotation
+/// binds, when `assigned` (the text before the `=`) ends with one on its
+/// last line: `spy` for `const spy: ReturnType<typeof vi.spyOn>`.
+fn annotated_declaration_name(assigned: &str) -> Option<String> {
+    let line = assigned.rsplit(['\n', ';']).next()?.trim_start();
+    let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+    let declarator = ["const ", "let ", "var "]
+        .into_iter()
+        .find_map(|keyword| line.strip_prefix(keyword))?;
+    let (name, annotation) = declarator.split_once(':')?;
+    let name = name.trim();
+    (!name.is_empty()
+        && !annotation.contains('=')
+        && name.chars().all(is_javascript_identifier_char))
+    .then(|| name.to_string())
+}
+
 fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
     let mut prefix = body[..call_start].trim_end();
     // The qualified needle forms leave the callee qualifier (`vi.` / `jest.`)
@@ -4359,12 +4438,17 @@ fn spy_bound_variable_name(body: &str, call_start: usize) -> Option<String> {
             .take_while(|ch| is_javascript_identifier_char(*ch))
             .map(char::len_utf8)
             .sum::<usize>();
-        prefix = &stripped[..stripped.len() - qualifier_bytes];
+        prefix = stripped[..stripped.len() - qualifier_bytes].trim_end();
     }
     if let Some(stripped) = strip_trailing_await_keyword(prefix) {
         prefix = stripped;
     }
     let assigned = prefix.strip_suffix('=')?.trim_end();
+    // `const spy: ReturnType<typeof vi.spyOn> = ...`: the annotation ends in
+    // `>` and hides the name from the scan below.
+    if let Some(name) = annotated_declaration_name(assigned) {
+        return Some(name);
+    }
     // A compound operator ending in `=` (`==`, `===`, `!=`, `<=`, `>=`,
     // `=>`, `+=`, ...) never binds the call result.
     if assigned
@@ -4866,7 +4950,7 @@ pub(crate) fn quoted_literal_after(body: &str, from: usize) -> Option<String> {
 /// before the import call. Requires the import call to be the declarator's
 /// whole initializer on its line (optionally wrapped in `await`); a trailing
 /// member access like `.default` fails the scan (fail-closed).
-fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
+pub(crate) fn awaited_import_binding_before(body: &str, at: usize) -> Option<String> {
     let line_start = body[..at].rfind('\n').map_or(0, |offset| offset + 1);
     let trimmed = body[line_start..at].trim();
     // The import must actually be awaited: `const m = import(...)` binds a
