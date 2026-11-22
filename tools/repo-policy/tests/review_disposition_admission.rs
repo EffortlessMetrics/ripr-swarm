@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 10] = [
+    let cases: [(&str, bool); 11] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -732,6 +732,16 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\nno blockers found.", true),
         ("SOURCE_REVIEW_READY\nNo source blockers remain.", true),
         ("SOURCE_REVIEW_READY\nNO   SOURCE   BLOCKERS   REMAIN", true),
+        // Closed-vocabulary boundary, deliberate: the strip removes only the
+        // negated phrase, and the remainder ("The fixture is still wrong.") hits
+        // no NEGATION vocabulary, so it admits. The same sentence without the
+        // negation prefix already admits today, so this is the vocabulary, not
+        // the strip. If this form should refuse, extend NEGATION's vocabulary
+        // (wrong/broken/stale/missing style words), not the strip.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
+            true,
+        ),
         // Un-negated control: a genuine blocker refuses.
         ("SOURCE_REVIEW_READY\nBlocker found.", false),
         // A later blocker sentence keeps its own refusal.
