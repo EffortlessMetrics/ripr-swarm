@@ -10,21 +10,9 @@ remains `EffortlessMetrics/ripr`.
 
 ## Settings App Contract
 
-One tree serves two repositories: a fast-forward promotion makes the frozen
-swarm head the public `EffortlessMetrics/ripr` tree byte for byte. The Settings
-app path `.github/settings.yml` therefore carries the **source** repository's
-contract (public ripr's merge policy and its required `rust`, `msrv`, `vscode`,
-`cargo-deny` and `dependency-review` contexts), and `cargo xtask check-workflows`
-refuses any of those contexts that has no producer in
-`policy/source-only-workflows.toml`.
+The reviewable Settings App contract lives in `.github/settings.yml`.
 
-The ripr-swarm contract below lives in `.github/swarm-settings.yml`. No
-Settings app reads that path. Live ripr-swarm settings already differed from
-the old `.github/settings.yml` (repository name, description,
-`allow_merge_commit`), which is the evidence that no app applies the file here.
-Confirm the app is not installed on ripr-swarm before relying on that.
-
-Managed from git (desired ripr-swarm state, `.github/swarm-settings.yml`):
+Managed from git:
 
 - repository About metadata: name, description, homepage, and topics
 - repository feature toggles: issues on, projects off, wiki off, downloads on

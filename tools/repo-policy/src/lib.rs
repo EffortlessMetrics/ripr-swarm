@@ -1068,7 +1068,7 @@ pub fn routed_rust_workflow_contract_violations_for_repo() -> Result<Vec<String>
     } else {
         None
     };
-    let settings = optional_policy_text(".github/swarm-settings.yml")?;
+    let settings = optional_policy_text(".github/settings.yml")?;
     let lane_whitelist = optional_policy_text("policy/ci-lane-whitelist.toml")?;
 
     Ok(routed_rust_workflow_contract_violations_with_reusable(
@@ -1904,7 +1904,7 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
     {
         if !settings.contains("Ripr Rust Small Result") {
             violations.push(
-                ".github/swarm-settings.yml must require the normalized `Ripr Rust Small Result` check for ripr-swarm".to_string(),
+                ".github/settings.yml must require the normalized `Ripr Rust Small Result` check for ripr-swarm".to_string(),
             );
         }
         for forbidden in [
@@ -1916,7 +1916,7 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
         ] {
             if settings.contains(forbidden) {
                 violations.push(format!(
-                    ".github/swarm-settings.yml must not require conditional implementation job `{forbidden}`"
+                    ".github/settings.yml must not require conditional implementation job `{forbidden}`"
                 ));
             }
         }

@@ -26,7 +26,8 @@ pub struct Ledger {
     pub guard: String,
     pub source_settings: String,
     pub source_settings_origin_blob: String,
-    pub swarm_settings: String,
+    pub settings_app_path: String,
+    pub settings_app_holds: String,
     #[serde(default)]
     pub workflow: Vec<SourceOnlyWorkflow>,
 }
@@ -96,15 +97,18 @@ pub fn violations(
             violations.push(format!("{LEDGER}: {field} must be a full lowercase SHA"));
         }
     }
-    if ledger.source_settings != ".github/settings.yml" {
-        violations.push(format!(
-            "{LEDGER}: source_settings must be the Settings app path .github/settings.yml"
-        ));
-    }
-    if ledger.swarm_settings == ledger.source_settings {
-        violations.push(format!(
-            "{LEDGER}: swarm_settings must not share the Settings app path"
-        ));
+    match ledger.settings_app_holds.as_str() {
+        "swarm" if ledger.source_settings == ledger.settings_app_path => violations.push(format!(
+            "{LEDGER}: settings_app_holds = \"swarm\" but source_settings is the Settings app path"
+        )),
+        "source" if ledger.source_settings != ledger.settings_app_path => violations.push(format!(
+            "{LEDGER}: settings_app_holds = \"source\" requires source_settings = {}",
+            ledger.settings_app_path
+        )),
+        "swarm" | "source" => {}
+        other => violations.push(format!(
+            "{LEDGER}: settings_app_holds must be swarm or source, found {other:?}"
+        )),
     }
 
     let mut seen = BTreeSet::new();
@@ -399,14 +403,11 @@ mod tests {
     const PATH: &str = ".github/workflows/source-only-ci.yml";
     const SETTINGS: &str = "branches:\n  - name: main\n    protection:\n      required_status_checks:\n        strict: true\n        contexts:\n          - rust\n          - cargo-deny\n      enforce_admins: true\n";
 
-    fn ledger(phase: &str, observation: &str) -> Ledger {
+    fn ledger(phase: &str, observation: &str) -> Result<Ledger, String> {
         let text = format!(
-            "schema_version = \"1.0\"\nsource_repository = \"EffortlessMetrics/ripr\"\nswarm_repository = \"EffortlessMetrics/ripr-swarm\"\nsource_origin = \"{SHA}\"\nguard = \"{GUARD}\"\nsource_settings = \".github/settings.yml\"\nsource_settings_origin_blob = \"{SHA}\"\nswarm_settings = \".github/swarm-settings.yml\"\n\n[[workflow]]\npath = \"{PATH}\"\nsource_path = \".github/workflows/ci.yml\"\nsource_blob = \"{SHA}\"\nrequired_contexts = [\"rust\", \"cargo-deny\"]\nphase = \"{phase}\"\nswarm_disable_observation = \"{observation}\"\n\n[workflow.source_events]\npull_request = [\"types: [opened, synchronize]\"]\n"
+            "schema_version = \"1.0\"\nsource_repository = \"EffortlessMetrics/ripr\"\nswarm_repository = \"EffortlessMetrics/ripr-swarm\"\nsource_origin = \"{SHA}\"\nguard = \"{GUARD}\"\nsource_settings = \".github/source-settings.yml\"\nsource_settings_origin_blob = \"{SHA}\"\nsettings_app_path = \".github/settings.yml\"\nsettings_app_holds = \"swarm\"\n\n[[workflow]]\npath = \"{PATH}\"\nsource_path = \".github/workflows/ci.yml\"\nsource_blob = \"{SHA}\"\nrequired_contexts = [\"rust\", \"cargo-deny\"]\nphase = \"{phase}\"\nswarm_disable_observation = \"{observation}\"\n\n[workflow.source_events]\npull_request = [\"types: [opened, synchronize]\"]\n"
         );
-        match parse_ledger(&text) {
-            Ok(ledger) => ledger,
-            Err(error) => panic!("fixture ledger must parse: {error}"),
-        }
+        parse_ledger(&text)
     }
 
     fn workflow(events: &str, rust_if: &str, deny_if: &str) -> String {
@@ -429,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn guarded_dispatch_only_workflow_producing_every_context_passes() {
+    fn guarded_dispatch_only_workflow_producing_every_context_passes() -> Result<(), String> {
         let paren = workflow(
             "",
             GUARD,
@@ -437,16 +438,17 @@ mod tests {
                 "{GUARD} && (contains(github.event.pull_request.labels.*.name, 'a)b') || (github.event_name == 'push'))"
             ),
         );
-        assert!(check(&ledger("dispatch_only", ""), &paren, SETTINGS).is_empty());
-        let found = check(&ledger("dispatch_only", ""), &good(), SETTINGS);
+        assert!(check(&ledger("dispatch_only", "")?, &paren, SETTINGS).is_empty());
+        let found = check(&ledger("dispatch_only", "")?, &good(), SETTINGS);
         assert!(found.is_empty(), "{found:#?}");
         let jobs = job_blocks(&good());
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[1].name.as_deref(), Some("cargo-deny"));
+        Ok(())
     }
 
     #[test]
-    fn unguarded_or_loosened_job_is_refused() {
+    fn unguarded_or_loosened_job_is_refused() -> Result<(), String> {
         for rust_if in [
             "github.event_name != 'pull_request'",
             "github.event_name != 'pull_request' || (github.repository == 'EffortlessMetrics/ripr')",
@@ -455,7 +457,7 @@ mod tests {
             &format!("{GUARD} && (github.event_name == 'push'"),
         ] {
             let text = workflow("", rust_if, GUARD);
-            let found = check(&ledger("dispatch_only", ""), &text, SETTINGS);
+            let found = check(&ledger("dispatch_only", "")?, &text, SETTINGS);
             assert!(
                 found.iter().any(|v| v.contains("job `rust`")),
                 "{rust_if}: {found:#?}"
@@ -463,17 +465,18 @@ mod tests {
         }
         let missing_if = good().replace(&format!("    if: {GUARD}\n    runs-on"), "    runs-on");
         assert_ne!(missing_if, good(), "fixture must remove the rust guard");
-        let found = check(&ledger("dispatch_only", ""), &missing_if, SETTINGS);
+        let found = check(&ledger("dispatch_only", "")?, &missing_if, SETTINGS);
         assert!(found.iter().any(|v| v.contains("job `rust`")), "{found:#?}");
+        Ok(())
     }
 
     #[test]
-    fn source_settings_context_without_producer_is_refused() {
+    fn source_settings_context_without_producer_is_refused() -> Result<(), String> {
         let settings = SETTINGS.replace(
             "          - cargo-deny\n",
             "          - cargo-deny\n          - vscode\n",
         );
-        let found = check(&ledger("dispatch_only", ""), &good(), &settings);
+        let found = check(&ledger("dispatch_only", "")?, &good(), &settings);
         assert!(
             found
                 .iter()
@@ -481,32 +484,33 @@ mod tests {
             "{found:#?}"
         );
         let renamed = good().replace("name: cargo-deny", "name: deny");
-        let found = check(&ledger("dispatch_only", ""), &renamed, SETTINGS);
+        let found = check(&ledger("dispatch_only", "")?, &renamed, SETTINGS);
         assert!(
             found
                 .iter()
                 .any(|v| v.contains("no job produces ledgered required context `cargo-deny`")),
             "{found:#?}"
         );
+        Ok(())
     }
 
     #[test]
-    fn source_triggers_need_a_disable_observation_and_exact_events() {
+    fn source_triggers_need_a_disable_observation_and_exact_events() -> Result<(), String> {
         let events = "  pull_request:\n    types: [opened, synchronize]\n";
         let text = workflow(events, GUARD, GUARD);
-        let found = check(&ledger("source_triggers", ""), &text, SETTINGS);
+        let found = check(&ledger("source_triggers", "")?, &text, SETTINGS);
         assert!(
             found
                 .iter()
                 .any(|v| v.contains("without a recorded swarm disable observation")),
             "{found:#?}"
         );
-        assert!(admitted_source_events(&ledger("source_triggers", "").workflow[0]).is_empty());
+        assert!(admitted_source_events(&ledger("source_triggers", "")?.workflow[0]).is_empty());
 
         let observed = ledger(
             "source_triggers",
             "workflow 123 disabled_manually read 2026-11-23",
-        );
+        )?;
         assert!(check(&observed, &text, SETTINGS).is_empty());
         assert_eq!(admitted_source_events(&observed.workflow[0]).len(), 1);
 
@@ -517,11 +521,12 @@ mod tests {
         );
         let found = check(&observed, &widened, SETTINGS);
         assert!(found.iter().any(|v| v.contains("exactly as")), "{found:#?}");
-        assert!(admitted_source_events(&ledger("dispatch_only", "x").workflow[0]).is_empty());
+        assert!(admitted_source_events(&ledger("dispatch_only", "x")?.workflow[0]).is_empty());
+        Ok(())
     }
 
     #[test]
-    fn swarm_callers_and_lane_ledgers_may_not_name_source_only_files() {
+    fn swarm_callers_and_lane_ledgers_may_not_name_source_only_files() -> Result<(), String> {
         let mut workflows = BTreeMap::from([(PATH.to_string(), good())]);
         workflows.insert(
             ".github/workflows/caller.yml".to_string(),
@@ -529,7 +534,7 @@ mod tests {
         );
         let lane = format!("[[lane]]\nworkflow = \"{PATH}\"\n");
         let found = violations(
-            &ledger("dispatch_only", ""),
+            &ledger("dispatch_only", "")?,
             &workflows,
             Some(SETTINGS),
             &[("policy/ci-lane-whitelist.toml", &lane)],
@@ -544,11 +549,29 @@ mod tests {
                 .iter()
                 .any(|v| v.starts_with("policy/ci-lane-whitelist.toml"))
         );
+        Ok(())
     }
 
     #[test]
-    fn settings_contexts_parse_only_the_contexts_list() {
+    fn settings_app_holder_must_match_the_source_settings_path() -> Result<(), String> {
+        let mut swapped = ledger("dispatch_only", "")?;
+        swapped.source_settings = ".github/settings.yml".to_string();
+        let found = check(&swapped, &good(), SETTINGS);
+        assert!(
+            found
+                .iter()
+                .any(|v| v.contains("settings_app_holds = \"swarm\"")),
+            "{found:#?}"
+        );
+        swapped.settings_app_holds = "source".to_string();
+        assert!(check(&swapped, &good(), SETTINGS).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn settings_contexts_parse_only_the_contexts_list() -> Result<(), String> {
         assert_eq!(required_contexts(SETTINGS), vec!["rust", "cargo-deny"]);
         assert!(required_contexts("labels:\n  - name: rust\n").is_empty());
+        Ok(())
     }
 }

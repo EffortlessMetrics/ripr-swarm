@@ -9683,7 +9683,7 @@ jobs = ["Ripr Rust Small Result"]
 fn routed_rust_live_contract_rejects_reviewed_semantic_regressions() {
     let workflow = include_str!("../../.github/workflows/routed-rust.yml");
     let reusable = include_str!("../../.github/workflows/rust-gates.yml");
-    let settings = include_str!("../../.github/swarm-settings.yml");
+    let settings = include_str!("../../.github/settings.yml");
     let lane = include_str!("../../policy/ci-lane-whitelist.toml");
 
     let violations = routed_rust_workflow_contract_violations_with_reusable(

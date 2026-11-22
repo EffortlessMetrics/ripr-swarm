@@ -301,9 +301,12 @@ source jobs on swarm's tree). A file stays dispatch-only (phase
 job-level `if:` cannot make a subscribed event Actions-free. Only then may its
 ledger row move to `source_triggers` with the read-back recorded in
 `swarm_disable_observation`, and the file declare exactly the ledgered source
-events. Every context the source settings file `.github/settings.yml`
-requires must have a ledgered producer, and no swarm workflow or
-`policy/ci-*.toml` ledger may name a source-only file.
+events. Every context public's settings contract requires must have a
+ledgered producer, and no swarm workflow or `policy/ci-*.toml` ledger may name
+a source-only file. Public's contract is held at `.github/source-settings.yml`
+until a separate change swaps it onto the Settings app path
+`.github/settings.yml` (`settings_app_holds` in the ledger); until then that
+path keeps swarm's contract and this machinery has no live settings effect.
 
 ## Verification Economics Policy
 
