@@ -662,8 +662,14 @@ impl ProjectedCollectionWorkspaceMemo {
 /// admits every file that spells a test file's local empty-macro name.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct WithheldMacroBindings {
-    /// Some withheld file may shadow any macro name.
+    /// Some withheld site binds every trusted name, so no later file can
+    /// change the result.
     any_name: bool,
+    /// Some withheld workspace-wide foreign glob may shadow any name but the
+    /// core prelude macros (#16060). It does not end the fold, since a later
+    /// file may still bind one of those, but a test file's local empty-macro
+    /// names stay ambiguous as they do for `any_name`.
+    glob_any_name: bool,
     /// A crate-local site routed by root may shadow any macro name. The
     /// trusted set stays per root, but a test file's local empty-macro names
     /// are refused workspace-wide, as the full scan's empty-macro check
@@ -745,7 +751,8 @@ impl WithheldMacroBindings {
                     .or_insert_with(|| (path.to_path_buf(), site));
                 continue;
             }
-            self.any_name |= site.kind.binds_any_name();
+            self.any_name |= site.kind.binds_every_trusted_name();
+            self.glob_any_name |= site.kind.binds_any_name();
             self.trusted.insert(name.clone());
             self.sites
                 .entry(name)
@@ -770,7 +777,8 @@ impl WithheldMacroBindings {
                 else {
                     continue;
                 };
-                self.any_name |= site.kind.binds_any_name();
+                self.any_name |= site.kind.binds_every_trusted_name();
+                self.glob_any_name |= site.kind.binds_any_name();
                 self.trusted.insert(name.clone());
                 self.sites.entry(name).or_insert((path, site));
             }
@@ -807,7 +815,8 @@ impl WithheldMacroBindings {
                 else {
                     continue;
                 };
-                self.any_name |= site.kind.binds_any_name();
+                self.any_name |= site.kind.binds_every_trusted_name();
+                self.glob_any_name |= site.kind.binds_any_name();
                 self.trusted.insert(name.clone());
                 self.sites.entry(name).or_insert((path, site));
             }
@@ -2362,7 +2371,9 @@ impl OwnerPinSyntax {
                     )
                 })
                 .chain(
-                    (self.withheld.any_name || self.withheld.root_any_name)
+                    (self.withheld.any_name
+                        || self.withheld.glob_any_name
+                        || self.withheld.root_any_name)
                         .then(|| names.clone())
                         .into_iter()
                         .flatten(),
@@ -4375,6 +4386,9 @@ impl AssertionRefusal {
                             "{} did not parse cleanly, so it may redefine `{name}!`",
                             crate::analysis::stable_display_path_text(path)
                         ),
+                        MacroBindingKind::Included => format!(
+                            "`include!` at {place} splices in a file ripr does not read here, which may define `{name}!`"
+                        ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
                         ),
@@ -4822,8 +4836,10 @@ fn trusted_macro_sites_in(
     // (a bench's `#[macro_use] extern crate bencher;`) is kept per root.
     let mut by_root = CrateMacroBindings::new();
     let mut retained = WorkspaceMacroSiteIndex::default();
-    // One foreign glob import, `#[macro_use]` or unparsable file makes
-    // every trusted name ambiguous, and most workspaces have one. Scan
+    // One `#[macro_use]` or unparsable file makes every trusted name
+    // ambiguous. A foreign glob makes every name but the core prelude
+    // macros ambiguous (#16060), so it saturates only beside another site
+    // for those. Scan
     // the files that can do that first; once every name is ambiguous for
     // every test, no later file (scoped sites included) changes an answer,
     // so the rest are skipped. A refusal that needs a site completes the

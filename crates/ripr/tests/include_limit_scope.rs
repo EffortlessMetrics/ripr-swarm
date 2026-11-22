@@ -2,7 +2,9 @@
 //! the paste can reach (#14116). Before, one such `include!` anywhere plus one
 //! private glob of a foreign crate anywhere refused every assertion in the
 //! workspace. Every row changes `score` in `src/b.rs` from `x + 1` to `x + 2`
-//! beside a sibling module holding `use rayon::prelude::*;`.
+//! beside a sibling module holding `use rayon::prelude::*;`. Each test calls
+//! `vec!`, a name a glob can bind; a glob cannot rebind the bare
+//! `assert_eq!` (#16060).
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -27,7 +29,7 @@ index 1111111..2222222 100644
 /// `src/b.rs` with a unit test that reaches `score` through `imports`.
 fn unit(imports: &str, call: &str) -> String {
     format!(
-        "{OWNER}#[cfg(test)]\nmod tests {{\n{imports}\n    #[test]\n    fn pins() {{ assert_eq!({call}, 4); }}\n}}\n"
+        "{OWNER}#[cfg(test)]\nmod tests {{\n{imports}\n    #[test]\n    fn pins() {{ let _ = vec![0u8]; assert_eq!({call}, 4); }}\n}}\n"
     )
 }
 
@@ -38,7 +40,7 @@ fn own_unit() -> String {
 
 /// An integration test file: `head`, then one test asserting `score(2)`.
 fn integration(head: &str) -> String {
-    format!("{head}\n#[test]\nfn t() {{ assert_eq!(score(2), 4); }}\n")
+    format!("{head}\n#[test]\nfn t() {{ let _ = vec![0u8]; assert_eq!(score(2), 4); }}\n")
 }
 
 struct TempRepo {
