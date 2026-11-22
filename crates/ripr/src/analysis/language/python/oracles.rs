@@ -413,20 +413,30 @@ fn bound_exception_comparison(
         return None;
     };
     for stmt in after {
-        for (left, right) in required_equalities(stmt) {
-            // One operand reads the error; the other must not, or the
-            // comparison can hold for any message (`str(e.value) ==
-            // str(e.value.args[0])`), as a tautology does (rule 1).
-            let pinned = |read: &Expr, other: &Expr| {
-                reads_raised_error(read, bound, field) && !mentions_name(source, other, bound)
-            };
-            if !same_tokens(source, left, right) && (pinned(left, right) || pinned(right, left)) {
-                // The failure message observes nothing (rule 4).
-                return Some(format!(
-                    "assert {} == {}",
-                    text_for_range(source, left.range()).trim(),
-                    text_for_range(source, right.range()).trim()
-                ));
+        // In an `and` chain an earlier operand runs before the equality, so a
+        // chain that rebinds or mutates the error credits nothing
+        // (`assert setattr(N.value, "args", ...) is None and str(N.value) ==
+        // "..."`). A lone equality has nothing before it in its statement.
+        let chain_touches = matches!(stmt, Stmt::Assert(assert_stmt)
+            if matches!(assert_stmt.test.as_ref(), Expr::BoolOp(_)))
+            && statement_touches_name(stmt, bound, source);
+        if !chain_touches {
+            for (left, right) in required_equalities(stmt) {
+                // One operand reads the error; the other must not, or the
+                // comparison can hold for any message (`str(e.value) ==
+                // str(e.value.args[0])`), as a tautology does (rule 1).
+                let pinned = |read: &Expr, other: &Expr| {
+                    reads_raised_error(read, bound, field) && !mentions_name(source, other, bound)
+                };
+                if !same_tokens(source, left, right) && (pinned(left, right) || pinned(right, left))
+                {
+                    // The failure message observes nothing (rule 4).
+                    return Some(format!(
+                        "assert {} == {}",
+                        text_for_range(source, left.range()).trim(),
+                        text_for_range(source, right.range()).trim()
+                    ));
+                }
             }
         }
         if statement_touches_name(stmt, bound, source) {

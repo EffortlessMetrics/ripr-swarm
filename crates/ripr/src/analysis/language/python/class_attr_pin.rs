@@ -222,7 +222,13 @@ fn pinning_literals(text: &str, gate_text: &str) -> Vec<PinLiteral> {
             whole: false,
         });
     }
-    for statement in gate_statements(gate_text) {
+    // The gate text keeps only an `and` chain's strongest conjuncts; the
+    // assertion's own text still holds a weaker one the test also requires
+    // (`assert f() == 1 and "text" in C.message`).
+    for statement in gate_statements(gate_text)
+        .into_iter()
+        .chain(gate_statements(text))
+    {
         let literals = match &statement {
             Stmt::Assert(assertion) => positive_conjuncts(&assertion.test)
                 .into_iter()

@@ -6396,6 +6396,24 @@ fn class_attribute_text_change_reads_required_message_comparisons() -> Result<()
             true,
         ),
         (
+            "conjunct_membership",
+            "",
+            "assert Length(max=3)(\"abc\") == \"abc\" and \"than maximum\" in Length.message_max",
+            true,
+        ),
+        (
+            "conjunct_other_text",
+            raises,
+            "assert len(exc.value.args) == 1 and str(exc.value) == \"Shorter than minimum length 1.\"",
+            false,
+        ),
+        (
+            "conjunct_after_mutation",
+            raises,
+            "assert setattr(exc.value, \"args\", (\"Longer than maximum length 1.\",)) is None and str(exc.value) == \"Longer than maximum length 1.\"",
+            false,
+        ),
+        (
             "disjunction",
             raises,
             "assert len(exc.value.args) == 1 or str(exc.value) == \"Longer than maximum length 1.\"",

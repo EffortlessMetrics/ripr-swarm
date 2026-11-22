@@ -314,7 +314,8 @@ one changed raise only (#12952); the general class-only table row stays weak.
    a non-literal container (a substring). The whole statement is read, so
    it may span lines, and each conjunct of a positive `and` chain is read on
    its own (`assert len(e.value.args) == 1 and str(e.value) == "..."`,
-   #15646); an `or` operand or anything under `not` pins nothing. At least half of the literal must
+   #15646), including a conjunct weaker than the one that grades the
+   assertion; an `or` operand or anything under `not` pins nothing. At least half of the literal must
    match fixed characters of the old text; against the new text one fixed
    character is enough, and a non-empty new text made only of placeholders
    rejects nothing (an empty new text rejects every non-empty literal). A literal shorter than four characters pins only through
@@ -993,7 +994,8 @@ the rule; ripr still reports only what the static shape shows.
     (no other receiver), is recorded `exact_error_variant` / strong when a statement after the
     `with` statement, in the same test body, asserts `==` (an `assert`
     with one `==`, an `==` conjunct of an `assert` whose test is a positive
-    `and` chain (#15646), or `assertEqual`) between two operands, one of which
+    `and` chain (#15646; a chain in which any operand could rebind or
+    mutate `N` promotes nothing), or `assertEqual`) between two operands, one of which
     is a value-preserving read of the exception: `N.value` (pytest) or
     `N.exception` (unittest), alone, as `str(...)` or `repr(...)` of it,
     or as its `.args` or a literal index of `.args`, and whose other operand
