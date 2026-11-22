@@ -160,7 +160,10 @@ unlocked crate, a missing or unreadable lockfile, a newer, older or unknown
 version, a path, git or other-registry package, a workspace member of the same
 name, or several locked versions of the crate refuse credit with the same named
 macro-binding refusal as before this spec; the refusal text does not name the
-version. A future release that exports a trusted assertion name is never
+version. Since #16060 that refusal covers only the names a glob can bind
+(`vec!`, `format!`, the claims and expect-test macros, `json!`): a bare core
+prelude assertion is credited beside any glob, audited or not (see "A glob
+cannot rebind a core prelude macro" below). A future release that exports a trusted assertion name is never
 covered by this entry until it is re-read and added.
 
 New-audit procedure: re-read the published crate's prelude export list at the

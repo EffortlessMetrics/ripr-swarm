@@ -306,8 +306,15 @@ fn a_withheld_file_keeps_its_glob_workspace_wide() {
     let mut withheld = WithheldMacroBindings::default();
     let packages = BTreeSet::new();
     let drop_ins = DropInManifests::default();
-    withheld.absorb(Path::new(GLOBS), GLOB, &packages, &drop_ins);
-    assert!(withheld.any_name, "a withheld file has no module edges");
+    // The glob is not every-name (#16060): it leaves the fold open for a
+    // later binding of a core prelude name.
+    assert!(!withheld.absorb(Path::new(GLOBS), GLOB, &packages, &drop_ins));
+    assert!(
+        withheld.glob_any_name,
+        "a withheld file has no module edges"
+    );
+    assert!(withheld.trusted.contains("vec") && !withheld.trusted.contains("assert_eq"));
+    assert!(withheld.by_root.is_empty());
 }
 
 /// The retained lookup agrees with the reference scan for a test in a

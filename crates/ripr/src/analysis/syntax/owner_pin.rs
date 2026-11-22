@@ -479,6 +479,13 @@ impl MacroBindingKind {
                 | Self::WrapperRedefinition(_)
         )
     }
+
+    /// Whether this site binds every trusted name. A foreign glob may shadow
+    /// any name but the core prelude macros, which a glob cannot rebind at a
+    /// bare call (#16060), so it is the one may-shadow-any site that does not.
+    pub(crate) fn binds_every_trusted_name(&self) -> bool {
+        self.binds_any_name() && !matches!(self, Self::ForeignGlob(_))
+    }
 }
 
 /// One file's file-wide macro-binding sites (its scoped sites cannot
