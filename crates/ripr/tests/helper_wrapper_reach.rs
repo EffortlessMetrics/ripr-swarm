@@ -387,6 +387,8 @@ fn env_reading_wrapper_forwards_unless_env_is_rebound() -> Result<(), String> {
             "macro_rules! option_env { ($q:expr) => { if $q == 10 { return 5; } }; }",
             "option_env!(qty);",
         ),
+        // A foreign import of the name.
+        ("use dep::env;", "env!(qty);"),
         // A qualified path may name any crate's macro.
         ("", "std::env!(\"CARGO_PKG_NAME\");"),
     ] {
@@ -409,6 +411,22 @@ fn env_reading_wrapper_forwards_unless_env_is_rebound() -> Result<(), String> {
             assert_eq!(finding["probe"]["line"], first + 1, "{call}\n{finding}");
             assert_ne!(finding["classification"], "exposed", "{call}\n{finding}");
         }
+    }
+    // A rebound `env` elsewhere cannot change a wrapper that only logs, so
+    // that wrapper keeps its credit.
+    let source = format!(
+        "{}\nmod other {{\n    macro_rules! env {{ () => {{ \"other\" }}; }}\n}}\n",
+        bulk_source(
+            "    println!(\"{qty}\");\n    if is_bulk(qty) { 5 } else { 0 }",
+            BOUNDARY_TESTS,
+        )
+    );
+    for finding in [
+        predicate_finding(&source, BULK_DIFF)?,
+        family_finding(&source, BULK_DIFF, "return_value")?,
+    ] {
+        assert_eq!(finding["probe"]["line"], 2, "{finding}");
+        assert_eq!(finding["classification"], "exposed", "{finding}");
     }
     Ok(())
 }
