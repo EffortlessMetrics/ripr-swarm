@@ -285,29 +285,37 @@ fn a_link_that_leaves_the_repository_gets_no_start() -> Result<(), String> {
 
 #[cfg(unix)]
 #[test]
-fn a_linked_binary_cargo_does_not_build_gets_no_start() -> Result<(), String> {
+fn a_linked_binary_cargo_does_not_build_lists_no_spots() -> Result<(), String> {
     // `autobins = false` with no `[[bin]]`: Cargo builds only the library,
-    // so `src/main.rs -> ../old/main.rs` is no target and its file is no
-    // repairable spot (#16045 review).
-    assert_no_start(
+    // so `src/main.rs -> ../old/main.rs` is no target and the repo inventory
+    // lists no spot in its file (#16084 review). The library is the control.
+    let repo = repo(
         "unbuilt-bin",
         &[
             file(
                 "Cargo.toml",
                 PACKAGE.replace("edition", "autobins = false\nedition"),
             ),
-            file("src/lib.rs", "pub fn other() {}\n"),
+            file("src/lib.rs", OLD.replace("discount", "alpha")),
             Entry::Link("src/main.rs", "../old/main.rs"),
-            file("tests/d.rs", weak_test("my_pkg::discount")),
+            file("tests/d.rs", weak_test("my_pkg::alpha")),
         ],
         "old/main.rs",
-    )
+    )?;
+    let cache = repo.root.join("target/test-cache");
+    let (listed, _) = repo_exposure(&repo.root, &cache, &["src/lib.rs", "old/main.rs"])?;
+    if listed != ["src/lib.rs"] {
+        return Err(format!(
+            "the inventory must list the library and not the unbuilt binary: {listed:?}"
+        ));
+    }
+    Ok(())
 }
 
-/// The `real/*.rs` files a cached `repo-exposure-json` run lists, and whether
-/// the run missed the classified-seam cache.
+/// Which of `files` a cached `repo-exposure-json` run lists, and whether the
+/// run missed the classified-seam cache.
 #[cfg(unix)]
-fn repo_exposure(root: &Path, cache: &Path) -> Result<(Vec<String>, bool), String> {
+fn repo_exposure(root: &Path, cache: &Path, files: &[&str]) -> Result<(Vec<String>, bool), String> {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
         .current_dir(root)
         .args(["check", "--root", ".", "--format", "repo-exposure-json"])
@@ -319,10 +327,10 @@ fn repo_exposure(root: &Path, cache: &Path) -> Result<(Vec<String>, bool), Strin
     if output.status.code() != Some(0) {
         return Err(format!("repo-exposure-json failed:\n{out}\n{err}"));
     }
-    let mut files = ["real/a.rs", "real/b.rs"]
-        .into_iter()
+    let mut files = files
+        .iter()
         .filter(|file| out.contains(&format!("\"{file}\"")))
-        .map(str::to_string)
+        .map(|file| file.to_string())
         .collect::<Vec<_>>();
     files.sort();
     Ok((
@@ -348,8 +356,8 @@ fn retargeting_a_crate_root_link_moves_the_repo_inventory_cache_key() -> Result<
         "real/b.rs",
     )?;
     let cache = repo.root.join("target/test-cache");
-    let first = repo_exposure(&repo.root, &cache)?;
-    let second = repo_exposure(&repo.root, &cache)?;
+    let first = repo_exposure(&repo.root, &cache, &["real/a.rs", "real/b.rs"])?;
+    let second = repo_exposure(&repo.root, &cache, &["real/a.rs", "real/b.rs"])?;
     if first.0 != ["real/a.rs"] || !first.1 || second.0 != first.0 || second.1 {
         return Err(format!(
             "fixture: a cold run lists real/a.rs and a warm rerun reuses it: {first:?} {second:?}"
@@ -358,7 +366,7 @@ fn retargeting_a_crate_root_link_moves_the_repo_inventory_cache_key() -> Result<
     std::fs::remove_file(repo.root.join("src/lib.rs")).map_err(|e| e.to_string())?;
     std::os::unix::fs::symlink("../real/b.rs", repo.root.join("src/lib.rs"))
         .map_err(|e| e.to_string())?;
-    let moved = repo_exposure(&repo.root, &cache)?;
+    let moved = repo_exposure(&repo.root, &cache, &["real/a.rs", "real/b.rs"])?;
     if moved != (vec!["real/b.rs".to_string()], true) {
         return Err(format!(
             "a retargeted root link must miss the cache and list real/b.rs: {moved:?}"
