@@ -782,7 +782,7 @@ fn materialize_check_output_gap_ledger(
         return Ok(());
     };
     let check_output_path = resolve_path(root, check_output);
-    let contents = crate::bounded_input::read_to_string(&check_output_path).map_err(|err| {
+    let contents = crate::bounded_input::read_artifact_text(&check_output_path).map_err(|err| {
         format!(
             "first-pr --check-output {} is invalid: read failed: {err}",
             check_output_path.display()
@@ -3020,7 +3020,7 @@ enum ArtifactReadError {
 }
 
 fn read_json(path: &Path) -> Result<Value, ArtifactReadError> {
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
             ArtifactReadError::Missing
         } else {
@@ -3040,7 +3040,11 @@ fn read_json_with_digest(path: &Path) -> Result<(Value, String), ArtifactReadErr
             ArtifactReadError::Malformed(format!("read failed: {error}"))
         }
     })?;
-    let value = serde_json::from_slice(&bytes)
+    // The digest covers the file as written; the parse decodes a PowerShell
+    // 5.1 encoding of the same bytes when one is marked (#15936).
+    let text = crate::bounded_input::decode_artifact_text(&bytes)
+        .map_err(|error| ArtifactReadError::Malformed(format!("read failed: {error}")))?;
+    let value = serde_json::from_str(&text)
         .map_err(|error| ArtifactReadError::Malformed(error.to_string()))?;
     Ok((value, format!("sha256:{:x}", Sha256::digest(&bytes))))
 }

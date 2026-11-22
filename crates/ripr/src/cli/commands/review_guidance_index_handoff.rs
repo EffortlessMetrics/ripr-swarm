@@ -36,7 +36,7 @@ pub(crate) fn resolve_review_guidance_prepared_workspace<'a>(
             reason: "no_check_output_handoff_requested",
         });
     };
-    let text = crate::bounded_input::read_to_string(path).map_err(|err| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {err}",
             crate::output::pr_inline_comment_publish_plan::display_path(path)
