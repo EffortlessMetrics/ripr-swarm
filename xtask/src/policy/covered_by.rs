@@ -972,18 +972,23 @@ expires = "2026-12-01"
         );
     }
 
-    /// The id search stops at the next block: an entry whose own block has
-    /// no `id` line must not borrow a later block's line.
+    /// The id search stops at the next block. The first block's `id` is
+    /// written without spaces, a form the line search does not match, so the
+    /// search runs on; it must stop at the next header and fall back to the
+    /// first block's header line rather than name the later block's `id`
+    /// line (6) that carries the same id.
     #[test]
     fn id_line_search_stops_at_the_next_block() {
         let text = format!(
-            "[[exception]]\nlint = \"clippy::a\"\n\n{}",
+            "[[exception]]\nid=\"clippy-exception-0009\"\nlint = \"clippy::a\"\n\n{}",
             complete_block("clippy-exception-0009", "")
         );
-        let (_, violations) = parse_clippy_exceptions_ledger(&text);
+        assert_eq!(text.lines().nth(5), Some("id = \"clippy-exception-0009\""));
+        let (entries, violations) = parse_clippy_exceptions_ledger(&text);
+        assert_eq!(entries.len(), 1);
         assert_eq!(
             violations,
-            vec!["policy/clippy-exceptions.toml:1 missing required fields: id, path, selector, owner, reason, covered_by".to_string()]
+            vec!["policy/clippy-exceptions.toml:1 `clippy-exception-0009` missing required fields: path, selector, owner, reason, covered_by".to_string()]
         );
     }
 
