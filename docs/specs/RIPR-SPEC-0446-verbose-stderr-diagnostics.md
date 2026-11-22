@@ -62,7 +62,9 @@ CI job that cannot edit argv had no way to turn it on.
    plain form (`//?/<drive>:/..` prints `<drive>:/..`,
    `//?/UNC/server/share/..` prints `//server/share/..`). On Unix the stable
    path text prints unchanged. On every host, the printed `<file>:<line>`
-   selects the same finding through `ripr explain`: the locator matcher folds
+   matches its finding through `ripr explain` (a location several reported
+   findings share is refused as ambiguous, as for any `file:line` selector,
+   and the finding ID then selects one): the locator matcher folds
    the same verbatim roots on both operands, so a plain UNC location selects a
    finding stored under the verbatim UNC spelling (#15921). Other `//?/` forms
    keep their spelling and match byte for byte.

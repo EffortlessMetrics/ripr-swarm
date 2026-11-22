@@ -1216,14 +1216,15 @@ mod tests {
         // #15921: the stored text is the verbatim spelling; the selector is
         // what `output::path` prints for it and what a user types.
         const STORED: &str = r"\\?\UNC\server\share\repo\src\lib.rs";
+        // The verdict line's Windows rendering of the stored path, through
+        // the real renderer, so the copy-and-paste round trip is exercised on
+        // every host (the verdict line itself only folds on Windows).
+        let printed = crate::output::path::human_path_text(STORED, true);
         // Fixture check: the printed location is the plain share path.
-        assert_eq!(
-            crate::output::path::strip_windows_verbatim_prefix(&STORED.replace('\\', "/"))
-                .as_deref(),
-            Some("//server/share/repo/src/lib.rs")
-        );
+        assert_eq!(printed, "//server/share/repo/src/lib.rs");
+        let printed_selector = format!("{printed}:7");
         for selector in [
-            "//server/share/repo/src/lib.rs:7",
+            printed_selector.as_str(),
             r"\\server\share\repo\src\lib.rs:7",
             r"\\?\UNC\server\share\repo\src\lib.rs:7",
             "src/lib.rs:7",
