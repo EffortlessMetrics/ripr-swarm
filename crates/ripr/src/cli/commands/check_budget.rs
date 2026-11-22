@@ -271,7 +271,7 @@ mod tests {
         });
         assert_eq!(observed, Some(AnalysisAbortKind::DeadlineExceeded));
         assert_eq!(caller.abort_kind(), None);
-        assert!(caller.checkpoint().is_ok());
+        assert!(matches!(caller.checkpoint(), Ok(())));
     }
 
     /// A lookup that finishes inside the budget returns its result with no
