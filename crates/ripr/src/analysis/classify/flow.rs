@@ -577,7 +577,9 @@ fn return_value_sink(
         // value whatever its operands spell (`n >= LIMIT` has no literal,
         // call or arithmetic), as its predicate twin on the same line reads
         // it. An expression that spells a value keeps the sink below.
-        if let Some(tail) = predicate_as_owner_tail(probe, owner_fn) {
+        if let Some(tail) = predicate_as_owner_tail(probe, owner_fn)
+            && owner_fn.is_some_and(|function| operands_are_owner_inputs(&tail.text, function))
+        {
             return flow_sink(FlowSinkKind::ReturnValue, tail.text, tail.line, owner);
         }
         return flow_sink(
@@ -593,6 +595,57 @@ fn return_value_sink(
         probe.location.line,
         owner,
     )
+}
+
+/// Whether every name a comparison tail reads is one a test's call fixes: an
+/// owner parameter the body never rebinds, or an item (`LIMIT`,
+/// `limits::MAX`). A local (`let end = input.rfind(delim).map_or(floor, ..)`)
+/// is computed inside the owner, and no reader here maps a test's arguments to
+/// its value, so a tail over one keeps the unknown sink (RIPR-SPEC-0158).
+fn operands_are_owner_inputs(expression: &str, function: &FunctionSummary) -> bool {
+    let parameters = super::activation::signature_parameters(function);
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
+    let rebinds = |name: &str| {
+        masked.lines().skip(1).any(|line| {
+            line.split("let ").skip(1).any(|rest| {
+                let pattern = rest.split('=').next().unwrap_or(rest);
+                identifiers(pattern).any(|(word, _, _)| word == name)
+            })
+        })
+    };
+    identifiers(expression).all(|(word, before, after)| {
+        if before == Some('.') || before == Some(':') || after.starts_with("::") {
+            // A field or a path segment is not a binding of its own.
+            return true;
+        }
+        if parameters.iter().any(|parameter| parameter == word) || word == "self" {
+            return !rebinds(word);
+        }
+        // What is left is an item when it is spelled like one.
+        !word.chars().any(|ch| ch.is_ascii_lowercase()) && !rebinds(word)
+    })
+}
+
+/// Each identifier in `text` with the character before it and the text after
+/// it.
+fn identifiers(text: &str) -> impl Iterator<Item = (&str, Option<char>, &str)> {
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        loop {
+            let rest = text.get(at..)?;
+            let start = at + rest.find(|ch: char| ch.is_ascii_alphabetic() || ch == '_')?;
+            let before = text[..start].chars().next_back();
+            let len = text[start..]
+                .find(|ch: char| !is_word(ch))
+                .unwrap_or(text.len() - start);
+            at = start + len;
+            if before.is_some_and(is_word) {
+                continue;
+            }
+            return Some((&text[start..at], before, text[at..].trim_start()));
+        }
+    })
 }
 
 fn match_arm_sink(
@@ -944,6 +997,20 @@ fn tail_if_branch_value(
     if inline_body.is_none() && rest != ["}"] {
         return None;
     }
+    // The `if` must open its own statement. A line that ends in an operator
+    // (`force ||`) makes it one operand of a wider tail, and that tail can
+    // return without evaluating either arm.
+    if inline_body.is_none() {
+        let before = masked
+            .lines()
+            .take(offset)
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .last()?;
+        if !before.ends_with(['{', ';', '}']) {
+            return None;
+        }
+    }
     // Branch spans come from the masked line (strings/comments cannot hide a
     // brace there); branch text comes from the raw line at the same offsets,
     // because masking blanks string and char literals that are valid values.
@@ -1018,6 +1085,24 @@ fn tail_if_branch_value(
         .iter()
         .skip(1)
         .any(|text| *text == texts[0] && !branch_is_diverging(text))
+    {
+        return None;
+    }
+    // Two paths that end in the same segment may spell one item
+    // (`Level::High` and `crate::Level::High`); nothing here resolves them, so
+    // the arms are not read as different values.
+    let last_segment = |text: &str| {
+        text.contains("::")
+            .then(|| text.rsplit("::").next())
+            .flatten()
+            .filter(|_| is_plain_path(text))
+            .map(str::to_string)
+    };
+    if let Some(first) = last_segment(&texts[0])
+        && texts
+            .iter()
+            .skip(1)
+            .any(|text| last_segment(text).as_ref() == Some(&first))
     {
         return None;
     }
@@ -2364,6 +2449,50 @@ mod tests {
         }
     }
 
+    /// A tail over a local, or over a parameter the body rebinds, is computed
+    /// inside the owner: no reader maps a test's arguments to it, so crediting
+    /// the return would credit a boundary nobody established (RIPR-SPEC-0158
+    /// example 5, verdict-corpus case `spec-b-0158-dynamic-default`).
+    #[test]
+    fn name_only_comparison_tail_over_a_local_keeps_the_unknown_sink() {
+        for (body, expression) in [
+            (
+                "pub fn hit(input: &str, delim: char) -> bool {\n    let floor = input.len().min(1);\n    let end = input.rfind(delim).map_or(floor, |idx| idx);\n    let start = delim.len_utf8();\n    end >= start\n}",
+                "end >= start",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    let n = n / 2;\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    let (n, _) = split(n);\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+            ),
+            (
+                "pub fn over_limit(n: u32) -> bool {\n    let LIMIT = n;\n    n >= LIMIT\n}",
+                "n >= LIMIT",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let line = body.lines().count() - 1;
+            let sinks = local_flow_sinks(
+                &probe(ProbeFamily::ReturnValue, expression, line),
+                Some(&owner),
+            );
+            assert_eq!(sinks.len(), 1, "{body}: {sinks:?}");
+            assert_eq!(sinks[0].kind, FlowSinkKind::Unknown, "{body}");
+        }
+        // A statement that binds nothing the tail reads changes nothing.
+        let owner = tail_owner(
+            "pub fn over_limit(n: u32, limits: &Limits) -> bool {\n    let _guard = enter();\n    n >= limits.max\n}",
+        );
+        let sinks = local_flow_sinks(
+            &probe(ProbeFamily::ReturnValue, "n >= limits.max", 3),
+            Some(&owner),
+        );
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue, "{sinks:?}");
+    }
+
     /// #15274: a tail that spells a value keeps the sink it had, with its
     /// literals intact. Reading it through the comparison-tail reader would
     /// blank them (`c ==     || c == `) and break the witness match.
@@ -2500,6 +2629,9 @@ mod tests {
             "pub fn level(n: u32) -> u8 {\n    if n > 10 { <A as Limit>::MAX } else { <B as Limit>::MAX }\n}",
             "pub fn level(n: u32) -> u8 {\n    if n > 10 { Tier::<A>::MAX } else { Tier::<B>::MAX }\n}",
             "pub fn level(n: u32) {\n    if n > 10 { Level::High } else { Level::Low }\n}",
+            // Two spellings of one variant.
+            "pub fn level(n: u32) -> Level {\n    if n > 10 { Level::High } else { crate::Level::High }\n}",
+            "pub fn level(n: u32) -> Level {\n    if n > 10 { Self::High } else { Level::High }\n}",
         ] {
             let owner = tail_owner(body);
             let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", 2), Some(&owner));
@@ -2510,6 +2642,37 @@ mod tests {
                 "`{body}` must not produce a return-value sink: {sinks:?}"
             );
         }
+    }
+
+    #[test]
+    fn tail_if_that_is_an_operand_of_a_wider_tail_fails_closed() {
+        for body in [
+            "pub fn level(n: u32, force: bool) -> bool {\n    force ||\n    if n > 10 { Mode::HIGH } else { Mode::LOW }\n}",
+            "pub fn level(n: u32, force: bool) -> bool {\n    force ||\n    // the boundary\n    if n > 10 { true } else { false }\n}",
+            "pub fn level(n: u32, base: u32) -> u32 {\n    base +\n    if n > 10 { 1 } else { 0 }\n}",
+        ] {
+            let owner = tail_owner(body);
+            let line = body.lines().count() - 1;
+            let sinks =
+                local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", line), Some(&owner));
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+        // The same `if` after a finished statement is the tail itself.
+        let owner = tail_owner(
+            "pub fn level(n: u32) -> Level {\n    let _ = n;\n    if n > 10 { Level::High } else { Level::Low }\n}",
+        );
+        let sinks = local_flow_sinks(&probe(ProbeFamily::Predicate, "n > 10", 3), Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "{sinks:?}"
+        );
     }
 
     #[test]

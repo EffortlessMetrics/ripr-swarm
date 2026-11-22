@@ -22,10 +22,8 @@ or missing discriminator. The independent RIPR-SPEC-0108 corpus pins exactly
 two predicates and non-promotion. Public regressions retain genuine u32,
 i32 and usize counterparts, unused narrow parameters and both orientations.
 
-The two separate returned-comparison findings remain infection_unknown
-outside this predicate repair. Since #15274 their propagation stage reads
-the return sink `k <= bound`, as the predicate findings' does; no finding
-is promoted. Fixture tests are adversarial static
+The two separate returned-comparison findings remain propagation_unknown
+outside this predicate repair. Fixture tests are adversarial static
 inputs, not claimed passing runtime tests. Native overflow-profile controls
 are separate evidence; no arbitrary Rust type inference is added.
 
