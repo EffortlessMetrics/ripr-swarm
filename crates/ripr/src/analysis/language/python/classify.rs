@@ -1152,11 +1152,14 @@ fn classify_change_for_owner_inner<'a>(
     );
     let changed_default_exercised_ok = changed_default_override.is_none();
     // An added `name=<literal>` that restates the declared default of every
-    // workspace definition of the callee (#16011) binds the same value as
-    // before, so an oracle on an ordinary call cannot tell the two apart.
-    let default_keyword = old_line_text.and_then(|old| {
-        super::default_equal_keyword::default_equal_keyword(old, line_text, owners)
-    });
+    // workspace definition the call can reach (#16011) binds the same value as
+    // before, so an oracle on an ordinary call cannot tell the two apart. A
+    // mock assertion that pins the call's keywords still sees the edit.
+    let default_keyword = old_line_text
+        .filter(|_| !mock_pins_changed_call)
+        .and_then(|old| {
+            super::default_equal_keyword::default_equal_keyword(old, line_text, file, owners)
+        });
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
@@ -1776,7 +1779,7 @@ fn classify_change_for_owner_inner<'a>(
             StageState::Weak,
             StageState::Weak,
             vec![format!(
-                "A strong Python oracle reaches `{}`, but the added argument `{}` equals the declared default of every workspace `{}`, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name.",
+                "A strong Python oracle reaches `{}`, but the added argument `{}` equals the declared default of every workspace `{}` the call can reach, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name.",
                 owner.name, keyword.argument, keyword.callee,
             )],
         )
