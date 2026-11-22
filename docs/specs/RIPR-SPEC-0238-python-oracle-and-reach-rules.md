@@ -339,7 +339,9 @@ one changed raise only (#12952); the general class-only table row stays weak.
    same-file functions that name a reader. The existing verdict is kept when
    the readers cannot be listed from the file: the name is public or a
    dunder; the line is added without an old side; the recorded argument on
-   either side calls, assigns (`:=`), awaits or yields; the method is
+   either side calls, assigns (`:=`), awaits or yields, or, for the
+   iterating `extend`, `extendleft` and `update`, names something another
+   line of the method uses; the method is
    decorated or a dunder; the class has bases other than `object`, keywords or decorators;
    the container is not seeded in `__init__` by a fresh empty collection
    (`[]`, `{}`, `set()`, `list()`, `dict()`, `deque()`), or is named outside
