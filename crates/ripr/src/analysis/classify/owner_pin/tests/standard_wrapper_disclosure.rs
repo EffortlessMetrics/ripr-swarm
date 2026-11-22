@@ -107,3 +107,27 @@ fn an_unknown_wrapper_is_still_named() {
     let files = [(NESTED, source), (LIB, GATE), (TESTS, PINS)];
     assert_eq!(named_site(&files, "assert_eq"), None);
 }
+
+/// #16053: a glob inside one test's body binds only inside that body. Before,
+/// it bound its names for the whole file, so a standard `assert!` nesting
+/// `assert_eq!` anywhere else in the file was named as a wrapper.
+#[test]
+fn a_block_scoped_glob_leaves_standard_calls_outside_the_block_transparent() {
+    let outside = "pub fn check(f: impl FnOnce() -> bool) -> bool {\n    f()\n}\n\n#[test]\nfn scoped() {\n    use foreign::*;\n    let _ = 1;\n}\n\n#[test]\nfn nested() {\n    assert!(check(|| {\n        assert_eq!(1, 1);\n        true\n    }));\n}\n";
+    // Fixture admission: the glob sits in `scoped`'s body and the nesting
+    // standard call in another test.
+    assert!(outside.contains("fn scoped() {\n    use foreign::*;"));
+    let files = [(NESTED, outside), (LIB, GATE), (TESTS, PINS)];
+    assert_eq!(named_site(&files, "assert_eq"), None);
+    assert_eq!(named_site(&files, "assert"), None);
+    // The same call inside the glob's block still reads the glob's names.
+    let inside = "pub fn check(f: impl FnOnce() -> bool) -> bool {\n    f()\n}\n\n#[test]\nfn nested() {\n    use foreign::*;\n    assert!(check(|| {\n        assert_eq!(1, 1);\n        true\n    }));\n}\n";
+    let files = [(NESTED, inside), (LIB, GATE), (TESTS, PINS)];
+    let named = named_site(&files, "assert_eq");
+    assert!(
+        matches!(&named, Some((path, site)) if path == Path::new(NESTED)
+            && site.line == 8
+            && matches!(&site.kind, MacroBindingKind::MacroArgument(wrapper) if wrapper == "assert")),
+        "{named:?}"
+    );
+}

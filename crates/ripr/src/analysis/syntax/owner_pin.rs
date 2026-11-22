@@ -1018,7 +1018,7 @@ fn macro_binding_ambiguity_sets(
     };
     let tree = parse.tree();
     let binding_free = BindingFreeFileIndex::collect(tree.syntax());
-    let scan = |names: &[&str], known: &[&str], known_bound: &BTreeSet<String>| {
+    let scan = |names: &[&str], known: &[&str], known_bound: &BoundNames| {
         macro_binding_sites_in_tree(
             source,
             packages,
@@ -1033,20 +1033,22 @@ fn macro_binding_ambiguity_sets(
             &binding_free,
         )
     };
-    let union = scan(trusted, trusted, &BTreeSet::new());
+    let union = scan(trusted, trusted, &BoundNames::default());
     // #14115: a per-name query reads the other trusted macros as the union
     // scan does. A call to one is opaque only when that macro has a binding
     // site of its own in this file; otherwise `assert!(.. assert_eq!(..) ..)`
     // would be named as a wrapper that may define `assert_eq`, a site the
     // admission scan never reports.
-    // A mention confined to an audited pass-through call (#14116) rebinds
-    // nothing outside that call, so it does not make the name's other calls
-    // in this file opaque either.
-    let union_bound: BTreeSet<String> = union
-        .iter()
-        .filter(|(_, site)| !confined_pass_through_site(site))
-        .map(|(name, _)| name.clone())
-        .collect();
+    // A site with a scope binds the name only inside that scope, and a
+    // mention confined to an audited pass-through call (#14116) rebinds
+    // nothing at all, so neither makes the name's calls elsewhere in this
+    // file opaque (#16053).
+    let mut union_bound = BoundNames::default();
+    for (name, site) in &union {
+        if !confined_pass_through_site(site) {
+            union_bound.insert(name, site.scope_bytes);
+        }
+    }
     let singletons = singleton_names
         .into_iter()
         .flatten()
@@ -1055,7 +1057,7 @@ fn macro_binding_ambiguity_sets(
             if trusted.contains(name) {
                 scan(&[name], trusted, &union_bound)
             } else {
-                scan(&[name], &[name], &BTreeSet::new())
+                scan(&[name], &[name], &BoundNames::default())
             }
         })
         .collect();
@@ -1076,7 +1078,53 @@ fn confined_pass_through_site(site: &MacroBindingSite) -> bool {
 struct ScanNames<'a> {
     trusted: &'a [&'a str],
     known: &'a [&'a str],
-    known_bound: &'a BTreeSet<String>,
+    known_bound: &'a BoundNames,
+}
+
+/// Trusted names with a binding site in one file, and where each binds: a
+/// site without a scope binds the name for the whole file, a scoped site
+/// (a definition or import inside a function body or block) only for calls
+/// inside its byte span (#16053).
+#[derive(Clone, Debug, Default)]
+struct BoundNames {
+    everywhere: BTreeSet<String>,
+    within: BTreeSet<(String, u32, u32)>,
+}
+
+impl BoundNames {
+    fn insert(&mut self, name: &str, scope_bytes: Option<(u32, u32)>) {
+        match scope_bytes {
+            Some((start, end)) => {
+                self.within.insert((name.to_string(), start, end));
+            }
+            None => {
+                self.everywhere.insert(name.to_string());
+            }
+        }
+    }
+
+    /// Whether a call of `name` starting at byte `at` reads a bound name.
+    fn binds_at(&self, name: &str, at: u32) -> bool {
+        self.everywhere.contains(name)
+            || self
+                .within
+                .iter()
+                .any(|(bound, start, end)| bound == name && (*start..*end).contains(&at))
+    }
+
+    /// Every bound name, wherever it binds: the conservative reading for a
+    /// question that has no call position.
+    fn names(&self) -> BTreeSet<String> {
+        self.everywhere
+            .iter()
+            .cloned()
+            .chain(self.within.iter().map(|(name, _, _)| name.clone()))
+            .collect()
+    }
+
+    fn len(&self) -> usize {
+        self.everywhere.len() + self.within.len()
+    }
 }
 
 fn macro_binding_sites_in_tree(
@@ -1845,11 +1893,10 @@ fn macro_binding_sites_in_tree(
     // module whose tests then use it. The first pass skips trusted calls, so
     // run to a fixpoint: a name bound through one call's arguments makes its
     // own calls opaque in turn.
-    let mut bound: BTreeSet<String> = ambiguous
-        .iter()
-        .map(|(name, _)| name.clone())
-        .chain(known_bound.iter().cloned())
-        .collect();
+    let mut bound = known_bound.clone();
+    for (name, site) in &ambiguous {
+        bound.insert(name, site.scope_bytes);
+    }
     let mut reported = BTreeSet::new();
     // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
@@ -1886,12 +1933,14 @@ fn macro_binding_sites_in_tree(
             // call receives the arguments through fragments (`vec!($n)`), so
             // the scan of that call never sees the name it may define.
             let body_bound = call.as_ref().is_some_and(|call| {
-                wrapper_body_calls_bound(binding_free, call, &bound)
+                wrapper_body_calls_bound(binding_free, call, &bound.names())
                     && binding_free_local_wrapper(binding_free, call, &tokens(), known)
             });
             if !body_bound
-                && (!bound.contains(path.trim_start_matches("r#"))
-                    || !is_trusted_macro(path, known))
+                && (!bound.binds_at(
+                    path.trim_start_matches("r#"),
+                    node.text_range().start().into(),
+                ) || !is_trusted_macro(path, known))
             {
                 continue;
             }
@@ -1925,7 +1974,7 @@ fn macro_binding_sites_in_tree(
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
-                    bound.insert(name.to_string());
+                    bound.insert(name, None);
                     let line = line_of(node);
                     if !reported.insert((name.to_string(), line, path.clone())) {
                         continue;
