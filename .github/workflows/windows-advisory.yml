@@ -115,9 +115,9 @@ jobs:
     name: windows-advisory-integration-${{ matrix.part }}
     if: ${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: windows-latest
-    # Above the step deadlines below (15+45+65+65), which bound the work.
+    # Above the step deadlines below (15+45+65+65+45), which bound the work.
     # Measured on 2026-11-21, a slow night: 19 to 23 minutes per sample.
-    timeout-minutes: 200
+    timeout-minutes: 250
     strategy:
       fail-fast: false
       matrix:
@@ -187,6 +187,23 @@ jobs:
         run: |
           mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 60 --log "target/windows-integration-$PART-run2.log" --status "target/windows-integration-$PART-run2.status" -- cargo test --workspace --no-fail-fast --test "$PATTERN" -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
+      # Feature-combination testing (#2400, #16036): this part's `ripr`
+      # integration targets with the Rust-only feature set. One step of
+      # `cargo test -p ripr --no-default-features --features lang-rust` in
+      # `windows-advisory` ran 8 minutes of build, 11 of unit tests and then
+      # reached only the `l*` integration targets before its 40-minute
+      # deadline (44952408835: a-c took 15 minutes, d-k 6). Here each part
+      # builds and runs its own third, after both samples, so swapping
+      # `target/debug/ripr.exe` for the Rust-only build cannot reach them.
+      # `windows-advisory` runs the unit targets and doctests of the same
+      # feature set and reports every part's row.
+      - name: Test this part's integration targets with --no-default-features (advisory)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log "target/nofeatures-test-$PART.log" --status "target/nofeatures-test-$PART.status" -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast --test "$PATTERN" -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
       # `always()`, so a cancelled or cut job still hands over what it wrote:
       # the summarizer then names the missing or truncated part itself.
       - name: Upload this part's logs
@@ -201,6 +218,8 @@ jobs:
             target/windows-integration-${{ matrix.part }}-run1.status
             target/windows-integration-${{ matrix.part }}-run2.log
             target/windows-integration-${{ matrix.part }}-run2.status
+            target/nofeatures-test-${{ matrix.part }}.log
+            target/nofeatures-test-${{ matrix.part }}.status
           if-no-files-found: warn
 
   windows-advisory:
@@ -210,9 +229,9 @@ jobs:
     needs: windows-advisory-integration
     if: ${{ !cancelled() && !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: windows-latest
-    # The hosted maximum. The cargo step deadlines below sum to 435 minutes
-    # (15+15+45+15+45+115+95+20+20+25+25: checks, runner build,
-    # no-default-features tests, the test-binary build, both unit runs, both
+    # The hosted maximum. The cargo step deadlines below sum to 455 minutes
+    # (15+15+45+20+15+45+115+95+20+20+25+25: checks, runner build,
+    # no-default-features unit tests and doctests, the test-binary build, both unit runs, both
     # doctest runs, real-ACL and file-policy), more than any job may run, so
     # they cannot all be exhausted in one night. A night that does is cancelled
     # by this limit and fails the job; it cannot report green. Before the
@@ -291,12 +310,24 @@ jobs:
         run: |
           cargo build -p xtask && mkdir -p target/advisory-run && cp target/debug/xtask.exe target/advisory-run/xtask.exe
 
-      - name: Test --no-default-features (advisory)
+      # The unit targets and doctests of the Rust-only feature set (#2400).
+      # Its integration targets run in the `windows-advisory-integration`
+      # parts (#16036): the whole package in this one step did not fit its
+      # deadline. On 2026-11-21 the build took 8 minutes and the `ripr` unit
+      # binary 11.
+      - name: Test --no-default-features unit targets (advisory)
         if: ${{ !cancelled() }}
         timeout-minutes: 45
         shell: bash
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test.log --status target/nofeatures-test.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test-unit.log --status target/nofeatures-test-unit.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast --lib --bins -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      - name: Test --no-default-features doctests (advisory)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 15 --log target/nofeatures-test-doc.log --status target/nofeatures-test-doc.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast --doc || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Check --all-features (advisory)
         if: ${{ !cancelled() }}
@@ -466,25 +497,21 @@ jobs:
             --head "$(git rev-parse HEAD)"
 
       # A missing status file is `not_run`, never silence: a lane that drops a
-      # row it did not execute reads as if nothing was wrong. The rows are
-      # echoed to the job log as well: the step summary is not retrievable
-      # through the API, and the artifact needs a separate authenticated
-      # download.
+      # row it did not execute reads as if nothing was wrong. A part cut by
+      # its deadline (124) or that could not start (127) is INCOMPLETE:
+      # missing evidence, not a test failure (#16036). `nofeatures-test` joins
+      # its parts (unit targets, doctests and the three integration parts):
+      # FAIL when any part failed, PASS only when every part passed, otherwise
+      # INCOMPLETE; `windows-advisory-feature-rows` owns those rules and its
+      # tests. The rows are echoed to the job log as well: the step summary is
+      # not retrievable through the API, and the artifact needs a separate
+      # authenticated download.
       - name: Summarize feature-combination results
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           printf '\n### Feature-combination tests (#2400)\n\n' >> target/windows-verdict.md
-          for label in nofeatures-check nofeatures-test allfeatures-check; do
-            status_file="target/${label}.status"
-            if [ ! -f "$status_file" ]; then
-              echo "- $label: not_run (no status file)"
-            elif [ "$(cat "$status_file")" = "0" ]; then
-              echo "- $label: PASS"
-            else
-              echo "- $label: FAIL (exit $(cat "$status_file"))"
-            fi
-          done | tee -a target/windows-verdict.md
+          cargo xtask windows-advisory-feature-rows --join nofeatures-test --row nofeatures-check target/nofeatures-check.status --part nofeatures-test-unit target/nofeatures-test-unit.status --part nofeatures-test-doc target/nofeatures-test-doc.status --part nofeatures-test-a-c target/integration/nofeatures-test-a-c.status --part nofeatures-test-d-o target/integration/nofeatures-test-d-o.status --part nofeatures-test-rest target/integration/nofeatures-test-rest.status --row allfeatures-check target/allfeatures-check.status | tee -a target/windows-verdict.md
           cat target/windows-verdict.md >> "$GITHUB_STEP_SUMMARY"
 
       # Manual, ref-selected isolation for #4377. Broad workspace runs
@@ -560,8 +587,10 @@ jobs:
             target/ripr/reports/file-policy.subject.json
             target/nofeatures-check.log
             target/nofeatures-check.status
-            target/nofeatures-test.log
-            target/nofeatures-test.status
+            target/nofeatures-test-unit.log
+            target/nofeatures-test-unit.status
+            target/nofeatures-test-doc.log
+            target/nofeatures-test-doc.status
             target/allfeatures-check.log
             target/allfeatures-check.status
             target/nested-alias-isolated-*.log
@@ -1267,6 +1296,11 @@ jobs:
           exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
+      # #16121: the producer peak is the single `ripr` lib rustc, not -j 2 overlap. It
+      # grew from 8.14 GB (15 Nov) past the 8 GiB Job cap (22 Nov). The two --config
+      # overrides on the build below drop line tables and split codegen finer for `ripr`
+      # only, so cached dependencies keep their fingerprints. Measured on Linux at -j 2:
+      # 6.99 -> 6.00 GiB peak, 182 -> 160 s. The replay needs neither; the cap stays 8 GiB.
       - name: Produce and replay exact-head selector recovery (advisory)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         shell: pwsh
@@ -1588,7 +1622,7 @@ jobs:
               require(alias.is_junction() and alias.resolve() == target, "cache target mapping drift")
               ownership["target"] = True
               receipt["owned_producer_target"] = {"path": str(target), "state": "RETAINED_FOR_CACHE", "owner_sha256": digest(owner_path)}
-              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--target-dir", str(target), "--message-format=json"],
+              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--config", "profile.dev.package.ripr.debug=0", "--config", "profile.dev.package.ripr.codegen-units=1024", "--target-dir", str(target), "--message-format=json"],
                                       root, seconds=600, memory=8 * 1024**3, output_cap=16 * 1024**2, active=0)
               require(status == 0, "exact-head CLI build failed")
               require(git_value("rev-parse", "HEAD") == actual_head and git_value("rev-parse", "HEAD^{tree}") == source_tree, "producer source moved")

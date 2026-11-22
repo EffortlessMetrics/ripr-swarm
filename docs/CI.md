@@ -671,11 +671,12 @@ and single-platform CI was the root cause enabling both.
 - **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
 - **`Pilot Measure`** (`pilot-measure.yml`, manual `workflow_dispatch` only) builds a release `ripr` on a hosted runner, runs `ripr pilot` on this repository with default budgets and reports the byte sizes of `repo-exposure.json`, `agent-seam-packets.json` and the output tree, the exit code and each document's `run_status` in the job summary, then runs `ripr check --format agent --committed` on the pinned humantime commit plus the fortnight gap patch from `docs/AGENT_AS_USER_RUNS.md` and prints whether the terminal state is `open=` or `stop=`. It asserts nothing and never fails on a size or finding; the pilot output uploads as a 7-day `pilot-measure` artifact. It exists so #11951 (packet size target) and #12058 (humantime `open=`) can be confirmed on a current-main release binary.
 - **Test steps run under `windows-advisory-run`** (#9272, #9660). The
-  `--no-default-features` test step and both workspace runs go through
+  `--no-default-features` test parts and both workspace runs go through
   `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
   Object on Windows). It streams output to the job log as it arrives and into
   the log file, ends the whole tree at its own deadline (40 minutes for the
-  `--no-default-features` tests, 70 for each workspace run), and on a timeout
+  `--no-default-features` unit targets and for each integration part, 15 for
+  its doctests, 70 for each workspace run), and on a timeout
   names every test libtest reported as running for over 60 seconds with no
   result, so a stuck run points at a test. It records cargo's exit code in the
   status file (124 when it enforced the deadline, 127 when the command could
@@ -711,6 +712,21 @@ and single-platform CI was the root cause enabling both.
   exhaust it (setup, summary compilation and the manual isolation repeats have
   no separate deadline). The manual nested-alias isolation repeats use the
   redirect-and-replay form.
+- **Rust-only tests in parts (#2400, #16036).** One
+  `cargo test -p ripr --no-default-features --features lang-rust` step did not
+  fit its 40-minute deadline (run 44952408835: 8 minutes of build, 11 of unit
+  tests, then only the `a*` to `l*` integration targets). `windows-advisory`
+  now runs that feature set's unit targets (`--lib --bins`) and doctests, and
+  each `windows-advisory-integration` part runs its third of the `ripr`
+  integration targets after both samples, under its own deadline. On run
+  45008347596 the parts took 21 minutes (unit), under 1 (doctests), and 27,
+  20 and 34 (`a-c`, `d-o`, `rest`), each with every target reached.
+  `cargo xtask windows-advisory-feature-rows` prints the feature-combination
+  section: one row per part and a joined `nofeatures-test` row that is FAIL
+  when a part failed, PASS only when every part passed, and INCOMPLETE when a
+  part was cut at its deadline (124), could not start (127) or left no
+  status. A cut part is missing evidence, not a test failure. The rows stay
+  advisory.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
