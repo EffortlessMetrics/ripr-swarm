@@ -2329,10 +2329,25 @@ impl<'a> TransitiveReachIndex<'a> {
 /// duplicate declarations, or a stale line/name. Never infer privacy from the
 /// function body's text: that slice starts at `fn` and omits `pub`.
 fn declaration_visibility(index: &RustIndex, function: &FunctionSummary) -> Option<String> {
-    use ra_ap_syntax::{AstNode, ast, ast::HasName, ast::HasVisibility};
+    use ra_ap_syntax::{AstNode, ast::HasVisibility};
+    Some(
+        indexed_declaration(index, function)?
+            .visibility()
+            .map(|visibility| visibility.syntax().text().to_string())
+            .unwrap_or_default(),
+    )
+}
+
+/// The one `fn` declaration the index read `function` from; `None` on
+/// malformed source, duplicate declarations, or a stale line/name.
+pub(super) fn indexed_declaration(
+    index: &RustIndex,
+    function: &FunctionSummary,
+) -> Option<ra_ap_syntax::ast::Fn> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
     let file = index.files().get(&function.file)?;
     let tree = index.source_syntax.get(index, &function.file)?.tree()?;
-    let declarations = tree
+    let mut declarations = tree
         .syntax()
         .descendants()
         .filter_map(ast::Fn::cast)
@@ -2348,17 +2363,9 @@ fn declaration_visibility(index: &RustIndex, function: &FunctionSummary) -> Opti
                     + 1
                     == function.start_line
             })
-        })
-        .collect::<Vec<_>>();
-    let [declaration] = declarations.as_slice() else {
-        return None;
-    };
-    Some(
-        declaration
-            .visibility()
-            .map(|visibility| visibility.syntax().text().to_string())
-            .unwrap_or_default(),
-    )
+        });
+    let declaration = declarations.next()?;
+    declarations.next().is_none().then_some(declaration)
 }
 
 /// Finds a deterministic macro-blocked witness for a `no_static_path` Rust
