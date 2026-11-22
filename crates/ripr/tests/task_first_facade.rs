@@ -4709,12 +4709,13 @@ fn assert_already_complete_summary(
             .nth(1)
             .ok_or_else(|| format!("the {command} line must carry a command:\n{summary}"))?;
         let words = printed_words::printed_words(printed)?;
-        let selected = words
-            .windows(2)
-            .find(|pair| pair[0] == "--root")
-            .map(|pair| pair[1].as_str());
-        let names_root = selected.is_some_and(|word| Path::new(word) == Path::new(root_arg));
-        if !names_root || words.last().map(String::as_str) != selected {
+        // `--root <root>` must be the final pair, as the old byte check
+        // (`--root <root>` before the closing backtick) required.
+        let names_root = match words.as_slice() {
+            [.., flag, value] => flag == "--root" && Path::new(value) == Path::new(root_arg),
+            _ => false,
+        };
+        if !names_root {
             return Err(format!(
                 "the {command} command must end by naming the selected root `{root_arg}`:\n{summary}"
             ));
