@@ -25091,6 +25091,27 @@ async fn unanalyzed_hover_text(
     commit_snapshot: bool,
 ) -> Result<String, String> {
     let fixture = quarantine_fixture(name)?;
+    // Give the fixture its own repository with a local `main`, so the opening
+    // refresh resolves a base without inheriting whichever checkout encloses
+    // the temp directory. A shallow CI checkout with no base branch failed
+    // that refresh and collapsed the untouched case into the failed one
+    // (#16104).
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &[
+            "-c",
+            "user.name=ripr",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ][..],
+    ] {
+        run_lsp_scope_git(&fixture.root, args)?;
+    }
     let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
     drop(socket);
     let backend = service.inner();
