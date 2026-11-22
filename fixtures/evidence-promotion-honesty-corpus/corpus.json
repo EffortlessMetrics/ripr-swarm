@@ -5,6 +5,121 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "report_cache_schema_pins": [
     {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-missing-expected.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-field-snapshot-wrong-receiver.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-inherent-receiver-macro-discard.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-adapter-fed-error.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-else-only.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-branch-local-rebound-let.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-exact.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-inline.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-literal.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-other.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-settings.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-weak.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-guarded-boundary-guard-missing.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-late-assert-eq-definition-match-arms.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-local-closure-named-like-owner-map.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-ok-assertion-failure-seam.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-collision.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-panic-marker-neutral.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-rebound-assert-eq-match-arms.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-bare-use.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-test-local-rival-glob-use.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-unselected-match-arm.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
+      "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-wrapper-fed-error.json",
+      "cache_schema_version": "1.189",
+      "reason": "the canonical capture is at 1.189; the 1.190 bump is a cache generation claim and the judged seams are unchanged; recapture at the next corpus refresh"
+    },
+    {
       "report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-closure-callback-benign-macro-operand.json",
       "cache_schema_version": "1.167",
       "reason": "the typed missing-discriminator shape (#12414) adds a field the regeneration guard does not judge; this capture's judged seams are unchanged and are held at its recorded generation until the next corpus recapture"
