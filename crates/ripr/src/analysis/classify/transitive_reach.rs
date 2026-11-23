@@ -8220,33 +8220,35 @@ fn real() {}
     /// A multibyte separator before a macro name must not split the name: the
     /// scan advances past the whole character, not one byte (#13041 review).
     #[test]
-    fn a_multibyte_separator_before_a_macro_does_not_split_its_name() {
+    fn a_multibyte_separator_before_a_macro_does_not_split_its_name() -> Result<(), String> {
         let text = "let x = 1;\u{85}stringify!(self.render())";
-        let at = text.find("render").expect("render");
+        let at = text.find("render").ok_or("render")?;
         assert!(
             crate::analysis::classify::related_tests::call_site_in_discarded_macro(text, at),
             "{text}"
         );
+        Ok(())
     }
 
     /// An evaluating macro is not discarded, and a negated condition is not a
     /// macro invocation (#13041 review).
     #[test]
-    fn an_evaluating_macro_is_not_discarded_and_a_negation_is_not_a_macro() {
-        let discarded = |text: &str| {
-            let at = text.find("to_text").expect("to_text");
-            crate::analysis::classify::related_tests::call_site_in_discarded_macro(text, at)
+    fn an_evaluating_macro_is_not_discarded_and_a_negation_is_not_a_macro() -> Result<(), String> {
+        let discarded = |text: &str| -> Result<bool, String> {
+            let at = text.find("to_text").ok_or("to_text")?;
+            Ok(crate::analysis::classify::related_tests::call_site_in_discarded_macro(text, at))
         };
         // `format!` evaluates its arguments.
         assert!(!discarded(
             "assert!(format!(\"{}\", site.to_text()).contains(\"x\"))"
-        ));
+        )?);
         // `if !(..)`, `while !(..)` and `return !(..)` are negations.
-        assert!(!discarded("if !(x.to_text().is_empty()) { }"));
-        assert!(!discarded("while !(x.to_text().is_empty()) { }"));
-        assert!(!discarded("return !(x.to_text().is_empty());"));
+        assert!(!discarded("if !(x.to_text().is_empty()) { }")?);
+        assert!(!discarded("while !(x.to_text().is_empty()) { }")?);
+        assert!(!discarded("return !(x.to_text().is_empty());")?);
         // `stringify!` still discards its tokens.
-        assert!(discarded("stringify!(x.to_text())"));
+        assert!(discarded("stringify!(x.to_text())")?);
+        Ok(())
     }
 
     /// Execution and receiver are coupled at one call site: an executable call
