@@ -5350,6 +5350,7 @@ fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), B
 /// `::name::` line outside every `::stop-commands::TOKEN` … `::TOKEN::`
 /// window, plus the tokens in order. An unterminated window is an error: the
 /// runner would read no later command of the step.
+#[cfg(unix)]
 fn commands_read_by_the_runner(log: &str) -> Result<(Vec<String>, Vec<String>), String> {
     let mut open: Option<String> = None;
     let mut read = Vec::new();
@@ -5376,6 +5377,7 @@ fn commands_read_by_the_runner(log: &str) -> Result<(Vec<String>, Vec<String>), 
 
 /// A one-commit repository for a `reports ci-packet` step that asks git for
 /// `HEAD`.
+#[cfg(unix)]
 fn ci_packet_window_repo(label: &str) -> Result<std::path::PathBuf, Box<dyn Error>> {
     let root = replay::unique_temp_dir(label)?;
     fixture_git_ok(&root, &["init", "--initial-branch=main"])?;
@@ -5386,6 +5388,7 @@ fn ci_packet_window_repo(label: &str) -> Result<std::path::PathBuf, Box<dyn Erro
     Ok(root)
 }
 
+#[cfg(unix)]
 const CI_PACKET_WINDOW_ENV: [&str; 8] = [
     "GITHUB_BASE_REF",
     "GITHUB_EVENT_NAME",
@@ -5402,6 +5405,7 @@ const CI_PACKET_WINDOW_ENV: [&str; 8] = [
 /// The real `reports ci-packet` therefore sends a child's stderr down its own
 /// stdout, inside the `::stop-commands::` window, and gives every window its
 /// own token.
+#[cfg(unix)]
 #[test]
 fn ci_packet_replays_child_stderr_inside_a_stop_commands_window() -> Result<(), Box<dyn Error>> {
     let root = ci_packet_window_repo("ci-packet-stderr-window")?;

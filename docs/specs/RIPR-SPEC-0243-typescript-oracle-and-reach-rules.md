@@ -1810,6 +1810,41 @@ reading a member or destructuring it, such as `Object.assign(lib, stubs)`,
 `const alias = lib` or `{ lib }`) no longer holds the module's export
 there, so members read off it record nothing.
 
+A loop that runs one suite over a table of namespace imports calls each
+module's export (#13592, unjs/ohash `test/crypto.test.ts`). With
+`import * as cryptoJS from "<module>"`, a file-level `const impls = { js:
+cryptoJS, node: cryptoNode }` (or `{ cryptoJS }`, or `[cryptoJS, cryptoNode]`)
+and `for (const [name, { digest }] of Object.entries(impls))`, a bare
+`digest(...)` in a test the loop registers is `ImportedOwnerCall` of
+`digest` in each listed namespace's module, as `cryptoJS.digest(...)` would
+be, and module-entry reach continues from it. `Object.values(impls)` with
+`{ digest }`, and an array table iterated directly, are the same. Refused:
+a table value that is not an identifier, a table naming no namespace import,
+an exported table (another file could swap an entry), a table name mentioned
+anywhere in the file except as the argument of `Object.entries(` /
+`Object.values(` or the iterable after `of` (so no write, alias or call can
+swap an entry), a table a describe or loop level re-declares, an `Object`
+the file binds or imports, a `var` or `let` loop binding (one shared or
+reassignable binding), a renamed, defaulted or rest destructure
+(`{ digest: run }`), an `await` loop, and a body-local declaration of the
+name. Every iteration must register the same tests: the path from the loop
+to its tests (the loop body and `describe` / `context` / `suite` callbacks)
+holds only call statements with a bare identifier callee
+(`describe.only`, `describe.skipIf(c)` and `it.each` are refused) and
+blocks, with no `if`,
+`switch`, `continue`, `break`, `return`, `try`, label or `cond && it(...)`,
+and no declaration (one can carry per-iteration state), and no test body,
+registration argument after the title (Vitest's `it(name, { skip }, fn)`),
+or argument of a call that takes no title (a hook's
+`beforeEach(skipUnless(supported))`) reads another loop binding:
+the `Object.entries` key or another destructured member (`{ digest,
+supported }` with `if (!supported) return;` refuses `digest`). A suite or
+test title may read the key. A nested or defaulted member pattern refuses
+the loop. `as const`, `satisfies` and other type-only wrappers around the
+table literal keep it; a repeated key or a `__proto__` key refuses it.
+The binding is recorded on the test's
+scope binding as `namespace_member_of`; file-fact schema 14 carries it.
+
 Two bindings this rule and the destructured form share are refused (#10401).
 A test file that binds its own `require` at top level (`const require = ...`,
 `function require() {}`, also a block-level function, which hoists in sloppy

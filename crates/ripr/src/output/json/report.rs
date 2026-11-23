@@ -1574,7 +1574,9 @@ fn missing_discriminator_json(out: &mut String, fact: &MissingDiscriminatorFact,
     out.push_str(&format!("{sp}}}"));
 }
 
-fn flow_sink_json(out: &mut String, sink: &FlowSinkFact) {
+/// One flow sink as `{kind,text,line}`, the shape both `check` findings and
+/// context packets use for `missing_discriminators[].flow_sink` (#10516).
+pub(super) fn flow_sink_json(out: &mut String, sink: &FlowSinkFact) {
     out.push_str(&format!(
         "{{\"kind\":\"{}\",\"text\":\"{}\",\"line\":{}}}",
         sink.kind.as_str(),

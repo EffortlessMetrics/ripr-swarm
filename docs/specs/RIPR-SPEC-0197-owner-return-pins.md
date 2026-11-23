@@ -2830,6 +2830,23 @@ package may still assert. These leave the parsed oracle alone: a
 crate), an unparsable nearest manifest, and a renamed package under a
 different key.
 
+### Owner calls held by an untrusted inner macro (#16188)
+
+Diff mode refuses `assert_eq!(check_ok!(pick(0)), Ok(Mode::A))` through
+owner-pin execution admission when `check_ok!` is a test-local `macro_rules!`
+that never expands its operand. The repo view credited the same assertion from
+its parsed oracle, so `pick` read `strongly_gripped` through
+`direct_owner_call` while a mutated return survives `cargo test`. For each
+owner, the repo view now reads an assertion as an `unknown` oracle when it
+spells at least one call of that owner and every such call sits inside the
+token tree of an inner macro the analyzer does not trust: a name outside the
+evaluating standard macros (`assert*`, `debug_assert*`, `dbg`, `format`,
+`format_args`, `matches`, `vec`), or one the test file defines with
+`macro_rules!`. The macro may still evaluate the call, so the reading is
+`unknown`, not absent. A call written plainly, inside a trusted standard
+macro, or once more outside the untrusted macro keeps the parsed reading, as
+does an assertion that spells no call of the owner.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`

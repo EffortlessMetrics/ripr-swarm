@@ -25,7 +25,9 @@ uncommitted_production_change (the seam start's dirty-premise preflight names
 uncommitted tracked source files; the reason carries the commit step, #13636),
 and seam_evidence_deferred (an interactive refresh deferred the full spot
 inventory, so a gap finding has no seam-bound start; the reason names the full
-refresh, #13636).
+refresh, #13636), and seam_inventory_not_enabled (the configuration builds no
+spot inventory even on a full refresh; the reason names the
+ripr.diagnosticProfile setting, #13636).
 Disabled reasons are a closed vocabulary with a fail-closed emit
 guard; reserved reasons name their future producers and stay unemittable.
 It does not change the advertised capability set (resolve_provider stays

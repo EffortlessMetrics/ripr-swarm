@@ -508,10 +508,25 @@ const PROPOSAL_FOCUSED_RESULT_FILE_SHAPE: &str = "FILE is a JSON document saved 
 
 /// The requirement a new-test proposal attempt must meet to finish, stated for
 /// `subject` (an attempt id in backticks, or "this attempt").
-pub(crate) fn proposal_focused_result_requirement(subject: &str) -> String {
-    format!(
-        "{subject} follows a new-test proposal, so finishing needs a focused test result; {PROPOSAL_FOCUSED_RESULT_HOW_TO}. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}"
-    )
+///
+/// `resolved_run` is the command resolved for the proposed file's own package
+/// and target (#16186, from `app::test_stub::focused_result_run_command`),
+/// with the proposed file exactly as the result's `test_file` must spell it.
+/// When present it replaces the generic placeholder form; `None` (an inline
+/// test, an unresolved target, or a surface without the proposed file) keeps
+/// the generic guidance.
+pub(crate) fn proposal_focused_result_requirement(
+    subject: &str,
+    resolved_run: Option<(&str, &str)>,
+) -> String {
+    match resolved_run {
+        Some((command, test_file)) => format!(
+            "{subject} follows a new-test proposal, so finishing needs a focused test result; run the new test file's target on a nightly toolchain (`{command}`) and pass its events with `--test-result FILE`. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}; its test_file is `{test_file}`"
+        ),
+        None => format!(
+            "{subject} follows a new-test proposal, so finishing needs a focused test result; {PROPOSAL_FOCUSED_RESULT_HOW_TO}. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}"
+        ),
+    }
 }
 
 /// The full-proof finish gate for an attempt that follows a new-test proposal
@@ -524,9 +539,10 @@ pub(crate) fn require_passing_run(
     baseline: Option<&ProposalBaseline>,
 ) -> Result<(), String> {
     let Some(record) = record else {
-        return Err(proposal_focused_result_requirement(&format!(
-            "attempt `{attempt_id}`"
-        )));
+        return Err(proposal_focused_result_requirement(
+            &format!("attempt `{attempt_id}`"),
+            None,
+        ));
     };
     if record.counted() == 0 {
         return Err(format!(
