@@ -569,9 +569,13 @@ pub(super) struct ImportLines<'a> {
 /// its comment or blank lines was deleted, so it keeps its own base-side
 /// record instead of lending its probe shape to the comment text; so does a
 /// removed line an added `import` stands on, unless it was an import itself
-/// (an import that replaces an import re-points a name). A line inside a
-/// multi-line string is content, not a comment; with no `string_lines` (an
-/// unreadable or unlexable file) every pair is kept.
+/// (an import that replaces an import re-points a name). A comment or blank
+/// added line in a run with code replaced nothing either when every code
+/// line of the run has its own counterpart and the removed line was not
+/// folded into them (#16011): its pair is dropped too, so the removed line is
+/// not hidden behind a line that carries no probe. A line inside a multi-line string is content, not a
+/// comment; with no `string_lines` (an unreadable or unlexable file) every
+/// pair is kept.
 pub(super) fn unpair_runs_without_code(
     changed: &super::ChangedFile,
     string_lines: Option<&[std::ops::RangeInclusive<usize>]>,
@@ -594,21 +598,107 @@ pub(super) fn unpair_runs_without_code(
                 || is_python_import_line(&added.text)
                 || super::line_is_in_ranges(added.line, imports.added))
     });
-    if codeless.is_empty() {
-        return;
-    }
     let comment_or_blank: std::collections::BTreeSet<usize> = changed
         .added_lines
         .iter()
-        .filter(|added| codeless.contains(&added.line) && is_comment_or_blank(&added.text))
+        .filter(|added| {
+            !super::line_is_in_ranges(added.line, string_lines) && is_comment_or_blank(&added.text)
+        })
         .map(|added| added.line)
         .collect();
+    // A comment pair in a run with code is dropped only when every code line
+    // of the run already has its own counterpart and the removed line was not
+    // folded into that code; otherwise the run's code carries the rewrite.
+    let quiet = |added: &ChangedLine| {
+        comment_or_blank.contains(&added.line)
+            || (!super::line_is_in_ranges(added.line, string_lines)
+                && is_python_structural_line(&added.text))
+            || is_python_import_line(&added.text)
+            || super::line_is_in_ranges(added.line, imports.added)
+    };
+    let added_at: std::collections::BTreeMap<usize, &ChangedLine> = changed
+        .added_lines
+        .iter()
+        .map(|added| (added.line, added))
+        .collect();
+    // The code lines of the added run around `line`.
+    let run_code = |line: usize| -> Vec<&ChangedLine> {
+        let mut start = line;
+        while start > 0 && added_at.contains_key(&(start - 1)) {
+            start -= 1;
+        }
+        (start..)
+            .map_while(|index| added_at.get(&index).copied())
+            .filter(|added| !quiet(added))
+            .collect()
+    };
+    let replaced_nothing: std::collections::BTreeSet<usize> = comment_or_blank
+        .iter()
+        .copied()
+        .filter(|line| {
+            let Some(removed) = counterparts.get(line) else {
+                return false;
+            };
+            let code = run_code(*line);
+            !code.is_empty()
+                && code
+                    .iter()
+                    .all(|added| counterparts.contains_key(&added.line))
+                && !folded_into(&removed.text, &code)
+        })
+        .collect();
     counterparts.retain(|added_line, removed| {
+        if replaced_nothing.contains(added_line)
+            || (codeless.contains(added_line) && comment_or_blank.contains(added_line))
+        {
+            return false;
+        }
         !codeless.contains(added_line)
-            || (!comment_or_blank.contains(added_line)
-                && (is_python_import_line(&removed.text)
-                    || super::line_is_in_ranges(removed.line, imports.removed)))
+            || is_python_import_line(&removed.text)
+            || super::line_is_in_ranges(removed.line, imports.removed)
     });
+}
+
+/// Whether every name and number of `removed` appears among the code lines
+/// of an added run: the removed statement was folded into them
+/// (`x = min(x * 2, CAP)` into `return max(min(x * 2, CAP), 0)`), not deleted.
+/// Names and numbers are read with the Python lexer, so string and comment
+/// text is neither a name nor a cut point. A removed line with no name or
+/// number is never read as folded; a line the lexer refuses on its own keeps
+/// the pairing.
+fn folded_into(removed: &str, code: &[&ChangedLine]) -> bool {
+    let Some(removed_words) = names_and_numbers(removed) else {
+        return true;
+    };
+    let mut added_words = std::collections::BTreeSet::new();
+    for added in code {
+        let Some(words) = names_and_numbers(&added.text) else {
+            return true;
+        };
+        added_words.extend(words);
+    }
+    !removed_words.is_empty() && removed_words.is_subset(&added_words)
+}
+
+/// The name and number tokens of one line, as spelled; None when the trimmed
+/// line does not lex on its own.
+fn names_and_numbers(line: &str) -> Option<std::collections::BTreeSet<String>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let text = line.trim();
+    let mut words = std::collections::BTreeSet::new();
+    for result in lex(text, Mode::Module) {
+        let (tok, range) = result.ok()?;
+        if matches!(
+            tok,
+            Tok::Name { .. } | Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }
+        ) {
+            words.insert(
+                text.get(range.start().into()..range.end().into())?
+                    .to_string(),
+            );
+        }
+    }
+    Some(words)
 }
 
 /// For each added line, whether it is `quiet` (no behavior, structural, or an

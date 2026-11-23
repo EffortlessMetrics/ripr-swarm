@@ -37,8 +37,9 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses. `13`: module
-/// entries carry `closure` (#13592).
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "13";
+/// entries carry `closure` (#13592). `14`: test scope bindings carry
+/// `namespace_member_of` (#13592, implementation tables).
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "14";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -572,8 +573,9 @@ mod tests {
         // owner. "12" adds import-then-export forwards, class heritage,
         // namespace member calls and method-owner instance factories
         // (#15922-#15924). "13" adds the module entries' `closure` flag
+        // (#13592). "14" adds the scope bindings' `namespace_member_of`
         // (#13592).
-        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "13");
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "14");
         // A stale-schema envelope: the exact bytes the pre-#11250 ("3")
         // binary wrote — same identity, valid integrity digest, older
         // schema version — sitting at the entry path the current key

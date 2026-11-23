@@ -1,0 +1,8 @@
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/macro_held_owner_call.rs::an_owner_call_only_an_untrusted_macro_holds_gives_no_exact_credit",
+]
+code = [
+  "crates/ripr/src/analysis/test_grip_evidence/macro_operand_owner_call.rs",
+]

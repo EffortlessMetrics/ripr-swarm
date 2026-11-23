@@ -3,7 +3,7 @@ use std::path::Path;
 
 use super::{array_field, escape, field, float_field, number_field};
 use crate::config::RiprConfig;
-use crate::output::json::report::{related_test_json, stop_reason_values};
+use crate::output::json::report::{flow_sink_json, related_test_json, stop_reason_values};
 use crate::output::next_step::reconcile_next_step;
 use crate::output::preview_actionability::projected_preview_actionability_missing;
 
@@ -12,6 +12,9 @@ use crate::output::preview_actionability::projected_preview_actionability_missin
 // 1.1 (#8743): the packet now carries the finding's `classification`,
 // `severity`, and `confidence`, mirroring the `ripr check --json` finding
 // shape so packet consumers can state the verdict without a second command.
+// Additive within 1.1 (#10516): each `missing_discriminators` entry carries
+// `flow_sink` (`{kind,text,line}` or null), the field and shape the check
+// finding's entries carry.
 pub(crate) const CONTEXT_PACKET_VERSION_CONTRACT: &str = "1.1";
 
 pub fn render_context_packet(
@@ -225,10 +228,15 @@ fn discriminator_array(
             out.push_str(", ");
         }
         out.push_str(&format!(
-            "{{\"value\":\"{}\",\"reason\":\"{}\"}}",
+            "{{\"value\":\"{}\",\"reason\":\"{}\",\"flow_sink\":",
             escape(&value.value),
             escape(&value.reason)
         ));
+        match &value.flow_sink {
+            Some(sink) => flow_sink_json(out, sink),
+            None => out.push_str("null"),
+        }
+        out.push('}');
     }
     out.push(']');
 }

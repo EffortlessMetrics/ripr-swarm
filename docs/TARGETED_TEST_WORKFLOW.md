@@ -242,7 +242,8 @@ yet), it prints `ripr agent repair ... --phase after --test-result FILE`
 instead of `ripr continue`, because finishing needs a focused result. Run the
 new test on a nightly toolchain for its own package and target
 (`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json`, or `--lib` for an inline test), save the events
-as the `focused_test_result` document the start describes, and pass that file.
+as the `focused_test_result` document the start describes, and pass that file. For a Rust
+integration file whose target resolves, the start prints that exact command.
 
 ## 4. Add One Focused Test
 

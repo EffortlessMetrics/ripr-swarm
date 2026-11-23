@@ -181,6 +181,7 @@ records that distinction.
 | `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
+| `schemas/ripr/context.schema.json` | `1.1` | `crates/ripr/src/output/json/context_packet.rs` (`CONTEXT_PACKET_VERSION_CONTRACT`, pinned under the packet's top-level `version` key); the one-finding packet (`ripr context --json`) |
 | `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document has its own schema |
 | `schemas/ripr/agent-seam-packets.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the repository-wide packet document (`ripr check --format agent-seam-packets-json`), sharing the packet definitions of `agent-packet.schema.json` |
 | `schemas/ripr/agent-gap-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the GapRecord-backed packet document (`ripr agent packet --gap-ledger <path> --gap-id <id> --json`), advisory or blocked |
@@ -5332,6 +5333,21 @@ ambient configuration; no packet field or schema version changes (#10720).
   "recommended_next_step": "Add below, equal, and above threshold tests."
 }
 ```
+
+The packet has a published schema,
+[`schemas/ripr/context.schema.json`](../schemas/ripr/context.schema.json),
+tested against every finding's packet over a set of committed fixtures that
+reaches every classification
+(`crates/ripr/tests/context_json_schema.rs`). Objects are closed: a field
+added to the packet is added to the schema in the same change. Two shapes are
+worth knowing. The top-level `missing_discriminators[]` entries are the
+`ripr check --json` finding's entries field for field: `value`, `reason` and
+`flow_sink` (`{kind, text, line}` or `null`; #10516). The test compares
+every packet's array with its check finding's. `witness.missing_discriminators[]`
+entries are the full fact, whose `flow_sink` also names its `owner` and which
+adds `shape`. `flow_sink` is optional in the schema only so packets written
+before #10516 still conform; this additive field kept packet version `1.1`.
+And `witness` may be `null` only when `classification` is `exposed`.
 
 The context packet contract versions through the top-level `version` key, not
 `schema_version` (#5081). Producers pin the live value in
@@ -18447,7 +18463,11 @@ Field contract:
   `focused_result_requirement` is an additive string present only for an
   attempt that follows a new-test proposal (#16164): it states that the after
   phase finishes only with a focused `--test-result FILE` and how to produce
-  FILE, in the finish gate's own words.
+  FILE, in the finish gate's own words. Where the proposed Rust integration
+  file's package manifest and cargo target resolve, it names that exact
+  command (`cargo +nightly test --manifest-path M -p P --test T -- -Z
+  unstable-options --format json`) in place of the generic placeholders
+  (#16186).
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
   baseline, the ambiguity warning and the clean-state restart route, with

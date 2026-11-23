@@ -308,6 +308,10 @@ impl Counter {
     }
 }
 
+pub fn tier(qty: u32) -> (u32, &'static str) {
+    if qty > 30 { (20, "bulk") } else { (0, "retail") }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum State {
     Idle,
@@ -486,6 +490,14 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         (
             "sum > cap",
             Expect::BuildsReceiver("let subject: Ledger = Ledger::empty();"),
+        ),
+        // The written input decides the path to a constant: the expected
+        // fill-in names both candidates and still stops the test (#8361).
+        (
+            "qty > 30",
+            Expect::WritesInput(
+                r#"the changed code returns (0, \"retail\"); with `>=` it returns (20, \"bulk\")"#,
+            ),
         ),
         // A match arm's own pattern names the event that reaches it.
         (
