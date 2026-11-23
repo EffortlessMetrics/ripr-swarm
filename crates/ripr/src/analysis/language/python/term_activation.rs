@@ -181,12 +181,27 @@ pub(super) fn term_facts(
     let first_mention_lines = parameters
         .iter()
         .filter_map(|parameter| {
-            let statement = body.iter().find(|statement| {
-                code_mentions(&text_for_range(source, statement.range()), &parameter.name)
-            })?;
-            let start = usize::from(statement.range().start());
-            let line = source.get(..start)?.matches('\n').count() + 1;
-            Some((parameter.name.clone(), line))
+            // #16221: Python NFKC-normalises identifiers, so a raw spelling
+            // match can miss a prior use (`K` for `K`). Abstain on a
+            // non-ASCII parameter or body statement rather than reason from
+            // the original singleton.
+            if !parameter.name.is_ascii() {
+                return None;
+            }
+            let mut first = None;
+            for statement in body {
+                let text = text_for_range(source, statement.range());
+                if !text.is_ascii() {
+                    return None;
+                }
+                if code_mentions(&text, &parameter.name) {
+                    let start = usize::from(statement.range().start());
+                    let line = source.get(..start)?.matches('\n').count() + 1;
+                    first = Some((parameter.name.clone(), line));
+                    break;
+                }
+            }
+            first
         })
         .collect();
     PythonTermFacts {

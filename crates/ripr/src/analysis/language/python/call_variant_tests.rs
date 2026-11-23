@@ -48,6 +48,26 @@ fn classify_top(test_source: &str) -> Result<Finding, String> {
     )
 }
 
+fn classify_source(
+    source: &str,
+    line: usize,
+    old: &str,
+    new: &str,
+    test_source: &str,
+) -> Result<Finding, String> {
+    let owners = extract_owners(Path::new("src/text.py"), source);
+    let tests = extract_tests(Path::new("tests/test_text.py"), test_source);
+    classify_change_with_old(
+        Path::new("src/text.py"),
+        line,
+        new,
+        Some(old),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "a call change should classify".to_string())
+}
+
 #[test]
 fn inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip() -> Result<(), String> {
     let finding = classify_clean(
@@ -248,6 +268,24 @@ fn a_list_the_body_changes_before_the_sort_keeps_its_reading() -> Result<(), Str
         "    return sorted(xs)[0]",
         "    return sorted(xs, reverse=True)[0]",
         "from src.text import low\n\n\ndef test_low():\n    assert low([4]) == 4\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed() -> Result<(), String> {
+    // #16221: Python NFKC-normalises identifiers, so `K` and `K` are the same
+    // parameter. The body appends to the list before the sort, so the sort
+    // sees `[4, 9]` and the direction decides the result. The raw prior-use
+    // scan must not miss the append and reason from the original singleton.
+    let source = "def top(K):\n    K.append(9)\n    return sorted(K)[0]\n";
+    let finding = classify_source(
+        source,
+        3,
+        "    return sorted(K)[0]",
+        "    return sorted(K, reverse=True)[0]",
+        "from src.text import top\n\n\ndef test_top():\n    assert top([4]) == 4\n",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())
