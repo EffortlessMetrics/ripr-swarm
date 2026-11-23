@@ -435,8 +435,8 @@ impl RelatedTestCandidateIndex {
     }
 
     /// #15104: record a module declaration reading of every index file that
-    /// may declare a module, for a run without a diff (a repo scan): no
-    /// declaration changed.
+    /// may declare a module or hold a gate outside one (#14952), for a run
+    /// without a diff (a repo scan): no declaration changed.
     pub(in crate::analysis) fn with_unchanged_module_declarations(
         self,
         index: &crate::analysis::rust_index::RustIndex,
@@ -448,6 +448,9 @@ impl RelatedTestCandidateIndex {
                 .filter(|(_, facts)| {
                     !facts.module_declarations.is_empty()
                         || crate::analysis::diff::may_declare_module(&facts.source)
+                        || crate::analysis::diff::ModuleDeclarations::may_hold_outside_gate(
+                            &facts.source,
+                        )
                 })
                 .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
             std::iter::empty(),
