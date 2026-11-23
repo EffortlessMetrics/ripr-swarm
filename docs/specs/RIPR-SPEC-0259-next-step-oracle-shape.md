@@ -74,7 +74,11 @@ alone:
   a trailing `.clone()`, `.to_owned()`, `.to_vec()` or a leading borrow, as
   RIPR-SPEC-0094 defines it) never takes this step,
   whatever strength the row carries: ripr does not credit it as a
-  discriminator, so the family template stands.
+  discriminator. When every strongest eligible row is such a comparison, the
+  step instead names the test, says that static analysis did not establish
+  that it discriminates the changed behavior, and says to verify the changed
+  behavior with the test runner or assert against an independent expected
+  value (RIPR-SPEC-0094); otherwise the family template stands.
 - Only reach-establishing rows are eligible: the row's relation reason must
   establish reach to the changed owner
   (`RelationReason::establishes_reach`; `direct_owner_call`,

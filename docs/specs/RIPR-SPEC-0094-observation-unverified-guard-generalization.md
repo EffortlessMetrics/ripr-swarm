@@ -736,6 +736,19 @@ that comparison keeps its credit. Proof:
 `self_comparison_float_nan_stays_weak` and
 `clone_field_pin_self_comparison_keeps_credit`.
 
+Because the cap records what ripr did not establish, not a shown weakness,
+the output says so. A `weak_assertion` row whose assertion is a self-comparison
+explains that it compares a value with its own copy and that static analysis
+did not establish that it discriminates the changed behavior, instead of the
+generic "assertion too weak" sentence. When every strongest contributing row
+of a `weakly_exposed` finding is such a row, the next step names that test and
+says to verify the changed behavior with the test runner or assert against an
+independent expected value, instead of the family's "strengthen the assertion"
+template. The `miss` token, class and strength are unchanged. Proof:
+`self_comparison_weak_row_says_not_established`,
+`self_comparison_rows_name_what_was_not_established` and the two fixtures
+above that read weak.
+
 Proof: `owner_parameter_name_confirms_only_in_an_assertion_calling_the_owner`,
 `a_type_qualified_expected_call_reaches_only_through_its_own_type`, the
 caller-walk tests in `classifier/evidence.rs` (including the six-hop bound),
