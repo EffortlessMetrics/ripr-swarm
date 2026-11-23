@@ -48,11 +48,14 @@ pub struct NativeHarness {
     pub should_panic: bool,
     /// How the harness run ended.
     pub outcome: NativeOutcome,
-    /// Number of checks, when the export reports it.
+    /// Number of checks. Present exactly when the outcome is
+    /// [`NativeOutcome::Completed`]; `None` for every other outcome.
     pub checks_total: Option<u64>,
-    /// Number of successful checks, when the export reports it.
+    /// Number of successful checks. Present exactly when the outcome is
+    /// [`NativeOutcome::Completed`]; `None` for every other outcome.
     pub checks_success: Option<u64>,
-    /// Number of cover properties, when the export reports it.
+    /// Number of cover properties. Present exactly when the outcome is
+    /// [`NativeOutcome::Completed`]; `None` for every other outcome.
     pub covers_total: Option<u64>,
 }
 
