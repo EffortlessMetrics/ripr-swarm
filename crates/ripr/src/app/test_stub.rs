@@ -2169,6 +2169,7 @@ pub(crate) fn focused_test_run_command(
         fill_ins: Vec::new(),
         derived_inputs: Vec::new(),
         receiver_setup: None,
+        input_setup: None,
     };
     run_command(&resolved.manifest_arg, &integration, Some(&resolved.target))
 }
