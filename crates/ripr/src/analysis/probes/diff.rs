@@ -122,12 +122,16 @@ pub(crate) fn probes_for_file_with_relations(
         .unwrap_or_default();
     // #14181: lines of a build-time `const { assert!(..) }` block, also when
     // rustfmt splits it, select no runtime family.
+    // #15933: lines of a `compile_error!` invocation are build-time too.
+    let build_time_lines = |source: &str| {
+        let mut lines = super::lexical::inline_const_assertion_lines(source);
+        lines.extend(super::lexical::compile_error_lines(source));
+        lines
+    };
     let added_const_assertions = find_file_facts(index, &changed.path)
-        .map(|facts| super::lexical::inline_const_assertion_lines(&facts.source))
+        .map(|facts| build_time_lines(&facts.source))
         .unwrap_or_default();
-    let removed_const_assertions = old_source
-        .map(super::lexical::inline_const_assertion_lines)
-        .unwrap_or_default();
+    let removed_const_assertions = old_source.map(build_time_lines).unwrap_or_default();
     // RIPR-SPEC-0368: contract attributes and ghost/logic items are read by a
     // verifier, never by a test; the run discloses them as a typed limitation
     // instead of probing them.

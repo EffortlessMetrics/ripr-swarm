@@ -197,6 +197,10 @@ pub(in crate::analysis) fn missing_evidence(
 /// match is on the written text only; anything else keeps its generic reason.
 pub(super) fn is_compile_time_assertion(expression: &str) -> bool {
     let text = expression.trim_start();
+    // #15933: `compile_error!(..)` is the build-time refusal itself.
+    if crate::analysis::probes::is_compile_error_line(text) {
+        return true;
+    }
     if let Some(rest) = text.strip_prefix("const _") {
         let Some((_, value)) = rest.split_once('=') else {
             return false;
@@ -308,12 +312,14 @@ fn name_segments(token: &str) -> Vec<&str> {
 
 /// #14181: whether file line `line` sits inside a (possibly rustfmt-split)
 /// inline const assertion block in `owner`'s body, whose first body line is
-/// the owner's `start_line`.
+/// the owner's `start_line`. #15933: or inside a split `compile_error!`
+/// invocation there.
 fn in_owner_const_assertion(owner: &FunctionSummary, line: usize) -> bool {
     line.checked_sub(owner.start_line).is_some_and(|offset| {
-        owner.body.contains("const")
+        (owner.body.contains("const")
             && crate::analysis::probes::inline_const_assertion_lines(&owner.body)
-                .contains(&(offset + 1))
+                .contains(&(offset + 1)))
+            || crate::analysis::probes::compile_error_lines(&owner.body).contains(&(offset + 1))
     })
 }
 
@@ -331,6 +337,7 @@ pub(in crate::analysis) fn stop_reasons(
         }
     } else if probe.family == ProbeFamily::StaticUnknown
         && (crate::analysis::probes::is_inline_const_assertion_line(&probe.expression)
+            || crate::analysis::probes::is_compile_error_line(&probe.expression)
             || (probe.after.is_some()
                 && owner_fn
                     .is_some_and(|owner| in_owner_const_assertion(owner, probe.location.line))))
