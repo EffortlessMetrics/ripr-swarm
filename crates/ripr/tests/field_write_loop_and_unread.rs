@@ -1,12 +1,13 @@
 //! #6485: a changed compound field write (`self.n = self.n + 1` rewritten as
 //! `self.n += 1`) in the authored grid of the verdict corpus.
 //!
-//! - A test that calls the owner once on a local binding and checks nothing
-//!   places the unread write (RIPR-SPEC-0228 example 5), even when neighbour
-//!   tests in the same module assert on other fields: the finding is a gap
-//!   (`weakly_exposed`), not `static_unknown`. Any later use of the binding,
-//!   a field read, a macro that may hide an assertion or a second call keeps
-//!   the abstention.
+//! - A test that calls the owner once on an owned local binding, as its last
+//!   statement, and checks nothing places the unread write (RIPR-SPEC-0228
+//!   example 5 and Decision 3), even when neighbour tests in the same module
+//!   assert on other fields: the finding is `reachable_unrevealed`, not a weak
+//!   discriminator and not `static_unknown`. Any later statement, a reference
+//!   alias, a consumed result, a field read, a macro that may hide an
+//!   assertion or a second call keeps the abstention.
 //! - A receiver call inside a `for` loop whose pattern does not bind the
 //!   receiver reaches the owner through the binding declared around the loop.
 //!   A pattern that binds the receiver name refuses. Reach alone credits
@@ -24,11 +25,14 @@ struct TempRepo {
 
 impl Drop for TempRepo {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
+        // Keep a failing run's crate for inspection.
+        if !std::thread::panicking() {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
     }
 }
 
-const OWNER: &str = "#[derive(Debug, Default)]\npub struct Stats {\n    pub hits: u32,\n    pub misses: u32,\n}\n\nimpl Stats {\n    pub fn record_hit(&mut self) {\n        self.hits = self.hits + 1;\n    }\n\n    pub fn record_miss(&mut self) {\n        self.misses += 1;\n    }\n}\n";
+const OWNER: &str = "#[derive(Debug, Default)]\npub struct Stats {\n    pub hits: u32,\n    pub misses: u32,\n}\n\nimpl Stats {\n    pub fn record_hit(&mut self) {\n        self.hits = self.hits + 1;\n    }\n\n    pub fn record_miss(&mut self) -> Result<(), String> {\n        self.misses += 1;\n        Ok(())\n    }\n}\n";
 
 /// A neighbour test that pins another field exactly, like the grid's
 /// `one_hit_counts_one`: it relates to the owner by file only.
@@ -117,9 +121,11 @@ fn smoke(lines: &str) -> String {
 }
 
 #[test]
-fn an_unread_write_beside_asserting_neighbours_is_a_gap() -> Result<(), String> {
+fn an_unread_write_beside_asserting_neighbours_is_reachable_unrevealed() -> Result<(), String> {
+    // `let mut stats_seen` shares the binding's prefix: only whole-word
+    // declarations of `stats` count.
     let found = finding(&smoke(
-        "        let mut stats = Stats::default();\n        stats.record_miss();",
+        "        let mut stats_seen = 0u32;\n        stats_seen += 1;\n        let mut stats = Stats::default();\n        stats.record_miss();",
     ))?;
     assert_eq!(
         relation(&found, "miss_smoke"),
@@ -131,7 +137,16 @@ fn an_unread_write_beside_asserting_neighbours_is_a_gap() -> Result<(), String> 
         Some(RelationReason::SameTestFile),
         "{found:#?}"
     );
-    assert_eq!(found.class, ExposureClass::WeaklyExposed, "{found:#?}");
+    assert_eq!(
+        found.class,
+        ExposureClass::ReachableUnrevealed,
+        "{found:#?}"
+    );
+    assert_eq!(
+        found.ripr.reveal.observe.state,
+        StageState::No,
+        "{found:#?}"
+    );
     Ok(())
 }
 
@@ -160,6 +175,36 @@ fn any_other_use_of_an_unread_test_keeps_the_abstention() -> Result<(), String> 
             "a format capture reads the binding",
             smoke(
                 "        let mut stats = Stats::default();\n        stats.record_miss();\n        println!(\"{stats:?}\");",
+            ),
+        ),
+        (
+            "a reference alias escapes to a later helper",
+            smoke(
+                "        let mut outer = Stats::default();\n        let s: &mut Stats = &mut outer;\n        s.record_miss();\n        verify(&outer);\n    }\n\n    fn verify(stats: &Stats) {\n        assert_eq!(stats.misses, 1);",
+            ),
+        ),
+        (
+            "the binding is a reference to another local",
+            smoke(
+                "        let mut outer = Stats::default();\n        let s = &mut outer;\n        s.record_miss();",
+            ),
+        ),
+        (
+            "the binding is another local moved in",
+            smoke(
+                "        let outer = Stats::default();\n        let mut s = outer;\n        s.record_miss();",
+            ),
+        ),
+        (
+            "`?` consumes the result",
+            format!(
+                "{NEIGHBOUR}\n    #[test]\n    fn miss_smoke() -> Result<(), String> {{\n        let mut stats = Stats::default();\n        stats.record_miss()?;\n        Ok(())\n    }}\n"
+            ),
+        ),
+        (
+            "`.unwrap()` consumes the result",
+            smoke(
+                "        let mut stats = Stats::default();\n        stats.record_miss().unwrap();",
             ),
         ),
         (
@@ -195,14 +240,23 @@ fn a_receiver_call_in_a_for_loop_reaches_the_owner() -> Result<(), String> {
 
 #[test]
 fn a_for_pattern_that_binds_the_receiver_does_not_reach_the_owner() -> Result<(), String> {
-    let found = finding(&smoke(
-        "        let mut stats = Stats::default();\n        for mut stats in [Stats::default()] {\n            stats.record_miss();\n        }",
-    ))?;
-    assert_ne!(
-        relation(&found, "miss_smoke"),
-        Some(RelationReason::DirectOwnerCall),
-        "{found:#?}"
-    );
+    for (case, lines) in [
+        (
+            "plain pattern",
+            "        let mut stats = Stats::default();\n        for mut stats in [Stats::default()] {\n            stats.record_miss();\n        }",
+        ),
+        (
+            "tuple pattern",
+            "        let mut stats = Stats::default();\n        for (_, mut stats) in [(0, Stats::default())] {\n            stats.record_miss();\n        }",
+        ),
+    ] {
+        let found = finding(&smoke(lines)).map_err(|error| format!("{case}: {error}"))?;
+        assert_ne!(
+            relation(&found, "miss_smoke"),
+            Some(RelationReason::DirectOwnerCall),
+            "{case}: {found:#?}"
+        );
+    }
     Ok(())
 }
 

@@ -6107,7 +6107,7 @@ pub(in crate::analysis) fn assigned_field_weak_read_start(
     tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
-    assigned_field_unchecked(owner, expression, path, tests, index, false)
+    assigned_field_unchecked(owner, expression, path, tests, index, Placement::WeakRead)
 }
 
 /// RIPR-SPEC-0228 examples 3, 4 and 6 (#12771): whether the changed field
@@ -6126,7 +6126,44 @@ pub(in crate::analysis) fn assigned_field_gap_is_placed(
     tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
-    assigned_field_unchecked(owner, expression, path, tests, index, true)
+    assigned_field_unchecked(
+        owner,
+        expression,
+        path,
+        tests,
+        index,
+        Placement::WeakOrSibling,
+    )
+}
+
+/// RIPR-SPEC-0228 example 5 and Decision 3 (#6485): whether every test that
+/// runs the owner runs it once on a local binding and observes nothing
+/// afterwards ([`runs_owner_and_reads_nothing`]), under the same owner,
+/// attribute, owner-name-mention and `Drop` guards as
+/// [`assigned_field_gap_is_placed`]. Such a write is `reachable_unrevealed`:
+/// no reaching test holds even a weak read, so a file neighbour's assertion
+/// on another field must not read as a weak discriminator. It is never a
+/// repair start ([`assigned_field_weak_read_start`] stays with weak reads),
+/// and a test that holds any assertion withholds it.
+pub(in crate::analysis) fn assigned_field_is_unread(
+    owner: &FunctionSummary,
+    expression: &str,
+    path: &str,
+    tests: &[&TestSummary],
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    assigned_field_unchecked(owner, expression, path, tests, index, Placement::Unread)
+}
+
+/// Which reaching tests [`assigned_field_unchecked`] places.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Placement {
+    /// A weak relational or `assert_ne!` read of the field (the repair start).
+    WeakRead,
+    /// A weak read, or a read of only sibling fields (`check`'s gap class).
+    WeakOrSibling,
+    /// No read at all after one owner call (`reachable_unrevealed`).
+    Unread,
 }
 
 fn assigned_field_unchecked(
@@ -6135,8 +6172,9 @@ fn assigned_field_unchecked(
     path: &str,
     tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
-    sibling_reads: bool,
+    placement: Placement,
 ) -> bool {
+    let sibling_reads = placement == Placement::WeakOrSibling;
     if !owner_borrows_receiver(&owner.body)
         || path.is_empty()
         || tests.iter().any(|test| {
@@ -6155,12 +6193,20 @@ fn assigned_field_unchecked(
     let mut weak = false;
     for test in tests {
         // Every test that runs the owner must itself be a placed weak read:
-        // a test that reaches the owner another way (a helper, a loop, an
-        // alias), or that reads the write through a getter, `Display`, a
+        // a test that reaches the owner another way (a helper, an alias, a
+        // closure or a loop-held call that no read after it can confirm,
+        // #6485), or that reads the write through a getter, `Display`, a
         // helper-held assertion or an `if`/`panic!` check, may be the exact
         // check these rules do not place.
         if !super::related_tests::owner_call_is_direct(test, owner, index) {
             return false;
+        }
+        if placement == Placement::Unread {
+            if !runs_owner_and_reads_nothing(test, call.name(), path) {
+                return false;
+            }
+            weak = true;
+            continue;
         }
         // Pass one: the weak reads, as (assertion index, binding).
         let mut weak_reads: Vec<(usize, String)> = Vec::new();
@@ -6179,15 +6225,7 @@ fn assigned_field_unchecked(
             }
         }
         if weak_reads.is_empty() {
-            // RIPR-SPEC-0228 example 5 (#6485): for the class only, a test
-            // that runs the owner once and checks nothing at all places the
-            // unread write. The repair start keeps needing a weak read to
-            // strengthen.
-            if !(sibling_reads && runs_owner_and_reads_nothing(test, call.name(), path)) {
-                return false;
-            }
-            weak = true;
-            continue;
+            return false;
         }
         if reach
             .get_or_insert_with(|| super::field_reach::declared_field_reach(owner, path, index))
@@ -6254,13 +6292,22 @@ fn assigned_field_unchecked(
 }
 
 /// RIPR-SPEC-0228 example 5 (#6485): whether `test` calls `owner_name` on one
-/// local binding and observes nothing afterwards. Fails closed: the test holds
-/// no assertion fact and invokes no macro that could hide one (`check!(..)`),
-/// the masked body spells `.owner_name(` exactly once, on a plain binding, as
-/// a bare statement, and names the written field `path` nowhere. The binding
-/// appears only in its `let [mut]` declaration and that call: a helper call
-/// (`verify(&c)`), a move, a clone, a format capture or any other use may be
-/// the exact check, so each refuses.
+/// owned local binding as its last statement and observes nothing. Fails
+/// closed:
+/// - the test holds no assertion fact and invokes no macro that could hide one
+///   (`check!(..)`);
+/// - the masked body names the written field `path` nowhere and spells
+///   `.owner_name(` exactly once, on a plain binding, as a bare statement
+///   whose result nothing consumes (`.unwrap()`, `.expect(..)` or `?` may
+///   panic or return on a changed owner, which observes it);
+/// - nothing follows that statement but closing braces, so no later helper
+///   call, move or read of any binding (`verify(&outer)` after
+///   `let s = &mut outer; s.record()`) can observe the write;
+/// - the binding has exactly one `let [mut]` declaration, with no reference
+///   type annotation, initialized by an owned construction headed by a type
+///   path (`Stats::default()`, `Stats { .. }`) that borrows nothing (`&`), so
+///   the binding is not an alias of another local;
+/// - the binding appears nowhere else, format captures included.
 fn runs_owner_and_reads_nothing(test: &TestSummary, owner_name: &str, path: &str) -> bool {
     if !test.assertions.is_empty() || super::reach::invokes_opaque_macro(test.body.as_ref()) {
         return false;
@@ -6290,21 +6337,56 @@ fn runs_owner_and_reads_nothing(test: &TestSummary, owner_name: &str, path: &str
             .chars()
             .next_back()
             .is_none_or(|ch| matches!(ch, ';' | '{' | '}'))
-        || super::reveal::bare_call_end(&masked, binding_start, binding.len() + needle.len())
-            .is_none()
     {
         return false;
     }
-    let mut rest = masked.replacen(&format!("{binding}{needle}"), " (", 1);
+    let Some((call_end, false)) =
+        super::reveal::call_statement_tail(&masked, binding_start, binding.len() + needle.len())
+    else {
+        return false;
+    };
+    if masked[call_end..]
+        .chars()
+        .any(|ch| !(ch.is_whitespace() || ch == '}'))
+    {
+        return false;
+    }
+    // Every whole-word `let [mut] binding` declaration, as (start, end of
+    // the head).
+    let mut declarations = Vec::new();
     for head in [format!("let mut {binding}"), format!("let {binding}")] {
-        while let Some(at) = rest.find(&head) {
+        for (at, _) in masked.match_indices(&head) {
             let end = at + head.len();
-            if rest[end..].chars().next().is_some_and(is_ident) {
-                break;
+            let starts_word = !masked[..at].chars().next_back().is_some_and(is_ident);
+            if starts_word && !masked[end..].chars().next().is_some_and(is_ident) {
+                declarations.push((at, end));
             }
-            rest.replace_range(at..end, " ");
         }
     }
+    let [(declared_at, head_end)] = declarations[..] else {
+        return false;
+    };
+    let Some(statement_len) = masked[head_end..].find(';') else {
+        return false;
+    };
+    let declaration = &masked[head_end..head_end + statement_len];
+    let Some((annotation, initializer)) = declaration.split_once('=') else {
+        return false;
+    };
+    let initializer = initializer.trim();
+    if annotation.contains('&')
+        || initializer.contains('&')
+        || !initializer.starts_with(|ch: char| ch.is_ascii_uppercase())
+        || !initializer.contains(['(', '{'])
+    {
+        return false;
+    }
+    let mut rest = masked.clone();
+    rest.replace_range(
+        binding_start..dot + needle.len(),
+        &" ".repeat(dot + needle.len() - binding_start),
+    );
+    rest.replace_range(declared_at..head_end, &" ".repeat(head_end - declared_at));
     !names_whole_ident(&rest, binding) && !names_format_capture(test.body.as_ref(), binding)
 }
 

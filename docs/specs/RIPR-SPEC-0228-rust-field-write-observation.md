@@ -505,10 +505,13 @@ changes `self.count += 2` to `self.count += 1`.
   `mentions_count_every_use_of_the_name_but_not_its_definition` and
   `a_cancelled_inventory_reports_the_cancellation_from_field_admission`.
 - Unread write beside neighbours and loop-held receiver calls (#6485):
-  `crates/ripr/tests/field_write_loop_and_unread.rs` (positive gap, the
-  five abstaining controls, loop reach, a loop pattern that binds the
-  receiver, and no credit for an exact read after a loop that may not run),
-  and the verdict corpus `grid-delete-*` cells.
+  `crates/ripr/tests/field_write_loop_and_unread.rs` (positive
+  `reachable_unrevealed`, the abstaining controls including a reference
+  alias, a moved-in binding and a consumed result, loop reach, plain and
+  tuple loop patterns that bind the receiver, and no credit for an exact read
+  after a loop that may not run), `field_write_seam.rs`
+  `no_read_beside_an_asserting_neighbour_is_not_a_repair_start`, and the
+  verdict corpus `grid-delete-*` cells.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and
@@ -856,16 +859,20 @@ changes `self.count += 2` to `self.count += 1`.
   its latest `let` and refused when the test holds a second `let` of that
   binding name, whose block scope the text reading cannot place.
 - Example 5 beside asserting neighbours is implemented (#6485):
-  `runs_owner_and_reads_nothing` in `activation.rs` places, for the class
-  only (`assigned_field_gap_is_placed`, not the repair start), a reaching
-  test that holds no assertion fact, invokes no macro outside the
-  transparent set, spells `.owner(` once as a bare statement on a plain
-  binding, names the written field nowhere, and uses that binding only in
-  its `let [mut]` declaration and the call. Neighbour tests related by file
-  that assert on other fields no longer turn the unread write into
-  `static_unknown`; the finding reads `weakly_exposed` (verdict corpus
-  `grid-delete-none`). A helper taking the binding, a format capture, a
-  field read, an opaque macro or a second owner call keeps the abstention.
+  `assigned_field_is_unread` and `runs_owner_and_reads_nothing` in
+  `activation.rs` place a write whose every reaching test holds no assertion
+  fact, invokes no macro outside the transparent set, names the written field
+  nowhere, and ends with one bare `binding.owner(..);` whose result nothing
+  consumes (no `.unwrap()`, `.expect(..)` or `?`) on a binding declared once
+  by an owned type-path construction that borrows nothing. The classifier
+  then reads observe and discriminate as `no`, so the class is
+  `reachable_unrevealed` (Decision 3) even when file neighbours assert on
+  other fields; those neighbours are not a weak discriminator (verdict corpus
+  `grid-delete-none`). It is never a repair start: the seam's
+  missing-discriminator fact stays with `assigned_field_weak_read_start`. A
+  later statement (a helper taking the binding or an alias's target), a
+  reference or moved-in binding, a consumed result, a format capture, a field
+  read, an opaque macro or a second owner call keeps the abstention.
 - A receiver call inside a `for` loop whose pattern does not bind the
   receiver name relates as `direct_owner_call` through the binding visible
   around the loop (`visible_receiver_binding_names_type` in
