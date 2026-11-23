@@ -957,7 +957,7 @@ fn stub_body(
             .iter()
             .filter(|binding| {
                 !boundary.iter().any(|(name, _)| name == *binding)
-                    && !pushed.as_ref().is_some_and(|(name, _)| name == *binding)
+                    && pushed.as_ref().is_none_or(|(name, _)| name != *binding)
             })
             .cloned()
             .collect();

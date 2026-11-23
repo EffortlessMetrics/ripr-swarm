@@ -161,7 +161,7 @@ fn standard_macros_only(file: &SourceFile, in_scope: &impl Fn(&SyntaxNode) -> bo
                     && path
                         .segment()
                         .and_then(|segment| segment.name_ref())
-                        .is_some_and(|called| standard(&called.text()))
+                        .is_some_and(|called| standard(called.text()))
             })
         });
     let replaced = file.syntax().descendants().any(|node| {
@@ -169,19 +169,19 @@ fn standard_macros_only(file: &SourceFile, in_scope: &impl Fn(&SyntaxNode) -> bo
             return node
                 .children()
                 .find_map(ast::Name::cast)
-                .is_some_and(|defined| standard(&defined.text()));
+                .is_some_and(|defined| standard(defined.text()));
         }
         if let Some(rename) = ast::Rename::cast(node.clone()) {
             return rename
                 .name()
-                .is_some_and(|renamed| standard(&renamed.text()));
+                .is_some_and(|renamed| standard(renamed.text()));
         }
         if let Some(tree) = ast::UseTree::cast(node.clone()) {
             return tree
                 .path()
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
-                .is_some_and(|imported| standard(&imported.text()));
+                .is_some_and(|imported| standard(imported.text()));
         }
         ast::Attr::cast(node).is_some_and(|attr| {
             attr.meta()
