@@ -267,6 +267,13 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "exact_value",
         ),
         (
+            "a borrowed owner result is compared outside the local macro",
+            CHECK_OK,
+            "let r = pick(0).unwrap();\n        let actual = &pick(0);\n        assert_eq!(check_ok!(r), *actual);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
             "the unwrapped local is asserted plainly",
             CHECK_OK,
             "let r = pick(0).unwrap();\n        assert_eq!(r, Mode::A);",

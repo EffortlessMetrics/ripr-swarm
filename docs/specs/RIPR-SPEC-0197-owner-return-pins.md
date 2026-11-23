@@ -2876,7 +2876,9 @@ arguments are all literals. Any other method, or a closure or path argument
 (`inspect(|v| seen = ..)`, `map(helper)`), may record the result where a
 later assertion reads it, so the local does not count. A chain rooted
 anywhere else (`other(pick(0))`, `x.pick(0)` for a free function) does not
-count either. Only the macro-held assertion loses its reading; an
+count either. A read outside the untrusted macro of any other local whose
+initializer names the owner or such a local (`let actual = &pick(0);`, then
+`*actual`) observes the result, so the assertion keeps its parsed reading. Only the macro-held assertion loses its reading; an
 `.unwrap()` in the initializer still runs and keeps its own smoke oracle.
 
 ## Required Evidence

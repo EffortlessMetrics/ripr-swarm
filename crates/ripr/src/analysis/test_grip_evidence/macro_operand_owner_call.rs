@@ -93,19 +93,24 @@ impl<'a> OwnerName<'a> {
     }
 }
 
-/// A plain local bound directly to an owner call in the test body, with the
-/// number of times the body names it after its declaration.
+/// A local of the test body that may hold the owner's result. `evidence`
+/// marks a plain local bound to an owner call, with the number of times the
+/// body names it after its declaration. Any other local whose initializer
+/// names the owner or such a local (`let actual = &pick(0);`, `let s = &r;`)
+/// is tracked only so that a read of it outside the untrusted macro counts
+/// as a free use of the owner's result.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct OwnerResultLocal {
     name: String,
     uses: usize,
+    evidence: bool,
 }
 
-/// Locals of the test `body` declared once as `let name = <owner call>;`
-/// (a plain or `mut` identifier pattern, the initializer one call of the
-/// owner, possibly unwrapped or chained: `pick(0).unwrap()`, `pick(0)?`). A
-/// body that does not parse cleanly yields none, which keeps the parsed
-/// reading.
+/// Locals of the test `body` that may hold the owner's result. Evidence
+/// locals are declared once as `let name = <owner call>;` (a plain or `mut`
+/// identifier pattern, the initializer one call of the owner, possibly
+/// unwrapped or chained: `pick(0).unwrap()`, `pick(0)?`). A body that does
+/// not parse cleanly yields none, which keeps the parsed reading.
 fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLocal> {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(body) else {
         return Vec::new();
@@ -113,57 +118,108 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
     let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
         return Vec::new();
     };
-    let mut locals = Vec::new();
+    let tokens: Vec<SyntaxToken> = function
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let mut locals: Vec<OwnerResultLocal> = Vec::new();
     for statement in function
         .syntax()
         .descendants()
         .filter_map(ast::LetStmt::cast)
     {
-        let Some(ast::Pat::IdentPat(pattern)) = statement.pat() else {
+        let Some(initializer) = statement.initializer() else {
             continue;
         };
-        if pattern.ref_token().is_some() || pattern.pat().is_some() {
+        if let Some(local) = evidence_local(&function, &tokens, &statement, &initializer, owner) {
+            locals.push(local);
             continue;
         }
-        let (Some(name), Some(initializer)) = (pattern.name(), statement.initializer()) else {
-            continue;
-        };
-        if statement.let_else().is_some() || !owner_rooted(&initializer, owner) {
-            continue;
-        }
-        let declared_at = name.syntax().text_range();
-        let initialized_by = initializer.syntax().text_range();
-        let name = name.text().to_string();
-        let declarations = function
-            .syntax()
-            .descendants()
-            .filter_map(ast::IdentPat::cast)
-            .filter(|other| other.name().is_some_and(|other| other.text() == name))
-            .count();
-        if declarations != 1 {
-            continue;
-        }
-        let tokens: Vec<SyntaxToken> = function
+        // Locals are visited in source order, so a chain of bindings
+        // (`let s = &r; let t = s;`) is followed forward.
+        let carries = initializer
             .syntax()
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
-            .filter(|token| !token.kind().is_trivia())
+            .any(|token| {
+                token.kind() == SyntaxKind::IDENT
+                    && ((!owner.name.is_empty() && token.text() == owner.name)
+                        || locals.iter().any(|local| local.name == token.text()))
+            });
+        if !carries {
+            continue;
+        }
+        let Some(pattern) = statement.pat() else {
+            continue;
+        };
+        let names: Vec<String> = pattern
+            .syntax()
+            .descendants()
+            .filter_map(ast::IdentPat::cast)
+            .filter_map(|bound| bound.name())
+            .map(|name| name.text().to_string())
             .collect();
-        // The declaring name token is excluded by its range, so a typed
-        // `let r: T = ..` (whose name a `:` follows) is not miscounted, and
-        // so is the initializer, whose callee may share the local's name
-        // (`let pick = pick(0)`).
-        let uses = (0..tokens.len())
-            .filter(|&at| {
-                let range = tokens[at].text_range();
-                !declared_at.contains_range(range)
-                    && !initialized_by.contains_range(range)
-                    && reads_local(&tokens, at, &name)
-            })
-            .count();
-        locals.push(OwnerResultLocal { name, uses });
+        for name in names {
+            locals.push(OwnerResultLocal {
+                name,
+                uses: 0,
+                evidence: false,
+            });
+        }
     }
     locals
+}
+
+/// The evidence local `statement` declares, when it binds a plain or `mut`
+/// identifier once to an owner-rooted `initializer`.
+fn evidence_local(
+    function: &ast::Fn,
+    tokens: &[SyntaxToken],
+    statement: &ast::LetStmt,
+    initializer: &ast::Expr,
+    owner: &OwnerName<'_>,
+) -> Option<OwnerResultLocal> {
+    let Some(ast::Pat::IdentPat(pattern)) = statement.pat() else {
+        return None;
+    };
+    if pattern.ref_token().is_some() || pattern.pat().is_some() {
+        return None;
+    }
+    let name = pattern.name()?;
+    if statement.let_else().is_some() || !owner_rooted(initializer, owner) {
+        return None;
+    }
+    let declared_at = name.syntax().text_range();
+    let initialized_by = initializer.syntax().text_range();
+    let name = name.text().to_string();
+    let declarations = function
+        .syntax()
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .filter(|other| other.name().is_some_and(|other| other.text() == name))
+        .count();
+    if declarations != 1 {
+        return None;
+    }
+    // The declaring name token is excluded by its range, so a typed
+    // `let r: T = ..` (whose name a `:` follows) is not miscounted, and
+    // so is the initializer, whose callee may share the local's name
+    // (`let pick = pick(0)`).
+    let uses = (0..tokens.len())
+        .filter(|&at| {
+            let range = tokens[at].text_range();
+            !declared_at.contains_range(range)
+                && !initialized_by.contains_range(range)
+                && reads_local(tokens, at, &name)
+        })
+        .count();
+    Some(OwnerResultLocal {
+        name,
+        uses,
+        evidence: true,
+    })
 }
 
 /// Whether `tokens[at]` may read the local `name`: the identifier itself,
@@ -410,7 +466,7 @@ fn owner_use_only_inside_untrusted_macro(
     let local_evidence = locals
         .iter()
         .zip(&counts.local_held)
-        .any(|(local, held)| *held > 0 && *held == local.uses);
+        .any(|(local, held)| local.evidence && *held > 0 && *held == local.uses);
     counts.free == 0 && (counts.held > 0 || local_evidence)
 }
 
@@ -776,6 +832,26 @@ mod tests {
                 "let r = pick(0).record();",
                 "assert_eq!(check_ok!(r), Mode::A)",
                 false,
+            ),
+            (
+                "let r = pick(0).unwrap(); let actual = &pick(0);",
+                "assert_eq!(check_ok!(r), *actual)",
+                false,
+            ),
+            (
+                "let r = pick(0).unwrap(); let a = pick(0); let b = &a;",
+                "assert_eq!(check_ok!(r), *b)",
+                false,
+            ),
+            (
+                "let r = pick(0).unwrap(); let actual = pick(0).map(helper);",
+                "assert_eq!(format!(\"{actual:?}{:?}\", check_ok!(r)), \"\")",
+                false,
+            ),
+            (
+                "let r = pick(0).unwrap(); let actual = &pick(0);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
             ),
             (
                 "let r = other(pick(0));",
