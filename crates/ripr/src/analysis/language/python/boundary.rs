@@ -68,6 +68,9 @@ pub(super) struct PythonOwnerCallValues {
     pub(super) line: usize,
     pub(super) text: String,
     pub(super) values: BTreeMap<String, String>,
+    /// The scalar literals of each parameter bound to a list, tuple or set
+    /// display, as [`CallRow::elements`] reads them.
+    pub(super) elements: BTreeMap<String, Vec<String>>,
 }
 
 /// The owner calls the boundary rule reads, for another activation rule
@@ -97,6 +100,7 @@ pub(super) fn strong_owner_call_values(
                 .into_iter()
                 .map(|(parameter, binding)| (parameter, binding.value))
                 .collect(),
+            elements: row.elements,
         })
         .collect();
     Some(rows)

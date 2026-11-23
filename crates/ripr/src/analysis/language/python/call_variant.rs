@@ -1,22 +1,25 @@
-//! A one-line edit whose only change picks another side of `str.strip` or
-//! another digit count for `round` (#16203).
+//! A one-line edit whose only change picks another side of `str.strip`,
+//! another digit count for `round`, or the other sort direction (#16203).
 //!
 //! `s.strip()` to `s.lstrip()` gives a different result only for a string
 //! with trailing whitespace; `round(x, 2)` to `round(x, 3)` only for a number
-//! with more than two decimal places. A strong exact-value assertion whose
+//! with more than two decimal places; `sorted(xs)` to
+//! `sorted(xs, reverse=True)` only for a list holding two different
+//! elements. A strong exact-value assertion whose
 //! every call passes a value outside that set passes before and after the
 //! edit.
 //!
 //! The rule reads the changed token in place: `<param>.strip()`,
 //! `.lstrip()` or `.rstrip()` with no arguments, or `round(<param>, <int>)`
-//! with a literal digit count, where `<param>` is an owner parameter the body
+//! with a literal digit count, or one `sorted(<param>)` or `<param>.sort()`
+//! whose literal `reverse` flag alone flips, where `<param>` is an owner parameter the body
 //! never rebinds. Each strong related call (`boundary.rs`) must bind that
 //! parameter to a literal the rule can evaluate both ways; any other call, or
 //! no call at all, leaves the verdict to the other rules.
 
 use super::PythonOwner;
 use super::assertion_selection::PythonAssertionFocus;
-use super::boundary::strong_owner_call_values;
+use super::boundary::{literals_equal, strong_owner_call_values};
 use super::discriminators::python_string_literal_value;
 use super::related_tests::PythonRelatedCandidate;
 use crate::domain::OwnerKind;
@@ -43,6 +46,12 @@ pub(super) enum CallVariant {
     },
     /// `round(param, old)` to `round(param, new)`.
     Round { param: String, old: u32, new: u32 },
+    /// `sorted(param)` or `param.sort()` with its `reverse=` flag flipped.
+    Sort {
+        param: String,
+        old_call: String,
+        new_call: String,
+    },
 }
 
 type Token = (Tok, String);
@@ -50,8 +59,16 @@ type Token = (Tok, String);
 /// The changed call when the only edit between the lines is a strip side or
 /// a `round` digit count on a bare name; None for anything else.
 pub(super) fn call_variant(old_line: &str, new_line: &str) -> Option<CallVariant> {
+    // A line that also changes its block changes which code runs around it.
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    if old_line.get(..indent(old_line)) != new_line.get(..indent(new_line)) {
+        return None;
+    }
     let old = spellings(old_line)?;
     let new = spellings(new_line)?;
+    if let Some(sort) = sort_variant(&old, &new) {
+        return Some(sort);
+    }
     if old.len() != new.len() {
         return None;
     }
@@ -101,6 +118,96 @@ pub(super) fn call_variant(old_line: &str, new_line: &str) -> Option<CallVariant
     }
 }
 
+/// One `sorted(<name>[, reverse=<bool>])` or `<name>.sort([reverse=<bool>])`
+/// in a line: its token span, the name, and the `reverse` flag.
+fn sort_call(tokens: &[Token]) -> Option<(std::ops::Range<usize>, String, bool)> {
+    let name = |index: usize, text: &str| matches!(tokens.get(index), Some((Tok::Name { .. }, spelled)) if spelled == text);
+    let is = |index: usize, want: &Tok| tokens.get(index).is_some_and(|(tok, _)| tok == want);
+    let reverse_flag = |at: usize| -> Option<(bool, usize)> {
+        if !name(at, "reverse") || !is(at + 1, &Tok::Equal) {
+            return None;
+        }
+        let flag = match tokens.get(at + 2) {
+            Some((Tok::True, _)) => true,
+            Some((Tok::False, _)) => false,
+            _ => return None,
+        };
+        Some((flag, at + 3))
+    };
+    let mut found = None;
+    for start in 0..tokens.len() {
+        let preceded_by_dot = start > 0 && is(start - 1, &Tok::Dot);
+        let call = if name(start, "sorted") && !preceded_by_dot && is(start + 1, &Tok::Lpar) {
+            let param = match tokens.get(start + 2) {
+                Some((Tok::Name { .. }, spelled)) => spelled.clone(),
+                _ => continue,
+            };
+            let (flag, close) = if is(start + 3, &Tok::Comma) {
+                reverse_flag(start + 4)?
+            } else {
+                (false, start + 3)
+            };
+            is(close, &Tok::Rpar).then_some((start..close + 1, param, flag))
+        } else if matches!(tokens.get(start), Some((Tok::Name { .. }, _)))
+            && !preceded_by_dot
+            && is(start + 1, &Tok::Dot)
+            && name(start + 2, "sort")
+            && is(start + 3, &Tok::Lpar)
+        {
+            let param = tokens.get(start).map(|(_, spelled)| spelled.clone())?;
+            let (flag, close) = if is(start + 4, &Tok::Rpar) {
+                (false, start + 4)
+            } else {
+                reverse_flag(start + 4)?
+            };
+            is(close, &Tok::Rpar).then_some((start..close + 1, param, flag))
+        } else {
+            None
+        };
+        if let Some(call) = call {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(call);
+        }
+    }
+    found
+}
+
+/// A line pair whose only edit flips the `reverse` flag of one sort call.
+fn sort_variant(old: &[Token], new: &[Token]) -> Option<CallVariant> {
+    let (old_span, old_param, old_flag) = sort_call(old)?;
+    let (new_span, new_param, new_flag) = sort_call(new)?;
+    let same = |a: &[Token], b: &[Token]| {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.0 == y.0 && x.1 == y.1)
+    };
+    let sorted_form = |tokens: &[Token], span: &std::ops::Range<usize>| {
+        tokens
+            .get(span.start)
+            .is_some_and(|(_, text)| text == "sorted")
+    };
+    let spell = |tokens: &[Token], span: std::ops::Range<usize>| {
+        tokens.get(span).map(|part| {
+            part.iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<String>()
+        })
+    };
+    (old_param == new_param
+        && old_flag != new_flag
+        && sorted_form(old, &old_span) == sorted_form(new, &new_span)
+        && same(old.get(..old_span.start)?, new.get(..new_span.start)?)
+        && same(old.get(old_span.end..)?, new.get(new_span.end..)?))
+    .then(|| {
+        Some(CallVariant::Sort {
+            param: old_param,
+            old_call: spell(old, old_span)?.replace(',', ", "),
+            new_call: spell(new, new_span)?.replace(',', ", "),
+        })
+    })
+    .flatten()
+}
+
 /// Evidence that every strong related call binds the changed call's
 /// argument to a value both versions treat alike, or None.
 pub(super) fn python_call_variant_evidence(
@@ -118,7 +225,9 @@ pub(super) fn python_call_variant_evidence(
     }
     let variant = call_variant(old_line, new_line)?;
     let param = match &variant {
-        CallVariant::Strip { param, .. } | CallVariant::Round { param, .. } => param,
+        CallVariant::Strip { param, .. }
+        | CallVariant::Round { param, .. }
+        | CallVariant::Sort { param, .. } => param,
     };
     if !owner
         .parameters
@@ -133,8 +242,12 @@ pub(super) fn python_call_variant_evidence(
         return None;
     }
     for row in &rows {
-        let value = row.values.get(param)?;
-        if !variant_agrees(&variant, value)? {
+        let agrees = if matches!(variant, CallVariant::Sort { .. }) {
+            elements_agree(row.elements.get(param)?)?
+        } else {
+            variant_agrees(&variant, row.values.get(param)?)?
+        };
+        if !agrees {
             return None;
         }
     }
@@ -153,7 +266,31 @@ pub(super) fn python_call_variant_evidence(
                 if old.min(new) == 1 { "" } else { "s" }
             ),
         },
+        CallVariant::Sort {
+            param,
+            old_call,
+            new_call,
+        } => PythonCallVariantEvidence {
+            old_call,
+            new_call,
+            discriminator: format!("`{param}` holding two or more different elements"),
+        },
     })
+}
+
+/// Whether sorting the elements either way gives the same list: every
+/// element equals the first, so no order exists to reverse. None when an
+/// equality cannot be read.
+pub(super) fn elements_agree(elements: &[String]) -> Option<bool> {
+    let Some(first) = elements.first() else {
+        return Some(true);
+    };
+    for element in elements {
+        if !literals_equal(first, element)? {
+            return Some(false);
+        }
+    }
+    Some(true)
 }
 
 /// Whether both versions of the call give the same result for one literal
@@ -175,6 +312,8 @@ pub(super) fn variant_agrees(variant: &CallVariant, value: &str) -> Option<bool>
             let digits = decimal_places(value)?;
             Some(digits <= (*old).min(*new))
         }
+        // A sort reads a collection, never a scalar binding.
+        CallVariant::Sort { .. } => None,
     }
 }
 

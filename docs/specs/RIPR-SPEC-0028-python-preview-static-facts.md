@@ -2198,12 +2198,15 @@ Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap
 
 A one-line edit whose only change picks another `strip`, `lstrip` or `rstrip`
 on a parameter with no arguments, or another literal digit count in
-`round(<parameter>, <int>)` (#16203), changes the result only for a string
-with whitespace on a side one version keeps, or a number with more decimal
-places than the smaller count. The parameter must be one the body never
-rebinds. When every strong related call binds it to a plain literal the rule
-evaluates (a quoted string without escapes, or an int or decimal float) and
-both versions give the same result, the edit reads `weakly_exposed` and the
+`round(<parameter>, <int>)`, or flips the literal `reverse` flag alone on one
+`sorted(<parameter>)` or `<parameter>.sort()` call with no other argument
+(#16203), changes the result only for a string with whitespace on a side one
+version keeps, a number with more decimal places than the smaller count, or a
+collection holding two different elements. The parameter must be one the body
+never rebinds. When every strong related call binds it to a plain literal the
+rule evaluates (a quoted string without escapes, an int or decimal float, or a
+list, tuple or set display of such scalars) and both versions give the same
+result, the edit reads `weakly_exposed` and the
 missing discriminator names the separating input. A call the reader cannot
 resolve, or no resolved call at all, leaves the reading to the other rules.
 
@@ -2213,7 +2216,12 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::an_input_with_more_decimals_keeps_a_round_change_exposed`,
 `call_variant_tests.rs::an_unread_argument_keeps_its_reading`,
 `call_variant_tests.rs::only_a_strip_side_or_round_digits_edit_on_a_name_is_read`,
-`call_variant_tests.rs::agreement_follows_python_strip_and_round`.
+`call_variant_tests.rs::agreement_follows_python_strip_and_round`,
+`call_variant_tests.rs::lists_without_two_different_elements_do_not_expose_a_sort_direction_flip`,
+`call_variant_tests.rs::a_list_with_different_elements_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::an_unread_list_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::only_a_lone_reverse_flag_flip_on_a_named_sort_is_read`,
+`call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`.
 
 ## Changed Range Header Amendment (#12948)
 

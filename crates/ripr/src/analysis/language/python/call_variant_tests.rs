@@ -1,12 +1,11 @@
 //! Tests for the strip-side and `round`-digits gate (#16203): the edit is
 //! discriminated only by an argument the two versions treat differently.
 
-use super::call_variant::{CallVariant, call_variant, variant_agrees};
+use super::call_variant::{CallVariant, call_variant, elements_agree, variant_agrees};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::*;
 
-const SOURCE: &str =
-    "def clean(s):\n    return s.strip()\n\n\ndef money(x):\n    return round(x, 2)\n";
+const SOURCE: &str = "def clean(s):\n    return s.strip()\n\n\ndef money(x):\n    return round(x, 2)\n\n\ndef top(xs):\n    return sorted(xs)[0]\n";
 
 fn classify(line: usize, old: &str, new: &str, test_source: &str) -> Result<Finding, String> {
     let owners = extract_owners(Path::new("src/text.py"), SOURCE);
@@ -36,6 +35,15 @@ fn classify_money(test_source: &str) -> Result<Finding, String> {
         6,
         "    return round(x, 2)",
         "    return round(x, 3)",
+        test_source,
+    )
+}
+
+fn classify_top(test_source: &str) -> Result<Finding, String> {
+    classify(
+        10,
+        "    return sorted(xs)[0]",
+        "    return sorted(xs, reverse=True)[0]",
         test_source,
     )
 }
@@ -191,4 +199,125 @@ fn agreement_follows_python_strip_and_round() {
     assert_eq!(variant_agrees(&round, "1.255"), Some(false));
     assert_eq!(variant_agrees(&round, "\"1.5\""), None);
     assert_eq!(variant_agrees(&round, "1e3"), None);
+}
+
+#[test]
+fn lists_without_two_different_elements_do_not_expose_a_sort_direction_flip() -> Result<(), String>
+{
+    let finding = classify_top(
+        "from src.text import top\n\n\ndef test_top():\n    assert top([4]) == 4\n    assert top([2, 2]) == 2\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == "call `top` with `xs` holding two or more different elements"),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
+    Ok(())
+}
+
+#[test]
+fn a_list_with_different_elements_keeps_a_sort_direction_flip_exposed() -> Result<(), String> {
+    let finding = classify_top(
+        "from src.text import top\n\n\ndef test_top():\n    assert top([4]) == 4\n    assert top([4, 1]) == 1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn an_unread_list_keeps_a_sort_direction_flip_exposed() -> Result<(), String> {
+    let finding = classify_top(
+        "from src.text import top\n\nNUMS = [4, 1]\n\n\ndef test_top():\n    assert top([4]) == 4\n    assert top(NUMS) == 1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn only_a_lone_reverse_flag_flip_on_a_named_sort_is_read() {
+    assert_eq!(
+        call_variant("return sorted(xs)[0]", "return sorted(xs, reverse=True)[0]"),
+        Some(CallVariant::Sort {
+            param: "xs".to_string(),
+            old_call: "sorted(xs)".to_string(),
+            new_call: "sorted(xs, reverse=True)".to_string(),
+        })
+    );
+    assert_eq!(
+        call_variant("    xs.sort(reverse=True)", "    xs.sort()"),
+        Some(CallVariant::Sort {
+            param: "xs".to_string(),
+            old_call: "xs.sort(reverse=True)".to_string(),
+            new_call: "xs.sort()".to_string(),
+        })
+    );
+    // A key changes the order the flag reverses.
+    assert_eq!(
+        call_variant(
+            "return sorted(xs, key=len)",
+            "return sorted(xs, key=len, reverse=True)"
+        ),
+        None
+    );
+    // An explicit flag that keeps its value is no change of direction.
+    assert_eq!(
+        call_variant("return sorted(xs)", "return sorted(xs, reverse=False)"),
+        None
+    );
+    // A computed argument, an attribute receiver, or a module's own sort.
+    assert_eq!(
+        call_variant(
+            "return sorted(xs + ys)",
+            "return sorted(xs + ys, reverse=True)"
+        ),
+        None
+    );
+    assert_eq!(
+        call_variant("    self.xs.sort()", "    self.xs.sort(reverse=True)"),
+        None
+    );
+    assert_eq!(
+        call_variant("return np.sorted(xs)", "return np.sorted(xs, reverse=True)"),
+        None
+    );
+    // Switching between the two forms, or another edit beside the flag.
+    assert_eq!(
+        call_variant("return sorted(xs)", "return xs.sort(reverse=True)"),
+        None
+    );
+    assert_eq!(
+        call_variant("return sorted(xs)[0]", "return sorted(xs, reverse=True)[1]"),
+        None
+    );
+    // Two sort calls on the line.
+    assert_eq!(
+        call_variant(
+            "return sorted(xs) + sorted(xs)",
+            "return sorted(xs, reverse=True) + sorted(xs)"
+        ),
+        None
+    );
+}
+
+#[test]
+fn sorting_agrees_only_without_two_different_elements() {
+    let list = |items: &[&str]| {
+        items
+            .iter()
+            .map(|item| item.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(elements_agree(&list(&[])), Some(true));
+    assert_eq!(elements_agree(&list(&["4"])), Some(true));
+    assert_eq!(elements_agree(&list(&["2", "2.0"])), Some(true));
+    assert_eq!(elements_agree(&list(&["\"a\"", "'a'"])), Some(true));
+    assert_eq!(elements_agree(&list(&["4", "1"])), Some(false));
+    assert_eq!(elements_agree(&list(&["\"a\"", "\"b\""])), Some(false));
 }
