@@ -809,6 +809,18 @@ naming `ripr check` for detail, instead of the repository-wide `ripr pilot`
 route. When every candidate was dropped as already noticed, the outcome is the nothing-to-do one instead. Without a diff scope the repository route is kept. Eligibility and the
 `no_eligible_seam` code are unchanged.
 
+## Amendment (#15615): changed spots lead the capped refusal list
+
+The no-eligible reason list stays capped at three rows. Rows about the change
+are listed before rows counting spots outside it. When the rows overflow the
+cap and both kinds are present, the outside counts fold into one row
+("outside your changed lines, N repairable spots are not offered, ...") that
+follows at most two changed rows, so a changed spot is never hidden behind
+outside counts. For an open change the lead reads "none is ready for an
+automatic repair on your changed lines", and changed rows past the cap are
+disclosed as "(and N more on your changed lines; `ripr check ...` lists each
+one)" with the same base. Rows that fit keep their own wording.
+
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
 A start publishes an attempt and then renders the handoff card, which names the

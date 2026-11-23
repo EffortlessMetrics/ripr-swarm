@@ -11777,6 +11777,8 @@ tests = [
   "crates/ripr/src/app/navigation.rs::tests::repair_route_refusal_advisory_names_state_and_recovery",
   "crates/ripr/src/app/task_first.rs::tests::decide_zero_eligible_carries_reason_total_for_disclosure",
   "crates/ripr/src/app/task_first.rs::tests::no_eligible_reasons_total_dedups_repeated_omitted_reasons",
+  "crates/ripr/src/app/task_first.rs::tests::no_eligible_reasons_list_the_changed_spot_before_outside_counts",
+  "crates/ripr/tests/repair_check_recommended_start.rs::the_changed_spot_is_listed_before_the_outside_counts",
   "crates/ripr/src/cli/commands/task_first.rs::tests::no_eligible_message_discloses_truncated_reasons",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_omits_repair_when_top_seam_is_not_eligible",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_omits_repair_when_seam_inventory_is_truncated",

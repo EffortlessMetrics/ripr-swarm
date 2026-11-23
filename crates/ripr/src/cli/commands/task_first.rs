@@ -1165,8 +1165,15 @@ fn no_eligible_seam_message(
     };
     // #11883: the next step leads on its own sentence and the reasons follow
     // as one bullet each, instead of one unwrapped line with the command last.
+    // #15615: an open change may sit beside repairable spots outside it, so
+    // its lead scopes "none is ready" to the changed lines.
+    let scope = if change == NoEligibleChange::OpenOnChange {
+        " on your changed lines"
+    } else {
+        ""
+    };
     let mut message = format!(
-        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair. {next}"
+        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair{scope}. {next}"
     );
     if !reasons.is_empty() {
         message.push_str("\nWhy:");
@@ -1177,10 +1184,18 @@ fn no_eligible_seam_message(
         // was rendered, disclose the remainder instead of letting three
         // read as the whole story.
         if reasons_total > reasons.len() {
-            message.push_str(&format!(
-                "\n  (and {} more; run `ripr pilot --root {root}` for per-seam detail)",
-                reasons_total - reasons.len()
-            ));
+            let more = reasons_total - reasons.len();
+            // #15615: the rows past the cap are spots on the change, which
+            // the same-base check lists; pilot tours the whole repository.
+            if change == NoEligibleChange::OpenOnChange {
+                message.push_str(&format!(
+                    "\n  (and {more} more on your changed lines; `{check}` lists each one)"
+                ));
+            } else {
+                message.push_str(&format!(
+                    "\n  (and {more} more; run `ripr pilot --root {root}` for per-seam detail)"
+                ));
+            }
         }
     }
     message
@@ -1453,6 +1468,27 @@ mod tests {
             return Err(format!(
                 "complete list must not claim a remainder: {complete}"
             ));
+        }
+        // #15615: an open change's remainder is more changed spots, which the
+        // same-base check lists; the lead scopes "none is ready" to the change.
+        let open = no_eligible_seam_message(
+            Path::new("."),
+            Some("main"),
+            crate::app::task_first::NoEligibleChange::OpenOnChange,
+            9,
+            &reasons,
+            5,
+        );
+        for expected in [
+            "none is ready for an automatic repair on your changed lines.",
+            "(and 2 more on your changed lines; `ripr check --root . --base main` lists each one)",
+        ] {
+            if !open.contains(expected) {
+                return Err(format!("open change must carry {expected:?}: {open}"));
+            }
+        }
+        if open.contains("ripr pilot") {
+            return Err(format!("open change remainder must not tour: {open}"));
         }
         Ok(())
     }

@@ -362,6 +362,55 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
     Ok(())
 }
 
+/// Unchanged code beside the FLIP change: a repairable boundary, a field
+/// read that cannot start, and a gripped doubling, each outside the change.
+const OUTSIDE_SPOTS: &str = "\npub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n\npub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n";
+const OUTSIDE_TESTS: &str = "\n#[test]\nfn adult_far_above() {\n    assert!(fx::is_adult(40));\n}\n\n#[test]\nfn default_config_is_quiet() {\n    assert!(!fx::default_config().verbose);\n}\n\n#[test]\nfn doubled_works() {\n    assert_eq!(fx::doubled(2), 4);\n}\n";
+
+/// #15615: when the changed spot cannot start and several spots outside the
+/// change are counted, the capped reason list names the changed spot first
+/// and folds the outside counts into one row, instead of hiding the changed
+/// spot behind an "(and 1 more)" remainder.
+#[test]
+fn the_changed_spot_is_listed_before_the_outside_counts() -> Result<(), String> {
+    let base = format!("{FLIP_BASE}{OUTSIDE_SPOTS}");
+    let changed = format!("{FLIP_NEW}{OUTSIDE_SPOTS}");
+    let test = format!("{FLIP_TEST}{OUTSIDE_TESTS}");
+    let repo = repo("changed-first", &base, &changed, &test, true)?;
+    let repair = ripr(&repo.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
+        return Err(format!("the change must refuse:\n{err}"));
+    }
+    let why: Vec<&str> = err
+        .lines()
+        .skip_while(|line| *line != "Why:")
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .collect();
+    let changed_row = why
+        .iter()
+        .position(|row| row.contains("src/lib.rs:2"))
+        .ok_or_else(|| format!("the changed spot must be listed:\n{err}"))?;
+    let outside_row = why
+        .iter()
+        .position(|row| row.contains("outside your changed lines"))
+        .ok_or_else(|| format!("the outside spots must still be counted:\n{err}"))?;
+    if changed_row > outside_row
+        || !err.contains("none is ready for an automatic repair on your changed lines.")
+        || !err.contains("Next: each changed spot below says what it still needs")
+        || err.contains("(and 1 more")
+    {
+        return Err(format!(
+            "the changed spot must lead the outside counts:\n{err}"
+        ));
+    }
+    if attempts(&repo.root) != 0 {
+        return Err("no attempt may start".to_string());
+    }
+    Ok(())
+}
+
 /// #12867 / #13203 A0: a seam whose repair target is only a producer-owned
 /// proposed new test file now starts (bare and by id) when the producer names
 /// the workspace, while a seam the producer admits no proposal for (here a
