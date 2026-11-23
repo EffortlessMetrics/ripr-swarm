@@ -246,6 +246,13 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "unknown",
         ),
         (
+            "a local that shares the owner's name is used only by the local macro",
+            CHECK_OK,
+            "let pick = pick(0);\n        assert_eq!(check_ok!(pick), Ok(Mode::A));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
             "the bound result is asserted plainly",
             CHECK_OK,
             "let r = pick(0);\n        assert_eq!(r, Ok(Mode::A));",
@@ -265,6 +272,20 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "let r = pick(0);\n        let holder = Holder { r: 1 };\n        let _ = holder.r;\n        assert_eq!(check_ok!(r), Ok(Mode::A));",
             "propagation_unknown",
             "unknown",
+        ),
+        (
+            "a field label is not a held read of a local borrowed elsewhere",
+            &field_macros,
+            "let r = pick(0);\n        let s = &r;\n        assert_eq!(check_ok!(Holder { r: r }), *s);",
+            "strongly_gripped",
+            "whole_object_equality",
+        ),
+        (
+            "a capture after an escaped brace pair is read outside the local macro",
+            CHECK_OK,
+            "let r = pick(0);\n        assert_eq!(format!(\"{{{r:?}}}{:?}\", check_ok!(r)), \"{Ok(A)}Ok(A)\");",
+            "strongly_gripped",
+            "whole_object_equality",
         ),
         (
             "a local borrowed elsewhere does not undo a held owner call",
@@ -295,6 +316,8 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "exact_value",
         ),
     ];
+    // Every case runs, so one report names each wrong reading.
+    let mut wrong = Vec::new();
     for (label, macros, body, grip, oracle) in cases {
         let workspace = Workspace::create(macros, body)?;
         let (observed_grip, observed_oracle, relation) = workspace.ok_seam()?;
@@ -304,10 +327,14 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             ));
         }
         if (observed_grip.as_str(), observed_oracle.as_str()) != (*grip, *oracle) {
-            return Err(format!(
+            wrong.push(format!(
                 "{label}: expected ({grip}, {oracle}), got ({observed_grip}, {observed_oracle})"
             ));
         }
     }
-    Ok(())
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(wrong.join("\n"))
+    }
 }

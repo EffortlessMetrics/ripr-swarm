@@ -131,6 +131,7 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
             continue;
         }
         let declared_at = name.syntax().text_range();
+        let initialized_by = initializer.syntax().text_range();
         let name = name.text().to_string();
         let declarations = function
             .syntax()
@@ -148,10 +149,14 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
             .filter(|token| !token.kind().is_trivia())
             .collect();
         // The declaring name token is excluded by its range, so a typed
-        // `let r: T = ..` (whose name a `:` follows) is not miscounted.
+        // `let r: T = ..` (whose name a `:` follows) is not miscounted, and
+        // so is the initializer, whose callee may share the local's name
+        // (`let pick = pick(0)`).
         let uses = (0..tokens.len())
             .filter(|&at| {
-                !declared_at.contains_range(tokens[at].text_range())
+                let range = tokens[at].text_range();
+                !declared_at.contains_range(range)
+                    && !initialized_by.contains_range(range)
                     && reads_local(&tokens, at, &name)
             })
             .count();
@@ -189,15 +194,36 @@ fn reads_local(tokens: &[SyntaxToken], at: usize, name: &str) -> bool {
 }
 
 /// Whether a string literal's text holds an implicit format capture of
-/// `name` (`{name}`, `{name:..}`), outside `{{` escapes.
+/// `name`: as the argument (`{name}`, `{name:..}`) or as a width or
+/// precision parameter (`{:name$}`, `{:.name$}`). `{{` escapes are consumed
+/// in order, so the third brace of `{{{name}}}` still opens a capture.
 fn captures_local(text: &str, name: &str) -> bool {
-    text.match_indices('{').any(|(at, _)| {
-        let escaped = text[..at].ends_with('{') || text[at + 1..].starts_with('{');
-        !escaped
-            && text[at + 1..]
-                .strip_prefix(name)
-                .is_some_and(|after| after.starts_with('}') || after.starts_with(':'))
-    })
+    let mut at = 0;
+    while let Some(offset) = text[at..].find('{') {
+        let open = at + offset + 1;
+        if text[open..].starts_with('{') {
+            at = open + 1;
+            continue;
+        }
+        let Some(length) = text[open..].find('}') else {
+            return false;
+        };
+        if placeholder_reads(&text[open..open + length], name) {
+            return true;
+        }
+        at = open + length + 1;
+    }
+    false
+}
+
+/// Whether one placeholder's contents (between its braces) read `name`.
+fn placeholder_reads(placeholder: &str, name: &str) -> bool {
+    let (argument, spec) = placeholder.split_once(':').unwrap_or((placeholder, ""));
+    argument == name
+        || spec.match_indices(name).any(|(at, _)| {
+            spec[at + name.len()..].starts_with('$')
+                && !spec[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_')
+        })
 }
 
 /// Whether `expression` is exactly one call of the owner: `owner(..)`,
@@ -368,7 +394,21 @@ fn walk(
                     .checked_sub(1)
                     .and_then(|at| children.get(at))
                     .is_some_and(|before| before.kind() == SyntaxKind::DOT);
-                if token.text() == owner.name
+                let unqualified = !after_dot && qualifier(&children, position).is_none();
+                let label = next.is_some_and(|next| next.kind() == SyntaxKind::COLON)
+                    && after.is_none_or(|after| after.kind() != SyntaxKind::COLON);
+                // A local shadows a same-named owner function (`let pick =
+                // pick(0)`), so an unqualified name it binds reads the local.
+                let local = locals.iter().position(|local| local.name == token.text());
+                if unqualified && label && local.is_some() {
+                    // A struct field label (`Holder { r: .. }`) reads nothing.
+                } else if let (true, Some(at)) = (unqualified, local) {
+                    if inside_untrusted {
+                        counts.local_held[at] += 1;
+                    } else {
+                        counts.free += 1;
+                    }
+                } else if token.text() == owner.name
                     && (!after_dot || owner.is_method())
                     && qualifier(&children, position)
                         .is_none_or(|qualifier| owner.admits_qualifier(&qualifier))
@@ -385,15 +425,6 @@ fn walk(
                         counts.free += 1;
                     } else if paren_call {
                         counts.held += 1;
-                    }
-                } else if !after_dot
-                    && qualifier(&children, position).is_none()
-                    && let Some(at) = locals.iter().position(|local| local.name == token.text())
-                {
-                    if inside_untrusted {
-                        counts.local_held[at] += 1;
-                    } else {
-                        counts.free += 1;
                     }
                 }
             }
@@ -671,6 +702,46 @@ mod tests {
             (
                 "let r = pick(0);",
                 "assert_eq!(format!(\"{{r}}{}\", check_ok!(r)), \"Ok(A)\")",
+                true,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{{{r}}}{}\", check_ok!(r)), \"{Ok(A)}\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:r$}{}\", \"x\", check_ok!(r)), \"x\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:.r$}{}\", 1.0, check_ok!(r)), \"1\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:pr$}{}\", \"x\", check_ok!(r)), \"x\")",
+                true,
+            ),
+            (
+                "let pick = pick(0);",
+                "assert_eq!(check_ok!(pick), Mode::A)",
+                true,
+            ),
+            (
+                "let pick = pick(0);",
+                "assert_eq!(check_ok!(pick), pick)",
+                false,
+            ),
+            (
+                "let r = pick(0); let s = &r;",
+                "assert_eq!(check_ok!(Holder { r: r }), *s)",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(check_ok!(Holder { r: r }), Mode::A)",
                 true,
             ),
             (
