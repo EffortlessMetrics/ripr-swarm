@@ -6179,7 +6179,15 @@ fn assigned_field_unchecked(
             }
         }
         if weak_reads.is_empty() {
-            return false;
+            // RIPR-SPEC-0228 example 5 (#6485): for the class only, a test
+            // that runs the owner once and checks nothing at all places the
+            // unread write. The repair start keeps needing a weak read to
+            // strengthen.
+            if !(sibling_reads && runs_owner_and_reads_nothing(test, call.name(), path)) {
+                return false;
+            }
+            weak = true;
+            continue;
         }
         if reach
             .get_or_insert_with(|| super::field_reach::declared_field_reach(owner, path, index))
@@ -6243,6 +6251,61 @@ fn assigned_field_unchecked(
         &format!("{expression} Self"),
         index,
     )
+}
+
+/// RIPR-SPEC-0228 example 5 (#6485): whether `test` calls `owner_name` on one
+/// local binding and observes nothing afterwards. Fails closed: the test holds
+/// no assertion fact and invokes no macro that could hide one (`check!(..)`),
+/// the masked body spells `.owner_name(` exactly once, on a plain binding, as
+/// a bare statement, and names the written field `path` nowhere. The binding
+/// appears only in its `let [mut]` declaration and that call: a helper call
+/// (`verify(&c)`), a move, a clone, a format capture or any other use may be
+/// the exact check, so each refuses.
+fn runs_owner_and_reads_nothing(test: &TestSummary, owner_name: &str, path: &str) -> bool {
+    if !test.assertions.is_empty() || super::reach::invokes_opaque_macro(test.body.as_ref()) {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(test.body.as_ref());
+    if names_field_access(&masked, path) {
+        return false;
+    }
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let needle = format!(".{owner_name}(");
+    let mut sites = masked.match_indices(&needle).map(|(at, _)| at);
+    let (Some(dot), None) = (sites.next(), sites.next()) else {
+        return false;
+    };
+    let before = &masked[..dot];
+    let binding_start = before
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !is_ident(*ch))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
+    let binding = &before[binding_start..];
+    if binding.is_empty()
+        || binding.starts_with(|ch: char| ch.is_ascii_digit())
+        || binding == "self"
+        || !masked[..binding_start]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_none_or(|ch| matches!(ch, ';' | '{' | '}'))
+        || super::reveal::bare_call_end(&masked, binding_start, binding.len() + needle.len())
+            .is_none()
+    {
+        return false;
+    }
+    let mut rest = masked.replacen(&format!("{binding}{needle}"), " (", 1);
+    for head in [format!("let mut {binding}"), format!("let {binding}")] {
+        while let Some(at) = rest.find(&head) {
+            let end = at + head.len();
+            if rest[end..].chars().next().is_some_and(is_ident) {
+                break;
+            }
+            rest.replace_range(at..end, " ");
+        }
+    }
+    !names_whole_ident(&rest, binding) && !names_format_capture(test.body.as_ref(), binding)
 }
 
 /// Whether `test`'s body, with the weak-read assertions (`weak_reads`) cut

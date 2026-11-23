@@ -2046,7 +2046,11 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
 /// `binding.method(` (`call_len` bytes) starts at `call_at` in masked
 /// `code`. Only `.unwrap()`, `.expect(..)` or `?` may follow the call: they
 /// consume its result, so a returned `&mut Self` is never written.
-fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
+pub(in crate::analysis) fn bare_call_end(
+    code: &str,
+    call_at: usize,
+    call_len: usize,
+) -> Option<usize> {
     call_statement_tail(code, call_at, call_len).map(|(end, _)| end)
 }
 

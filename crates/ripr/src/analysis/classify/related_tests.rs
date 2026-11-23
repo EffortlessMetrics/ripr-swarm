@@ -7847,9 +7847,16 @@ fn visible_receiver_binding_names_type(
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
         // infer their types, and never borrows an outer same-spelled binding.
-        if ast::ClosureExpr::can_cast(ancestor.kind())
-            || ast::ForExpr::can_cast(ancestor.kind())
-            || ast::MatchArm::can_cast(ancestor.kind())
+        if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::MatchArm::can_cast(ancestor.kind()) {
+            return false;
+        }
+        // #6485: a `for` loop binds only its own pattern. When that pattern
+        // does not spell the receiver, the receiver is the binding visible
+        // around the loop (`let mut stats = ..; for _ in 0..n {
+        // stats.record() }`), so the walk continues outward. A pattern that
+        // does spell it may bind any type and still refuses.
+        if let Some(for_loop) = ast::ForExpr::cast(ancestor.clone())
+            && (for_loop.pat().is_none() || ident_pat_binds_name(for_loop.pat(), name))
         {
             return false;
         }
