@@ -2236,6 +2236,7 @@ fn focused_integration_target(root: &Path, test_file: &str) -> Option<FocusedInt
         fill_ins: Vec::new(),
         derived_inputs: Vec::new(),
         receiver_setup: None,
+        input_setup: None,
     };
     let manifest = package_manifest_for(root, &integration)?;
     let target = match integration_target_lookup(root, &manifest, &integration) {
@@ -2997,6 +2998,7 @@ mod tests {
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
             receiver_setup: None,
+            input_setup: None,
         };
         let inline = stub(TestStubPlacement::NewInlineModule {
             file: PathBuf::from("crates/a/src/lib.rs"),
@@ -3256,6 +3258,7 @@ mod tests {
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
             receiver_setup: None,
+            input_setup: None,
         };
         let got = |tail: &str, file: &str| -> Result<Option<String>, String> {
             std::fs::write(
@@ -4307,6 +4310,7 @@ impl Size {
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
             receiver_setup: None,
+            input_setup: None,
         };
         let resolution = TestStubResolution {
             seam_id: "seam".to_string(),
@@ -4351,6 +4355,7 @@ impl Size {
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
             receiver_setup: None,
+            input_setup: None,
         };
         let next = next_repair_for(root, &RiprConfig::default(), &entry, &stub)
             .ok_or("a repair-ready stub must name its repair journey")?;

@@ -299,7 +299,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     Ok(())
 }
 
-/// The human lines that follow the stub: the derived inputs, the receiver and
+/// The human lines that follow the stub: the derived and copied inputs, the receiver and
 /// each fill-in. They carry repository text (comparison and constructor
 /// literals, parameter names), so each is spelled single-line and
 /// terminal-safe; the JSON document keeps the raw values.
@@ -311,6 +311,9 @@ fn stub_detail_lines(stub: &crate::analysis::test_stub::RustTestStub) -> Vec<Str
             "Inputs from the changed code: {}",
             single_line(&stub.derived_inputs.join(", "))
         ));
+    }
+    if let Some(inputs) = &stub.input_setup {
+        lines.push(format!("Other inputs: {}", single_line(inputs)));
     }
     if let Some(receiver) = &stub.receiver_setup {
         lines.push(format!("Receiver: {}", single_line(receiver)));
@@ -577,12 +580,14 @@ mod tests {
                 "subject = Bucket::new(\"\u{1b}]0;owned\u{7}\"), as in the existing test `t`"
                     .to_string(),
             ),
+            input_setup: Some("s = \"\u{1b}[2J\", as in the existing test `t`".to_string()),
         };
         let lines = stub_detail_lines(&stub);
         assert_eq!(
             lines,
             vec![
                 "Inputs from the changed code: x = \"a\\u{202e}b\"".to_string(),
+                "Other inputs: s = \"\\u{1b}[2J\", as in the existing test `t`".to_string(),
                 "Receiver: subject = Bucket::new(\"\\u{1b}]0;owned\\u{07}\"), as in the existing test `t`"
                     .to_string(),
                 "Fill in: expected \\u{1b}[2J value".to_string(),

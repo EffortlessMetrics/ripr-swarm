@@ -3060,3 +3060,144 @@ fn length_boundary_writes_a_string_of_the_boundary_length() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), String> {
+    let owner = "pub fn tax(amount: i64, rate: u32) -> Result<i64, u8> {\n    if amount < 0 {\n        return Err(1);\n    }\n    if rate >= 10_000 {\n        return Err(2);\n    }\n    Ok(amount)\n}\n";
+    let module = |body: &str| {
+        format!("{owner}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{body}\n}}\n")
+    };
+    // (source, the copied `amount` and the test it came from; None = stays a fill-in)
+    let cases: Vec<(String, Option<(&str, &str)>)> = vec![
+        // An assertion's direct argument.
+        (
+            module(
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(10_000, 825), Ok(10_000));\n    }\n",
+            ),
+            Some(("10_000", "computes")),
+        ),
+        // A statement call, negative literal; the first call in source order wins.
+        (
+            module(
+                "    #[test]\n    fn rejects() {\n        let r = tax(-5, 100);\n        assert!(r.is_err());\n    }\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            Some(("-5", "rejects")),
+        ),
+        // A `should_panic` test, a closure, a cfg-gated statement, a helper
+        // that is not a test, and a ripr stub are skipped for a later call.
+        (
+            module(
+                "    #[test]\n    #[should_panic]\n    fn panics() {\n        assert_eq!(tax(1, 1), Ok(9));\n    }\n    #[test]\n    fn lazy() {\n        let f = || tax(2, 1);\n        let _ = f;\n    }\n    #[test]\n    fn gated() {\n        #[cfg(feature = \"x\")]\n        let _ = tax(3, 1);\n    }\n    fn helper() {\n        let _ = tax(4, 1);\n    }\n    #[test]\n    fn stub() {\n        let _ = tax(5, 1);\n        let _: i64 = todo!(\"ripr: choose `x`\");\n    }\n    #[test]\n    fn computes() {\n        assert_eq!(tax(6, 825), Ok(6));\n    }\n",
+            ),
+            Some(("6", "computes")),
+        ),
+        // A non-literal argument.
+        (
+            module(
+                "    const A: i64 = 1;\n    #[test]\n    fn computes() {\n        assert_eq!(tax(A, 825), Ok(1));\n    }\n",
+            ),
+            None,
+        ),
+        // A qualified call, or one wrapped in a method call.
+        (
+            module(
+                "    #[test]\n    fn computes() {\n        assert_eq!(super::tax(1, 825), Ok(1));\n        assert!(tax(1, 825).is_ok());\n    }\n",
+            ),
+            None,
+        ),
+        // A binding of the owner's name in the module takes the call.
+        (
+            module(
+                "    #[test]\n    fn computes() {\n        let tax = |a: i64, _r: u32| -> Result<i64, u8> { Ok(a) };\n        assert_eq!(tax(1, 825), Ok(1));\n    }\n",
+            ),
+            None,
+        ),
+        // So does a function of that name declared in the module.
+        (
+            module(
+                "    fn tax(a: i64, _r: u32) -> Result<i64, u8> { Ok(a) }\n    #[test]\n    fn computes() {\n        assert_eq!(tax(1, 825), Ok(1));\n    }\n",
+            ),
+            None,
+        ),
+        // A file-local `assert_eq!` is not the standard assertion.
+        (
+            format!(
+                "macro_rules! assert_eq {{ ($a:expr, $b:expr) => {{}}; }}\n{}",
+                module(
+                    "    #[test]\n    fn computes() {\n        assert_eq!(tax(1, 825), Ok(1));\n    }\n"
+                )
+            ),
+            None,
+        ),
+        // No existing test module: nothing to copy from.
+        (owner.to_string(), None),
+    ];
+    for (source, copied) in cases {
+        let needle = "rate >= 10_000";
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            needle,
+            SeamKind::PredicateBoundary,
+            boundary(needle),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        assert!(
+            stub.text.contains("let rate: u32 = 10_000;"),
+            "{}",
+            stub.text
+        );
+        // The expected value always stays the developer's to write.
+        assert!(
+            stub.text.contains("let expected: Result<i64, u8> = todo!("),
+            "{}",
+            stub.text
+        );
+        match copied {
+            Some((amount, test)) => {
+                assert!(
+                    stub.text.contains(&format!("let amount: i64 = {amount};")),
+                    "{}",
+                    stub.text
+                );
+                assert!(
+                    stub.text.contains(&format!(
+                        "// ripr: `amount` as in the existing test `{test}`; change it if this case needs another value"
+                    )),
+                    "{}",
+                    stub.text
+                );
+                assert_eq!(
+                    stub.input_setup.as_deref(),
+                    Some(format!("amount = {amount}, as in the existing test `{test}`").as_str())
+                );
+                assert_eq!(stub.derived_inputs, vec!["rate = 10_000".to_string()]);
+                assert!(
+                    !stub.fill_ins.iter().any(|f| f.starts_with("ripr: choose")),
+                    "{:?}",
+                    stub.fill_ins
+                );
+                let expected = stub
+                    .fill_ins
+                    .iter()
+                    .find(|f| f.starts_with("ripr: write the value"))
+                    .ok_or("expected fill-in")?;
+                assert!(
+                    expected.contains(&format!("for amount = {amount}, rate = 10_000")),
+                    "{expected}"
+                );
+            }
+            None => {
+                assert!(
+                    stub.text
+                        .contains("let amount: i64 = todo!(\"ripr: choose `amount`\");"),
+                    "{}",
+                    stub.text
+                );
+                assert_eq!(stub.input_setup, None);
+            }
+        }
+    }
+    Ok(())
+}

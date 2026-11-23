@@ -651,6 +651,25 @@ written only when:
   from the test build) and no generic parameter of the owner or an enclosing
   impl or trait that could shadow it.
 
+A boundary stub that writes the inputs its comparison reads copies the owner's
+other parameters from an existing test instead of leaving them as labelled
+`todo!()`s (#8361), for example `amount = 10_000` from `assert_eq!(tax_cents(10_000,
+825), Ok(825))` beside `rate_bps = 10_000` for `rate_bps >= 10_000`. A comment
+above the inputs and an `Other inputs:` line name the test they came from, and
+the expected value stays a `todo!()`. The values are copied only when:
+
+- the owner is a free function and the stub goes into an existing inline test
+  module;
+- the call is the first one in that module, in source order, through the
+  owner's bare name with one literal argument per parameter, either in a
+  test's own statements or as a direct argument of `assert!`, `assert_eq!` or
+  `assert_ne!` (with no file-local macro of that name);
+- it sits in a `#[test]` function that is not `should_panic` and not a ripr
+  stub, outside closures, `async` blocks and `cfg`;
+- nothing in the module declares, binds, imports or renames another item of
+  the owner's name;
+- each copied parameter's type is not `impl Trait` or `&mut`.
+
 A match-arm stub writes the input the changed arm's own pattern names instead
 of a labelled `todo!()` for that parameter (#8361), for example `ev =
 Event::Fail` for `(State::Running, Event::Fail) => ..` on `match (self.state,

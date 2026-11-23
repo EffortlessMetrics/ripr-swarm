@@ -207,10 +207,6 @@ fn reused_call(
     let parse = parse_clean_source_file(scope.parse_unit)?;
     let start = TextSize::try_from(scope.range.start).ok()?;
     let end = TextSize::try_from(scope.range.end).ok()?;
-    let in_scope = |node: &ra_ap_syntax::SyntaxNode| {
-        let range = node.text_range();
-        range.start() >= start && range.end() <= end
-    };
     parse
         .tree()
         .syntax()
@@ -240,48 +236,62 @@ fn reused_call(
             constructors
                 .iter()
                 .find(|candidate| candidate.name == name && candidate.params == arguments.len())?;
-            // A call inside a closure may be one a `catch_unwind` or a lazy
-            // combinator never runs to completion; only a call in the test's
-            // own body is known to have returned.
-            if call
-                .syntax()
-                .ancestors()
-                .take_while(|node| !ast::Fn::can_cast(node.kind()))
-                .any(|node| {
-                    ast::ClosureExpr::can_cast(node.kind())
-                        || ast::BlockExpr::cast(node)
-                            .is_some_and(|block| block.async_token().is_some())
-                })
-            {
-                return None;
-            }
-            // A call under `cfg` (on the test, a statement, or a nested
-            // module) may never be compiled, so it proves nothing about the
-            // constructor's argument types (#14825 review).
-            if call
-                .syntax()
-                .ancestors()
-                .take_while(|node| in_scope(node))
-                .filter_map(ast::AnyHasAttrs::cast)
-                .any(|owner| has_cfg(owner.attrs()))
-            {
-                return None;
-            }
-            let function = call.syntax().ancestors().find_map(ast::Fn::cast)?;
-            if !has_test_attribute(&function)
-                || function
-                    .attrs()
-                    .any(|attr| attr_named(&attr, &["should_panic"]))
-                || is_ripr_stub(&function)
-            {
-                return None;
-            }
+            let test = proven_test_call(call.syntax(), start, end)?;
             Some(Reused {
                 constructor: name,
                 arguments,
-                test: function.name()?.text().to_string(),
+                test,
             })
         })
+}
+
+/// The name of the `#[test]` function whose own body runs `node` to
+/// completion: `node` lies inside `start..end`, not in a closure or an
+/// `async` block (a `catch_unwind` or a lazy combinator may never finish
+/// it), not under `cfg` (it may never be compiled, #14825 review), and the
+/// test is neither `should_panic` nor a ripr stub (#14825 review: reusing a
+/// stub's own values would change its text on the next run).
+pub(super) fn proven_test_call(
+    node: &ra_ap_syntax::SyntaxNode,
+    start: TextSize,
+    end: TextSize,
+) -> Option<String> {
+    let range = node.text_range();
+    if range.start() < start || range.end() > end {
+        return None;
+    }
+    let in_scope = |node: &ra_ap_syntax::SyntaxNode| {
+        let range = node.text_range();
+        range.start() >= start && range.end() <= end
+    };
+    if node
+        .ancestors()
+        .take_while(|node| !ast::Fn::can_cast(node.kind()))
+        .any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+        })
+    {
+        return None;
+    }
+    if node
+        .ancestors()
+        .take_while(|node| in_scope(node))
+        .filter_map(ast::AnyHasAttrs::cast)
+        .any(|owner| has_cfg(owner.attrs()))
+    {
+        return None;
+    }
+    let function = node.ancestors().find_map(ast::Fn::cast)?;
+    if !has_test_attribute(&function)
+        || function
+            .attrs()
+            .any(|attr| attr_named(&attr, &["should_panic"]))
+        || is_ripr_stub(&function)
+    {
+        return None;
+    }
+    Some(function.name()?.text().to_string())
 }
 
 /// Whether the stub scope declares an item, or imports a name, that could
@@ -290,7 +300,7 @@ fn reused_call(
 /// nested module (the owner sits in that module's parent, since an owner
 /// in a nested module is refused earlier) are known to name the owner.
 /// An unparsed scope counts as shadowing.
-fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
+pub(super) fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
     if scope.range.is_empty() {
         return false;
     }
@@ -398,7 +408,7 @@ fn is_ripr_stub(function: &ast::Fn) -> bool {
 }
 
 /// A literal argument (`5`, `"w"`, `true`, `-3`, `1.5`) as written.
-fn literal_argument(arg: &ast::Expr) -> Option<String> {
+pub(super) fn literal_argument(arg: &ast::Expr) -> Option<String> {
     // The copied text is printed to the terminal on the `Receiver:` line.
     if arg
         .syntax()
