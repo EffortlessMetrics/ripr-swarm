@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 50] = [
+    let cases: [(&str, bool); 53] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -871,6 +871,11 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\n**INCOMPLETE**", false),
         ("SOURCE_REVIEW_READY\nBLOCK\nNo blocker found.", false),
         ("SOURCE_REVIEW_READY\nINCOMPLETE\nNo blocker found.", false),
+        // A fenced uppercase token is a disposition; a fenced lowercase "block"
+        // is ordinary prose and still admits.
+        ("SOURCE_REVIEW_READY\n```\nBLOCK\n```", false),
+        ("SOURCE_REVIEW_READY\n```\nINCOMPLETE\n```", false),
+        ("SOURCE_REVIEW_READY\n```\nBLOCK: no\n```", false),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);

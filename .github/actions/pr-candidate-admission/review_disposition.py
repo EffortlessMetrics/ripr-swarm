@@ -583,7 +583,12 @@ def comment_body_verdict_ready(body: str, head: str) -> bool:
     visible = without_verdict_table_headers(visible)
     fenced = without_verdict_table_headers(fenced)
     substantive = [line for line in visible if line.strip()]
-    if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
+    if any(
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+            for line in fenced
+        ):
         return False
     return all(
         positive_line(line)
@@ -761,7 +766,12 @@ def comment_body_ready(body: str) -> bool:
     substantive = [line for line in visible if line.strip()]
     if not substantive or not positive_line(substantive[0]):
         return False
-    if any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced):
+    if any(
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+            for line in fenced
+        ):
         return False
     first_seen = False
     for line in visible:
@@ -832,7 +842,12 @@ def comment_body_negative(body: str) -> bool:
     # neutral chatter.
     if neutral_first and any(negation_hit(line) for line in visible if line.strip()):
         return True
-    return any(STATE_TOKEN.search(line) or negation_hit(line) for line in fenced)
+    return any(
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+            for line in fenced
+        )
 
 
 # #14728: the objection space cannot be enumerated, so a later same-login body
@@ -1223,7 +1238,11 @@ def body_refusal_reason(body: str, head: str) -> str | None:
         )
     fenced_lines = without_verdict_table_headers(fenced)
     for line in fenced_lines:
-        if STATE_TOKEN.search(line) or negation_hit(line):
+        if (
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+        ):
             return (
                 "a line inside a code fence states a disposition or a blocker or "
                 f"retraction phrase: '{_snippet(line)}'"
@@ -1293,7 +1312,11 @@ def negative_reason(body: str, head: str) -> str:
                 f"'{_snippet(line)}'"
             )
     for line in fenced:
-        if STATE_TOKEN.search(line) or negation_hit(line):
+        if (
+            STATE_TOKEN.search(line)
+            or BARE_STATE_TOKEN.search(line)
+            or negation_hit(line)
+        ):
             return (
                 "a line inside a code fence states a disposition or a blocker or "
                 f"retraction phrase: '{_snippet(line)}'"
@@ -1876,6 +1899,11 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\n**INCOMPLETE**", False),
         ("SOURCE_REVIEW_READY\nBLOCK\nNo blocker found.", False),
         ("SOURCE_REVIEW_READY\nINCOMPLETE\nNo blocker found.", False),
+        # #15980: a fenced uppercase token is a disposition; a fenced lowercase
+        # "block" is ordinary prose and still admits.
+        ("SOURCE_REVIEW_READY\n```\nBLOCK\n```", False),
+        ("SOURCE_REVIEW_READY\n```\nINCOMPLETE\n```", False),
+        ("SOURCE_REVIEW_READY\n```\nBLOCK: no\n```", False),
         # #15980: the Rust carrier's changed row, mirrored here.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
