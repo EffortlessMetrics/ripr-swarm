@@ -866,10 +866,15 @@ fn persist_before_repair_attempt(
         // #16186: name the command resolved for the proposed file's own
         // package and target when it can be established.
         focused_result_requirement: policy.new_test_proposal.as_ref().map(|proposal| {
-            let resolved = crate::app::test_stub::focused_result_run_command(root, &proposal.file);
+            let resolved = (proposal.kind
+                == crate::analysis::new_test_target::NewTestKind::Integration)
+                .then(|| crate::app::test_stub::focused_result_run_command(root, &proposal.file))
+                .flatten();
             crate::app::focused_run::proposal_focused_result_requirement(
                 "This attempt",
-                resolved.as_deref(),
+                resolved
+                    .as_deref()
+                    .map(|command| (command, proposal.file.as_str())),
             )
         }),
     };

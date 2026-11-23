@@ -1117,6 +1117,9 @@ the start names the exact command that produces FILE:
 It runs through the member's own manifest, so a workspace member that is not a
 default member is still the package that runs, and it carries no test-name
 filter, because the name the agent writes may differ from the suggested one.
+The resolved requirement also names the exact `test_file` value the result
+must carry (the proposal's file as committed), and resolution applies only to
+an integration proposal.
 An inline test or an unresolved target keeps the generic form, and so do
 `ripr agent status` and the gate's missing-result refusal, which do not
 resolve the target.

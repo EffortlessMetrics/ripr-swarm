@@ -3054,11 +3054,29 @@ fn a_member_proposal_names_a_focused_run_that_finishes() -> Result<(), String> {
         "cargo +nightly test --manifest-path {} --test discounted_total -- -Z unstable-options --format json",
         manifest_path.display()
     );
+    // Run the command exactly as the requirement prints it (quoting
+    // included), not a copy rebuilt here.
+    let printed = requirement
+        .split('`')
+        .find(|part| part.starts_with("cargo +nightly test "))
+        .ok_or_else(|| format!("no printed command: {requirement}"))?
+        .to_owned();
+    let plain_path = !manifest_path
+        .display()
+        .to_string()
+        .contains([' ', '\'', '"', '$', '\\']);
+    if plain_path {
+        assert_eq!(printed, expected, "{requirement}");
+    }
     assert!(
-        requirement.contains(&format!("`{expected}`")),
+        printed.ends_with(" --test discounted_total -- -Z unstable-options --format json"),
         "{requirement}"
     );
     assert!(!requirement.contains("PACKAGE"), "{requirement}");
+    assert!(
+        requirement.contains(&format!("its test_file is `{MEMBER_PROPOSED_FILE}`")),
+        "{requirement}"
+    );
     let attempt = Attempt {
         root_arg: root.display().to_string(),
         id: block["attempt_id"]
@@ -3068,7 +3086,7 @@ fn a_member_proposal_names_a_focused_run_that_finishes() -> Result<(), String> {
     };
 
     write(root, MEMBER_PROPOSED_FILE, NEW_TEST)?;
-    let stable = expected.replacen("cargo +nightly test", "cargo test", 1);
+    let stable = printed.replacen("cargo +nightly test", "cargo test", 1);
     let target_dir = root.with_file_name(format!(
         "{}-target",
         root.file_name()
@@ -3081,6 +3099,18 @@ fn a_member_proposal_names_a_focused_run_that_finishes() -> Result<(), String> {
         .current_dir(root)
         .env("RUSTC_BOOTSTRAP", "1")
         .env("CARGO_TARGET_DIR", &target_dir)
+        // A nested build of the fixture: offline, without the outer build's
+        // flags, wrappers or coverage instrumentation.
+        .env("CARGO_NET_OFFLINE", "true")
+        .env("CARGO_TERM_COLOR", "never")
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .env_remove("CARGO_BUILD_RUSTFLAGS")
+        .env_remove("RUSTC_WRAPPER")
+        .env_remove("RUSTC_WORKSPACE_WRAPPER")
+        .env_remove("RUSTDOCFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTDOCFLAGS")
+        .env_remove("LLVM_PROFILE_FILE")
         .output()
         .map_err(|error| format!("spawn focused run: {error}"));
     let _ = fs::remove_dir_all(&target_dir);

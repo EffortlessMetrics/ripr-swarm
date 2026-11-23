@@ -510,23 +510,23 @@ const PROPOSAL_FOCUSED_RESULT_FILE_SHAPE: &str = "FILE is a JSON document saved 
 /// `subject` (an attempt id in backticks, or "this attempt").
 ///
 /// `resolved_run` is the command resolved for the proposed file's own package
-/// and target (#16186, from `app::test_stub::focused_result_run_command`).
+/// and target (#16186, from `app::test_stub::focused_result_run_command`),
+/// with the proposed file exactly as the result's `test_file` must spell it.
 /// When present it replaces the generic placeholder form; `None` (an inline
 /// test, an unresolved target, or a surface without the proposed file) keeps
 /// the generic guidance.
 pub(crate) fn proposal_focused_result_requirement(
     subject: &str,
-    resolved_run: Option<&str>,
+    resolved_run: Option<(&str, &str)>,
 ) -> String {
-    let how_to = match resolved_run {
-        Some(command) => format!(
-            "run the new test file's target on a nightly toolchain (`{command}`) and pass its events with `--test-result FILE`"
+    match resolved_run {
+        Some((command, test_file)) => format!(
+            "{subject} follows a new-test proposal, so finishing needs a focused test result; run the new test file's target on a nightly toolchain (`{command}`) and pass its events with `--test-result FILE`. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}; its test_file is `{test_file}`"
         ),
-        None => PROPOSAL_FOCUSED_RESULT_HOW_TO.to_string(),
-    };
-    format!(
-        "{subject} follows a new-test proposal, so finishing needs a focused test result; {how_to}. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}"
-    )
+        None => format!(
+            "{subject} follows a new-test proposal, so finishing needs a focused test result; {PROPOSAL_FOCUSED_RESULT_HOW_TO}. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}"
+        ),
+    }
 }
 
 /// The full-proof finish gate for an attempt that follows a new-test proposal
