@@ -79,7 +79,11 @@ diverging statement: a removed single-line `None => return R,` arm and the
 added `return R;` seed no probe on either side when the `match` scrutinee and
 the `let ... else` scrutinee are the same text, the added statement is the
 first added line after its opener, and each text occurs exactly once in the
-window (#14428). A changed scrutinee, a changed return value, a multi-line
+window (#14428). The added pattern must use the unqualified spelling
+`Some(...)`, with no space before the opening parenthesis. An added
+`let None = option else {` diverges on the opposite variant. The pairing
+also leaves `Option::Some(x)` and `Some (x)` unpaired. All three forms keep
+both probes (#14498). A changed scrutinee, a changed return value, a multi-line
 `None => { .. }` arm, or a repeated statement keeps both probes. A pattern
 that itself holds ` = ` inside a string literal (`let Some("a = b") = s else
 { .. }`) is not split from its scrutinee, so it fails closed and both probes
@@ -164,11 +168,12 @@ that item must equal the current one with the tail line restored. A `cfg`
 on the function, an enclosing item, the file or a `mod` declaration on its
 chain, or any `#[path]` module declaration, refuses, so a swapped module,
 `#[cfg]` twin or `#[path]` target cannot supply another function's body.
-Because that identity does not see a `cfg` outside `mod` declarations
-(#14952), the reading also refuses when the index holds another function of
-the owner's name, or any indexed file renames an import to that name, calls
-`include!`, or defines a `macro_rules!` that may emit a module or such a
-function.
+The identity also reads the gates outside `mod` declarations and the
+function's own body attributes (see "Base-owner cfg gates" below). As a
+second layer, the reading also refuses when the index holds another function
+of the owner's name, or any indexed file renames an import to that name,
+calls `include!`, or defines a `macro_rules!` that may emit a module or such
+a function.
 The parameter and return types must be the same unshadowed primitive.
 `!` differs from its operand at every input, so the ordinary infection
 reading applies. `-a` and `a` agree at `0`, so infection reads `yes` only when
@@ -197,6 +202,29 @@ nested macro or a control-flow keyword refuses too, even when the call would
 run (`assert!(true && f(5) == 5)`), because the parser does not read inside
 macro input (#14968).
 
+A predicate whose `if` (or `else if`) condition became the literal `true` or
+`false` reads its infection from the two owner versions (#14816), but only
+for a free owner when, inside the owner's span, the diff replaces exactly the
+condition's line and nothing else, and the two lines differ only by that one
+condition: a bare bool literal on the current side, and on the base side a
+single-line condition that is not itself a bool literal and holds no `let`
+(an `if let` pattern binds and tests, which a literal cannot stand in for). A
+condition spanning lines, two conditions starting on one line, or an
+attribute in the owner's body refuses. The base-side item must pass the same
+base-owner identity the unary-tail reading uses (same function, not
+`cfg`-gated, equal to the current item with the line restored), and the
+reading refuses when another function, import rename, `include!` or
+`macro_rules!` may answer the owner's name. The infection stage then folds
+both versions at the related tests' literal calls: `yes` when an exact
+assertion pins a call whose folded result differs, or every owner call in
+every related test that names it is such a call; `weak` when only a
+relational or inequality assertion separates them, or every asserted input
+already took the forced branch on the base side; `unknown` when the fold
+cannot read an argument, the condition or the body, or the workspace rebinds
+an assertion macro. An ignored or `should_panic` test supplies no reaching
+call. Infection credit does not confirm the predicate's reveal pairing, so an
+exact pin at a separating input stays `weakly_exposed`, not `exposed`.
+
 A removed line that is one bare literal (a number, `true`/`false`, or one
 quoted string or char, optionally followed by `,` or `;`) adds no removed-side
 `static_unknown` probe when its positional replacement in the same block
@@ -222,6 +250,106 @@ tail (`.map(|x| {\n let y = x + 1;\n y\n})`) reads as the same statement
 in a function body does, not as the returned value. The lexical fallback
 that classifies such a line still reads its text the way it reads any
 function-body statement (a `?` reads `error_path`).
+
+### Base-owner cfg gates (#15003, #14952)
+
+A claim that compares a changed function's old and new body reads the
+base-side item through the shared base-owner identity, which reports whether
+a `cfg` or `cfg_attr` may compile the function out or swap it for a twin. A
+claim that sees that gate does not credit the function, so a test that runs a
+twin, or a function that no build compiles, never reads `exposed`,
+`weakly_exposed` or `reachable_unrevealed` with propagation credited from the
+changed body. The identity reports a gate when any of these holds:
+
+- a `cfg`/`cfg_attr` on the function, an enclosing item or the owner file, or
+  an inner attribute of the function's own body (`fn f() { #![cfg(..)] .. }`),
+  which Rust applies to the function itself (#15003);
+- a `cfg`/`cfg_attr` on a `mod` declaration named like a component of the
+  owner file's path, on an item enclosing one or on its declaring file, or any
+  `#[path]` declaration;
+- a `use` item (not emitted by a macro) with its own `cfg`/`cfg_attr`, or a
+  `pub` one under a gated item or file, whose leaf or rename is the owner's
+  name, a name in the self type or trait of an enclosing `impl`, or an
+  enclosing `trait` or inline module's name (`pub use real::Thing;` beside
+  `pub use fake::Thing;` swaps `Thing::ready`), or which may alias a module
+  named like a component of the owner's path, enclosing inline modules
+  included: by its last segment (`use a::imp;`), a rename or the segment it
+  renames (`use real as imp;`, `use crate::{real as imp};`), or any segment
+  of a glob or `self` import (`pub use crate::real_impl::*;`; #14952,
+  #15035). An intermediate segment of another leaf only names the module
+  that leaf lives in (`#[cfg(test)] use crate::real::Helper;` does not gate
+  `src/real.rs`). Two gated imports are not gates. One rooted at a sysroot
+  crate (`std`, `core`, `alloc`, `proc_macro`, `test`) in a module whose
+  items cannot shadow that root (no item, `use`, `extern crate`, non-sysroot
+  glob or macro call naming it) names that crate, unless an `extern crate ..
+  as` anywhere in the workspace (an item, or macro tokens spelling one)
+  renames a crate to a sysroot name (`extern crate self as std;`). A private
+  `use super::name;` directly inside a `#[cfg(test)]` module in which
+  nothing else can bind `name` (no other `use` binding it, no glob but
+  `super::*`, no item or `extern crate` naming it, and no module-level macro
+  call, which may emit the import) binds `name` to the parent's item or to
+  nothing. Every other root (`crate`, `self`, `super`, a module or any other
+  crate name) counts as crate-local, since telling a third-party crate from a
+  workspace package would need the manifests;
+- the owner file is not a crate root and no out-of-line `mod` declaration is
+  named like its module (or no module is named like a directory above it),
+  as for a file reached only through `include!` (#14952). A
+  crate root is `src/lib.rs`, `src/main.rs`, a file directly under `src/bin`,
+  `tests`, `examples` or `benches`, or such a directory's `x/main.rs`; its
+  `x/mod.rs` (`tests/common/mod.rs`) is module `x` of a sibling root, and a
+  library's `src/bin.rs` is module `bin`, and a root below another `src`
+  directory (`src/a/src/lib.rs`) reads as a module named by its stem when
+  some module named `src` is declared (#15035);
+- an `include!` (a call whose macro path ends in `include`, a comment before
+  its `!` included) whose literal path, resolved against the including file's
+  directory, is the owner file (compared case-insensitively); a literal that cannot be resolved (absolute, or climbing above
+  the including path) gates the owner file's stem by name. An `include!` of
+  one `concat!` call gates, by name, the stem of the `.rs` path `concat!`'s
+  trailing string literals spell, joined (`"/src/re", "al.rs"` spells
+  `/src/real.rs`), and every owner otherwise: any other macro argument
+  (`include!(src_file!("unused.rs"))`), arguments not ending in a literal, a
+  literal with escapes, or a run after another argument that spells no `/`
+  (#15035). A bare `concat!` is trusted only while no file of its package
+  (any file once one mentions `macro_export`, or once a `#[path]` may move a
+  file between packages) may bind a macro named `concat` (`macro_rules! concat`, `macro concat`, `as concat`
+  in an item or macro tokens, a `use` leaf named `concat`, or any
+  `#[macro_use] extern crate`; a glob bringing one in is not read), and a
+  `core::`/`std::` qualified one only while nothing binds `core` or `std`
+  (an `extern crate .. as`, a `use` leaf or rename, or a `mod core`);
+- a `macro_rules!` transcriber or `macro` body that may emit an out-of-line module (`mod`
+  followed by a name and no `{` body), an `include!` or a `#[path]`
+  (`path =`), and the owner file is not a crate root of the package that
+  defines the macro (the directories above its anchor), or of any package
+  when it is exported (`#[macro_export]`, or a `macro` with a visibility); a
+  macro emitting only inline `mod name { .. }` modules is not a gate.
+
+A diff that adds or removes any of these refuses the identity; touching an
+attribute of an item enclosing a gated `use` or `include!` (removing
+`#[cfg(not(test))]` from a `mod api` whose `pub use` is unchanged) counts.
+Two changes are narrowed to what the unchanged reading gates: a touched
+sysroot rename refuses only owners a gated sysroot-rooted `use` (either side)
+names, and a touched module-emitting macro does not refuse a crate-root owner
+(#15035). Names approximate the module chain, so a name can only gate more
+owners than the exact chain would, except for these name-coincidence limits:
+a module of the same name in another directory satisfies the declaration
+check for a file reached only through a renamed `include!`, or only through a
+`mod` inside a macro call the reading cannot expand (`cfg_if::cfg_if!`); and
+a package scope is read from the path layout (a non-exported macro reaches
+every target of its package, no other). Not read: a module or
+re-export emitted by a procedural macro; a private `use` gated only through
+its enclosing module; a gated `use` a macro's tokens emit (a
+`cfg_if::cfg_if!` block, a `macro_rules!` emitting a gated `pub use`, an
+import a macro emits in the test module); and a
+gated alias of a module that only re-exports the owner (`#[cfg(not(test))]
+use api as imp;`), since only the owner's own chain is matched (#15037);
+a gated glob of such a re-export facade module (#15037); an `include!` whose
+path a forwarding macro passes through its arguments (a macro-emitted item);
+and an `include!` through a renamed macro (`use core::include as inc;`),
+whose owner file is still gated when no `mod` declares it. These limits can
+credit on either tail path: the unary-tail reading's own refusals catch some
+(a `cfg_if!` block beside a stand-in) but not, for example, a
+`macro_rules!`-emitted gated `pub use` beside a stand-in that is not a
+function.
 
 ## Required Evidence
 
@@ -390,6 +518,13 @@ repeats byte for byte, and a malformed pin refuses the run), and
 the human digest's one-time first-run legend (#10481), which is intended
 state. Rerun commands carry the absolute root, so output also differs by
 checkout location (#14230).
+
+The same pin sets a receipt's `written_at` and the report commands'
+`generated_at`, which are otherwise the only bytes that differ between two
+writes of one receipt or report; a malformed pin refuses those commands
+before anything is written (#14230). The pin never moves a deadline
+judgment: `ripr zero status`, which judges review deadlines against its own
+stamp, stays on the current time.
 
 ## Classifications
 
@@ -1064,6 +1199,7 @@ Fixture coverage:
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
 - `a_manual_let_else_rewrite_pairs_its_diverging_statement`
 - `manual_let_else_pairing_is_fail_closed`
+- `manual_let_else_pairing_requires_an_unqualified_adjacent_some_pattern`
 - `a_reversed_let_else_pattern_never_pairs`
 - `a_neighbouring_functions_arm_never_pairs`
 - `a_scrutinee_with_an_equals_sign_still_pairs`
@@ -1116,6 +1252,21 @@ closer on or inside a function span (including its `end_line`) keeps its probe
 (#4216), and so does any file with no indexed function or no file facts. The
 helper checks the line's position, not the kind of item it closes. The removed
 side is unchanged.
+
+A closers-only added line that is its function's `end_line` also seeds no probe
+when Git's diff slider moved it (#15270). This happens when an item such as
+`agent stub --write`'s test module is appended right after a function. Git then
+reports the function's unchanged `}` as the first added line and leaves the
+appended item's identical closer as context. All of the following must hold:
+
+- the line starts a contiguous added run of more than one line;
+- the line right after that run is unchanged;
+- that context line is byte-identical to the added line, ignoring only a CRLF
+  carriage return;
+- that context line is an item-level closer in the sense above.
+
+Any other function-end closer keeps its probe. That includes an indented
+method closer followed by its `impl`'s closer, and a closer whose run has a gap.
 
 A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
 no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header

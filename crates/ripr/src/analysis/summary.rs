@@ -68,6 +68,7 @@ mod tests {
             id: format!("finding-{}", class.as_str()),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(format!("probe-{}", class.as_str())),
                 location: SourceLocation::new("src/lib.rs", 1, 1),
                 owner: None,

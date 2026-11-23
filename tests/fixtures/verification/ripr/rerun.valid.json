@@ -1,0 +1,219 @@
+{
+  "schema_version": "ripr-targeted-rerun-v1",
+  "state": "current_state_only",
+  "selector": {
+    "kind": "canonical_gap",
+    "canonical_gap_id": "gap:4b5fdc1a2a157b0d",
+    "gap_ledger": "gap-ledger.json",
+    "matched_record_count": 1,
+    "recomputed_scope_count": 1,
+    "selected_test_count": 0,
+    "direct_call_names": []
+  },
+  "cache": {
+    "schema_version": "1.62",
+    "reuse_state": "reused_file_facts",
+    "file_fact_status": "hits_3_misses_0_corrupt_0_store_errors_0",
+    "hits": 3,
+    "misses": 0,
+    "corrupt_ignored": 0,
+    "stores": 0,
+    "store_errors": 0,
+    "store_failures": [],
+    "store_failures_dropped": 0,
+    "recomputation_reasons": [
+      "selected_gap_scopes_recomputed"
+    ],
+    "invalidation_status": "not_available",
+    "input_fingerprint": {
+      "schema_version": "1.184",
+      "analyzer_version": "0.11.0+b30a0f391be3934e8bab3f216b7b99ec5bdf5f9b+languages:rust=1,typescript=1,python=1,perl=0",
+      "workspace_root_hash": "0584ec1e6ca64f7a",
+      "files_content_hash": "d5a31f7aa63a2260",
+      "cfg_features_hash": "cbf29ce484222325",
+      "config_hash": "881255e2f498d9f2",
+      "test_intent_hash": "cbf29ce484222325",
+      "suppressions_hash": "cbf29ce484222325",
+      "workspace_manifests_hash": "c4952d190f24329f",
+      "lockfile_hash": "0b74165b4cea4f09",
+      "toolchain_hash": "833996a486514c49",
+      "seam_limit_key": "limit_10000",
+      "selector_ledger_hash": "2e3d452ca5625b78",
+      "graph_provenance": {
+        "package_graph_status": "complete",
+        "package_graph_hash": "31a77f60e00d5af1",
+        "package_graph_detail": null,
+        "feature_graph_status": "complete",
+        "feature_graph_hash": "e8a716fd68a93295",
+        "feature_graph_detail": null,
+        "external_dependency_graph_status": "unavailable",
+        "external_dependency_graph_detail": "external dependency metadata is not resolved; no network access was used",
+        "path_dependency_graph": {
+          "status": "complete",
+          "detail": "no path dependencies were declared in the scanned manifests; the adjacency has no nodes",
+          "edge_count": 0,
+          "connected_edge_count": 0,
+          "adjacency": {}
+        }
+      }
+    }
+  },
+  "seams": [
+    {
+      "canonical_gap_id": "gap:4b5fdc1a2a157b0d",
+      "seam_id": "67fc764ba37d77bd",
+      "file": "src/lib.rs",
+      "line": 2,
+      "owner": "src/lib.rs::discounted_total",
+      "static_class": "weakly_gripped",
+      "repair_route_readiness": {
+        "state": "ready",
+        "seam_id": "67fc764ba37d77bd",
+        "canonical_gap_id": "gap:4b5fdc1a2a157b0d",
+        "required_evidence": [
+          "producer-owned missing discriminator fact: boundary_value",
+          "safe test target"
+        ],
+        "present_evidence": [
+          "producer-owned missing discriminator fact: boundary_value",
+          "safe test target"
+        ],
+        "missing_evidence": [],
+        "target_selection": {
+          "existing": {
+            "symbol_id": "tests/pricing.rs::far",
+            "file": "tests/pricing.rs",
+            "line": 3,
+            "test_kind": "integration",
+            "relation": "direct_owner_call",
+            "provenance": "rust_index_function",
+            "workspace_identity": "sha256:337b148ee8ba7e58d7fbdf838c53b6f315773b265238908aea3e7add0b227876",
+            "currentness": "current"
+          }
+        },
+        "test_target": {
+          "symbol_id": "tests/pricing.rs::far",
+          "file": "tests/pricing.rs",
+          "line": 3,
+          "test_kind": "integration",
+          "relation": "direct_owner_call",
+          "provenance": "rust_index_function",
+          "workspace_identity": "sha256:337b148ee8ba7e58d7fbdf838c53b6f315773b265238908aea3e7add0b227876",
+          "currentness": "current"
+        },
+        "proposed_oracle": "ExactValue",
+        "current_oracle": "ExactValue",
+        "authority_boundary": "analysis/producer-owned-repair-route-readiness"
+      },
+      "related_tests": [
+        {
+          "test_name": "far",
+          "file": "tests/pricing.rs",
+          "line": 3,
+          "oracle_kind": "exact_value",
+          "oracle_strength": "strong",
+          "evidence_summary": "exact value assertion",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "discount_threshold (equality boundary)",
+          "reason": "observed values do not include the equality-boundary case for this predicate"
+        }
+      ]
+    }
+  ],
+  "route": {
+    "verify_commands": [
+      "cargo test far"
+    ],
+    "receipt_command": "ripr agent receipt --json",
+    "verify_command_specs": [
+      {
+        "schema_version": "1",
+        "command_id": "ripr:agent:verify",
+        "role": "verify",
+        "execution_mode": "direct",
+        "program": "ripr",
+        "args": [
+          "agent",
+          "verify",
+          "--root",
+          ".",
+          "--before",
+          "target/ripr/workflow/before.repo-exposure.json",
+          "--after",
+          "target/ripr/workflow/after.repo-exposure.json",
+          "--json"
+        ],
+        "working_directory": ".",
+        "env_set": [],
+        "env_passthrough": [],
+        "environment": "clean",
+        "stdin": "null",
+        "timeout_ms": 120000,
+        "cancellation": "allowed",
+        "network": "forbidden",
+        "expected_result_parser": "declared_json",
+        "expected_exit_codes": [
+          0
+        ],
+        "expected_writes": [],
+        "cost_class": "unknown",
+        "platforms": [
+          "linux",
+          "macos",
+          "windows"
+        ],
+        "human_display": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
+        "authority_boundary": "verification_route_only"
+      }
+    ],
+    "receipt_command_spec": {
+      "schema_version": "1",
+      "command_id": "ripr:agent:receipt",
+      "role": "receipt",
+      "execution_mode": "direct",
+      "program": "ripr",
+      "args": [
+        "agent",
+        "receipt",
+        "--root",
+        ".",
+        "--verify-json",
+        "target/ripr/workflow/agent-verify.json",
+        "--seam-id",
+        "67fc764ba37d77bd",
+        "--json",
+        "--out",
+        "target/ripr/reports/agent-receipt.json"
+      ],
+      "working_directory": ".",
+      "env_set": [],
+      "env_passthrough": [],
+      "environment": "clean",
+      "stdin": "null",
+      "timeout_ms": 120000,
+      "cancellation": "allowed",
+      "network": "forbidden",
+      "expected_result_parser": "declared_json",
+      "expected_exit_codes": [
+        0
+      ],
+      "expected_writes": [
+        "target/ripr/reports/agent-receipt.json"
+      ],
+      "cost_class": "unknown",
+      "platforms": [
+        "linux",
+        "macos",
+        "windows"
+      ],
+      "human_display": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 67fc764ba37d77bd --json --out target/ripr/reports/agent-receipt.json",
+      "authority_boundary": "receipt_route_only"
+    }
+  },
+  "authority_boundary": "static evidence only; no before snapshot was supplied, so gap movement is not inferred"
+}

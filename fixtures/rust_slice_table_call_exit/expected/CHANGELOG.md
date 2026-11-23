@@ -399,3 +399,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — rust_slice_table_call_exit (32)
+
+Reason:
+RIPR-SPEC-0224: report no established path for an assertion-free file-proximity row (#14808).
+
+Command:
+`cargo xtask goldens bless rust_slice_table_call_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`

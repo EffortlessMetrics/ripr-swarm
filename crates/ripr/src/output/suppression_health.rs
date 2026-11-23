@@ -284,6 +284,17 @@ pub(crate) fn render_suppression_health_markdown(report: &SuppressionHealthRepor
     out
 }
 
+/// Config-error findings (an unreadable or malformed manifest), for the CLI
+/// refusal of an explicitly named manifest.
+pub(crate) fn suppression_health_config_errors(report: &SuppressionHealthReport) -> Vec<&str> {
+    report
+        .findings
+        .iter()
+        .filter(|finding| finding.severity == "config_error")
+        .map(|finding| finding.message.as_str())
+        .collect()
+}
+
 pub(crate) fn suppression_health_status(report: &SuppressionHealthReport) -> &str {
     &report.status
 }

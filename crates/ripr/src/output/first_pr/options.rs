@@ -117,7 +117,7 @@ Options:
   --agent-packet <path>      Agent handoff JSON. Defaults to target/ripr/workflow/agent-packet.json.
   --gate-decision <path>     Gate-decision JSON. Defaults to target/ripr/reports/gate-decision.json.
   --receipts-dir <path>      Directory of repair receipts (before/after records). Defaults to target/ripr/receipts.
-  --output-dir <path>           Output directory. Defaults to target/ripr/reports.
+  --output-dir <path>        Output directory. Defaults to target/ripr/reports.
   --check                    Verify the existing start-here page is up to date; write nothing.
   --run-chain                Run the commands for missing reports first, each only when its
                              report is missing and each exactly the command first-pr prints,

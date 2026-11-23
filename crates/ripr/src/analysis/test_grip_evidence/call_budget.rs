@@ -63,6 +63,7 @@ pub(super) fn withhold(evidence: &mut TestGripEvidence, saturated: bool) -> bool
     ] {
         if matches!(stage.state, StageState::No | StageState::Weak) {
             *stage = StageEvidence::new(StageState::Unknown, Confidence::Low, summary(label));
+            stage.static_limit_kind = Some(LIMIT);
             changed = true;
         }
     }
@@ -76,6 +77,7 @@ pub(super) fn withhold(evidence: &mut TestGripEvidence, saturated: bool) -> bool
                 Confidence::Low,
                 summary("Discrimination"),
             );
+            evidence.discriminate.static_limit_kind = Some(LIMIT);
         }
         changed = true;
     }
@@ -90,6 +92,7 @@ pub(super) fn withhold(evidence: &mut TestGripEvidence, saturated: bool) -> bool
             &mut evidence.discriminate,
         ] {
             if matches!(stage.state, StageState::Unknown | StageState::Opaque) {
+                stage.static_limit_kind = Some(LIMIT);
                 stage.summary = format!("{}; {}", stage.summary, clause());
                 return true;
             }
@@ -106,7 +109,12 @@ fn stage_names_limit(evidence: &TestGripEvidence) -> bool {
         &evidence.discriminate,
     ]
     .iter()
-    .any(|stage| stage.summary.contains(LIMIT.as_str()))
+    .any(|stage| {
+        stage.static_limit_kind.map_or_else(
+            || stage.summary.contains(LIMIT.as_str()),
+            |kind| kind == LIMIT,
+        )
+    })
 }
 
 #[cfg(test)]

@@ -44,9 +44,10 @@ Options:
                    unknown flag prints that document beside its exit 2
                    stderr prose.
   --quiet          Drop the start's progress narration and `wrote <path>`
-                   lines from stderr. Refusal prose, the attempt id and the
-                   next command stay. `RIPR_QUIET` (any value except empty,
-                   `0` or `false`) does the same.
+                   lines from stderr. Refusal prose, the attempt id, the
+                   next command and the warning to write output outside the
+                   repo stay. `RIPR_QUIET` (any value except empty, `0` or
+                   `false`) does the same.
 
 Without an item, repair starts only when exactly one repair-eligible gap
 is visible under the selected root. Several eligible gaps print a bounded
@@ -431,6 +432,14 @@ fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
     CommandError::Decision(code.message_with_stderr_line(&message))
 }
 
+/// [`typed_decision`] for a refusal whose prose names one next command the
+/// caller composed from the bound root; the document carries it as `next`
+/// (#15260).
+fn typed_decision_with_next(code: RepairRefusalCode, message: String, next: &str) -> CommandError {
+    crate::cli::usage_refusal::note_typed_refusal_with_next(code, message.trim_end(), next);
+    CommandError::Decision(code.message_with_stderr_line(&message))
+}
+
 /// [`typed_decision`] for a selection refusal: the document also carries the
 /// choice commands the caller composed from the typed ids it just listed on
 /// stderr (#14980).
@@ -457,6 +466,17 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     )
     .map_err(|message| typed_decision(RepairRefusalCode::UnanchoredRoot, message))?;
     ensure_command_root(&options.root, "repair")?;
+    // #15488: a repair attempt starts only at the exact Git top-level, so a
+    // start decided under a subdirectory root would refuse at the before
+    // phase. Refuse here, before the selector reads or writes anything,
+    // with the cage's own reason. (The app-level selector stays usable on
+    // non-attempt roots; this façade is where a start becomes an attempt.)
+    if let Some(refusal) = crate::edit_cage::subdirectory_attempt_root_refusal(&options.root) {
+        return Err(typed_decision(
+            RepairRefusalCode::SubdirectoryRoot,
+            format!("repair start refused: {refusal}; rerun `ripr repair` from the Git top-level"),
+        ));
+    }
     let mut unscoped: Option<UnscopedSelection> = None;
     let seam_id = match options.item.as_deref() {
         Some(item) => {
@@ -814,9 +834,16 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                     .map_err(CommandError::Failure)?;
                 print!("{rendered}");
             } else {
+                // A short summary, not the whole status page (#15282 item 7):
+                // `ripr status --attempt` keeps the full page.
+                let root = crate::agent::loop_commands::shell_arg(
+                    &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
+                );
                 print!(
                     "{}",
-                    crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+                    crate::app::agent_status::complete_summary::render_already_complete_summary(
+                        &report, &root
+                    )
                 );
             }
             eprintln!(
@@ -921,13 +948,15 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(typed_decision(
+            let next = format!("ripr status --root {root}");
+            Err(typed_decision_with_next(
                 RepairRefusalCode::NoCurrentAttempt,
                 format!(
-                    "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
+                    "no current attempt to continue under {root}: {}. Next: `{next}`; {}",
                     none_available_detail(prepared, terminal, trust_bound, &root),
                     start_with_repair_clause(&options.root, &root)
                 ),
+                &next,
             ))
         }
         ContinueSelection::Ambiguous { candidates } => {

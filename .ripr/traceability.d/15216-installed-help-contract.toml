@@ -1,0 +1,11 @@
+# Registers the installed-candidate help contract (#15216 item 5) under
+# RIPR-SPEC-0134: the rendered-help harness leaves the published package and
+# runs against the executable installed from the qualified archive.
+[[extend]]
+id = "RIPR-SPEC-0134"
+tests = [
+  "xtask/src/reports/release/candidate_harness/archive/help_contract.rs::help_contract_runs_every_declared_case_against_the_bound_binary",
+  "xtask/src/reports/release/candidate_harness/archive/help_contract.rs::help_contract_refuses_ignored_cases_and_other_bindings",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::installed_candidate_runs_the_admitted_help_harness_outside_its_package",
+  "xtask/tests/ripr_public_guide_contract.rs::help_harness_stays_out_of_the_package_and_runs_every_case_standalone",
+]

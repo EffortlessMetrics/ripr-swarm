@@ -1,0 +1,219 @@
+//! #15183: an assertion the test spells as `assert_eq!` grips a seam only
+//! when that name still means the standard macro at the assertion. A
+//! test-local `macro_rules! assert_eq` that compares nothing must not read as
+//! a strong oracle on any seam of the owner, in the full and the compact grip
+//! paths alike; the same test with the standard macro keeps its credit. A
+//! `macro_rules! assert_eq` defined after the assertions in the test body
+//! does not rebind them (Rust textual macro scope starts after the
+//! definition), so they still run the standard macro and keep their credit.
+
+use super::*;
+
+const OWNER: &str = "pub enum Size {\n    Small,\n    Medium,\n    Large,\n}\n\n\
+pub fn price_cents(size: Size) -> u32 {\n    match size {\n        Size::Small => 300,\n        \
+Size::Medium => 450,\n        Size::Large => 500,\n    }\n}\n";
+
+const REBOUND: &str = "    macro_rules! assert_eq {\n        \
+($f:ident ( $($arg:tt)* ), $expected:expr) => {\n            \
+let _ = $f(Size::Medium);\n        };\n    }\n\n";
+
+const ASSERTIONS: &str = "        assert_eq!(price_cents(Size::Small), 300);\n        \
+assert_eq!(price_cents(Size::Large), 500);\n";
+
+/// The same do-nothing `assert_eq`, defined inside the test body.
+const LATE_REBOUND: &str = "        macro_rules! assert_eq {\n            \
+($f:ident ( $($arg:tt)* ), $expected:expr) => {\n                \
+let _ = $f(Size::Medium);\n            };\n        }\n";
+
+/// Where the test module places the `assert_eq` definition, if anywhere.
+#[derive(Clone, Copy)]
+enum Binding {
+    Standard,
+    BeforeTest,
+    AfterAssertions,
+}
+
+type SeamReading = (String, [TestGripEvidence; 2], [SeamGripClass; 2]);
+
+fn match_seam_readings(binding: Binding) -> Result<Vec<SeamReading>, String> {
+    let (before, after) = match binding {
+        Binding::Standard => ("", ""),
+        Binding::BeforeTest => (REBOUND, ""),
+        Binding::AfterAssertions => ("", LATE_REBOUND),
+    };
+    let source = format!(
+        "{OWNER}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{before}    #[test]\n    \
+fn small_and_large_prices() {{\n{ASSERTIONS}{after}    }}\n}}\n"
+    );
+    // The fixture places the definition where the case says, and keeps the
+    // assertions the oracle reads, before any oracle claim is read.
+    let definition = source
+        .find("macro_rules! assert_eq")
+        .map(|at| source[..at].lines().count());
+    let first_assertion = source
+        .find("assert_eq!(price_cents")
+        .map(|at| source[..at].lines().count());
+    match binding {
+        Binding::Standard => assert_eq!(definition, None),
+        Binding::BeforeTest => {
+            assert!(
+                definition.is_some() && definition < first_assertion,
+                "{source}"
+            )
+        }
+        Binding::AfterAssertions => {
+            assert!(
+                definition.is_some() && definition > first_assertion,
+                "{source}"
+            )
+        }
+    }
+    let file = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[(file.clone(), source.as_str())])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&file), &index);
+    let context = CompactGripContext::new(&index);
+    let selected: Vec<SeamReading> = seams
+        .iter()
+        .filter(|seam| seam.kind() == SeamKind::MatchArm)
+        .map(|seam| {
+            let full = evidence_for_seam(seam, &index);
+            let compact = compact_evidence_for_seam(seam, &context);
+            let classes = [classify_seam(seam, &full), classify_seam(seam, &compact)];
+            (seam.expression().to_string(), [full, compact], classes)
+        })
+        .collect();
+    // The fixture builds the four seams the issue reports, each related to
+    // the one test by a direct owner call, before any oracle claim is read.
+    // Only the full path publishes the related-test records; the compact
+    // path is read through its stages and class.
+    assert_eq!(selected.len(), 4, "match seams: {seams:?}");
+    for (expression, [full, _], _) in &selected {
+        assert_eq!(full.related_tests.len(), 1, "{expression}");
+        assert_eq!(
+            full.related_tests[0].relation_reason,
+            RelationReason::DirectOwnerCall,
+            "{expression}"
+        );
+    }
+    Ok(selected)
+}
+
+#[test]
+fn a_rebound_assert_eq_grips_no_seam_of_the_owner() -> Result<(), String> {
+    for (expression, evidence, classes) in match_seam_readings(Binding::BeforeTest)? {
+        assert_eq!(
+            evidence[0].related_tests[0].oracle_strength,
+            OracleStrength::Unknown,
+            "{expression}: {:?}",
+            evidence[0]
+        );
+        for evidence in &evidence {
+            assert_ne!(
+                evidence.discriminate.state,
+                StageState::Yes,
+                "{expression}: {evidence:?}"
+            );
+        }
+        assert!(
+            !classes.contains(&SeamGripClass::StronglyGripped),
+            "{expression}: {classes:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_standard_assert_eq_keeps_its_strong_oracle() -> Result<(), String> {
+    keeps_strong_oracle(Binding::Standard)
+}
+
+#[test]
+fn an_assert_eq_defined_after_the_assertions_does_not_rebind_them() -> Result<(), String> {
+    keeps_strong_oracle(Binding::AfterAssertions)
+}
+
+fn keeps_strong_oracle(binding: Binding) -> Result<(), String> {
+    let selected = match_seam_readings(binding)?;
+    for (expression, [full, _], _) in &selected {
+        assert_eq!(
+            full.related_tests[0].oracle_strength,
+            OracleStrength::Strong,
+            "{expression}: {full:?}"
+        );
+    }
+    let small = selected
+        .iter()
+        .find(|(expression, _, _)| expression.starts_with("Size::Small"))
+        .ok_or("expected the `Size::Small` arm seam")?;
+    assert_eq!(small.2, [SeamGripClass::StronglyGripped; 2]);
+    for evidence in &small.1 {
+        assert_eq!(evidence.discriminate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+/// One module, the `assert_eq` definition between two tests: the test above
+/// it runs the standard macro and keeps its strong oracle on the arm it pins,
+/// the test below it runs the rebound macro and its oracle is withheld.
+#[test]
+fn a_module_definition_rebinds_only_the_tests_after_it() -> Result<(), String> {
+    let source = format!(
+        "{OWNER}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    \
+fn price_small() {{\n        assert_eq!(price_cents(Size::Small), 300);\n    }}\n\n\
+{REBOUND}    #[test]\n    fn price_large() {{\n        \
+assert_eq!(price_cents(Size::Large), 500);\n    }}\n}}\n"
+    );
+    let line_of = |needle: &str| source.find(needle).map(|at| source[..at].lines().count());
+    assert!(
+        line_of("fn price_small") < line_of("macro_rules! assert_eq")
+            && line_of("macro_rules! assert_eq") < line_of("fn price_large")
+            && line_of("fn price_small").is_some(),
+        "{source}"
+    );
+    let file = PathBuf::from("src/lib.rs");
+    let index = index_from_files(&[(file.clone(), source.as_str())])?;
+    let seams = inventory_seams_from_index(std::slice::from_ref(&file), &index);
+    let context = CompactGripContext::new(&index);
+    let arm = |prefix: &str| {
+        seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::MatchArm && seam.expression().starts_with(prefix))
+            .ok_or(format!("expected the `{prefix}` arm seam: {seams:?}"))
+    };
+    let strength = |evidence: &TestGripEvidence, test: &str| {
+        evidence
+            .related_tests
+            .iter()
+            .find(|related| related.test_name == test)
+            .map(|related| related.oracle_strength.clone())
+    };
+    let small = arm("Size::Small")?;
+    let full = evidence_for_seam(small, &index);
+    let compact = compact_evidence_for_seam(small, &context);
+    assert_eq!(
+        strength(&full, "price_small"),
+        Some(OracleStrength::Strong),
+        "{full:?}"
+    );
+    assert_eq!(
+        [classify_seam(small, &full), classify_seam(small, &compact)],
+        [SeamGripClass::StronglyGripped; 2]
+    );
+    // The Large arm's own test is withheld. The arm itself is still graded
+    // by the strongest related test, and `price_small` (which runs the
+    // standard macro) is related by a direct owner call, so the seam-level
+    // class is not what this rule decides; only the per-test record is.
+    let large = arm("Size::Large")?;
+    let full = evidence_for_seam(large, &index);
+    assert_eq!(
+        strength(&full, "price_large"),
+        Some(OracleStrength::Unknown),
+        "{full:?}"
+    );
+    assert_eq!(
+        strength(&full, "price_small"),
+        Some(OracleStrength::Strong),
+        "{full:?}"
+    );
+    Ok(())
+}

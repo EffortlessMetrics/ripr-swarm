@@ -1,6 +1,6 @@
 # RIPR-SPEC-0028: Python Preview Static Facts
 
-Status: proposed
+Status: accepted
 
 ## Problem
 
@@ -32,8 +32,13 @@ families as the Rust adapter and tags each finding with
 When `ripr.toml` is absent, Python project detection may also enable the
 adapter for roots with markers such as `pyproject.toml`, `setup.py`,
 `setup.cfg`, `requirements.txt`, `pytest.ini`, `tox.ini`, `noxfile.py`, or
-Python files under `src/` or `tests/`. An explicit `ripr.toml` remains
-authoritative and can keep Python disabled.
+non-generated regular Python files directly at the root or under `src/` or
+`tests/`. `ripr init` preserves this selection when Python is compiled in and
+warns when it is unavailable. Detection reads file presence, not contents, and
+does not descend into arbitrary root child directories. An explicit `ripr.toml` remains
+authoritative and can keep Python disabled. The LSP requests nonrecursive,
+root-anchored Python presence events so creating, deleting or renaming the last
+root source file reloads those defaults; generated names remain excluded.
 
 The adapter is syntax-first. It must not depend on `mypy`, `pyright`, a
 runtime test runner, or an import graph. When syntax-first analysis
@@ -216,7 +221,9 @@ Test discovery:
   With no project venv the command keeps PATH `python` at its existing
   confidence: a static producer cannot know whether system Python has pytest,
   and a runtime probe would make reports and goldens host-dependent, so
-  `ripr doctor` checks PATH `python -m pytest` instead (RIPR-SPEC-0007). The
+  `ripr doctor` checks PATH `python -m pytest` instead when there is no
+  project venv; with a venv, doctor reads the same static venv facts
+  (RIPR-SPEC-0007). The
   unittest route is unchanged. JSON (`evidence`, `repair_placement`,
   `python_repair_card`), SARIF, GitHub, human, pilot and MCP gap evidence all
   carry this one decision; renderers never read the filesystem, and the
@@ -318,8 +325,9 @@ mock expectations, and custom `assert_*` helpers.
   change retains the finding and limitation without inventing a missing exact
   assertion, typed repair placement or repair card.
 - `self.assertTrue(...)` / `assertFalse(...)` → smoke oracle, except the bounded bool-owner exception below
-  Bool-owner exception (#13620): `assert f(lit, ..) is True` / `is False`
-  (either operand order), `self.assertTrue(f(lit, ..))`,
+  `assert f(..) is True|False` (one `is`, either operand order) is an exact
+  identity pin for any owner and arguments (#15250), like `== True|False`.
+  Bool-owner exception (#13620): `self.assertTrue(f(lit, ..))`,
   `self.assertFalse(f(lit, ..))` and `self.assertIs(f(lit, ..), True|False)`
   are re-read as `f(lit, ..) == True|False` exact pins only when `f` is a
   unique function owner that provably returns a `bool` (annotated `-> bool`,
@@ -466,7 +474,19 @@ A re-exported package name is shadowed like an src-layout short name: when a pla
 module of the same project (beside `src/` or at the repo root) resolves under the
 package's name, `from core import price` cannot be told apart from it, so the
 re-export identifies no owner and credits no test.
-Methods and module owners are never re-exported. The test must still call the owner's own name through
+Module owners are never re-exported. A method is not re-exported either, but
+its class is (#15967): a method of a top-level class the file defines exactly
+once, and binds nowhere else except as `Name = wrap(Name)`, carries that
+class's re-exporting packages, so `from pkg import Manager`
+or `import pkg` / `pkg.Manager(...)` binds a receiver to the owner's class the
+way `from pkg.manager import Manager` does. Only a plain `import` names the
+package as a receiver: `from parent import pkg` binds whatever
+`parent/__init__.py` put under the name. A rival project's package of the
+same name makes the class exporter as ambiguous as a function's (#13786). A class imported under the same
+name from any other source (another module, a package that binds a different
+class under the name, an unresolved module) is not the owner's class: a
+method call on its instance stays a name-level relation and reads no stronger
+than `weakly_exposed`. The test must still call the owner's own name through
 the package, so a test that only calls a sibling name from the same package
 stays unrelated, and a test that binds a local named like the package alias
 (a parameter, fixture or assignment) calls that local, not the package. Diff
@@ -498,6 +518,27 @@ string text make no edge, nor does a caller wrapped by any decorator
 `click.argument`, with `import click` in its module) is a caller as well, since
 its decorators build a command that runs the body; an `async def` caller is
 allowed (#4568, #9226).
+A test is also related with the weak `helper_owner_call` relation when its
+body bare-calls a same-file value helper whose own body calls the owner by the
+direct-call rules, read with the helper's module imports, where a
+helper-local import replaces the module's import of the same name and a
+test-local import never applies, and with the helper's parameters standing
+where a test's fixtures do
+(`def parse(text): from pkg import parse_lines; return parse_lines(text)`,
+#15350). The helper must be a module-level, undecorated, synchronous `def` not
+named `test*`, the only binding of its name in the file, with a straight-line
+body (imports, assignments and expression statements) ending in
+`return <value>`, and no `yield`, `lambda` or `:=` spelled anywhere in its
+body. A helper whose parameter or assignment target rebinds the owner's name,
+or the alias the owner or its module is imported as, does not relate. A
+test whose own import binds the owner's name to another workspace module still
+relates through a helper that imports the owner itself; a test that binds the
+helper's name itself (a fixture parameter or a local) does not reach it. The relation carries no
+oracle, so such a test turns a `no_static_path` reading weak, never `exposed`.
+Such a test does not hide the rows of tests that reach the owner through a
+same-module or cross-module caller; a test both reach keeps one row. Because a
+value-helper test reaches the owner from its own file, its row also keeps the
+reading weak where cross-module callers alone would read the edit as unresolved.
 A top-level `click.command` or `click.group` function that no test calls is
 related, with the weak `cli_runner_invoke` relation, to a test that passes it
 as the first argument of `<runner>.invoke(` (`runner.invoke(hello, [...])`),
@@ -1326,10 +1367,28 @@ import or `del` of the argname drops it from the cases, and a nested `def` or
 `class`, a `match` or a star import drops all cases. Any `lambda` in the test,
 or a comprehension whose `for` target names the argname, also leaves the call
 unresolved. When no strong related call binds a literal
-argument (test locals, `*args`, a construct-call passing a dict), static
-evidence cannot see the activating input either way: the oracle verdict stands
-and an `exposed` finding carries a `boundary_activation_unresolved` evidence
-line naming that limitation.
+argument, static evidence cannot see the activating input either way. If a
+strong related test does make a recognized owner call but passes its inputs in
+a form the reader cannot read (a `*args` unpack, or a bare name it cannot bind
+such as a reassigned test local, a fixture, or a parametrize argname whose
+table is named by a variable or whose rows name values), that call is
+not established to reach the changed boundary: the finding fails closed to
+`weakly_exposed`, says why no call reaches the boundary, and names no missing
+discriminator, because the unread input may already sit on the boundary
+(#15287). When the calls the reader recognizes pass only expressions it does
+not evaluate (a list of objects, a constructor call, a dict display), or no
+strong related test makes a recognized owner call at all (an implicit dunder
+such as `__bool__`, a construct-call `Owner()(...)`), the oracle verdict stands and an `exposed` finding carries a
+`boundary_activation_unresolved` evidence line naming that limitation; an
+operand the owner rebinds keeps the same limitation. One rebinding is read
+through: when the owner's first statement is `name = float(name)` or
+`name = int(name)`, it is the only binding of that parameter, and every strong
+call binds it to a numeric literal the conversion leaves equal (integers for
+`int`; finite floats and integers within 2**53 for `float`, or a larger integer when
+the other operand is a literal below 2**53, which rounding can never reach),
+the call's literal is the compared value (#15287). An operand the owner
+rebinds in any other way still keeps the limitation, unless the tests also
+pass unread inputs as above, which fail closed.
 
 For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
 integer bound, a closed generator walk can resolve a rebound parameter. It
@@ -2066,6 +2125,78 @@ Tests: `tests.rs::a_changed_message_string_on_a_continuation_line_gets_a_probe`,
 `deleted_lines_tests.rs::deleted_string_argument_inside_brackets_is_base_side_evidence` and
 `deleted_lines_tests.rs::changed_string_argument_inside_brackets_gets_a_finding`.
 
+A bare string on an explicitly joined line also contributes to the value of
+its enclosing expression (#13888). Editing it produces a candidate finding.
+Deleting it from a kept statement produces base-side evidence. A backslash in
+a comment or a string token supplies no evidence of a join between tokens.
+Docstrings and standalone sequences of plain string literals stay quiet.
+
+A bracket-continuation line holding one keyword argument with a literal value
+(`stacklevel=3,`: a number, string, `True`, `False` or `None`, with an optional
+argument comma or trailing comment) is not a statement on its own either
+(#16018). It takes the probe family of its enclosing statement, and the static
+limits read that statement, as they would for the same call written on one
+line. So a changed `stacklevel=` of a statement-level `warnings.warn(` is a
+side effect of an imported call, and a return-value assertion reads it as
+`weakly_exposed`, not `exposed`. A keyword continuing `return f(` stays a
+returned value. A keyword whose value is a name, a call or a comparison keeps
+the line's own reading.
+
+Tests: `deleted_lines_tests.rs::literal_keyword_argument_line_takes_the_call_shape`.
+
+A changed line that only adds one keyword argument with a plain literal value
+to a call (#16011), compared token by token as spelled, can bind the same value
+as before. That holds when the call can reach at least one workspace
+definition and every definition it can reach declares the parameter, past the
+call's positional arguments, with a default spelled the same way. An attribute
+call reaches methods and never a built-in string or container method name; a
+bare call reaches functions, one of them in the changed file; a class of the
+callee's name, a `*` unpack and a mock assertion that pins the call's
+keywords keep the line's reading. A strong oracle on such a call reads
+`weakly_exposed`, with the reason that the argument restates the default, and
+the finding carries no missing discriminator. Another value, a name value, an
+unknown callee or any other edit on the line, including whitespace inside a
+string, keeps the line's reading.
+
+Tests: `default_equal_keyword_tests.rs::a_restated_default_reads_weakly_exposed`,
+`default_equal_keyword_tests.rs::a_different_value_keeps_its_reading`,
+`default_equal_keyword_tests.rs::only_a_restated_default_of_every_definition_matches`,
+`default_equal_keyword_tests.rs::review_controls_keep_their_reading`.
+
+A one-line `def` header edit whose only runtime difference is the position of
+the positional-only `/` marker (#16011) changes behavior only for a call that
+passes a moved parameter by keyword. Unless a related test with a strong
+oracle calls the owner with a moved parameter by keyword (by its own name, an
+import alias or a module receiver), the edit reads `weakly_exposed` and the
+missing discriminator names that keyword call. A call
+whose arguments the reader cannot account for (`**options`) does not count as
+such a call.
+
+Tests: `positional_only_marker_tests.rs::positional_calls_do_not_expose_a_marker_only_edit`,
+`positional_only_marker_tests.rs::a_keyword_call_on_a_moved_parameter_keeps_exposed`,
+`positional_only_marker_tests.rs::an_aliased_keyword_call_keeps_exposed`,
+`positional_only_marker_tests.rs::marker_only_edits_name_the_moved_parameters`.
+
+A one-line `return`, `if` or `elif` condition whose only edit swaps its one
+top-level `and` for `or`, or back (#16203), changes the result only for inputs
+where the two operands disagree. Each operand must be a parameter (in an
+`if` or `elif` only, since `return a or b` returns an operand rather than its
+truth value), `not` a parameter, or one comparison between parameters, scalar literals and unrebound
+module constants, and each parameter must be one the body never rebinds. When
+every strong related call resolves both operands and gives them the same truth
+value, the edit reads `weakly_exposed` and the missing discriminator names a
+call where the operands differ. A call the reader cannot resolve, or no
+resolved call at all, leaves the reading to the other rules. Such a swap moves
+no comparison boundary, so the changed-predicate boundary rule does not read
+its comparisons.
+
+Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap`,
+`connective_swap_tests.rs::a_call_with_disagreeing_operands_keeps_exposed`,
+`connective_swap_tests.rs::an_unresolved_call_keeps_exposed`,
+`connective_swap_tests.rs::a_float_operand_is_read_by_its_represented_value`,
+`connective_swap_tests.rs::an_if_condition_with_a_module_constant_reads_agreeing_calls`,
+`connective_swap_tests.rs::only_a_lone_connective_swap_between_simple_operands_is_read`.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed
@@ -2190,8 +2321,12 @@ accumulator selection shape (either `best = next(it)` followed by `for x in it`,
 or `best = xs[0]` followed by `for x in xs[1:]` or `for x in xs`, both with conditional
 `best = x` and `return best`), an unresolved boundary is
 `infection_unknown` when each oracle-eligible test has one or more assertions
-and each has a strong direct comparison of the owner call on an integer list
-or tuple with an integer. The owner may have a second parameter unused by this
+and each has a strong direct comparison of the owner call on a literal list
+or tuple with a literal. A literal here is an integer, float, string or boolean
+constant (numbers optionally signed); elements that compare equal under the
+selector's `>=` or `<=` also compare equal under `==` against any such literal,
+so the pin cannot tell which of two equal elements was selected. `None` and
+container elements are not literals for this rule. The owner may have a second parameter unused by this
 closed body, bound positionally, by name, or by an integer-literal default.
 When there are two parameters, every default must be an integer literal even
 when explicitly overridden, because defaults are evaluated at definition time. Such a scalar
@@ -2199,11 +2334,22 @@ does not resolve the loop's comparison operands. A
 single line with multiple assertions or `and`
 conjuncts qualifies only when every statement and conjunct is such a direct
 pin. A test with exactly one direct owner-call assignment followed by one
-integer equality assertion on that local also qualifies when test facts show
+literal equality assertion on that local also qualifies when test facts show
 no implicit setup, substitution, opaque module or edited-test uncertainty.
 Qualified calls must resolve to the owner through test imports. The changed
 condition must be the comparison alone: a further `and` or `or` operand can run
-on different iterations after the edit, so the selector is not closed. The
+on different iterations after the edit, so the selector is not closed. The one
+exception is the `None`-seeded selector, `best = None` followed by
+`for x in xs:` and `if best is None or x > best:`, whose guard has no effect and
+only holds before the first element is taken; the guard is accepted only with
+that seed and loop. An infinity seed, `best = float("-inf")` for `>`/`>=` or
+`best = float("inf")` for `<`/`<=`, followed by `for x in xs:`, is read the
+same way: it takes the first finite element under either operator. So is
+`best = -math.inf` (`math.inf` for a minimum) when the module has exactly one
+top-level `import math` and nothing else in it binds `math`, writes through it
+or passes the module on. Another import of the module (`import math as m`),
+a private attribute such as `math.__dict__`, a `"math"` string (a by-name lookup
+such as `sys.modules["math"]`) or a star import also refuses the seed. The
 result-alias form reads the test's own assignment; an earlier test's call
 assigned to a local of the same name does not stand in for it. The finding carries an infection stop
 reason and no repair suggestion. Other source and test shapes retain their

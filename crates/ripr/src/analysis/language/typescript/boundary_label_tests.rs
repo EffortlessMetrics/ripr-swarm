@@ -312,8 +312,10 @@ fn regex_literal_contents_are_not_comparison_sites() {
     let new = "  if (/[/>=]\\/x/.test(t) || a > b) {";
     assert_eq!(boundary_label(Some(old), new), None);
     // Division after an operand is not a regex.
-    let text = boundary_text(Some("  if (a / 2 > b / 3) {"), "  if (a / 2 >= b / 3) {");
-    assert!(text.contains(">= b / 3"), "{text}");
+    assert_eq!(
+        boundary_label(Some("if (a / 2 && b > c) {"), "if (a / 2 && b >= c) {").as_deref(),
+        Some("b == c")
+    );
 }
 
 #[test]
@@ -483,6 +485,17 @@ fn computed_comparison_operands_refuse_truncated_labels() {
     for (old, new) in [
         ("if (arr[i] >= n || c > d) {", "if (arr[i] > n || c > d) {"),
         ("if (a >= arr[i] || c > d) {", "if (a > arr[i] || c > d) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{new}");
+    }
+}
+
+#[test]
+fn arithmetic_on_either_side_has_no_truncated_boundary() {
+    for (old, new) in [
+        ("if (x / 2 > 5) {", "if (x / 2 >= 5) {"),
+        ("if (5 < -2 + x) {", "if (5 <= -2 + x) {"),
+        ("if (x + y > 5) {", "if (x + y >= 5) {"),
     ] {
         assert_eq!(boundary_label(Some(old), new), None, "{new}");
     }

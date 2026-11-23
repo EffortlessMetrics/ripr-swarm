@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_mocha_verify_command.rs|Command::new|1|typescript-preview|#15340: integration test runs the worktree-built ripr binary against an isolated temp Mocha TypeScript fixture to check the verify command launches Mocha and never routes through the npm-init placeholder test script; no shell, network, or user-repository mutation.

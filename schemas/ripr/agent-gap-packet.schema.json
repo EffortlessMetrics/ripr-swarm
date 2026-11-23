@@ -1,0 +1,791 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/agent-gap-packet.schema.json",
+  "title": "ripr agent packet --gap-ledger --json",
+  "description": "The document `ripr agent packet --gap-ledger <path> --gap-id <id> --json` writes to stdout. `status` `advisory` carries one assignable packet built from the GapRecord, because the ledger's repo-exposure source still matches the checkout; `status` `blocked` carries no packet, only a review-only `blocked_candidate` and its refresh route. A record that cannot be packeted is refused with the shared refusal envelope instead (`agent-packet-refusal.schema.json`). Shared definitions come from `agent-seam-packets.schema.json`. Static advisory evidence only: a conforming packet is not runtime proof, coverage, or mutation adequacy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scope",
+    "source",
+    "status",
+    "inputs",
+    "source_currentness",
+    "packets_total",
+    "packets"
+  ],
+  "properties": {
+    "schema_version": {"const": "0.5"},
+    "scope": {"const": "repo"},
+    "source": {"const": "gap_decision_ledger"},
+    "status": {
+      "description": "`advisory` when the record is live-current and assignable; `blocked` otherwise.",
+      "enum": ["advisory", "blocked"]
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gap_ledger"],
+      "properties": {"gap_ledger": {"type": "string", "minLength": 1}}
+    },
+    "source_currentness": {"$ref": "#/$defs/source_currentness"},
+    "analysis_outcome_status": {
+      "description": "A gap-ledger packet projects no AnalysisOutcome. Written as a one-value enum, not a const, so a blocked document, which omits the field, still matches this schema's top-level constants in the producer sweep.",
+      "enum": ["not_applicable"]
+    },
+    "analysis_outcome_error": {"type": "null"},
+    "analysis_outcome": {"type": "null"},
+    "causal_comparison": {
+      "description": "Present when a canonical delta artifact was found under the root.",
+      "$ref": "#/$defs/causal_comparison"
+    },
+    "packets_total": {"enum": [0, 1]},
+    "packets": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/packet"}},
+    "blocked_candidate": {"$ref": "#/$defs/blocked_candidate"},
+    "must_not_infer": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "const": "blocked_candidate is review-only and carries no edit, verify, receipt, or packet command authority"
+        },
+        {
+          "const": "source_currentness=candidate_current does not establish live packet currentness"
+        },
+        {"const": "stale or not_evaluated currentness must be refreshed before assignment"}
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "advisory"}}},
+      "then": {
+        "allOf": [
+          {"required": ["analysis_outcome_status", "analysis_outcome_error", "analysis_outcome"]},
+          {
+            "properties": {
+              "packets_total": {"const": 1},
+              "packets": {"minItems": 1},
+              "source_currentness": {"properties": {"status": {"const": "current"}}}
+            }
+          },
+          {
+            "not": {
+              "anyOf": [{"required": ["blocked_candidate"]}, {"required": ["must_not_infer"]}]
+            }
+          }
+        ]
+      },
+      "else": {
+        "allOf": [
+          {"required": ["blocked_candidate", "must_not_infer"]},
+          {"properties": {"packets_total": {"const": 0}, "packets": {"maxItems": 0}}},
+          {
+            "anyOf": [
+              {
+                "properties": {
+                  "source_currentness": {"properties": {"status": {"const": "stale"}}},
+                  "blocked_candidate": {"properties": {"staleness_status": {"const": "stale"}}}
+                }
+              },
+              {
+                "properties": {
+                  "source_currentness": {"properties": {"status": {"const": "not_evaluated"}}},
+                  "blocked_candidate": {
+                    "properties": {"staleness_status": {"const": "not_evaluated"}}
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "not": {
+              "anyOf": [
+                {"required": ["analysis_outcome_status"]},
+                {"required": ["analysis_outcome_error"]},
+                {"required": ["analysis_outcome"]},
+                {"required": ["causal_comparison"]}
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "packet": {
+      "description": "One assignable GapRecord packet: the ledger record's repair boundary, its verify and receipt routes, and its live currentness.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task",
+        "source",
+        "gap_id",
+        "canonical_gap_id",
+        "gap_kind",
+        "language",
+        "language_status",
+        "policy_state",
+        "gap_state",
+        "evidence_class",
+        "repairability",
+        "current_evidence_strength",
+        "file",
+        "line",
+        "owner",
+        "allowed_edit_surface",
+        "allowed_files",
+        "forbidden_files",
+        "conflict_group",
+        "anchor",
+        "repair_route",
+        "repair_kind",
+        "changed_behavior",
+        "missing_discriminator",
+        "discriminator_guidance",
+        "recommended_test",
+        "assertion_shape",
+        "evidence_ids",
+        "verification_commands",
+        "verify_command",
+        "receipt_command",
+        "receipt_status",
+        "must_not_change",
+        "stop_conditions",
+        "repair_card",
+        "static_evidence_boundary",
+        "llm_guidance",
+        "runtime_confirmation",
+        "queue_state",
+        "staleness_status",
+        "staleness_reason",
+        "source_currentness",
+        "assignment"
+      ],
+      "properties": {
+        "task": {
+          "enum": [
+            "write_targeted_test",
+            "strengthen_targeted_test",
+            "add_output_golden",
+            "inspect_static_limitation"
+          ]
+        },
+        "source": {"const": "gap_decision_ledger"},
+        "gap_id": {"type": "string", "minLength": 1},
+        "canonical_gap_id": {"type": ["string", "null"], "minLength": 1},
+        "gap_kind": {"type": "string", "minLength": 1},
+        "language": {"type": "string", "minLength": 1},
+        "language_status": {"type": "string", "minLength": 1},
+        "policy_state": {"type": "string", "minLength": 1},
+        "gap_state": {"type": "string", "minLength": 1},
+        "evidence_class": {"type": "string", "minLength": 1},
+        "repairability": {"type": "string", "minLength": 1},
+        "current_evidence_strength": {
+          "description": "`<evidence_class> / <gap_state>`, with `unknown` for a blank part.",
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {"type": ["string", "null"], "minLength": 1},
+        "line": {"type": ["integer", "null"], "minimum": 1},
+        "owner": {"type": ["string", "null"], "minLength": 1},
+        "allowed_edit_surface": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "allowed_files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "forbidden_files": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "conflict_group": {
+          "description": "`file:<first edit-surface path>`, or `gap:<gap id>` when there is none.",
+          "type": "string",
+          "minLength": 1
+        },
+        "anchor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "line", "owner", "dedupe_fingerprint"],
+          "properties": {
+            "file": {"type": ["string", "null"], "minLength": 1},
+            "line": {"type": ["integer", "null"], "minimum": 1},
+            "owner": {"type": ["string", "null"], "minLength": 1},
+            "dedupe_fingerprint": {"type": ["string", "null"], "minLength": 1}
+          }
+        },
+        "repair_route": {"$ref": "#/$defs/repair_route"},
+        "repair_kind": {"type": "string", "minLength": 1},
+        "changed_behavior": {"type": ["string", "null"], "minLength": 1},
+        "missing_discriminator": {"type": ["string", "null"], "minLength": 1},
+        "discriminator_guidance": {"$ref": "#/$defs/discriminator_guidance"},
+        "recommended_test": {
+          "description": "`file` and `name` are null unless the discriminator allows a targeted test.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "name", "reason"],
+          "properties": {
+            "file": {"type": ["string", "null"], "minLength": 1},
+            "name": {"type": ["string", "null"], "minLength": 1},
+            "reason": {"type": "string", "minLength": 1}
+          }
+        },
+        "assertion_shape": {"type": ["string", "null"], "minLength": 1},
+        "evidence_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "verification_commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "verify_command": {"type": "string", "minLength": 1},
+        "receipt_command": {"type": ["string", "null"], "minLength": 1},
+        "receipt_status": {"enum": ["available", "missing_from_gap_record"]},
+        "must_not_change": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "stop_conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "repair_card": {"$ref": "#/$defs/repair_card"},
+        "static_evidence_boundary": {"type": "string", "minLength": 1},
+        "llm_guidance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["prompt", "verify_command", "stop_conditions", "copyable_packet"],
+          "properties": {
+            "prompt": {"type": "string", "minLength": 1},
+            "verify_command": {"type": "string", "minLength": 1},
+            "stop_conditions": {
+              "type": "array",
+              "minItems": 1,
+              "items": {"type": "string", "minLength": 1}
+            },
+            "copyable_packet": {"$ref": "#/$defs/copyable_packet"}
+          }
+        },
+        "runtime_confirmation": {"type": "string", "minLength": 1},
+        "queue_state": {"const": "queued"},
+        "staleness_status": {"const": "current"},
+        "staleness_reason": {"type": "string", "minLength": 1},
+        "source_currentness": {
+          "allOf": [
+            {"$ref": "#/$defs/source_currentness"},
+            {"properties": {"status": {"const": "current"}}}
+          ]
+        },
+        "assignment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["eligible", "reason"],
+          "properties": {
+            "eligible": {"const": true},
+            "reason": {"const": "producer-validated live-current packet"}
+          }
+        },
+        "command_specs": {"$ref": "#/$defs/command_specs"},
+        "verify_cwd": {
+          "description": "The nested project directory a Python verify command runs from.",
+          "type": "string",
+          "minLength": 1
+        },
+        "delta_attribution": {"$ref": "#/$defs/delta_attribution"},
+        "base_state": {"$ref": "#/$defs/nullable_causal_evidence_state"},
+        "head_state": {"$ref": "#/$defs/nullable_causal_evidence_state"},
+        "attribution_basis": {"type": "array", "items": {"$ref": "#/$defs/attribution_basis"}},
+        "comparison_confidence": {"$ref": "#/$defs/comparison_confidence"}
+      },
+      "allOf": [
+        {
+          "if": {"required": ["delta_attribution"]},
+          "then": {
+            "required": [
+              "delta_attribution",
+              "base_state",
+              "head_state",
+              "attribution_basis",
+              "comparison_confidence"
+            ]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                {"required": ["base_state"]},
+                {"required": ["head_state"]},
+                {"required": ["attribution_basis"]},
+                {"required": ["comparison_confidence"]}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "source_currentness": {
+      "description": "Live currentness of the GapRecord source against the selected checkout. Only `status` `current` with `queue_state` `queued` is assignable.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "queue_state",
+        "reason",
+        "refresh_commands",
+        "refresh_replayable",
+        "source_kind",
+        "source_path"
+      ],
+      "properties": {
+        "status": {"enum": ["current", "stale", "not_evaluated"]},
+        "queue_state": {"enum": ["queued", "blocked_stale", "blocked_not_evaluated"]},
+        "reason": {"type": "string", "minLength": 1},
+        "refresh_commands": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "refresh_replayable": {
+          "description": "True only when `refresh_commands` replay the ledger's own recorded repo-exposure route.",
+          "type": "boolean"
+        },
+        "source_kind": {
+          "description": "The source kind the ledger records, or null when it names none.",
+          "type": ["string", "null"]
+        },
+        "source_path": {"type": ["string", "null"]}
+      },
+      "anyOf": [
+        {"properties": {"status": {"const": "current"}, "queue_state": {"const": "queued"}}},
+        {"properties": {"status": {"const": "stale"}, "queue_state": {"const": "blocked_stale"}}},
+        {
+          "properties": {
+            "status": {"const": "not_evaluated"},
+            "queue_state": {"const": "blocked_not_evaluated"}
+          }
+        }
+      ]
+    },
+    "repair_route": {
+      "description": "The GapRecord's repair route as the ledger carries it; optional fields are omitted, never null.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["route_kind"],
+      "properties": {
+        "route_kind": {"type": "string", "minLength": 1},
+        "target_file": {"type": "string", "minLength": 1},
+        "target_line": {"type": "integer", "minimum": 1},
+        "related_test": {"type": "string", "minLength": 1},
+        "assertion_shape": {"type": "string", "minLength": 1},
+        "missing_discriminator": {"type": "string", "minLength": 1},
+        "changed_behavior": {"type": "string", "minLength": 1},
+        "inspection_command": {"type": "string", "minLength": 1},
+        "proposed_target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["proposal_kind", "file", "owner"],
+          "properties": {
+            "proposal_kind": {"type": "string", "minLength": 1},
+            "file": {"type": "string", "minLength": 1},
+            "owner": {"type": "string", "minLength": 1},
+            "provenance": {"type": "string", "minLength": 1}
+          }
+        },
+        "stop_conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "discriminator_guidance": {
+      "description": "Producer-owned discriminator availability. Each state carries only the reason and recovery it allows; `text` and `basis` are set only when the state is `present`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "text", "basis", "reason", "recovery", "static_limit_kind"],
+      "properties": {
+        "state": {
+          "enum": ["present", "not_produced", "not_applicable", "static_limitation", "stale"]
+        },
+        "text": {"type": ["string", "null"], "maxLength": 512},
+        "basis": {"enum": ["activation_evidence_fact", "seam_required_discriminator", null]},
+        "reason": {"type": ["string", "null"]},
+        "recovery": {"type": ["string", "null"]},
+        "static_limit_kind": {
+          "description": "A static limitation category, present exactly when `state` is `static_limitation`.",
+          "type": ["string", "null"]
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "state": {"const": "present"},
+            "text": {"type": "string", "minLength": 1},
+            "basis": {"type": "string"},
+            "reason": {"const": null},
+            "recovery": {"const": null},
+            "static_limit_kind": {"const": null}
+          }
+        },
+        {
+          "properties": {
+            "state": {"const": "not_produced"},
+            "text": {"const": null},
+            "basis": {"const": null},
+            "reason": {"enum": ["producer_fact_absent", "no_behavioral_discriminator_derived"]},
+            "recovery": {
+              "enum": [
+                "inspect_fix_site",
+                "run_explain",
+                "review_external_oracle",
+                "no_recovery_available"
+              ]
+            },
+            "static_limit_kind": {"const": null}
+          }
+        },
+        {
+          "properties": {
+            "state": {"const": "not_applicable"},
+            "text": {"const": null},
+            "basis": {"const": null},
+            "reason": {"enum": ["route_is_inspection_only", "route_is_verification_only"]},
+            "recovery": {"const": null},
+            "static_limit_kind": {"const": null}
+          }
+        },
+        {
+          "properties": {
+            "state": {"const": "static_limitation"},
+            "text": {"const": null},
+            "basis": {"const": null},
+            "reason": {
+              "enum": ["static_limitation_blocks_derivation", "cross_language_oracle_unresolved"]
+            },
+            "recovery": {"const": null},
+            "static_limit_kind": {"type": "string", "minLength": 1}
+          }
+        },
+        {
+          "properties": {
+            "state": {"const": "stale"},
+            "text": {"const": null},
+            "basis": {"const": null},
+            "reason": {"enum": ["snapshot_stale"]},
+            "recovery": {"enum": ["refresh_analysis", "no_recovery_available"]},
+            "static_limit_kind": {"const": null}
+          }
+        }
+      ]
+    },
+    "command_specs": {
+      "description": "Typed verify and receipt routes from the GapRecord, present only when the record carries them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verify", "receipt"],
+      "properties": {
+        "verify": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/command_spec"},
+              {"properties": {"role": {"const": "verify"}}}
+            ]
+          }
+        },
+        "receipt": {
+          "type": "array",
+          "items": {
+            "allOf": [
+              {"$ref": "#/$defs/command_spec"},
+              {"properties": {"role": {"const": "receipt"}}}
+            ]
+          }
+        }
+      }
+    },
+    "repair_card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gap_kind",
+        "changed_behavior",
+        "missing_discriminator",
+        "discriminator_guidance",
+        "repair",
+        "repair_route",
+        "current_evidence_strength",
+        "verification_commands",
+        "verify_command",
+        "receipt_command",
+        "receipt_status",
+        "source_artifact",
+        "static_evidence_boundary",
+        "authority_boundary"
+      ],
+      "properties": {
+        "gap_kind": {"type": "string", "minLength": 1},
+        "changed_behavior": {"type": ["string", "null"], "minLength": 1},
+        "missing_discriminator": {"type": ["string", "null"], "minLength": 1},
+        "discriminator_guidance": {"$ref": "#/$defs/discriminator_guidance"},
+        "repair": {"type": "string", "minLength": 1},
+        "repair_route": {"$ref": "#/$defs/repair_route"},
+        "current_evidence_strength": {"type": "string", "minLength": 1},
+        "verification_commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "verify_command": {"type": "string", "minLength": 1},
+        "receipt_command": {"type": ["string", "null"], "minLength": 1},
+        "receipt_status": {"enum": ["available", "missing_from_gap_record"]},
+        "source_artifact": {"type": "string", "minLength": 1},
+        "static_evidence_boundary": {"type": "string", "minLength": 1},
+        "authority_boundary": {"type": "string", "minLength": 1},
+        "command_specs": {"$ref": "#/$defs/command_specs"},
+        "verify_cwd": {"type": "string", "minLength": 1}
+      }
+    },
+    "copyable_packet": {
+      "description": "The repair packet as paste-ready sections plus their Markdown rendering.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task",
+        "context",
+        "repair",
+        "verification",
+        "receipt",
+        "stop_conditions",
+        "do_not_do",
+        "authority_boundary",
+        "markdown"
+      ],
+      "properties": {
+        "task": {"type": "string", "minLength": 1},
+        "context": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "repair": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "verification": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "receipt": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "stop_conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "do_not_do": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "authority_boundary": {"type": "string", "minLength": 1},
+        "markdown": {"type": "string", "minLength": 1}
+      }
+    },
+    "blocked_candidate": {
+      "description": "The selected record as a review-only projection: identity, currentness and the refresh route, with no edit, verify, receipt or packet command.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gap_id",
+        "canonical_gap_id",
+        "language",
+        "queue_state",
+        "staleness_status",
+        "staleness_reason",
+        "refresh_commands"
+      ],
+      "properties": {
+        "gap_id": {"type": "string", "minLength": 1},
+        "canonical_gap_id": {"type": ["string", "null"], "minLength": 1},
+        "language": {"type": "string", "minLength": 1},
+        "queue_state": {"enum": ["blocked_stale", "blocked_not_evaluated"]},
+        "staleness_status": {"enum": ["stale", "not_evaluated"]},
+        "staleness_reason": {"type": "string", "minLength": 1},
+        "refresh_commands": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "queue_state": {"const": "blocked_stale"},
+            "staleness_status": {"const": "stale"}
+          }
+        },
+        {
+          "properties": {
+            "queue_state": {"const": "blocked_not_evaluated"},
+            "staleness_status": {"const": "not_evaluated"}
+          }
+        }
+      ]
+    },
+    "command_spec": {
+      "description": "A typed command route, the shape `repair-assurance.schema.json` publishes as `command_spec`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "command_id",
+        "role",
+        "execution_mode",
+        "program",
+        "args",
+        "working_directory",
+        "env_set",
+        "env_passthrough",
+        "timeout_ms",
+        "stdin",
+        "cancellation",
+        "network",
+        "environment",
+        "expected_result_parser",
+        "expected_exit_codes",
+        "expected_writes",
+        "cost_class",
+        "platforms",
+        "authority_boundary",
+        "human_display"
+      ],
+      "properties": {
+        "schema_version": {"const": "1"},
+        "command_id": {"type": "string", "minLength": 1},
+        "role": {"enum": ["verify", "receipt", "regeneration", "inspection", "targeted_rerun"]},
+        "execution_mode": {"enum": ["direct", "shell_required", "manual"]},
+        "program": {"type": "string", "minLength": 1},
+        "args": {"type": "array", "items": {"type": "string"}},
+        "working_directory": {
+          "description": "Relative to the workspace root: no drive or scheme prefix, no leading separator and no `..` segment (the same constraint as `repair-assurance.schema.json`).",
+          "type": "string",
+          "pattern": "^(?![^\\\\/]+:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$"
+        },
+        "env_set": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "value"],
+            "properties": {"name": {"type": "string", "minLength": 1}, "value": {"type": "string"}}
+          }
+        },
+        "env_passthrough": {"type": "array", "items": {"type": "string"}},
+        "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 3600000},
+        "stdin": {"enum": ["null", "declared"]},
+        "cancellation": {"enum": ["allowed", "not_allowed"]},
+        "network": {"enum": ["forbidden", "not_required", "declared", "unrestricted"]},
+        "environment": {"enum": ["clean", "declared", "inherited"]},
+        "expected_result_parser": {"enum": ["exit_code", "declared_json", "declared_text"]},
+        "expected_exit_codes": {"type": "array", "items": {"type": "integer"}, "minItems": 1},
+        "expected_writes": {"type": "array", "items": {"type": "string"}},
+        "cost_class": {
+          "enum": [
+            "unknown",
+            "pilot",
+            "check",
+            "projection_only",
+            "bounded_static_analysis",
+            "full_repo_analysis",
+            "compile_or_test",
+            "runtime_mutation_or_import"
+          ]
+        },
+        "platforms": {
+          "type": "array",
+          "items": {"enum": ["linux", "macos", "windows"]},
+          "minItems": 1
+        },
+        "authority_boundary": {
+          "enum": [
+            "verification_route_only",
+            "receipt_route_only",
+            "regeneration_route_only",
+            "inspection_route_only",
+            "targeted_rerun_route_only"
+          ]
+        },
+        "human_display": {"type": "string", "minLength": 1, "maxLength": 512}
+      }
+    },
+    "delta_attribution": {
+      "enum": [
+        "introduced_by_change",
+        "weakened_by_change",
+        "reintroduced_by_change",
+        "resolved_by_change",
+        "changed_surface_existing",
+        "adjacent_preexisting",
+        "baseline_existing",
+        "comparison_unknown"
+      ]
+    },
+    "nullable_causal_evidence_state": {
+      "anyOf": [{"type": "null"}, {"$ref": "#/$defs/causal_evidence_state"}]
+    },
+    "causal_evidence_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_owner",
+        "behavior_identity",
+        "discriminator_identity",
+        "gap_state",
+        "oracle_strength"
+      ],
+      "properties": {
+        "canonical_owner": {"type": "string"},
+        "behavior_identity": {"type": "string"},
+        "discriminator_identity": {"type": "string"},
+        "gap_state": {"enum": ["actionable", "already_observed", "resolved", "unknown"]},
+        "oracle_strength": {"enum": ["strong", "medium", "weak", "smoke", "none", "unknown"]}
+      }
+    },
+    "attribution_basis": {
+      "enum": [
+        "same_canonical_owner",
+        "same_behavior_identity",
+        "same_discriminator",
+        "oracle_strength_decreased",
+        "oracle_strength_increased",
+        "gap_state_changed",
+        "unchanged_evidence",
+        "base_item_absent",
+        "head_item_absent",
+        "base_snapshot_unavailable",
+        "head_snapshot_unavailable",
+        "identity_ambiguous",
+        "rename_or_move_mapped",
+        "adjacent_surface",
+        "baseline_receipt"
+      ]
+    },
+    "comparison_confidence": {"enum": ["fixture_backed", "high", "medium", "low", "unknown"]},
+    "causal_comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "coverage"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "base_items",
+            "head_items",
+            "matched_items",
+            "ambiguous_items",
+            "unknown_items",
+            "complete",
+            "low_coverage_disclosed"
+          ],
+          "properties": {
+            "base_items": {"type": "integer", "minimum": 0},
+            "head_items": {"type": "integer", "minimum": 0},
+            "matched_items": {"type": "integer", "minimum": 0},
+            "ambiguous_items": {"type": "integer", "minimum": 0},
+            "unknown_items": {"type": "integer", "minimum": 0},
+            "complete": {"type": "boolean"},
+            "low_coverage_disclosed": {"type": "boolean"}
+          }
+        }
+      }
+    }
+  }
+}

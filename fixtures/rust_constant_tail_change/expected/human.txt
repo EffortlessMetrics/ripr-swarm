@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_constant_tail_change/input
 
-Summary: 14 changed behaviors checked: 4 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test path, 9 unclear. 14 found, 0 suppressed by your settings (4 base-side evidence, not candidate edit targets)
+Summary: 14 changed behaviors checked: 3 appear noticed by tests, 1 partly noticed, 1 reached but not noticed, 0 no test path, 9 unclear. 14 found, 0 suppressed by your settings (4 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 26 changed line(s), 12 candidate line(s), 14 changed behavior(s) checked, 14 finding(s)
@@ -51,13 +51,14 @@ Hidden:
     - ./src/lib.rs:24 (unknown: propagation unclear, base-side); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
     - ./src/lib.rs:25 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: same as above
     - ./src/lib.rs:29 (unknown: propagation unclear, base-side); kind: predicate; reason: same as above
-    - ./src/lib.rs:29 (exposed, base-side); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:29 (weak, base-side); kind: return_value; reason: No assertion was tied to the changed value
     - ./src/lib.rs:30 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
     - ./src/lib.rs:38 (unknown: infection unclear, lower-priority candidate); kind: return_value; reason: The returned `delta` and `-delta` agree at `delta = 0`; ripr could not show that any related test asserts an exact value at a literal input where they differ, so infection is not…
     - ./src/lib.rs:42 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
     - ./src/lib.rs:50 (unknown: propagation unclear, lower-priority candidate); kind: return_value; reason: same as above
   Hidden classes:
     exposed = tests appear to notice the change
+    weak = tests reach it but check it only loosely
     unknown: infection unclear = ripr could not tell what input makes the change take effect
     unknown: propagation unclear = ripr could not follow the change through an opaque boundary
   Full evidence: rerun with --format human-full
