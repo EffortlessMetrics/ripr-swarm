@@ -1213,8 +1213,15 @@ pub(crate) fn resolve_repair_start(
     // spots above are not scoped to the change, and the text says so first
     // (the reason list is capped, so it is placed where it survives).
     let narrowed = matches!(scope, Some(ChangeScope::TouchesSeams(_)));
+    // #16113: a run that classified no seam lists no spot, so its note names
+    // the search instead of "the spots below".
+    let subject = if classified.is_empty() {
+        unscoped_subject::REFUSAL_SEARCH
+    } else {
+        unscoped_subject::REFUSAL_SPOTS
+    };
     if let Some(note) = (!narrowed)
-        .then(|| unscoped_diff_note(diff.as_deref(), base, unscoped_subject::REFUSAL_SPOTS))
+        .then(|| unscoped_diff_note(diff.as_deref(), base, subject))
         .flatten()
     {
         refusal_reasons.insert(0, note);
@@ -3529,6 +3536,9 @@ pub(crate) struct ChangedNonRust {
 pub(crate) mod unscoped_subject {
     /// The refusal's list of spots, printed after the note.
     pub(crate) const REFUSAL_SPOTS: &str = "the spots below are";
+    /// A refusal that found no repairable spot at all, so no list follows
+    /// (#16113).
+    pub(crate) const REFUSAL_SEARCH: &str = "the search for repairable spots is";
     /// The selection menu's choices.
     pub(crate) const OFFERED_CHOICES: &str = "the repairs ripr offers here are";
     /// The one spot a bare `ripr repair` started on.
