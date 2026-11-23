@@ -3129,6 +3129,30 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // A statement macro may emit a function of the owner's name.
+        (
+            format!(
+                "macro_rules! fake {{ () => {{ fn tax(a: &str, _r: u32) -> Result<i64, u8> {{ Ok(a.len() as i64) }} }}; }}\n{}",
+                module(
+                    "    #[test]\n    fn computes() {\n        fake!();\n        assert_eq!(tax(\"abc\", 825), Ok(3));\n    }\n"
+                )
+            ),
+            None,
+        ),
+        // An imported `assert_eq!` may never type-check its arguments.
+        (
+            module(
+                "    use crate::testing::assert_eq;\n    #[test]\n    fn computes() {\n        assert_eq!(tax(1, 825), Ok(1));\n    }\n",
+            ),
+            None,
+        ),
+        // A standard macro beside the call does not block the copy.
+        (
+            module(
+                "    #[test]\n    fn computes() {\n        println!(\"{}\", 1);\n        let v = vec![1];\n        assert_eq!(tax(8, 825), Ok(8));\n        assert_eq!(v.len(), 1);\n    }\n",
+            ),
+            Some(("8", "computes")),
+        ),
         // No existing test module: nothing to copy from.
         (owner.to_string(), None),
     ];

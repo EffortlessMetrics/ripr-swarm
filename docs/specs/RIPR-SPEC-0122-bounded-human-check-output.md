@@ -668,6 +668,10 @@ the expected value stays a `todo!()`. The values are copied only when:
   stub, outside closures, `async` blocks and `cfg`;
 - nothing in the module declares, binds, imports or renames another item of
   the owner's name;
+- the module calls only standard macros (`assert_eq!`, `vec!`, `println!` and
+  the like), since another macro or `include!` may emit a function of the
+  owner's name, and the file defines, imports or `#[macro_use]`s no macro of
+  a standard macro's name;
 - each copied parameter's type is not `impl Trait` or `&mut`.
 
 A match-arm stub writes the input the changed arm's own pattern names instead

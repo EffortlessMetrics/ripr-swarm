@@ -16,8 +16,11 @@
 //! - it sits in a `#[test]` function that is not `should_panic` and not a
 //!   ripr stub, outside closures, `async` blocks and `cfg`;
 //! - nothing in the module declares, imports or renames another item or
-//!   binding of the owner's name, and nothing in the file defines a macro
-//!   named like the assertion macro;
+//!   binding of the owner's name;
+//! - the module calls only standard macros (`assert_eq!`, `vec!`,
+//!   `println!` and the like), since any other macro or `include!` may emit
+//!   a function of the owner's name, and the file defines, imports or
+//!   `#[macro_use]`s no macro of a standard macro's name;
 //! - each copied parameter's type is not `impl Trait` or `&mut`.
 //!
 //! The copied values are setup, not evidence: the stub says which test they
@@ -27,11 +30,36 @@ use super::StubScope;
 use super::receiver::{literal_argument, proven_test_call, scope_shadows};
 use crate::analysis::syntax::fn_signature::OwnerSignature;
 use crate::analysis::syntax::parse_clean_source_file;
-use ra_ap_syntax::ast::{self, HasArgList, HasGenericArgs};
+use ra_ap_syntax::ast::{self, HasArgList, HasGenericArgs, HasName};
 use ra_ap_syntax::{AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize};
 
 /// The assertion macros whose arguments a passing test always evaluates.
 const ASSERTIONS: [&str; 3] = ["assert", "assert_eq", "assert_ne"];
+
+/// Standard macros a test module may call without blocking the copy; none
+/// can emit an item.
+const STANDARD_MACROS: [&str; 20] = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "dbg",
+    "eprint",
+    "eprintln",
+    "format",
+    "matches",
+    "panic",
+    "print",
+    "println",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+    "write",
+    "writeln",
+];
 
 /// Literals for the open parameters, and the test they came from.
 #[derive(Debug, PartialEq)]
@@ -63,7 +91,11 @@ pub(super) fn reused_inputs(
         .all(|(param, binding)| {
             !open.contains(binding) || {
                 let ty = param.ty.split_whitespace().collect::<String>();
-                !ty.contains("impl") && !ty.starts_with("&mut")
+                let generic_bound = param
+                    .ty
+                    .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .any(|word| word == "impl");
+                !generic_bound && !ty.starts_with("&mut")
             }
         });
     if !copyable || scope_shadows(scope, name) {
@@ -85,7 +117,7 @@ pub(super) fn reused_inputs(
         .filter(|node| in_scope(node))
         .filter_map(ast::Name::cast)
         .any(|bound| bound.text() == name);
-    if rebinds {
+    if rebinds || !standard_macros_only(&file, &in_scope) {
         return None;
     }
     let (arguments, test) = file
@@ -95,9 +127,7 @@ pub(super) fn reused_inputs(
         .find_map(|node| {
             let arguments = match node.kind() {
                 SyntaxKind::CALL_EXPR => owner_call(&ast::CallExpr::cast(node.clone())?, name),
-                SyntaxKind::MACRO_CALL => {
-                    asserted_call(&ast::MacroCall::cast(node.clone())?, &file, name)
-                }
+                SyntaxKind::MACRO_CALL => asserted_call(&ast::MacroCall::cast(node.clone())?, name),
                 _ => None,
             }?;
             if arguments.len() != bindings.len() {
@@ -112,6 +142,54 @@ pub(super) fn reused_inputs(
         .map(|(binding, argument)| (binding.clone(), argument))
         .collect();
     Some(ReusedInputs { values, test })
+}
+
+/// Whether every macro the module calls is a standard one this file does not
+/// replace. Any other macro (or `include!`) may emit a function of the
+/// owner's name, and a file-local `macro_rules!`, a `use` or `#[macro_use]`
+/// may replace `assert_eq!` with one that never type-checks its arguments.
+fn standard_macros_only(file: &SourceFile, in_scope: &impl Fn(&SyntaxNode) -> bool) -> bool {
+    let standard = |name: &str| STANDARD_MACROS.contains(&name);
+    let calls_standard = file
+        .syntax()
+        .descendants()
+        .filter(|node| in_scope(node))
+        .filter_map(ast::MacroCall::cast)
+        .all(|call| {
+            call.path().is_some_and(|path| {
+                path.qualifier().is_none()
+                    && path
+                        .segment()
+                        .and_then(|segment| segment.name_ref())
+                        .is_some_and(|called| standard(&called.text()))
+            })
+        });
+    let replaced = file.syntax().descendants().any(|node| {
+        if matches!(node.kind(), SyntaxKind::MACRO_RULES | SyntaxKind::MACRO_DEF) {
+            return node
+                .children()
+                .find_map(ast::Name::cast)
+                .is_some_and(|defined| standard(&defined.text()));
+        }
+        if let Some(rename) = ast::Rename::cast(node.clone()) {
+            return rename
+                .name()
+                .is_some_and(|renamed| standard(&renamed.text()));
+        }
+        if let Some(tree) = ast::UseTree::cast(node.clone()) {
+            return tree
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|imported| standard(&imported.text()));
+        }
+        ast::Attr::cast(node).is_some_and(|attr| {
+            attr.meta()
+                .and_then(|meta| meta.simple_name())
+                .is_some_and(|attr_name| attr_name == "macro_use")
+        })
+    });
+    calls_standard && !replaced
 }
 
 /// The literal arguments of `name(..)`, a call through the bare name.
@@ -135,21 +213,10 @@ fn owner_call(call: &ast::CallExpr, name: &str) -> Option<Vec<String>> {
 
 /// The literal arguments of a call to `name` written directly as an
 /// argument of `assert!`, `assert_eq!` or `assert_ne!`.
-fn asserted_call(call: &ast::MacroCall, file: &SourceFile, name: &str) -> Option<Vec<String>> {
+fn asserted_call(call: &ast::MacroCall, name: &str) -> Option<Vec<String>> {
     let path = call.path()?;
     let macro_name = path.segment()?.name_ref()?.text().to_string();
     if path.qualifier().is_some() || !ASSERTIONS.contains(&macro_name.as_str()) {
-        return None;
-    }
-    // A file-local macro of that name is not the standard assertion.
-    let redefined = file.syntax().descendants().any(|node| {
-        matches!(node.kind(), SyntaxKind::MACRO_RULES | SyntaxKind::MACRO_DEF)
-            && node
-                .children()
-                .find_map(ast::Name::cast)
-                .is_some_and(|defined| defined.text() == macro_name)
-    });
-    if redefined {
         return None;
     }
     let tree = call.token_tree()?;
