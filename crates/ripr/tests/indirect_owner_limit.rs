@@ -1796,8 +1796,9 @@ fn a_blanket_bound_on_another_modules_trait_of_the_same_name_is_not_reach() -> R
 
 #[test]
 fn a_blanket_bound_on_a_different_trait_argument_is_not_reach() -> Result<(), String> {
-    // `Render<u16>` is bounded; the owner is `Render` with its default `u8`.
-    let lib = blanket_identity("b::Render<u16>", "a::Render", "", BLANKET_PINNED_TEST);
+    // `a::Render<u16>` is bounded; the owner is `a::Render` with its default
+    // `u8`. Same module, so only the trait argument differs (#13041 review).
+    let lib = blanket_identity("a::Render<u16>", "a::Render", "", BLANKET_PINNED_TEST);
     not_withheld(&lib, "different trait argument")
 }
 

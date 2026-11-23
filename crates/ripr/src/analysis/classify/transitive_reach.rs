@@ -4391,6 +4391,7 @@ fn self_method_call(text: &str, method: &str) -> bool {
             // that discards its tokens, is not an executable call site
             // (#13041 review).
             && !super::related_tests::call_site_in_let_closure(text, method_at)
+            && !super::related_tests::call_site_in_dropped_future(text, method_at)
             && !super::related_tests::call_site_in_discarded_macro(text, method_at)
     })
 }
@@ -4666,16 +4667,13 @@ fn blanket_impl_entry_reaches_owner<'f>(
 /// functions. Used only as a conservative related-test candidate prefilter:
 /// an owner absent from the map has no blanket entry that could reach it.
 /// The map is cached on the index, so a run with many withheld findings pays
-/// for the scan once (#13041 review).
+/// for the scan once and reads borrow it (#13041 review).
 pub(in crate::analysis) fn blanket_proxy_call_names_by_owner(
     index: &RustIndex,
-) -> BTreeMap<String, Vec<String>> {
-    if let Some(cached) = index.blanket_proxy_call_names.get() {
-        return cached.clone();
-    }
-    let map = build_blanket_proxy_call_names(index);
-    let _ = index.blanket_proxy_call_names.set(map.clone());
-    map
+) -> &BTreeMap<String, Vec<String>> {
+    index
+        .blanket_proxy_call_names
+        .get_or_init(|| build_blanket_proxy_call_names(index))
 }
 
 fn build_blanket_proxy_call_names(index: &RustIndex) -> BTreeMap<String, Vec<String>> {
@@ -4750,6 +4748,7 @@ pub(in crate::analysis) fn test_reaches_trait_owner_through_blanket_impl(
                     // the owner (#13041 review).
                     super::related_tests::method_call_sites(&masked, entry.name.as_str()).any(|at| {
                         !super::related_tests::call_site_in_let_closure(&masked, at)
+                            && !super::related_tests::call_site_in_dropped_future(&masked, at)
                             && !super::related_tests::call_site_in_discarded_macro(&masked, at)
                             && super::related_tests::method_call_site_resolves_to_impl_type_and_trait_in(
                                 test,
@@ -8086,6 +8085,11 @@ fn real() {}
         assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
         // A `self` call in a nested item belongs to that item, not the entry.
         entry.body = "fn to_text(&self) -> String {\n    struct Unused;\n    impl Unused { fn render(&self) { self.render(); } }\n    String::new()\n}".into();
+        assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
+        // A call inside a future that `drop` never polls is not executed.
+        entry.body =
+            "fn to_text(&self) -> String {\n    drop(async { self.render() });\n    String::new()\n}"
+                .into();
         assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
         // A `fn()` type in a block head is not a nested item, so the outer
         // call still counts.

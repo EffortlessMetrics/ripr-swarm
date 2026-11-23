@@ -203,7 +203,8 @@ fn judged_for_owner(
     let blanket_entry_names: Vec<String> =
         if super::related_tests::impl_trait_name(&owner.id.0).is_some() {
             super::transitive_reach::blanket_proxy_call_names_by_owner(index)
-                .remove(&owner.name)
+                .get(&owner.name)
+                .cloned()
                 .unwrap_or_default()
         } else {
             Vec::new()
@@ -296,6 +297,10 @@ fn reaches_owner_only_through_blanket_impl(
             .and_then(after_generic_arguments)
             .is_some_and(|rest| rest.trim_start().starts_with('('));
         (after.starts_with(['(', '!']) || turbofish)
+            // A call inside a discarded macro or a `let` closure the test
+            // never runs is not a direct owner call (#13041 review).
+            && !super::related_tests::call_site_in_let_closure(code, at)
+            && !super::related_tests::call_site_in_discarded_macro(code, at)
             && super::related_tests::method_call_site_resolves_to_impl_type_and_trait_in(
                 test,
                 code,

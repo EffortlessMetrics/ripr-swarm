@@ -323,7 +323,7 @@ impl RelatedTestCandidateIndex {
         candidates.common_tokens = CommonTestTokens::new(index.tests());
         candidates.unseen_reach = super::UnseenReachNames::build(index);
         candidates.blanket_proxy_call_names =
-            super::transitive_reach::blanket_proxy_call_names_by_owner(index);
+            super::transitive_reach::blanket_proxy_call_names_by_owner(index).clone();
 
         candidates
     }
@@ -5372,7 +5372,12 @@ pub(in crate::analysis) fn impl_self_type_is_specialized(owner_id: &str) -> bool
         None => impl_body,
     };
     let ty = self_ty.trim();
-    let ty = ty.strip_prefix('&').unwrap_or(ty).trim();
+    // A reference self type (`impl Render for &f64`) is a different impl from
+    // the value type, and the compact name strips the `&`, so it must be
+    // refused rather than credited to the value owner (#13041 review).
+    if ty.starts_with('&') {
+        return true;
+    }
     let ty = ty.strip_prefix("mut ").unwrap_or(ty).trim();
     ty.contains('<')
 }
@@ -6326,6 +6331,17 @@ pub(in crate::analysis) fn call_site_in_let_closure(masked: &str, at: usize) -> 
         || (initializer.starts_with('|') && initializer[1..].contains('|'))
 }
 
+/// Whether the call of `method` at byte `at` of `masked` sits inside an
+/// `async` block passed to `drop`, which never polls the future, so the call
+/// is not executed (#13041 review).
+pub(in crate::analysis) fn call_site_in_dropped_future(masked: &str, at: usize) -> bool {
+    let before = &masked[..at];
+    let Some(async_at) = before.rfind("async") else {
+        return false;
+    };
+    before[..async_at].trim_end().ends_with("drop(")
+}
+
 /// Keywords that can precede a `!` as an operator, not a macro name. A
 /// keyword cannot be a macro path, so `if !(..)`, `while !(..)` and
 /// `return !(..)` are negations (#13041 review).
@@ -6375,12 +6391,11 @@ fn enclosing_macro_names(masked: &str, at: usize) -> Vec<String> {
             b'(' | b'[' | b'{' => {
                 let before = masked[..index].trim_end();
                 let name = before.strip_suffix('!').and_then(|head| {
-                    // The `!` must be attached to the name, and the name must
-                    // not be a keyword: `if !(..)` is a negation, not a macro
-                    // invocation (#13041 review).
-                    if head.chars().next_back().is_some_and(char::is_whitespace) {
-                        return None;
-                    }
+                    // A keyword before `!` is an operator, not a macro name:
+                    // `if !(..)` is a negation. Whitespace before the `!` is
+                    // allowed, so `discard !(..)` is still a macro
+                    // (#13041 review).
+                    let head = head.trim_end();
                     let start = head
                         .char_indices()
                         .rev()

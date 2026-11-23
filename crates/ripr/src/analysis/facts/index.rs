@@ -185,7 +185,8 @@ pub struct RustIndex {
     /// use (#12720). Not serialized, like the listing.
     pub(crate) local_snapshot_macros: crate::analysis::rust_snapshot_files::LocalSnapshotMacrosCell,
     /// Run-scoped blanket-impl proxy map, built once per index and reused by
-    /// every withheld finding (#13041 review). A cloned index starts empty.
+    /// every withheld finding (#13041 review). A cloned index copies the
+    /// populated map.
     pub(crate) blanket_proxy_call_names: std::sync::OnceLock<BTreeMap<String, Vec<String>>>,
     /// The display name and synthetic source of each registered doc
     /// example test, keyed by (file, start line) (#6648). A doctest is its
