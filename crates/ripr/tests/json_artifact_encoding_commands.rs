@@ -197,12 +197,12 @@ fn powershell_redirect(text: &str) -> Vec<u8> {
 }
 
 /// Drop the digits after each run-local stamp (`unix_ms:<n>`, the analyzer
-/// build's `process:<pid>:<nanos>`) and blank the wall-clock RFC3339 value of
-/// each `"generated_at"` string (the repo badge's `public_projection` stamps
-/// the second it ran), so two runs over the same input compare even when they
-/// straddle a second boundary.
+/// build's `process:<pid>:<nanos>`) and zero the digits of each
+/// `"generated_at"` string (the repo badge's `public_projection` stamps the
+/// wall-clock second it ran), so two runs over the same input compare even when
+/// they straddle a second boundary.
 fn scrub(text: &str) -> String {
-    blank_generated_at(&scrub_stamps(text))
+    zero_generated_at_digits(&scrub_stamps(text))
 }
 
 fn scrub_stamps(text: &str) -> String {
@@ -221,9 +221,11 @@ fn scrub_stamps(text: &str) -> String {
     out
 }
 
-/// Replace the contents of every `"generated_at": "<value>"` string with
-/// `<scrubbed>`; non-string values (`null`) are left as they are.
-fn blank_generated_at(text: &str) -> String {
+/// Replace each ASCII digit inside every `"generated_at": "<value>"` string
+/// with `0`, keeping the value's shape (`0000-00-00T00:00:00Z`, `unix_ms:`) so
+/// a malformed, empty or differently prefixed stamp still differs from the
+/// control; non-string values (`null`) are left as they are.
+fn zero_generated_at_digits(text: &str) -> String {
     const KEY: &str = "\"generated_at\"";
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -242,7 +244,11 @@ fn blank_generated_at(text: &str) -> String {
             continue;
         };
         out.push_str(&rest[..rest.len() - body.len()]);
-        out.push_str("<scrubbed>");
+        out.extend(
+            body[..end]
+                .chars()
+                .map(|c| if c.is_ascii_digit() { '0' } else { c }),
+        );
         rest = &body[end..];
     }
     out.push_str(rest);
@@ -250,13 +256,21 @@ fn blank_generated_at(text: &str) -> String {
 }
 
 #[test]
-fn scrub_blanks_generated_at_values_only() {
+fn scrub_zeroes_generated_at_digits_only() {
     let control = "{\n  \"generated_at\": \"2026-11-22T23:44:55Z\",\n  \"stale_age_secs\": 0\n}";
     let later = "{\n  \"generated_at\": \"2026-11-22T23:44:56Z\",\n  \"stale_age_secs\": 0\n}";
     assert_eq!(scrub(control), scrub(later));
     assert_eq!(
         scrub(control),
-        "{\n  \"generated_at\": \"<scrubbed>\",\n  \"stale_age_secs\": 0\n}"
+        "{\n  \"generated_at\": \"0000-00-00T00:00:00Z\",\n  \"stale_age_secs\": 0\n}"
+    );
+    assert_ne!(
+        scrub(control),
+        scrub("{\n  \"generated_at\": \"\",\n  \"stale_age_secs\": 0\n}")
+    );
+    assert_ne!(
+        scrub("{\"generated_at\": \"unix_ms:1\"}"),
+        scrub("{\"generated_at\": \"1\"}")
     );
     assert_eq!(scrub("{\"generated_at\":null}"), "{\"generated_at\":null}");
     assert_ne!(scrub("{\"other\": \"a\"}"), scrub("{\"other\": \"b\"}"));
