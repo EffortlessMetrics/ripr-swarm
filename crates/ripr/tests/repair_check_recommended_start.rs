@@ -396,6 +396,15 @@ fn the_changed_spot_is_listed_before_the_outside_counts() -> Result<(), String> 
         .iter()
         .position(|row| row.contains("outside your changed lines"))
         .ok_or_else(|| format!("the outside spots must still be counted:\n{err}"))?;
+    // The outside counts fold into one row, which ends the capped list.
+    if why.len() != 3
+        || outside_row != 2
+        || !why[outside_row].starts_with("  - outside your changed lines, ")
+    {
+        return Err(format!(
+            "the outside counts must fold into the last row:\n{err}"
+        ));
+    }
     if changed_row > outside_row
         || !err.contains("none is ready for an automatic repair on your changed lines.")
         || !err.contains("Next: each changed spot below says what it still needs")

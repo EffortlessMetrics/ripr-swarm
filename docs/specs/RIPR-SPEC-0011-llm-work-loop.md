@@ -815,7 +815,7 @@ The no-eligible reason list stays capped at three rows. Rows about the change
 are listed before rows counting spots outside it. When the rows overflow the
 cap and both kinds are present, the outside counts fold into one row
 ("outside your changed lines, N repairable spots are not offered, ...") that
-follows at most two changed rows, so a changed spot is never hidden behind
+follows at most two leading rows (framing notes, then changed rows), so a changed spot is never hidden behind
 outside counts. For an open change the lead reads "none is ready for an
 automatic repair on your changed lines", and changed rows past the cap are
 disclosed as "(and N more on your changed lines; `ripr check ...` lists each
