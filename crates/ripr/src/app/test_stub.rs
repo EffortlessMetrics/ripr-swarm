@@ -2151,18 +2151,53 @@ pub(crate) fn focused_test_run_command(
     test_file: &str,
     test_name: &str,
 ) -> Option<String> {
-    let spelled = test_file.replace('\\', "/");
-    let file = PathBuf::from(spelled.strip_prefix("./").unwrap_or(&spelled));
     let plain_name = !test_name.is_empty()
         && test_name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if !plain_name || file.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+    if !plain_name {
         return None;
     }
+    let (file, manifest, target) = focused_integration_target(root, test_file)?;
     let integration = RustTestStub {
         placement: TestStubPlacement::ExistingIntegrationFile { file },
         test_name: test_name.to_string(),
+        text: String::new(),
+        already_present: false,
+        fill_ins: Vec::new(),
+        derived_inputs: Vec::new(),
+        receiver_setup: None,
+    };
+    run_command(&manifest, &integration, Some(&target))
+}
+
+/// The command that produces a new-test proposal's focused result (#16186):
+/// libtest JSON events for every test in the proposed integration file's own
+/// cargo target, run through its package manifest so a workspace member that
+/// is not a default member is still the package that runs. No test-name
+/// filter: the name the agent writes may differ from the suggested one, and
+/// a filter that matched nothing would yield a result with no counted test.
+/// Libtest JSON is unstable, so the command selects a nightly toolchain.
+/// `None` under the same conditions as [`focused_test_run_command`], so an
+/// inline test keeps the generic guidance.
+pub(crate) fn focused_result_run_command(root: &Path, test_file: &str) -> Option<String> {
+    let (_, manifest, target) = focused_integration_target(root, test_file)?;
+    Some(format!(
+        "cargo +nightly test --manifest-path {manifest} --test {target} -- -Z unstable-options --format json"
+    ))
+}
+
+/// The shell-ready manifest and plain cargo target name of a Rust
+/// integration test file, with the file as the stub placement spells it.
+fn focused_integration_target(root: &Path, test_file: &str) -> Option<(PathBuf, String, String)> {
+    let spelled = test_file.replace('\\', "/");
+    let file = PathBuf::from(spelled.strip_prefix("./").unwrap_or(&spelled));
+    if file.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+        return None;
+    }
+    let integration = RustTestStub {
+        placement: TestStubPlacement::ExistingIntegrationFile { file: file.clone() },
+        test_name: String::new(),
         text: String::new(),
         already_present: false,
         fill_ins: Vec::new(),
@@ -2189,7 +2224,7 @@ pub(crate) fn focused_test_run_command(
     // A literal `\` in a Unix checkout root is part of the path, so the
     // manifest renders natively, as the repair start command renders it.
     let manifest = root_path_display(manifest.strip_prefix(".").unwrap_or(&manifest));
-    run_command(&shell_arg(&manifest), &integration, Some(&target))
+    Some((file, shell_arg(&manifest), target))
 }
 
 #[cfg(test)]
@@ -3055,6 +3090,58 @@ mod tests {
         .map_err(|error| error.to_string())?;
         assert_eq!(
             focused_test_run_command(&root, "tests/pricing.rs", "t"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #16186: a proposal's focused-result command runs the proposed file's
+    /// own target through its member manifest, even when that member is not a
+    /// workspace default member and the file is not written yet; an inline
+    /// file keeps the generic guidance.
+    #[test]
+    fn focused_result_run_command_names_the_member_target() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-focused-result-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        for dir in ["alpha/src", "beta/src", "beta/tests"] {
+            std::fs::create_dir_all(root.join(dir)).map_err(|error| error.to_string())?;
+        }
+        for (path, text) in [
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"alpha\", \"beta\"]\ndefault-members = [\"alpha\"]\nresolver = \"3\"\n",
+            ),
+            (
+                "alpha/Cargo.toml",
+                "[package]\nname = \"alpha\"\nedition = \"2024\"\n",
+            ),
+            ("alpha/src/lib.rs", ""),
+            (
+                "beta/Cargo.toml",
+                "[package]\nname = \"beta\"\nedition = \"2024\"\n",
+            ),
+            ("beta/src/lib.rs", "pub fn f() {}\n"),
+            ("beta/tests/smoke.rs", "#[test]\nfn smoke() {}\n"),
+        ] {
+            std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
+        }
+        let manifest = shell_arg(&root_path_display(&root.join("beta/Cargo.toml")));
+        assert_eq!(
+            focused_result_run_command(&root, "beta/tests/pricing.rs"),
+            Some(format!(
+                "cargo +nightly test --manifest-path {manifest} --test pricing -- -Z unstable-options --format json"
+            ))
+        );
+        assert_eq!(focused_result_run_command(&root, "beta/src/lib.rs"), None);
+        assert_eq!(
+            focused_result_run_command(&root, "beta/tests/pricing.py"),
             None
         );
         let _ = std::fs::remove_dir_all(&root);

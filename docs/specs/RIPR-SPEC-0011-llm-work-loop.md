@@ -1110,6 +1110,17 @@ missing-result refusals are still uncharged). The retained packet's
 `repair_after_command` and the repair card's next action do not carry the flag;
 following either reaches the uncharged refusal, which names it.
 
+Amendment (#16186): where the proposed file is a Rust integration test whose
+package manifest and cargo target resolve (`app::test_stub::focused_result_run_command`),
+the start names the exact command that produces FILE:
+`cargo +nightly test --manifest-path M --test T -- -Z unstable-options --format json`.
+It runs through the member's own manifest, so a workspace member that is not a
+default member is still the package that runs, and it carries no test-name
+filter, because the name the agent writes may differ from the suggested one.
+An inline test or an unresolved target keeps the generic form, and so do
+`ripr agent status` and the gate's missing-result refusal, which do not
+resolve the target.
+
 ## Amendment (#13205): a proposed new-test target is preflighted read-only
 
 Before an attempt follows a new-test proposal, one shared preflight

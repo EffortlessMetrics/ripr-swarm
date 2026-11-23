@@ -3718,7 +3718,7 @@ fn with_focused_result_requirement(reason: String, command: Option<&str>) -> Str
     }) {
         format!(
             "{reason}. {}",
-            crate::app::focused_run::proposal_focused_result_requirement("This attempt")
+            crate::app::focused_run::proposal_focused_result_requirement("This attempt", None)
         )
     } else {
         reason

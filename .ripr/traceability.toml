@@ -2271,6 +2271,7 @@ tests = [
   "crates/ripr/src/app/agent_status.rs::tests::trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied",
   "crates/ripr/tests/focused_test_result.rs::review_fifth_focused_refusal_requires_restart",
   "crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_names_the_focused_result_up_front",
+  "crates/ripr/tests/focused_test_result.rs::a_member_proposal_names_a_focused_run_that_finishes",
   "crates/ripr/tests/focused_test_result.rs::a_missing_result_never_spends_the_retry_budget",
   "crates/ripr/tests/focused_test_result.rs::a_failing_result_still_charges_between_uncharged_refusals",
   "crates/ripr/src/agent/mod.rs::tests::proposal_after_phase_follow_up_keeps_the_focused_result_flag",
