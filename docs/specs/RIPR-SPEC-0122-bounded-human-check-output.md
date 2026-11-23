@@ -657,6 +657,32 @@ because a built receiver may start in another state. The input reaches the
 arm once the receiver is in that state; the expected value stays a `todo!()`.
 Human output lists the inputs on the `Inputs from the changed code:` line.
 
+The `expected` fill-in's label names what the owner returns for the stub's
+written inputs when a small evaluation decides it (#8361): "(the changed code
+returns `C`; with `>=` it returns `N`; keep the intended one)", where `N`,
+for a relational-boundary seam, is the result with the changed comparison's
+operator replaced by its neighbor (`>`/`>=`, `<`/`<=`). The stub never writes
+either value as `expected`, since the change may be the defect; it still
+stops at that `todo!()`. The evaluation applies only when the owner has no
+receiver, type generics, `async`, attributes or `mut` parameter type, its
+body holds no `let`, assignment, closure, macro call or nested item, and the
+path for the written inputs is decided by:
+
+- `if` statements and tails (with `else`/`else if`), `return` and blocks;
+  a statement-position block whose tail is not a `return`, or any statement
+  with an attribute, refuses;
+- a `match` on a written parameter whose arms up to the taken one are
+  literal, unit-variant or `_` patterns without guards or attributes;
+- conditions comparing a written parameter with an integer, bool, char or
+  string literal (`<`, `<=`, `>`, `>=`, `==`, `!=`), combined with `&&`,
+  `||`, `!` and parentheses;
+
+and the returned expression on that path is a constant: a literal, a unit
+variant of a file-local enum (inline test module only), `None`, a tuple of
+constants, `Some`/`Ok`/`Err` of one constant, or a written parameter. A file
+that redeclares, imports or renames `Some`, `Ok`, `Err` or `None` by name
+refuses.
+
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
 (`selector_ambiguous`). Both remain decisions (exit 3), with the schema
