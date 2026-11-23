@@ -11592,6 +11592,39 @@
       ]
     },
     {
+      "id": "rust_self_comparison_float_nan_stays_weak",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/self_comparison_float_nan_stays_weak",
+      "vector": "self_comparison_copy_non_reflexive_float",
+      "probe_family": "call_deletion",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 2
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "weak"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_owner_pin_clone_self_comparison_keeps_credit",
       "language": "rust",
       "tier": "pure",

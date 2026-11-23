@@ -73,8 +73,8 @@ alone:
   itself (`assert_eq!(b.0, b.0.clone())`: one place read on both sides, up to
   a trailing `.clone()`, `.to_owned()`, `.to_vec()` or a leading borrow, as
   RIPR-SPEC-0094 defines it) never takes this step,
-  whatever strength the row carries: it cannot discriminate, so the family
-  template stands.
+  whatever strength the row carries: ripr does not credit it as a
+  discriminator, so the family template stands.
 - Only reach-establishing rows are eligible: the row's relation reason must
   establish reach to the changed owner
   (`RelationReason::establishes_reach`; `direct_owner_call`,

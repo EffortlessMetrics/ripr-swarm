@@ -3236,12 +3236,15 @@ fn analyze_related_assertions(
                     }
                     (None, None) => false,
                 };
-            // #13037: an equality of a value with a copy of itself
-            // (`assert_eq!(b.0, b.0.clone())`) passes whatever value the
-            // code produced, so like a self-computed expected value it
-            // neither pins nor confirms. The one exception is the #6692
-            // clone-field pin, where the owner is the hand-written `clone`
-            // and the owner pin already admitted the comparison.
+            // #13037 conservative heuristic: an equality of a place with a
+            // copy of itself (`assert_eq!(b.0, b.0.clone())`) passes for any
+            // value whose equality is reflexive and whose copy preserves it,
+            // and ripr does not establish when that fails (a NaN float, a
+            // hand-written `PartialEq` or `Clone`, #16227). So, like a
+            // self-computed expected value, it is not credited: capped at
+            // weak, never confirming. The one exception is the #6692
+            // clone-field pin, which establishes the derived `PartialEq` and
+            // the hand-written `clone` it tests.
             let compared_with_own_copy =
                 matched && !owner_pinned && compares_value_with_its_own_copy(&assertion.text);
             let self_computed = self_computed
@@ -3988,8 +3991,10 @@ mod kani_proofs;
 /// of itself (#13037): both operands are the same place (a binding with
 /// optional field or tuple-index projections, `b.0`, `cfg.limits.max`), each
 /// with at most a leading borrow and trailing `.clone()`, `.to_owned()` or
-/// `.to_vec()` calls. Such an assertion cannot tell the changed behavior from a
-/// wrong one. Anything else is not read as a self-comparison: an operand with
+/// `.to_vec()` calls. Such an assertion passes for any value with reflexive,
+/// copy-preserving equality; ripr does not credit it as a discriminator, a
+/// conservative reading that underclaims a NaN float or a hand-written
+/// `PartialEq`/`Clone` (#16227). Anything else is not read as a self-comparison: an operand with
 /// a call (`counter.next()` runs twice and can observe a state change), a
 /// literal (`render("a b")` and `render("ab")` differ), an index, a macro or an
 /// operator. An exact self-comparison (`assert_eq!(x, x)`) is already a weak
@@ -14774,8 +14779,8 @@ return Err(\"typed pin\".into());
 
     /// #13037: `assert_eq!(RATE, RATE.clone())` names the changed constant,
     /// so before this rule its token confirmed observation at full strength,
-    /// yet it compares a value with a copy of itself and passes whatever the
-    /// code does. Neither side calls the owner, so the #5830 self-computed
+    /// yet it compares a value with a copy of itself, which passes for any
+    /// value with reflexive equality. Neither side calls the owner, so the #5830 self-computed
     /// reading does not apply. The row is capped at weak and observation
     /// stays unconfirmed. The control compares the same constant with an
     /// independent literal and keeps its credit.

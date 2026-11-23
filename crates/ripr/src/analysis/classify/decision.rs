@@ -535,10 +535,10 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
     ) {
         return None;
     }
-    // #13037 review: `assert_eq!(b.0, b.0.clone())` compares a value with
-    // a copy of itself, so it passes whatever the change does. Saying the
-    // gap "is not the assertion shape" would be wrong advice; the family
-    // template ("Strengthen the related assertion") is the honest step.
+    // #13037 review: `assert_eq!(b.0, b.0.clone())` compares a place with
+    // a copy of itself, which ripr does not credit as a discriminator
+    // (RIPR-SPEC-0094). Saying the gap "is not the assertion shape" would
+    // then contradict the row; the family template stands.
     if strongest
         .oracle
         .as_deref()
