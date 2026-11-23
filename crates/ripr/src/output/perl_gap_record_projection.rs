@@ -233,6 +233,7 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
         safe_gate_predicate: None,
         authority_boundary: PERL_AUTHORITY_BOUNDARY.to_string(),
         typescript_package_root: None,
+        verify_cwd: None,
     })
 }
 
@@ -354,6 +355,7 @@ mod tests {
                 normalized_discriminator: "return_value".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
                 location: SourceLocation::new("lib/My/App.pm", 8, 5),
                 owner: None,

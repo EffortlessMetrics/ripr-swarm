@@ -515,7 +515,7 @@ pub(crate) fn name_scopes_for_test_caller(
         Some(origin) if origin.body_declares_items => None,
         Some(_) if file_rebinds_a_std_macro(tree) => None,
         Some(_) => name_scopes_at_line(tree, line_index, fn_line)
-            .filter(|scopes| !scopes_import_a_std_macro_name(scopes)),
+            .filter(|scopes| !scopes_import_a_std_macro_name(tree, scopes)),
     }
 }
 
@@ -533,12 +533,112 @@ fn file_rebinds_a_std_macro(tree: &ast::SourceFile) -> bool {
 
 /// An explicit import at the invocation site that binds an exempt std macro
 /// name (`use other::assert_eq;`). Glob imports are not read (#12852).
-fn scopes_import_a_std_macro_name(scopes: &NameScopes) -> bool {
+/// An import of the real std item of that name is not a rebinding
+/// (`use std::panic;`, `use std::fmt::write;`; #12876).
+fn scopes_import_a_std_macro_name(tree: &ast::SourceFile, scopes: &NameScopes) -> bool {
     scopes.scopes.iter().any(|scope| {
-        scope
-            .imports
-            .iter()
-            .any(|import| NAME_FREE_STD_MACROS.contains(&import.bound.trim_start_matches("r#")))
+        scope.imports.iter().any(|import| {
+            NAME_FREE_STD_MACROS.contains(&import.bound.trim_start_matches("r#"))
+                && !imports_from_the_std_crate(tree, scope, import)
+        })
+    })
+}
+
+/// The crate root whose identity the scan checks from one file. `std` is the
+/// crate the bare-name exemption above already trusts: replacing it through
+/// Cargo would replace the std prelude too. `core` and `alloc` are refused,
+/// because a Cargo dependency renamed to either can stand in for that path
+/// alone, unseen by a syntax scan.
+const STD_CRATE_ROOT: &str = "std";
+
+/// `use std::panic;`-style: the path starts at `std` and ends in the bound
+/// name, so it imports std's own item (a module, function or the std macro
+/// itself), none of which binds names. The root must mean the real crate, so
+/// a `no_std` attribute in the file, a local module, rename, `extern crate ..
+/// as`, use leaf or macro-token use of `std` other than as a path root
+/// anywhere in the file, or a glob in the importing scope, keeps the refusal
+/// (#12876). A crate-root rebinding in another file is not seen, like a macro
+/// defined there.
+fn imports_from_the_std_crate(
+    tree: &ast::SourceFile,
+    scope: &NameScope,
+    import: &UseImport,
+) -> bool {
+    let UseBinding::Path(path) = &import.binding else {
+        return false;
+    };
+    path.len() >= 2
+        && path.first().is_some_and(|root| root == STD_CRATE_ROOT)
+        && scope.globs.is_empty()
+        && !file_may_bind_name(tree, STD_CRATE_ROOT)
+}
+
+/// Any declaration in the file that may bind `name` or make it unavailable: a
+/// named item, rename or pattern, a `use` leaf, an attribute naming
+/// `no_std`, or macro tokens (a `macro_rules!` body or an invocation's input)
+/// that carry `name` anywhere but as the root of a path. A macro argument can
+/// become a binding (`rename!(std)` for `use b as $alias;`).
+fn file_may_bind_name(tree: &ast::SourceFile, name: &str) -> bool {
+    tree.syntax().descendants().any(|node| {
+        if let Some(declared) = ast::Name::cast(node.clone()) {
+            return declared.text().trim_start_matches("r#") == name;
+        }
+        if let Some(item_use) = ast::Use::cast(node.clone()) {
+            return use_item_bindings(&item_use)
+                .imports
+                .iter()
+                .any(|import| import.bound == name);
+        }
+        if let Some(attribute) = ast::Attr::cast(node.clone()) {
+            return attribute
+                .syntax()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .any(|token| token.text() == "no_std");
+        }
+        let outermost_tokens = ast::TokenTree::can_cast(node.kind())
+            && !node
+                .parent()
+                .is_some_and(|parent| ast::TokenTree::can_cast(parent.kind()));
+        outermost_tokens && token_tree_mentions_off_root(&node, name)
+    })
+}
+
+/// `name` in a macro token sequence anywhere except as a path root: followed
+/// by `::` and not itself after `segment ::`. `std::x` and `::std::x` pass;
+/// `as std`, `mod std`, `rename!(std)` and `a::std::x` do not.
+fn token_tree_mentions_off_root(body: &SyntaxNode, name: &str) -> bool {
+    let mut tokens: Vec<String> = Vec::new();
+    for token in body
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+    {
+        let text = token.text().trim_start_matches("r#");
+        // A token tree may lex `::` as one token or as two `:` tokens.
+        if text == ":" && tokens.last().is_some_and(|last| last == ":") {
+            if let Some(last) = tokens.last_mut() {
+                *last = "::".to_string();
+            }
+        } else {
+            tokens.push(text.to_string());
+        }
+    }
+    let is_segment = |text: &str| {
+        text.chars()
+            .next()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+    };
+    let separator_at = |at: usize| tokens.get(at).is_some_and(|text| text == "::");
+    tokens.iter().enumerate().any(|(at, text)| {
+        if text != name {
+            return false;
+        }
+        let qualified = at >= 2
+            && separator_at(at - 1)
+            && tokens.get(at - 2).is_some_and(|before| is_segment(before));
+        let root_position = separator_at(at + 1) && !qualified;
+        !root_position
     })
 }
 

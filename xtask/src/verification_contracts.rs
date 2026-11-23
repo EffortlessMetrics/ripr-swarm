@@ -126,13 +126,62 @@ const VERSION_AUTHORITIES: &[(&str, &[VersionProducer])] = &[
         )],
     ),
     (
+        // The `ripr context` packet. It pins its version under the top-level
+        // `version` key (`schema_compat::VERSION_KEY_OVERRIDES`), not
+        // `schema_version`.
+        "context",
+        &[producer(
+            "crates/ripr/src/output/json/context_packet.rs",
+            "pub(crate) const CONTEXT_PACKET_VERSION_CONTRACT: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr agent packet --seam-id <id> --json`, the one-seam packet
+        // document. The `--gap-ledger` document shares the constant and has
+        // its own schema, `agent-gap-packet`.
+        "agent-packet",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr check --format agent-seam-packets-json`, the repository-wide
+        // packet document over the same packet definitions.
+        "agent-seam-packets",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        // `ripr agent packet --gap-ledger <path> --gap-id <id> --json`, the
+        // GapRecord-backed packet document.
+        "agent-gap-packet",
+        &[producer(
+            "crates/ripr/src/app.rs",
+            "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
         // The refusal envelope `ripr agent packet --json` writes when it
-        // cannot produce a seam packet. The packet's own version constant
-        // keys it; the packet document itself is not a published schema.
+        // cannot produce a seam packet, keyed with the packet's version.
         "agent-packet-refusal",
         &[producer(
             "crates/ripr/src/app.rs",
             "pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = \"",
+            1,
+        )],
+    ),
+    (
+        "context-refusal",
+        &[producer(
+            "crates/ripr/src/output/json/context_packet.rs",
+            "pub(crate) const CONTEXT_PACKET_VERSION_CONTRACT: &str = \"",
             1,
         )],
     ),
@@ -666,6 +715,17 @@ const CONTRACTS: &[VerificationContract] = &[
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["--base", "run_limitations"],
     },
+    // `ripr context --json`: a capture of the boundary_gap fixture's one
+    // packet with the host paths in `witness.explain_command` made
+    // portable; the producer-byte authority is `context_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/context.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/context.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["related_tests_total", "before_condition"],
+    },
     VerificationContract {
         schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
         schema_pointer: None,
@@ -673,6 +733,48 @@ const CONTRACTS: &[VerificationContract] = &[
         subject: ContractSubject::Document,
         doc_path: "docs/OUTPUT_SCHEMA.md",
         doc_markers: &["seam_id_unknown", "run_limitations"],
+    },
+    VerificationContract {
+        schema_path: "schemas/ripr/context-refusal.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/context-refusal.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["check_artifact_unusable", "run_limitations"],
+    },
+    // `ripr agent packet --seam-id <id> --json`. The fixture is a capture of
+    // a write-targeted-test packet with the host's absolute root made
+    // portable; the producer-byte authority is `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-packet.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-packet.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["--seam-id", "write_targeted_test"],
+    },
+    // `ripr check --format agent-seam-packets-json`. The fixture is a capture
+    // of a one-packet run with the host's absolute root made portable; the
+    // producer-byte authority is `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-seam-packets.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-seam-packets.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["agent-seam-packets-json", "receipt_after_verify"],
+    },
+    // `ripr agent packet --gap-ledger <path> --gap-id <id> --json`. The
+    // fixture is a capture of an advisory packet with the host's absolute
+    // root made portable; the producer-byte authority is
+    // `agent_packet_json_schema.rs`.
+    VerificationContract {
+        schema_path: "schemas/ripr/agent-gap-packet.schema.json",
+        schema_pointer: None,
+        fixture_path: "tests/fixtures/verification/ripr/agent-gap-packet.valid.json",
+        subject: ContractSubject::Document,
+        doc_path: "docs/OUTPUT_SCHEMA.md",
+        doc_markers: &["agent-gap-packet.schema.json", "blocked_candidate"],
     },
     // `ripr agent status --json`. The fixture is a capture of a finished
     // repair loop with the host's absolute root replaced by `.`; the
@@ -1085,15 +1187,16 @@ pub(crate) fn check_verification_contracts_with_hooks(
             violations.push(format!("{rel_str} has no properties"));
             continue;
         };
-        let Some(sv_prop) = props.get("schema_version") else {
+        let key = crate::schema_compat::version_key(rel_str);
+        let Some(sv_prop) = props.get(key) else {
             violations.push(format!(
-                "{rel_str} is missing `schema_version` property — every ripr output schema must declare a version (#1720)"
+                "{rel_str} is missing `{key}` property — every ripr output schema must declare a version (#1720)"
             ));
             continue;
         };
         if sv_prop.get("const").is_none() {
             violations.push(format!(
-                "{rel_str} schema_version must use `const` for a pinned version (#1720)"
+                "{rel_str} {key} must use `const` for a pinned version (#1720)"
             ));
         }
     }
@@ -1165,7 +1268,7 @@ fn version_authority_violations(
             continue;
         }
         let schema = read_json(root.join(&schema_path))?;
-        let pinned = pinned_version(&schema);
+        let pinned = pinned_version_at(&schema, crate::schema_compat::version_key(&schema_path));
         for producer in *producers {
             if let Some(violation) = version_type_mismatch(&schema_path, &schema, producer.prefix) {
                 violations.push(violation);
@@ -1190,8 +1293,15 @@ fn version_authority_violations(
 /// The schema's pinned `schema_version`: a string const as written, or an
 /// unsigned integer const (`ripr help --json` versions with an integer) as
 /// its decimal spelling, which is how its producer constant reads.
+#[cfg(test)]
 fn pinned_version(schema: &Value) -> Option<String> {
-    match schema.pointer("/properties/schema_version/const")? {
+    pinned_version_at(schema, "schema_version")
+}
+
+/// `pinned_version` for a schema that pins its version under `key` (see
+/// `schema_compat::VERSION_KEY_OVERRIDES`).
+fn pinned_version_at(schema: &Value, key: &str) -> Option<String> {
+    match schema.pointer(&format!("/properties/{key}/const"))? {
         Value::String(version) => Some(version.clone()),
         Value::Number(version) => version.as_u64().map(|version| version.to_string()),
         _ => None,
@@ -1203,7 +1313,8 @@ fn pinned_version(schema: &Value) -> Option<String> {
 /// pairs only with a string producer constant (a prefix ending in its opening
 /// quote) and an integer const only with an integer one.
 fn version_type_mismatch(schema_path: &str, schema: &Value, prefix: &str) -> Option<String> {
-    let schema_is_string = match schema.pointer("/properties/schema_version/const")? {
+    let key = crate::schema_compat::version_key(schema_path);
+    let schema_is_string = match schema.pointer(&format!("/properties/{key}/const"))? {
         Value::String(_) => true,
         Value::Number(_) => false,
         _ => return None,
@@ -1212,7 +1323,7 @@ fn version_type_mismatch(schema_path: &str, schema: &Value, prefix: &str) -> Opt
     (schema_is_string != producer_is_string).then(|| {
         let kind = |string: bool| if string { "a string" } else { "an integer" };
         format!(
-            "{schema_path} pins `schema_version` as {} but its producer constant `{prefix}` is {}",
+            "{schema_path} pins `{key}` as {} but its producer constant `{prefix}` is {}",
             kind(schema_is_string),
             kind(producer_is_string)
         )

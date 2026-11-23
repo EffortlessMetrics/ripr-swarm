@@ -51,6 +51,7 @@ mod helper_arguments;
 pub(in crate::analysis::classify) mod path_value;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
+mod scalar_exits;
 mod shared_macro_scan;
 pub(super) mod short_circuit;
 mod unseen_member;
@@ -661,8 +662,14 @@ impl ProjectedCollectionWorkspaceMemo {
 /// admits every file that spells a test file's local empty-macro name.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct WithheldMacroBindings {
-    /// Some withheld file may shadow any macro name.
+    /// Some withheld site binds every trusted name, so no later file can
+    /// change the result.
     any_name: bool,
+    /// Some withheld workspace-wide foreign glob may shadow any name but the
+    /// core prelude macros (#16060). It does not end the fold, since a later
+    /// file may still bind one of those, but a test file's local empty-macro
+    /// names stay ambiguous as they do for `any_name`.
+    glob_any_name: bool,
     /// A crate-local site routed by root may shadow any macro name. The
     /// trusted set stays per root, but a test file's local empty-macro names
     /// are refused workspace-wide, as the full scan's empty-macro check
@@ -744,7 +751,8 @@ impl WithheldMacroBindings {
                     .or_insert_with(|| (path.to_path_buf(), site));
                 continue;
             }
-            self.any_name |= site.kind.binds_any_name();
+            self.any_name |= site.kind.binds_every_trusted_name();
+            self.glob_any_name |= site.kind.binds_any_name();
             self.trusted.insert(name.clone());
             self.sites
                 .entry(name)
@@ -769,7 +777,8 @@ impl WithheldMacroBindings {
                 else {
                     continue;
                 };
-                self.any_name |= site.kind.binds_any_name();
+                self.any_name |= site.kind.binds_every_trusted_name();
+                self.glob_any_name |= site.kind.binds_any_name();
                 self.trusted.insert(name.clone());
                 self.sites.entry(name).or_insert((path, site));
             }
@@ -806,7 +815,8 @@ impl WithheldMacroBindings {
                 else {
                     continue;
                 };
-                self.any_name |= site.kind.binds_any_name();
+                self.any_name |= site.kind.binds_every_trusted_name();
+                self.glob_any_name |= site.kind.binds_any_name();
                 self.trusted.insert(name.clone());
                 self.sites.entry(name).or_insert((path, site));
             }
@@ -2361,7 +2371,9 @@ impl OwnerPinSyntax {
                     )
                 })
                 .chain(
-                    (self.withheld.any_name || self.withheld.root_any_name)
+                    (self.withheld.any_name
+                        || self.withheld.glob_any_name
+                        || self.withheld.root_any_name)
                         .then(|| names.clone())
                         .into_iter()
                         .flatten(),
@@ -4268,7 +4280,7 @@ impl AssertionRefusal {
         // Evidence text is host-independent: use the stable slash spelling
         // so Windows and Unix emit identical bytes (#2337 family).
         let at = |path: &Path, line: usize| {
-            let text = crate::analysis::stable_path_text(path);
+            let text = crate::analysis::stable_display_path_text(path);
             if line == 0 {
                 text
             } else {
@@ -4372,7 +4384,10 @@ impl AssertionRefusal {
                     match &site.kind {
                         MacroBindingKind::Unparsed => format!(
                             "{} did not parse cleanly, so it may redefine `{name}!`",
-                            crate::analysis::stable_path_text(path)
+                            crate::analysis::stable_display_path_text(path)
+                        ),
+                        MacroBindingKind::Included => format!(
+                            "`include!` at {place} splices in a file ripr does not read here, which may define `{name}!`"
                         ),
                         MacroBindingKind::NoImplicitPrelude => format!(
                             "`#![no_implicit_prelude]` at {place} removes the standard `{name}!`"
@@ -4821,8 +4836,10 @@ fn trusted_macro_sites_in(
     // (a bench's `#[macro_use] extern crate bencher;`) is kept per root.
     let mut by_root = CrateMacroBindings::new();
     let mut retained = WorkspaceMacroSiteIndex::default();
-    // One foreign glob import, `#[macro_use]` or unparsable file makes
-    // every trusted name ambiguous, and most workspaces have one. Scan
+    // One `#[macro_use]` or unparsable file makes every trusted name
+    // ambiguous. A foreign glob makes every name but the core prelude
+    // macros ambiguous (#16060), so it saturates only beside another site
+    // for those. Scan
     // the files that can do that first; once every name is ambiguous for
     // every test, no later file (scoped sites included) changes an answer,
     // so the rest are skipped. A refusal that needs a site completes the
@@ -7153,7 +7170,11 @@ impl OwnerReturnPin {
             // Err-return guard twin `if !matches!(owner(..), Ok(5)) { return
             // Err(..) }` (RIPR-SPEC-0154 example 2).
             matches_operands = operands;
-            let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
+            // #15397: an async owner's operand is `owner(..).await`, as in the
+            // `assert_eq!` forms; its bare call is a future, not its value.
+            let Some(call) =
+                self.awaited_call_shape(poll_context, &matches_operands[0], &self.name)
+            else {
                 return false;
             };
             // A pattern resolves `None` or `Some(..)` in the test's scope, so
@@ -7324,7 +7345,12 @@ impl OwnerReturnPin {
             && let Some(call) = call_text
                 .map(str::to_string)
                 .or_else(|| owner_call_in(&assertion.text, &self.name, unwrapped))
-            && closed.provably_unpinned(&self.name, self.closed_call_text(&call), expected)
+            // #15397 review: an awaited call evaluates like its bare call.
+            && closed.provably_unpinned(
+                &self.name,
+                self.closed_call_text(&call).trim_end_matches(".await"),
+                expected,
+            )
         {
             return false;
         }
@@ -10061,35 +10087,16 @@ fn scalar_early_return_gate(
     {
         return None;
     }
-    let mut changed_returns = 0usize;
-    for offset in whole_word_offsets(inner, "return") {
-        let value_start = offset + "return".len();
-        let value_end = value_start + inner[value_start..].find(';')?;
-        let value = collapse_whitespace(&inner_text[value_start..value_end]);
-        let value = value.trim();
-        if !super::boundary_pairing::is_whole_decimal_literal(value) {
-            // A parameter, const or computed exit may alias the changed
-            // literal under an input this static read does not evaluate.
-            return None;
-        }
-        if super::boundary_pairing::same_scalar_literal(value, changed) {
-            // Only the changed line may produce this literal; a second
-            // `return` of it elsewhere is a second source.
-            if !spans_changed_line(offset, value_end) {
-                return None;
-            }
-            changed_returns += 1;
-        }
-    }
-    let (after_semicolon, after_brace) = top_level_tail_starts(inner);
-    let tail = collapse_whitespace(&inner_text[after_semicolon.max(after_brace)..]);
-    let tail = tail.trim();
-    (changed_returns == 1
-        && super::boundary_pairing::is_whole_decimal_literal(tail)
-        && !super::boundary_pairing::same_scalar_literal(tail, changed))
-    .then(|| ReturnPathGate::EarlyScalar {
-        literal: changed.to_string(),
-    })
+    // #11738: the exits are a pure function of the owner text, read once per
+    // scope; only which of them build the changed literal is asked here.
+    let exits = scalar_exits::scalar_exits(inner, inner_text);
+    exits
+        .as_ref()
+        .as_ref()?
+        .changed_is_only_source(changed, spans_changed_line)
+        .then(|| ReturnPathGate::EarlyScalar {
+            literal: changed.to_string(),
+        })
 }
 
 /// #13037 Defect A, tail direction: whether every early `return` in `inner`
@@ -10305,7 +10312,12 @@ fn assertion_context_macros() -> Vec<&'static str> {
 /// Whether a macro named `name` neither returns nor binds a name, whatever
 /// file it sits in.
 fn is_bounded_macro(name: &str) -> bool {
-    NON_RETURNING_MACROS.contains(&name) && !is_test_scoped_trusted_macro(name)
+    NON_RETURNING_MACROS.contains(&name)
+        && !is_test_scoped_trusted_macro(name)
+        // The owner-side return scan reads spellings without the binding
+        // check, so a local `macro_rules! include_str` there could hide a
+        // `return`; the include pair is trusted in assertion context only.
+        && !matches!(name, "include_bytes" | "include_str")
 }
 
 fn has_unbounded_macro(masked: &str) -> bool {
@@ -13979,6 +13991,19 @@ fn other_definition_competes(
     let associated = kind == CallKind::Associated;
     let name = owner.name.as_str();
     let is_owner = |file: &PathBuf, line: usize| *file == owner.file && line == owner.start_line;
+    // #15276: a method call whose receiver is typed as the owner's own named
+    // `impl` type never dispatches to a method of another named type, so a
+    // trait or inherent method of that name on a different declared type
+    // (`impl Shape for Line` beside the owner `impl Shape for Square`) does
+    // not compete. Same-type rivals (an inherent `Square::area`, a second
+    // trait's method on `Square`), trait default bodies, generic, reference,
+    // slice and `dyn` self types, and unindexed definitions still refuse.
+    let owner_receiver = method.then(|| impl_receiver_type(owner, index)).flatten();
+    let on_another_named_type = |function: &FunctionSummary| {
+        owner_receiver.as_deref().is_some_and(|own| {
+            impl_receiver_type(function, index).is_some_and(|other| other != own)
+        })
+    };
     let indexed_competes = index.functions().iter().any(|function| {
         if function.name != name || is_owner(&function.file, function.start_line) {
             return false;
@@ -13989,7 +14014,7 @@ fn other_definition_competes(
             FunctionContainer::Free => {
                 !method
                     && !associated
-                    && !settled_per_test.is_some_and(|identity| identity.settles(function))
+                    && !settled_per_test.is_some_and(|identity| identity.settles(index, function))
             }
             _ if associated => true,
             _ => {
@@ -13997,6 +14022,7 @@ fn other_definition_competes(
                     && function.item.has_self_param
                     && function.item.has_body
                     && !is_self_forward(&function.body, name)
+                    && !on_another_named_type(function)
             }
         }
     });
@@ -14040,6 +14066,87 @@ fn other_definition_competes(
                 }
             })
     })
+}
+
+/// The declared named type of an inherent or trait `impl` method with a
+/// `self` receiver, as [`declared_receiver`] reads it: `None` for a trait
+/// default body, a free or local `fn`, an unknown container, a generic,
+/// reference, slice, tuple, pointer, `dyn` or undeclared self type, and a
+/// name the workspace aliases, renames to, or uses as an impl's generic
+/// parameter in that file.
+fn impl_receiver_type(function: &FunctionSummary, index: &RustIndex) -> Option<String> {
+    if !function.item.has_self_param {
+        return None;
+    }
+    let self_ty = match &function.item.container {
+        FunctionContainer::Inherent { self_ty } | FunctionContainer::TraitImpl { self_ty, .. } => {
+            self_ty
+        }
+        _ => return None,
+    };
+    if self_ty.contains('<') {
+        return None;
+    }
+    let name = match declared_receiver(self_ty, index)? {
+        ReceiverType::Named(name) => name,
+        ReceiverType::ByteSlice => return None,
+    };
+    // #15426 review: the written name must bind the declared type. An
+    // `impl<T> .. for T` beside a declared `struct T`, or a `type` alias or
+    // `as` rename of that name anywhere in the workspace, may denote another
+    // type (`type Line = super::Square; impl Line { .. }`), so it is not
+    // established and the caller keeps the rival competing.
+    let raw = format!("r#{name}");
+    let rebinds = index.files().values().any(|facts| {
+        let source = facts.source.as_ref();
+        file_aliases_type(source, &name)
+            || file_aliases_type(source, &raw)
+            || file_renames_to(source, &name)
+            || file_renames_to(source, &raw)
+    });
+    let generic_in_file = index
+        .files()
+        .get(&function.file)
+        .is_some_and(|facts| impl_generics_name(&facts.source, &name));
+    (!rebinds && !generic_in_file).then_some(name)
+}
+
+/// Whether any `impl<..>` header in `source` lists `name` among its generic
+/// parameters (or anywhere in its angle brackets, which fails closed).
+fn impl_generics_name(source: &str, name: &str) -> bool {
+    if !source.contains(name) {
+        return false;
+    }
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    whole_word_offsets(&masked, "impl")
+        .into_iter()
+        .any(|offset| {
+            let rest = &masked[offset + "impl".len()..];
+            let open = offset + "impl".len() + (rest.len() - rest.trim_start().len());
+            if bytes.get(open) != Some(&b'<') {
+                return false;
+            }
+            let mut depth = 0usize;
+            let mut close = None;
+            for (at, byte) in bytes.iter().enumerate().skip(open) {
+                match byte {
+                    b'<' => depth += 1,
+                    b'>' if at > 0 && bytes[at - 1] == b'-' => {}
+                    b'>' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            close = Some(at);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // An unbalanced header fails closed.
+            let generics = close.map_or(&masked[open..], |close| &masked[open..close]);
+            !whole_word_offsets(generics, name).is_empty()
+        })
 }
 
 struct UnindexedDefinition<'a> {
@@ -14599,7 +14706,7 @@ fn receiver_let_binding_ranges(body: &str, receiver: &str) -> Option<Vec<(usize,
 /// after the `let` (`assert!(b > 3); assert_eq!(b, 12);`), and statements
 /// may stand between the `let` and the assertion. Every use still lies in
 /// an assertion, so no item, pattern or macro outside one can rebind it.
-fn let_bound_owner_call<'a>(
+pub(super) fn let_bound_owner_call<'a>(
     test: &'a TestSummary,
     assertion: &OracleFact,
     operand: &str,
@@ -15162,7 +15269,9 @@ fn owner_file_keeps_integer_names(owner: &FunctionSummary, index: &RustIndex) ->
 /// Whether the expected operand of `assertion` in `test` reaches the owner
 /// `name`: it names the owner, or names a test binding whose initializer
 /// does (`assert_eq!(f(4), f(2) + f(2))`, `let e = f(4); assert_eq!(f(4),
-/// e)`), so the assertion compares the owner with itself. Shared by the
+/// e)`), or names a value bound from loop rows that are not constant
+/// (`for want in [EXPECTED]`), so the assertion may compare the owner with
+/// itself. Shared by the
 /// owner-return pin and RIPR-SPEC-0265 element pairing.
 pub(in crate::analysis::classify) fn expected_reaches_owner(
     test: &TestSummary,
@@ -15170,9 +15279,15 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
     expected: &str,
     name: &str,
 ) -> bool {
-    contains_as_whole_word(&mask_comments_and_strings(expected), name)
+    let masked = mask_comments_and_strings(expected);
+    contains_as_whole_word(&masked, name)
         || (owner_named_outside(test, assertion, name)
             && expected_binding_calls_owner(test, expected, name))
+        // #14116: a name bound from loop rows that are not constant
+        // (`for want in [EXPECTED]`) may hold the owner's own output.
+        || crate::analysis::syntax::opaque_row_names(&test.body)
+            .iter()
+            .any(|row_name| contains_as_whole_word(&masked, row_name))
 }
 
 /// RIPR-SPEC-0035, reveal side: the value the expected `operand` stands

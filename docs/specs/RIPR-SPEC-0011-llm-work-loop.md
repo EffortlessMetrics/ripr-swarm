@@ -809,6 +809,26 @@ naming `ripr check` for detail, instead of the repository-wide `ripr pilot`
 route. When every candidate was dropped as already noticed, the outcome is the nothing-to-do one instead. Without a diff scope the repository route is kept. Eligibility and the
 `no_eligible_seam` code are unchanged.
 
+## Amendment (#15615): changed spots lead the capped refusal list
+
+The no-eligible reason list stays capped at three rows. Rows about the change
+are listed before rows counting spots outside it. When the rows overflow the
+cap and both kinds are present, the outside counts fold into one row
+("outside your changed lines, N repairable spots are not offered, ...") that
+follows at most two leading rows (framing notes, then changed rows), so a changed spot is never hidden behind
+outside counts. For an open change the lead reads "none is ready for an
+automatic repair on your changed lines", and changed rows past the cap are
+disclosed as "(and N more on your changed lines; `ripr check ...` shows the
+change's findings)" with the same base. Rows that fit keep their own wording.
+
+A change with an already-gripped spot and no open spot takes the
+nothing-to-do outcome directly only when no repair candidate sits on the
+changed lines. A candidate is
+open until `ripr check`'s closure decides it: one that check cannot judge
+leaves the change open (and keeps the outside counts), and one that check reads
+as noticed ends on the nothing-to-do outcome with the gripped spots named
+directly and, as in the shortcut, no spot outside the change listed.
+
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
 A start publishes an attempt and then renders the handoff card, which names the
@@ -1035,7 +1055,9 @@ refuses, before issuing anything and leaving the attempt awaiting its edit,
 when no `--test-result` is passed, when the result counted no test, or when it
 reports any failed test (`failed == 0` is required; a failed test counts as
 having ran but not as a pass). Each refusal names the command to run and the
-flag to pass, and counts against the after-phase retry budget. A proposal
+flag to pass. A refused supplied result (zero-count, failing, or not new)
+counts against the after-phase retry budget; a missing result does not (see
+the #16164 amendment below). A proposal
 whose file was never created is left to the cage verdict
 (`selected_target_not_changed`) rather than this gate. The finish authority
 re-checks this from its own evaluated cage state: a proposal attempt whose cage
@@ -1044,11 +1066,9 @@ proposed file created after the gate looked cannot finish compliant unrecorded.
 It also re-applies the passing-run check to the result it would retain, so a
 failing or zero-count run that the gate did not check is refused there (#15033).
 Attempts that follow an
-existing test target keep `--test-result` optional. `ripr continue` and the printed `--phase after` next commands do not
-pass `--test-result`; for a proposal attempt they reach this refusal, whose text
-names the explicit `ripr agent repair --phase after --attempt <id> --test-result
-FILE` command. Teaching `continue` and the printed command to carry the flag is
-left to a follow-up. Attribution of the events to
+existing test target keep `--test-result` optional. How a proposal attempt's
+printed next commands state the requirement is the #16164 amendment below.
+Attribution of the events to
 the file stays the caller's claim (see the B amendment).
 
 For an inline new-test proposal the new test goes into a file that already
@@ -1071,6 +1091,61 @@ normalized-record equality; older normalized records alone lost suite framing.
 This does not prove that the supplied raw bytes are the original events. A failed historical result is not
 promoted; status inspection and a new attempt are required. Existing-target
 attempts retain B's optional-result and visible-failure behavior.
+
+## Amendment (#16164): a proposal attempt states its focused-result requirement up front, and a missing result charges no retry
+
+A new-test proposal attempt must not have to fail once to learn that it needs
+a focused result. When the attempt begins, its committed after command (the
+manifest `next_command`, the `--json` `repair_attempt.next_command`, and the
+human `Next, after the test edit:` line) ends with `--test-result FILE`, and
+the start states, in the finish gate's own words, that the attempt follows a
+new-test proposal and how to produce FILE (run the new test on a nightly
+toolchain for its own package and target, for example
+`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json` or `--lib` for an inline test, and pass its events in a
+`focused_test_result` document saved outside the checkout). The `--json`
+continuation carries that text as the additive `focused_result_requirement`
+member, present only for a proposal attempt. `ripr agent status` (default and
+`--attempt`) offers the same flag-bearing command, because `ripr continue`
+cannot pass a result, and adds the same requirement to its reason. An attempt
+that follows an existing test target is unchanged: its command stays the plain
+`--phase after` form (rendered as `ripr continue` for people) with no new text.
+
+Running the after phase of a proposal attempt with no `--test-result` at all
+(for example through `ripr continue`, or the retained packet's
+`repair_after_command`, which is rendered before the cage policy exists and
+does not carry the flag) is a usage refusal, not a failed attempt. It stays a
+typed refusal (exit 3) with the same narration (the explicit
+`ripr agent repair --phase after --attempt <id> --test-result FILE` command and
+how to produce FILE) and leaves the attempt awaiting its edit, but it records
+no refusal: `after_refusal_count`, `last_after_refusal` and the refusal history
+do not move, so it never spends the retry budget. The finish authority's own
+missing-result refusal is the same class and is treated the same way. Status
+explains the requirement from the committed command rather than from a
+recorded refusal. A supplied result that the gate refuses still counts as a
+retry exactly as before.
+
+Limits: an attempt begun before this amendment keeps its old committed command
+without the flag, so status does not name the requirement for it (its
+missing-result refusals are still uncharged). The retained packet's
+`repair_after_command` and the repair card's next action do not carry the flag;
+following either reaches the uncharged refusal, which names it.
+
+Amendment (#16186): where the proposed file is a Rust integration test whose
+package manifest and cargo target resolve (`app::test_stub::focused_result_run_command`),
+the start names the exact command that produces FILE:
+`cargo +nightly test --manifest-path M -p P --test T -- -Z unstable-options --format json`.
+It runs through the package's own manifest and names the package with `-p`, so
+a package outside the workspace default members still runs, including a root
+package whose own manifest declares other default members. It carries no test-name
+filter, because the name the agent writes may differ from the suggested one.
+The resolved requirement also names the exact `test_file` value the result
+must carry (the proposal's file as committed), and resolution applies only to
+an integration proposal. A proposed flat file whose `tests/NAME/main.rs`
+directory target already exists gets the generic form, because creating the
+file makes that target name ambiguous to Cargo.
+An inline test or an unresolved target keeps the generic form, and so do
+`ripr agent status` and the gate's missing-result refusal, which do not
+resolve the target.
 
 ## Amendment (#13205): a proposed new-test target is preflighted read-only
 
@@ -1260,6 +1335,7 @@ is not decided here.
 - `crates/ripr/src/app/repair_card_handoff.rs::tests::a_proposal_names_the_workspace_only_when_the_evidence_admitted_it` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::created_proposed_file_binds_the_attempt_to_its_proposal` (#13203)
 - `crates/ripr/tests/new_test_proposal_attempt.rs::edit_outside_the_proposals_cage_is_refused` (#13203)
+- `crates/ripr/tests/new_test_proposal_attempt.rs::a_proposal_made_stale_before_the_baseline_is_captured_binds_nothing` (#13203)
 - `crates/ripr/tests/proposal_only_repair_start.rs::inline_proposal_with_an_invalid_package_identity_leaves_no_attempt` (#13205)
 - `crates/ripr/tests/proposal_only_repair_start.rs::package_name_preflight_agrees_with_cargo_metadata` (#13205)
 - `crates/ripr/src/output/agent_seam_packets.rs::tests::selected_proposal_reads_the_same_in_card_packet_and_mcp` (#13204)
@@ -1379,7 +1455,7 @@ is not decided here.
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_failed_restart_retains_literal_unix_root`
 - `crates/ripr/src/mcp/repair_root_tests.rs::durable_inventory_open_gap_restart_retains_literal_unix_root`
 - `crates/ripr/src/app/agent_status.rs::tests::pilot_select_command_binds_raw_and_bound_roots_once`
-- `crates/ripr/tests/generated_review_workflow.rs::generated_status_command_runs_from_a_foreign_working_directory`
+- `crates/ripr/tests/generated_review_workflow/main.rs::generated_status_command_runs_from_a_foreign_working_directory`
 - `crates/ripr/src/lsp/tests.rs::agent_loop_command_payloads_stay_root_anchored_for_platform_roots`
 - `editors/vscode/test/suite/extension.test.ts::agent loop commands must equal the body the server renders from the payload (#4225)`
 - `editors/vscode/test/suite/extension.test.ts::real server surfaces seam diagnostic, hover provider, and agent actions`

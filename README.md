@@ -194,7 +194,8 @@ and limits; the [capability matrix](docs/CAPABILITY_MATRIX.md) and
 
 ## Docs
 
-[Quickstart](docs/QUICKSTART.md) · [Configuration](docs/CONFIGURATION.md) ·
+[Quickstart](docs/QUICKSTART.md) · [Upgrading from 0.10](docs/INSTALL_CHANNELS.md#upgrading-from-010-to-011) ·
+[Configuration](docs/CONFIGURATION.md) ·
 [Editor extension](docs/EDITOR_EXTENSION.md) · [Agent guide](docs/LLM_OPERATOR_GUIDE.md) ·
 [Output formats](docs/OUTPUT_SCHEMA.md) · [Integrations and Git hooks](docs/INTEGRATIONS.md) ·
 [Proof and limits](docs/PUBLIC_PROOF.md) · [All documentation](docs/README.md)

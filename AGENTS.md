@@ -207,7 +207,10 @@ not enqueue or authorize merge. After inspecting the results and making the curr
 product/integration judgment, enqueue the exact reviewed head for qualification of
 the actual merge composition. GitHub performs the protected squash when the queue's
 conditions pass. Direct expected-head squash is a refused historical route
-(#14247); do not arm generic auto-merge instead. Preserve actual required checks
+(#14247). A REST-only session may enqueue with the auto-merge call under the
+[enqueue interface](docs/MERGE_FLOW.md#enqueue-interface) conditions: every
+required result green on the exact reviewed head and the final review marker
+posted. It is never an armed wait. Preserve actual required checks
 and approvals; this guidance does not change triggers, settings or result producers.
 
 Source review and focused proof can be complete while hosted qualification is
@@ -430,7 +433,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo doc --workspace --no-deps
 cargo package -p ripr --list
 cargo xtask check-packaged-readme
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run # packages from the publish stage; not plain cargo package/publish
 cargo xtask check-static-language
 cargo xtask check-policy-all
 cargo xtask check-no-panic-family

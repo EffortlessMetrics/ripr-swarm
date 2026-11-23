@@ -245,6 +245,12 @@ pub(super) fn gap_record_comment_json(
     let repair_text = repair_text(repair_route);
     let why = repair_why(record, repair_route);
     let verify_command = record.verification_commands[0].clone();
+    // #15302: prose and guidance run a nested project's command from its
+    // directory; the repair card keeps the raw ledger command.
+    let verify_display = crate::output::python_repair_card::rooted_verify_display(
+        record.verify_cwd.as_deref(),
+        &verify_command,
+    );
     let source_location = source_location_json(file, Some(line as usize));
 
     let mut value = json!({
@@ -295,13 +301,13 @@ pub(super) fn gap_record_comment_json(
             "authority_boundary": record.authority_boundary.as_str(),
         },
         "llm_guidance": {
-            "prompt": repair_prompt(repair_route, &verify_command),
+            "prompt": repair_prompt(repair_route, &verify_display),
             "command": format!(
                 "ripr first-action --root {} --gap-ledger {}",
                 shell_arg(&display_path(root)),
                 shell_arg(gap_ledger_path)
             ),
-            "verify_command": verify_command,
+            "verify_command": verify_display,
         },
     });
     if let Some(seam_id) = seam_id

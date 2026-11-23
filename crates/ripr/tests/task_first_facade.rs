@@ -424,6 +424,9 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
 
 /// An explicit check base is not retained by bare repair. A clean main branch
 /// can therefore have a real diff gap even when the seam inventory is empty.
+/// The gap sits two commits back, behind a docs-only commit, so the range
+/// bare `ripr check` and bare repair read on this clean branch (the last
+/// commit, #16082) is not the explicit check's range.
 #[cfg(feature = "lang-python")]
 #[test]
 fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(), String> {
@@ -447,8 +450,11 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     .map_err(|e| e.to_string())?;
     run_git(root, &["add", "pricing.py"])?;
     git_commit(root, "change")?;
+    std::fs::write(root.join("README.md"), "pricing\n").map_err(|e| e.to_string())?;
+    run_git(root, &["add", "README.md"])?;
+    git_commit(root, "docs")?;
 
-    let check = run_ripr(root, &["check", "--base", "HEAD^"])?;
+    let check = run_ripr(root, &["check", "--base", "HEAD~2"])?;
     assert_exit(&check, 0, "explicit-base check");
     let check_out = stdout_text(&check);
     let gap = "gap:python:pricing.py:price:predicate_boundary:predicate:amount-10_if_amount>100_else_amount";
@@ -464,7 +470,7 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
     assert!(
         start_line.contains(gap)
             && start_line.contains("--base")
-            && start_line.contains("HEAD^")
+            && start_line.contains("HEAD~2")
             && start_line.contains("--phase before"),
         "start must bind the selected gap and base: {start_line}"
     );
@@ -494,7 +500,7 @@ fn repair_after_explicit_base_check_points_back_to_its_gap_start() -> Result<(),
             "--gap-id",
             gap,
             "--base",
-            "HEAD^",
+            "HEAD~2",
             "--root",
             &root.to_string_lossy(),
             "--phase",
@@ -2465,7 +2471,9 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
             "before",
         ],
     )?;
-    assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    // docs/EXIT_CODES.md: an unknown `--seam-id` is one typed refusal with
+    // one exit, `3`, as `ripr repair` gives above (#15311).
+    assert_exit(&agent_stale, 3, "agent repair with a stale probe ID");
     let agent_stale_stderr = stderr_text(&agent_stale);
     assert!(
         agent_stale_stderr.contains("agent repair --seam-id")
@@ -3971,7 +3979,23 @@ fn continue_no_movement_keeps_inline_test_module_restrictions() -> Result<(), St
         format!("{FIXTURE_LIB}\n#[cfg(test)]\nmod tests {{\n    use super::discounted_total;\n    #[test]\n    fn below() {{ assert_eq!(discounted_total(50, 100), 50); }}\n    #[test]\n    fn above() {{ assert_eq!(discounted_total(10_000, 100), 9_990); }}\n}}\n"),
     ).map_err(|error| error.to_string())?;
     run_git(root, &["add", "src", "tests"])?;
-    git_commit(root, "inline test target")?;
+    // Amend the fixture's root commit: with a parent commit, bare repair on
+    // this clean default branch would follow check's last-commit rescope
+    // (#16082) to the test-only edit and offer no start.
+    run_git(
+        root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "--amend",
+            "-q",
+            "-m",
+            "inline test target",
+        ],
+    )?;
     let before = run_ripr(root, &["repair"])?;
     assert_exit(&before, 0, "prepare inline attempt");
     let attempt_id = attempt_id_from_before(&before)?;
@@ -4697,10 +4721,26 @@ fn assert_already_complete_summary(
             ));
         }
     }
+    // The printed root is the bound root, shell-quoted for this host: on
+    // Windows it renders with `/` separators (#4287), so a backslash-separated
+    // drive root prints with forward slashes (#16105). Decode each command
+    // the way its shell would and compare the argument as a path, not as the
+    // bytes the test passed in.
     for (index, command) in [(4, "Next"), (5, "Full status")] {
-        if !lines[index].contains(&format!("--root {root_arg}`")) {
+        let printed = lines[index]
+            .split('`')
+            .nth(1)
+            .ok_or_else(|| format!("the {command} line must carry a command:\n{summary}"))?;
+        let words = printed_words::printed_words(printed)?;
+        // `--root <root>` must be the final pair, as the old byte check
+        // (`--root <root>` before the closing backtick) required.
+        let names_root = match words.as_slice() {
+            [.., flag, value] => flag == "--root" && Path::new(value) == Path::new(root_arg),
+            _ => false,
+        };
+        if !names_root {
             return Err(format!(
-                "the {command} command must name the selected root `{root_arg}`:\n{summary}"
+                "the {command} command must end by naming the selected root `{root_arg}`:\n{summary}"
             ));
         }
     }

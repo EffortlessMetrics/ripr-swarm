@@ -949,3 +949,14 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_strong_oracle (43)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless typescript_strong_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -1,0 +1,3 @@
+crates/ripr/src/lsp.rs|failed to get current dir: {err}
+crates/ripr/src/lsp.rs|failed to start LSP runtime: {err}
+crates/ripr/src/lsp.rs|lsp: received `exit` without a prior `shutdown` request; LSP section exit requires a nonzero exit

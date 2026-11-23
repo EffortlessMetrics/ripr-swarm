@@ -232,6 +232,16 @@ Other applicable spec/document gates remain necessary. The precommit gate
 table, required hosted policy, advisory source-of-truth workflow and support
 claims are unchanged.
 
+### Release-note CLI inputs to the scoped docs gate
+
+The revision-bound docs gate compares committed release-note command paths and
+flags using the public guide contract's parser. Changed lines containing a ripr command prefix
+and their shell continuations also require the candidate CLI contract, including
+bare commands and bracketed examples outside the flag parser. Surrounding prose
+can change without widening this check. A changed-list invocation lacks the two
+committed inputs and widens for release notes. The protected docs gate runs the
+full precommit table and its Markdown tests.
+
 ### Gemini context pointer parity
 
 The root `GEMINI.md` is a regular file containing only the relative import
