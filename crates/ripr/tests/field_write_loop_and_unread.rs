@@ -208,6 +208,24 @@ fn any_other_use_of_an_unread_test_keeps_the_abstention() -> Result<(), String> 
             ),
         ),
         (
+            "an opaque macro runs before the call",
+            smoke(
+                "        let mut stats = Stats::default();\n        observe_later!();\n        stats.record_miss();",
+            ),
+        ),
+        (
+            "the call sits in a loop that may not run",
+            smoke(
+                "        let mut stats = Stats::default();\n        for _ in 0..0 {\n            stats.record_miss();\n        }",
+            ),
+        ),
+        (
+            "the call sits in a block",
+            smoke(
+                "        let mut stats = Stats::default();\n        {\n            stats.record_miss();\n        }",
+            ),
+        ),
+        (
             "the owner runs twice",
             smoke(
                 "        let mut stats = Stats::default();\n        stats.record_miss();\n        stats.record_miss();",
@@ -246,6 +264,10 @@ fn a_for_pattern_that_binds_the_receiver_does_not_reach_the_owner() -> Result<()
             "        let mut stats = Stats::default();\n        for mut stats in [Stats::default()] {\n            stats.record_miss();\n        }",
         ),
         (
+            "macro pattern",
+            "        let mut stats = Stats::default();\n        for bind!(stats) in [Stats::default()] {\n            stats.record_miss();\n        }",
+        ),
+        (
             "tuple pattern",
             "        let mut stats = Stats::default();\n        for (_, mut stats) in [(0, Stats::default())] {\n            stats.record_miss();\n        }",
         ),
@@ -273,6 +295,6 @@ fn an_exact_read_after_a_loop_that_may_not_run_does_not_credit() -> Result<(), S
         Some(RelationReason::DirectOwnerCall),
         "{found:#?}"
     );
-    assert_ne!(found.class, ExposureClass::Exposed, "{found:#?}");
+    assert_eq!(found.class, ExposureClass::StaticUnknown, "{found:#?}");
     Ok(())
 }

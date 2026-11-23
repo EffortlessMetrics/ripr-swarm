@@ -7854,9 +7854,15 @@ fn visible_receiver_binding_names_type(
         // does not spell the receiver, the receiver is the binding visible
         // around the loop (`let mut stats = ..; for _ in 0..n {
         // stats.record() }`), so the walk continues outward. A pattern that
-        // does spell it may bind any type and still refuses.
+        // does spell it may bind any type and still refuses, and so does a
+        // pattern holding a macro (`for bind!(stats) in ..`), whose expansion
+        // may bind any name.
         if let Some(for_loop) = ast::ForExpr::cast(ancestor.clone())
-            && (for_loop.pat().is_none() || ident_pat_binds_name(for_loop.pat(), name))
+            && for_loop.pat().is_none_or(|pattern| {
+                pattern.syntax().descendants().any(|node| {
+                    ast::MacroPat::can_cast(node.kind()) || ast::MacroCall::can_cast(node.kind())
+                }) || ident_pat_binds_name(Some(pattern), name)
+            })
         {
             return false;
         }

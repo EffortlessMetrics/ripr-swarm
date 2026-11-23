@@ -6300,7 +6300,10 @@ fn assigned_field_unchecked(
 ///   `.owner_name(` exactly once, on a plain binding, as a bare statement
 ///   whose result nothing consumes (`.unwrap()`, `.expect(..)` or `?` may
 ///   panic or return on a changed owner, which observes it);
-/// - nothing follows that statement but closing braces, so no later helper
+/// - the call is an unconditional top-level statement of the test body (not
+///   inside a loop, `if`, `match`, block or closure: `for _ in 0..0 {
+///   stats.record() }` may never run), and nothing follows it but the test
+///   fn's closing brace, so no later helper
 ///   call, move or read of any binding (`verify(&outer)` after
 ///   `let s = &mut outer; s.record()`) can observe the write;
 /// - the binding has exactly one `let [mut]` declaration, with no reference
@@ -6337,6 +6340,7 @@ fn runs_owner_and_reads_nothing(test: &TestSummary, owner_name: &str, path: &str
             .chars()
             .next_back()
             .is_none_or(|ch| matches!(ch, ';' | '{' | '}'))
+        || !super::reveal::runs_unconditionally(&masked, binding_start)
     {
         return false;
     }
@@ -6345,10 +6349,9 @@ fn runs_owner_and_reads_nothing(test: &TestSummary, owner_name: &str, path: &str
     else {
         return false;
     };
-    if masked[call_end..]
-        .chars()
-        .any(|ch| !(ch.is_whitespace() || ch == '}'))
-    {
+    // Only the test fn's own closing brace may follow: a `}` of a loop, `if`
+    // or block around the call would mean the call may not run.
+    if masked[call_end..].trim() != "}" {
         return false;
     }
     // Every whole-word `let [mut] binding` declaration, as (start, end of

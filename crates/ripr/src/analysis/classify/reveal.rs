@@ -2285,7 +2285,7 @@ pub(in crate::analysis) fn unconditional_owner_insert_field(
 /// Whether the call at `at` in a test body (masked, starting at its `fn`)
 /// is a top-level statement of that body: not inside a nested block, branch,
 /// loop or closure, any of which may never run it. Fails closed.
-fn runs_unconditionally(masked: &str, at: usize) -> bool {
+pub(in crate::analysis) fn runs_unconditionally(masked: &str, at: usize) -> bool {
     let before = &masked[..at];
     let depth = before.matches('{').count() as isize - before.matches('}').count() as isize;
     let statement_start = before.rfind([';', '{', '}']).map_or(0, |index| index + 1);
