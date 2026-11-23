@@ -1344,15 +1344,7 @@ fn printed_argv_inverts_both_quoting_forms() -> Result<(), String> {
     assert_eq!(
         printed_argv(r#"ripr context id --root "tmp\fx" --from "x\a b\\" --x "q""t""#)?,
         [
-            "ripr",
-            "context",
-            "id",
-            "--root",
-            r"tmp\fx",
-            "--from",
-            r"x\a b\",
-            "--x",
-            "q\"t"
+            "ripr", "context", "id", "--root", r"tmp\fx", "--from", r"x\a b\", "--x", "q\"t"
         ]
     );
     for refused in [
