@@ -1,0 +1,10 @@
+# Registers the #15278 reverse screen under RIPR-SPEC-0217: bare `ripr repair`
+# reopens a changed seam the inventory reads as gripped when the same default
+# `ripr check` reads its changed line as non-exposed, instead of saying "the
+# existing tests already check it, and `ripr check` reports the same".
+[[extend]]
+id = "RIPR-SPEC-0217"
+tests = [
+  "crates/ripr/tests/check_repair_agree.rs::repair_never_says_check_reports_the_same_while_check_reports_a_weak_gap",
+  "crates/ripr/src/app/task_first.rs::tests::reopen_opens_only_changed_gripped_seams_check_reads_open",
+]

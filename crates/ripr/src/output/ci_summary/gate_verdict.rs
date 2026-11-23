@@ -15,6 +15,11 @@
 use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR, GateMode};
 use crate::output::markdown::code_span;
 use serde_json::Value;
+use std::fs;
+use std::path::Path;
+
+/// The decision document the gate stage writes, relative to the root.
+pub(crate) const GATE_DECISION_JSON: &str = "target/ripr/reports/gate-decision.json";
 
 /// Where the variable is edited, for the two surfaces that name it.
 const VARIABLE_ROUTE: &str = "Settings > Secrets and variables > Actions > Variables";
@@ -44,6 +49,21 @@ pub(crate) enum GateVerdict {
 }
 
 impl GateVerdict {
+    /// The failing verdict of this run, if any. A set mode the gate refuses
+    /// comes first, because the gate did not run under it. A decision
+    /// document is read only when it names this run's mode, so a report left
+    /// by an earlier run under another mode is never worded as this run's
+    /// verdict.
+    pub(crate) fn for_run(root: &Path, gate_mode: &str) -> Option<Self> {
+        Self::from_mode(gate_mode).or_else(|| {
+            fs::read(root.join(GATE_DECISION_JSON))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .filter(|decision| decision["mode"].as_str() == Some(gate_mode))
+                .and_then(|decision| Self::from_decision(&decision))
+        })
+    }
+
     /// The verdict a written decision document states, if it fails the gate
     /// for one of the two reasons this module words. Any other status,
     /// including an unknown one, yields `None`: the caller keeps its own
@@ -174,6 +194,57 @@ impl GateVerdict {
             },
             Self::UnknownMode { refusal } => format!(
                 "RIPR gate did not run: {refusal} Fix the RIPR_GATE_MODE repository variable ({VARIABLE_ROUTE}), or unset it to stay advisory, then re-run the job."
+            ),
+        }
+    }
+
+    /// One paragraph for the pull request conversation comment (#15718).
+    /// `inert` renders text that can come from the analyzed change (places,
+    /// reasons, the raw mode) as literal, mention-free text.
+    pub(crate) fn comment_line(&self, inert: impl Fn(&str) -> String) -> String {
+        match self {
+            Self::Blocked {
+                mode,
+                blocking,
+                first,
+                exception,
+            } => {
+                let mut text = format!(
+                    "**The RIPR gate blocked this pull request** under {} mode: {}.",
+                    inert(mode),
+                    blocked_by(*blocking, exception.as_ref())
+                );
+                match (first, exception) {
+                    (Some((reason, Some(place))), _) => {
+                        text.push_str(&format!(" First: {} at {}.", inert(reason), inert(place)))
+                    }
+                    (Some((reason, None)), _) => {
+                        text.push_str(&format!(" First: {}.", inert(reason)));
+                    }
+                    (None, Some((_, violation))) => {
+                        text.push_str(&format!(" First: {}.", inert(violation)));
+                    }
+                    (None, None) => {}
+                }
+                text.push_str(" The job summary and `gate-decision.md` in the `ripr-reports` artifact have the detail.");
+                text
+            }
+            Self::ConfigError { mode, errors } => {
+                let mut text = format!(
+                    "**The RIPR gate could not evaluate this pull request** under {} mode. This is a setup problem, not a finding about the code.",
+                    inert(mode)
+                );
+                match errors.first() {
+                    Some(first) => text.push_str(&format!(" First error: {}.", inert(first))),
+                    None => {
+                        text.push_str(" See `gate-decision.md` in the `ripr-reports` artifact.")
+                    }
+                }
+                text
+            }
+            Self::UnknownMode { refusal } => format!(
+                "**The RIPR gate did not run**, because `RIPR_GATE_MODE` is not a gate mode: {}. Fix the repository variable ({VARIABLE_ROUTE}), or unset it to stay advisory, then re-run the job.",
+                inert(refusal)
             ),
         }
     }

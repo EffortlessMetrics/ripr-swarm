@@ -835,3 +835,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — python_boundary_gap (38)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless python_boundary_gap --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`

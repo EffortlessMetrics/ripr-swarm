@@ -124,6 +124,14 @@ fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), S
         "let expected =",
         "let expected: Option<Vec<(String, String)>> =",
     );
+    // The decoy test's `for malformed in [format!(..), ..]` loop runs its
+    // smoke assertion (#14116, non-empty array loops), which would lift the
+    // control on its own; drop it too so the control keeps no admitted
+    // assertion.
+    let without = without.replace_checked(
+        "assert!(parse_note(&malformed).is_none(), \"{malformed}\");",
+        "let _ = parse_note(&malformed);",
+    );
     let control = effect(&without, DIFF, ".or_default()")?;
     let rows = with["related_tests"]
         .as_array()

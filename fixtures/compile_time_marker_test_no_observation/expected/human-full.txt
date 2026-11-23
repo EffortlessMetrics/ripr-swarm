@@ -36,7 +36,7 @@ Evidence
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: { let v = self.inner.get(); v } (line 11)
-  - related test src/lib.rs:16 wrapper_is_send uses no oracle; misses: has no assertion
+  - related test src/lib.rs:16 wrapper_is_send uses no oracle; misses: no established call path to the changed code; linked by file location only
 
 Weakness
   - No detected assertion observes the changed value, error, field, or effect

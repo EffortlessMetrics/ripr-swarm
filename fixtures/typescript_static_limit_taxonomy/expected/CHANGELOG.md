@@ -887,3 +887,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_static_limit_taxonomy (39)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless typescript_static_limit_taxonomy --reason "..."`
+
+Updated:
+- `expected/human.txt`

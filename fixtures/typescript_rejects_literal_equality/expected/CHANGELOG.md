@@ -455,3 +455,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — typescript_rejects_literal_equality (35)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless typescript_rejects_literal_equality --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`

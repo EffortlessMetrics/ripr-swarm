@@ -3,8 +3,8 @@ use crate::output;
 use std::path::Path;
 
 use super::super::{
-    maybe_append_jsonl, policy_readiness_generated_at, read_optional_manifest_for_report,
-    read_optional_text_for_report, write_text_file,
+    SuppliedInputReads, maybe_append_jsonl, policy_readiness_generated_at,
+    read_optional_manifest_for_report, read_optional_text_for_report, write_text_file,
 };
 use super::parse::{
     parse_policy_history_options, parse_policy_operations_options,
@@ -127,6 +127,7 @@ pub(crate) fn policy_readiness(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_operations(args: &[String]) -> Result<(), String> {
     let options = parse_policy_operations_options(args)?;
+    let mut reads = SuppliedInputReads::default();
     let input = output::policy_operations::PolicyOperationsInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -165,35 +166,38 @@ pub(crate) fn policy_operations(args: &[String]) -> Result<(), String> {
         policy_readiness_json: options
             .policy_readiness
             .as_ref()
-            .map(|path| read_optional_text_for_report("policy readiness", path)),
+            .map(|path| reads.read("--policy-readiness", "policy readiness", path)),
         waiver_aging_json: options
             .waiver_aging
             .as_ref()
-            .map(|path| read_optional_text_for_report("waiver aging", path)),
+            .map(|path| reads.read("--waiver-aging", "waiver aging", path)),
         suppression_health_json: options
             .suppression_health
             .as_ref()
-            .map(|path| read_optional_text_for_report("suppression health", path)),
+            .map(|path| reads.read("--suppression-health", "suppression health", path)),
         baseline_delta_json: options
             .baseline_delta
             .as_ref()
-            .map(|path| read_optional_text_for_report("baseline debt delta", path)),
+            .map(|path| reads.read("--baseline-delta", "baseline debt delta", path)),
         gate_decision_json: options
             .gate_decision
             .as_ref()
-            .map(|path| read_optional_text_for_report("gate decision", path)),
-        recommendation_calibration_json: options
-            .recommendation_calibration
-            .as_ref()
-            .map(|path| read_optional_text_for_report("recommendation calibration", path)),
+            .map(|path| reads.read("--gate-decision", "gate decision", path)),
+        recommendation_calibration_json: options.recommendation_calibration.as_ref().map(|path| {
+            reads.read(
+                "--recommendation-calibration",
+                "recommendation calibration",
+                path,
+            )
+        }),
         mutation_calibration_json: options
             .mutation_calibration
             .as_ref()
-            .map(|path| read_optional_text_for_report("mutation calibration", path)),
+            .map(|path| reads.read("--mutation-calibration", "mutation calibration", path)),
         preview_boundary_json: options
             .preview_boundary
             .as_ref()
-            .map(|path| read_optional_text_for_report("preview boundary", path)),
+            .map(|path| reads.read("--preview-boundary", "preview boundary", path)),
     };
     let report = output::policy_operations::build_policy_operations_report(input);
     let rendered_json = output::policy_operations::render_policy_operations_json(&report)?;
@@ -207,11 +211,13 @@ pub(crate) fn policy_operations(args: &[String]) -> Result<(), String> {
         "Next safe action: {}",
         output::policy_operations::policy_operations_next_action(&report)
     );
+    reads.finish("policy operations")?;
     Ok(())
 }
 
 pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
     let options = parse_policy_history_options(args)?;
+    let mut reads = SuppliedInputReads::default();
     let input = output::policy_history::PolicyHistoryInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -222,7 +228,7 @@ pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
             .map(|path| output::policy_history::display_path(path)),
         commit: options.commit,
         pr_number: options.pr_number,
-        current_json: read_optional_text_for_report("policy operations", &options.current),
+        current_json: reads.read("--current", "policy operations", &options.current),
         history_jsonl: options
             .history
             .as_ref()
@@ -240,6 +246,7 @@ pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
                 .to_string(),
         );
     }
+    reads.finish("policy history")?;
     maybe_append_jsonl(
         options.out_jsonl.as_deref(),
         &output::policy_history::render_policy_history_jsonl_record(&report)?,
@@ -257,6 +264,7 @@ pub(crate) fn policy_history(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn policy_promotion(args: &[String]) -> Result<(), String> {
     let options = parse_policy_promotion_options(args)?;
+    let mut reads = SuppliedInputReads::default();
     let input = output::policy_promotion::PolicyPromotionInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -266,11 +274,11 @@ pub(crate) fn policy_promotion(args: &[String]) -> Result<(), String> {
             .history
             .as_ref()
             .map(|path| output::policy_promotion::display_path(path)),
-        operations_json: read_optional_text_for_report("policy operations", &options.operations),
+        operations_json: reads.read("--operations", "policy operations", &options.operations),
         history_json: options
             .history
             .as_ref()
-            .map(|path| read_optional_text_for_report("policy history", path)),
+            .map(|path| reads.read("--history", "policy history", path)),
     };
     let report = output::policy_promotion::build_policy_promotion_report(input);
     let rendered_json = output::policy_promotion::render_policy_promotion_json(&report)?;
@@ -284,12 +292,14 @@ pub(crate) fn policy_promotion(args: &[String]) -> Result<(), String> {
             "no"
         }
     );
+    reads.finish("policy promotion")?;
     Ok(())
 }
 
 pub(crate) fn policy_preview_promotion(args: &[String]) -> Result<(), String> {
     let options = parse_policy_preview_promotion_options(args)?;
     ensure_command_root(Path::new(&options.root), "policy preview-promote")?;
+    let mut reads = SuppliedInputReads::default();
     let input = output::policy_preview_promotion::PreviewPromotionInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -302,7 +312,7 @@ pub(crate) fn policy_preview_promotion(args: &[String]) -> Result<(), String> {
         evidence_json: options
             .evidence
             .as_ref()
-            .map(|path| read_optional_text_for_report("preview promotion evidence", path)),
+            .map(|path| reads.read("--evidence", "preview promotion evidence", path)),
     };
     let report = output::policy_preview_promotion::build_preview_promotion_report(input);
     let rendered_json = output::policy_preview_promotion::render_preview_promotion_json(&report)?;
@@ -316,12 +326,14 @@ pub(crate) fn policy_preview_promotion(args: &[String]) -> Result<(), String> {
             "no"
         }
     );
+    reads.finish("policy preview-promote")?;
     Ok(())
 }
 
 pub(crate) fn policy_waiver_aging(args: &[String]) -> Result<(), String> {
     let options = parse_policy_waiver_aging_options(args)?;
     ensure_command_root(Path::new(&options.root), "policy waiver-aging")?;
+    let mut reads = SuppliedInputReads::default();
     let input = output::waiver_aging::WaiverAgingInput {
         root: options.root,
         generated_at: policy_readiness_generated_at()?,
@@ -336,7 +348,7 @@ pub(crate) fn policy_waiver_aging(args: &[String]) -> Result<(), String> {
         ledger_json: options
             .ledger
             .as_ref()
-            .map(|path| read_optional_text_for_report("PR evidence ledger", path)),
+            .map(|path| reads.read("--ledger", "PR evidence ledger", path)),
         history_json: options
             .history
             .as_ref()
@@ -350,6 +362,7 @@ pub(crate) fn policy_waiver_aging(args: &[String]) -> Result<(), String> {
         "Status: {}",
         output::waiver_aging::waiver_aging_status(&report)
     );
+    reads.finish("policy waiver-aging")?;
     Ok(())
 }
 
@@ -374,12 +387,27 @@ pub(crate) fn policy_suppression_health(args: &[String]) -> Result<(), String> {
             ));
         }
     }
+    let manifest_text = read_optional_manifest_for_report(&options.root, &options.manifest);
+    // A missing default manifest is a quiet `no_suppressions`; a manifest the
+    // caller named that is not there is a typo, not a clean report.
+    if options.manifest_explicit && manifest_text.is_none() {
+        let location = if options.manifest.is_absolute() {
+            String::new()
+        } else {
+            format!(" under --root {}", options.root.display())
+        };
+        return Err(format!(
+            "policy suppression-health --manifest {} does not exist{location}; pass --manifest naming an existing suppression manifest, or omit it to use {}",
+            options.manifest.display(),
+            output::suppressions::SUPPRESSIONS_PATH
+        ));
+    }
     let input = output::suppression_health::SuppressionHealthInput {
         root: output::suppression_health::display_path(&options.root),
         generated_at: policy_readiness_generated_at()?,
         today: output::suppressions::current_iso_date(),
         manifest_path: output::suppression_health::display_path(&options.manifest),
-        manifest_text: read_optional_manifest_for_report(&options.root, &options.manifest),
+        manifest_text,
     };
     let report = output::suppression_health::build_suppression_health_report(input);
     let rendered_json = output::suppression_health::render_suppression_health_json(&report)?;
@@ -389,5 +417,17 @@ pub(crate) fn policy_suppression_health(args: &[String]) -> Result<(), String> {
         "Status: {}",
         output::suppression_health::suppression_health_status(&report)
     );
+    // An explicitly named manifest that is unreadable or malformed means the
+    // run could not complete; the report is already written so a stale one is
+    // not left behind for `policy readiness`.
+    let config_errors = output::suppression_health::suppression_health_config_errors(&report);
+    if options.manifest_explicit && !config_errors.is_empty() {
+        return Err(format!(
+            "policy suppression-health could not use --manifest {}: {}; the report was written as `config_error`. Pass --manifest naming a readable, well-formed suppression manifest, or omit it to use {}",
+            options.manifest.display(),
+            config_errors.join("; "),
+            output::suppressions::SUPPRESSIONS_PATH
+        ));
+    }
     Ok(())
 }
