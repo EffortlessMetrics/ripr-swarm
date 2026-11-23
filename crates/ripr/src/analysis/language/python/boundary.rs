@@ -71,6 +71,9 @@ pub(super) struct PythonOwnerCallValues {
     /// The scalar literals of each parameter bound to a list, tuple or set
     /// display, as [`CallRow::elements`] reads them.
     pub(super) elements: BTreeMap<String, Vec<String>>,
+    /// The scalar key literals of each parameter bound to a dict display, as
+    /// [`CallRow::dict_keys`] reads them.
+    pub(super) dict_keys: BTreeMap<String, Vec<String>>,
 }
 
 /// The owner calls the boundary rule reads, for another activation rule
@@ -101,6 +104,7 @@ pub(super) fn strong_owner_call_values(
                 .map(|(parameter, binding)| (parameter, binding.value))
                 .collect(),
             elements: row.elements,
+            dict_keys: row.dict_keys,
         })
         .collect();
     Some(rows)
@@ -1607,11 +1611,13 @@ fn starts_with_keyword(text: &str, keyword: &str) -> bool {
 type CaseArguments = Vec<(String, String)>;
 
 /// What one call's arguments bind: scalar literals, the parametrize pairing,
-/// the element literals of list-like arguments, and whether an explicit
-/// argument was a bare name the reader could not bind (#15287).
+/// the element literals of list-like arguments, the key literals of dict
+/// arguments, and whether an explicit argument was a bare name the reader
+/// could not bind (#15287).
 type BoundArguments = (
     BTreeMap<String, Binding>,
     CaseArguments,
+    BTreeMap<String, Vec<String>>,
     BTreeMap<String, Vec<String>>,
     bool,
 );
@@ -1635,6 +1641,10 @@ pub(super) struct CallRow {
     /// set display (`prices` in `fetch_total([3, -1, 4])`), for the
     /// comprehension-element boundary rule. Never read as a scalar binding.
     pub(super) elements: BTreeMap<String, Vec<String>>,
+    /// The scalar key literals of each owner parameter bound to a dict
+    /// display (`d` in `score({"k": 2})`), for the `dict.get` fallback rule
+    /// (#16203).
+    pub(super) dict_keys: BTreeMap<String, Vec<String>>,
 }
 
 /// Owner calls from related tests whose strongest assertion is strong: the
@@ -1770,14 +1780,16 @@ fn candidate_call_rows(
                 // the call's position in it (#10707).
                 let call_start = std::ptr::eq(*text, candidate.test.body_text.as_str())
                     .then(|| arglist.as_ptr().addr() - text.as_ptr().addr());
-                let Some((bindings, case_arguments, elements, unread_name)) = bind_call_arguments(
-                    owner,
-                    constants,
-                    candidate.test,
-                    skip,
-                    arglist,
-                    call_start,
-                ) else {
+                let Some((bindings, case_arguments, elements, dict_keys, unread_name)) =
+                    bind_call_arguments(
+                        owner,
+                        constants,
+                        candidate.test,
+                        skip,
+                        arglist,
+                        call_start,
+                    )
+                else {
                     gaps = true;
                     unbound = true;
                     continue;
@@ -1808,6 +1820,7 @@ fn candidate_call_rows(
                                 &text,
                                 &bindings,
                                 &elements,
+                                &dict_keys,
                                 &case_arguments,
                                 case,
                             )
@@ -1819,6 +1832,7 @@ fn candidate_call_rows(
                         text,
                         bindings,
                         elements,
+                        dict_keys,
                     }),
                 }
             }
@@ -1943,6 +1957,7 @@ fn bind_call_arguments(
     let mut bound_names = Vec::new();
     let mut bindings = BTreeMap::new();
     let mut elements = BTreeMap::new();
+    let mut dict_keys = BTreeMap::new();
     let mut case_arguments = Vec::new();
     let mut unread_name = false;
     let mut position = 0usize;
@@ -1984,6 +1999,9 @@ fn bind_call_arguments(
             continue;
         }
         bound_names.push(name.clone());
+        if let Some(keys) = super::call_variant::literal_dict_keys(value) {
+            dict_keys.insert(name.clone(), keys);
+        }
         if let Some(literals) = literal_elements(value) {
             elements.insert(name, literals);
         } else if let Some(value) =
@@ -2040,7 +2058,7 @@ fn bind_call_arguments(
             );
         }
     }
-    Some((bindings, case_arguments, elements, unread_name))
+    Some((bindings, case_arguments, elements, dict_keys, unread_name))
 }
 
 /// A bare (optionally dotted) name such as `quantity` or `cases.LOW`: test
@@ -2091,11 +2109,13 @@ fn parametrize_case_row(
     text: &str,
     bindings: &BTreeMap<String, Binding>,
     elements: &BTreeMap<String, Vec<String>>,
+    dict_keys: &BTreeMap<String, Vec<String>>,
     case_arguments: &[(String, String)],
     case: &BTreeMap<String, String>,
 ) -> CallRow {
     let mut bindings = bindings.clone();
     let mut elements = elements.clone();
+    let mut dict_keys = dict_keys.clone();
     let mut shown = Vec::new();
     for (parameter, argname) in case_arguments {
         let Some(value) = case.get(argname) else {
@@ -2104,6 +2124,9 @@ fn parametrize_case_row(
         shown.push(format!("{argname}={value}"));
         if let Some(literals) = literal_elements(value) {
             elements.insert(parameter.clone(), literals);
+        }
+        if let Some(keys) = super::call_variant::literal_dict_keys(value) {
+            dict_keys.insert(parameter.clone(), keys);
         }
         if let Some(value) = literal_value(value) {
             bindings.insert(
@@ -2121,6 +2144,7 @@ fn parametrize_case_row(
         text: format!("{text} [parametrize {}]", shown.join(", ")),
         bindings,
         elements,
+        dict_keys,
     }
 }
 

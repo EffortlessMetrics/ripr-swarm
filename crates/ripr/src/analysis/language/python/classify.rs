@@ -1182,9 +1182,10 @@ fn classify_change_for_owner_inner<'a>(
             &focus,
         )
     });
-    // A strip side, `round` digit count or sort direction edit (#16203)
-    // differs only for an argument with whitespace on the dropped side, more
-    // decimal places, or two different elements.
+    // A strip side, `round` digit count, sort direction or `get` fallback
+    // edit (#16203) differs only for an argument with whitespace on the
+    // dropped side, more decimal places, two different elements, or no such
+    // key.
     let call_variant_gap = old_line_text.and_then(|old| {
         super::call_variant::python_call_variant_evidence(
             old,

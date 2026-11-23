@@ -5907,7 +5907,10 @@ mod tests {
         // `python_strip_side_no_exposed_credit` keeps a `strip` -> `lstrip`
         // edit no related call separates weakly exposed; its card names a
         // string with trailing whitespace, one more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (30, 36, 49, 2) {
+        // `python_get_fallback_no_exposed_credit` keeps a `get` fallback edit
+        // whose calls all hold the key weakly exposed; its card names a dict
+        // without the key, one more direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (31, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

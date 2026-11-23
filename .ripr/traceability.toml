@@ -4724,6 +4724,7 @@ fixtures = [
   "fixtures/python_truthiness_swap_no_exposed_credit",
   "fixtures/python_connective_swap_no_exposed_credit",
   "fixtures/python_strip_side_no_exposed_credit",
+  "fixtures/python_get_fallback_no_exposed_credit",
   "fixtures/python_truthiness_swap_falsy_input_control",
   "fixtures/python_truthiness_swap_inline_rebind_control",
   "fixtures/python_truthiness_swap_indirect_call_control",
