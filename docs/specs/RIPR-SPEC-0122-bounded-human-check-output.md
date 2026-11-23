@@ -634,8 +634,8 @@ written only when:
 
 - one side of the changed comparison is `p.len()` or `p.chars().count()` for
   a `&str` parameter `p`, or a local the body binds exactly once, by an
-  immutable top-level `let` before the comparison, to one of those and never
-  assigns;
+  immutable top-level `let` with no attribute before the comparison, to one
+  of those and never assigns;
 - the other side is a non-negative integer literal, a file-root `const` of
   integer type whose value is such a literal (for an owner outside any inline
   module, with no other item, import, rename or item macro of that name), or
