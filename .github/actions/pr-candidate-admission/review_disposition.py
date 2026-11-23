@@ -213,7 +213,7 @@ NEGATION = re.compile(
     # subjects, so narration such as "a wrongly gated control still fails" or
     # "a redirect still fails" admits. The other still-forms stay
     # subject-agnostic.
-    r"|\b(?:build|test|tests|suite|ci|check|checks|job|jobs|lane|lanes|run|runs|pipeline|workflow|gate|step|steps|shard|shards|matrix)\b[^.;\n]*\bstill[ \t]+fail(?:s|ed|ing)?(?![-\w])\b"
+    r"|\b(?:build|test|tests|suite|ci|check|checks|job|jobs|lane|lanes|run|runs|pipeline|workflow|gate|step|steps|shard|shards|matrix|probe|fixture|golden|mutant|assertion)\b[^.;\n]*\bstill[ \t]+fail(?:s|ed|ing)?(?![-\w])\b"
     r"|\bstill[ \t]+(?:wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
     r"|\bremains?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
     r"|\bcontinues?[ \t]+to(?:[ \t]+be)?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
@@ -267,8 +267,9 @@ REMAINDER_DEFECT = re.compile(
 # second defect in the same sentence still refuses.
 BENIGN_REMAINDER = re.compile(
     r"\bdown[ \t]+to\b"
-    r"|\b(?:queue|backlog)\b[^.;\n]*\bis[ \t]+empty\b"
-    r"|\breported[ \t]+in[ \t]+the[ \t]+run[ \t]+log\b"
+    r"|\bdown[ \t]+for[ \t]+maintenance\b"
+    r"|\b(?:queue|backlog|cache)\b[^.;\n]*\bis[ \t]+empty\b"
+    r"|\breported[ \t]+in[ \t]+the[ \t]+(?:run[ \t]+log|summary)\b"
     # #15980: the #15525 witness says the hosted lane has not run on this head,
     # which is a fact about coverage, not a defect. The bare "tests have not
     # run" still refuses.
@@ -2157,6 +2158,23 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed", True),
         (
             "SOURCE_REVIEW_READY\nIt still fails when no string value carries the missing root",
+            True,
+        ),
+        # #15980: standalone defect lines, the subject-anchored form now covers
+        # probe/fixture/golden/mutant/assertion.
+        ("SOURCE_REVIEW_READY\nThe probe still fails.", False),
+        ("SOURCE_REVIEW_READY\nThe fixture still fails.", False),
+        ("SOURCE_REVIEW_READY\nThe golden still fails.", False),
+        ("SOURCE_REVIEW_READY\nThe mutant still fails.", False),
+        ("SOURCE_REVIEW_READY\nThe assertion still fails.", False),
+        # #15980: benign combined shapes, the homograph narrowings cover these.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the summary.",
+            True,
+        ),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The cache is empty.", True),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down for maintenance.",
             True,
         ),
     ]

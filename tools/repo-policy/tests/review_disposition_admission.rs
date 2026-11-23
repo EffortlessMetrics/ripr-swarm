@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 192] = [
+    let cases: [(&str, bool); 200] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -1070,6 +1070,23 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed", true),
         (
             "SOURCE_REVIEW_READY\nIt still fails when no string value carries the missing root",
+            true,
+        ),
+        // Standalone defect lines: the subject-anchored still-fails form now
+        // covers probe/fixture/golden/mutant/assertion.
+        ("SOURCE_REVIEW_READY\nThe probe still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe fixture still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe golden still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe mutant still fails.", false),
+        ("SOURCE_REVIEW_READY\nThe assertion still fails.", false),
+        // Benign combined shapes: the homograph narrowings cover these too.
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the summary.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The cache is empty.", true),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down for maintenance.",
             true,
         ),
     ];
