@@ -1664,10 +1664,12 @@ mod tests {
         }
     }
 
-    // #13037 review: a self-comparison admitted as strong keeps the family
-    // template, while an independent literal expectation gets the exact step.
+    // #13037 review: the exact-oracle step never fires for a self-comparison
+    // (it would say the gap "is not the assertion shape"); the caller then
+    // reaches `self_comparison_next_step`. An independent literal expectation
+    // still gets the exact step.
     #[test]
-    fn self_comparison_keeps_the_strengthen_template() {
+    fn self_comparison_gets_no_exact_oracle_step() {
         let with_oracle = |oracle: &str| {
             let mut row = related_test(
                 "records_into_the_bag",
