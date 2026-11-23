@@ -103,8 +103,9 @@ pub(super) struct OwnerResultLocal {
 
 /// Locals of the test `body` declared once as `let name = <owner call>;`
 /// (a plain or `mut` identifier pattern, the initializer one call of the
-/// owner, possibly unwrapped or chained: `pick(0).unwrap()`, `pick(0)?`). A body that does not parse cleanly yields none, which keeps
-/// the parsed reading.
+/// owner, possibly unwrapped or chained: `pick(0).unwrap()`, `pick(0)?`). A
+/// body that does not parse cleanly yields none, which keeps the parsed
+/// reading.
 fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLocal> {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(body) else {
         return Vec::new();
