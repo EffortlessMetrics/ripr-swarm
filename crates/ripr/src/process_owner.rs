@@ -593,9 +593,13 @@ impl OwnedProcess {
     /// Terminate the whole owned tree and reap the direct child before
     /// returning. Windows: one termination request kills every process in
     /// the job. Unix: one `SIGKILL` to the child's process group reaches
-    /// every descendant, including pipe-inheriting grandchildren, and — per
-    /// the PID-custody contract — that group signal is always issued BEFORE
-    /// the primary is reaped: an unreaped leader pins its pgid, so the
+    /// every descendant this owner may signal, including pipe-inheriting
+    /// grandchildren. On Darwin an exited leader whose group answers `EPERM`
+    /// is reported settled; that answer does not rule out a live member that
+    /// changed to a user id this owner may not signal (see
+    /// [`group_signal_outcome`]), so `Ok` there is not proof that no member
+    /// remains. Per the PID-custody contract, that group signal is always
+    /// issued BEFORE the primary is reaped: an unreaped leader pins its pgid, so the
     /// signal can only reach this owner's tree; after the reap the number
     /// becomes recyclable and later release paths stay disarmed. Other
     /// platforms: the direct child kill and reap.
