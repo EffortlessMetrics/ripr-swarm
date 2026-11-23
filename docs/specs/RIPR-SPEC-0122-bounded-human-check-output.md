@@ -644,10 +644,12 @@ written only when:
 - the length is at most 64;
 - the parameter is not declared `mut`, and nothing before the comparison
   rebinds it, assigns it or names it inside a macro call;
-- a local or `const` bound is read only when the owner's body (and any
-  enclosing function's) calls no macro, since a macro may bind a local or
-  define a `const` of any name, and a `const` bound only when no generic
-  parameter of the owner or an enclosing impl or trait could shadow it.
+- the owner (and any enclosing function) calls no macro and declares no
+  `use` or nested item, since a macro may bind a local or emit an item of any
+  name and a block-level `use` or item shadows a name for its block; a
+  `const` bound also needs no attribute on the const (a `cfg` may remove it
+  from the test build) and no generic parameter of the owner or an enclosing
+  impl or trait that could shadow it.
 
 A match-arm stub writes the input the changed arm's own pattern names instead
 of a labelled `todo!()` for that parameter (#8361), for example `ev =

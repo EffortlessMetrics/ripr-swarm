@@ -2996,6 +2996,30 @@ fn length_boundary_writes_a_string_of_the_boundary_length() -> Result<(), String
             "s.len() > 3",
             vec![],
         ),
+        // A block-level import may shadow the local (or the parameter).
+        (
+            format!(
+                "pub fn f(s: &str) -> bool {{\n    let n = s.len();\n    {{\n        use crate::config::LIMIT as n;\n        n > 3\n    }}\n}}\n{module}"
+            ),
+            "n > 3",
+            vec![],
+        ),
+        // A glob in the body may supply its own `LIMIT`.
+        (
+            format!(
+                "pub const LIMIT: usize = 3;\npub fn f(s: &str) -> bool {{\n    use crate::config::*;\n    s.len() > LIMIT\n}}\n{module}"
+            ),
+            "s.len() > LIMIT",
+            vec![],
+        ),
+        // A cfg-gated const may be absent from the test build.
+        (
+            format!(
+                "#[cfg(not(test))]\npub const LIMIT: usize = 3;\npub fn f(s: &str) -> bool {{\n    s.len() > LIMIT\n}}\n{module}"
+            ),
+            "s.len() > LIMIT",
+            vec![],
+        ),
         // A byte count of something else (`s.bytes().count()`) is not read.
         (
             format!("pub fn f(s: &str) -> bool {{\n    s.bytes().count() > 3\n}}\n{module}"),

@@ -15,10 +15,11 @@
 //!   or the length of another `&str` parameter;
 //! - the length is at most [`MAX_LENGTH`];
 //! - the parameter is not `mut`, and nothing before the comparison rebinds,
-//!   assigns or names it inside a macro call; a local or a `const` bound is
-//!   only read when the owner's body (and any enclosing fn's) calls no
-//!   macro at all, and a `const` bound only when no generic parameter of
-//!   the owner or an enclosing impl or trait could shadow it.
+//!   assigns or names it inside a macro call;
+//! - the owner (and any enclosing fn) calls no macro and declares no `use`
+//!   or nested item, any of which could give a name another meaning in its
+//!   block; a `const` bound also needs no attribute on the const and no
+//!   generic parameter of the owner or an enclosing impl or trait.
 //!
 //! The string is `x` repeated, so its byte length and char count agree. Two
 //! parameters compared with each other get equal lengths and different text
@@ -30,7 +31,7 @@ use super::super::seams::{RepoSeam, SeamKind};
 use super::super::syntax::fn_signature::OwnerSignature;
 use super::super::syntax::parse_clean_source_file;
 use super::match_inputs::{is_str_ref, parse_integer, unraw, unstable_before_offset};
-use ra_ap_syntax::ast::{self, HasArgList, HasGenericArgs, HasName};
+use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName};
 use ra_ap_syntax::{AstNode, SourceFile, SyntaxKind, TextSize};
 
 /// The longest boundary string written out.
@@ -92,6 +93,42 @@ fn derive(
                 && normalized(&bin.syntax().text().to_string()) == wanted
         })
         .min_by_key(|bin| bin.syntax().text_range().len())?;
+    // Nothing in the owner (or an enclosing fn) may give a name another
+    // meaning: a macro can bind a local or emit an item of any name
+    // (`macro_rules!` items are not hygienic), and a block-level `use` or
+    // item shadows a parameter, local or file-root `const` for its block.
+    let outermost = owner
+        .syntax()
+        .ancestors()
+        .filter(|node| node.kind() == SyntaxKind::FN)
+        .last()
+        .unwrap_or_else(|| owner.syntax().clone());
+    let disturbed = outermost.descendants().any(|node| {
+        node != outermost
+            && node != *owner.syntax()
+            && matches!(
+                node.kind(),
+                SyntaxKind::MACRO_CALL
+                    | SyntaxKind::USE
+                    | SyntaxKind::CONST
+                    | SyntaxKind::STATIC
+                    | SyntaxKind::FN
+                    | SyntaxKind::MODULE
+                    | SyntaxKind::STRUCT
+                    | SyntaxKind::ENUM
+                    | SyntaxKind::UNION
+                    | SyntaxKind::TYPE_ALIAS
+                    | SyntaxKind::TRAIT
+                    | SyntaxKind::IMPL
+                    | SyntaxKind::EXTERN_CRATE
+                    | SyntaxKind::EXTERN_BLOCK
+                    | SyntaxKind::MACRO_RULES
+                    | SyntaxKind::MACRO_DEF
+            )
+    });
+    if disturbed {
+        return None;
+    }
     let at = comparison.syntax().text_range().start();
     let context = Context {
         owner: &owner,
@@ -99,16 +136,6 @@ fn derive(
         file: &file,
         signature,
         at,
-        // The outermost enclosing fn: a macro in an enclosing body can
-        // define a block-scope `const` the owner sees.
-        has_macro: owner
-            .syntax()
-            .ancestors()
-            .filter(|node| node.kind() == SyntaxKind::FN)
-            .last()
-            .unwrap_or_else(|| owner.syntax().clone())
-            .descendants()
-            .any(|node| node.kind() == SyntaxKind::MACRO_CALL),
     };
     let lhs = context.side(&comparison.lhs()?)?;
     let rhs = context.side(&comparison.rhs()?)?;
@@ -136,9 +163,6 @@ struct Context<'a> {
     signature: &'a OwnerSignature,
     /// Where the changed comparison starts.
     at: TextSize,
-    /// The body calls a macro, which may bind a local or define a `const`
-    /// of any name (`macro_rules!` items are not hygienic).
-    has_macro: bool,
 }
 
 impl Context<'_> {
@@ -218,7 +242,7 @@ impl Context<'_> {
             .params
             .iter()
             .any(|param| param.name.as_deref().map(unraw) == Some(unraw(name)));
-        if is_param || self.has_macro {
+        if is_param {
             return None;
         }
         let bindings = self
@@ -264,12 +288,11 @@ impl Context<'_> {
                         .any(|param| !matches!(param, ast::GenericParam::LifetimeParam(_)))
                 })
         };
-        if self.has_macro
-            || self
-                .owner
-                .syntax()
-                .ancestors()
-                .any(|node| node.kind() == SyntaxKind::MODULE || generic(&node))
+        if self
+            .owner
+            .syntax()
+            .ancestors()
+            .any(|node| node.kind() == SyntaxKind::MODULE || generic(&node))
         {
             return None;
         }
@@ -296,6 +319,11 @@ impl Context<'_> {
                         return None;
                     }
                     let constant = ast::Const::cast(node.clone())?;
+                    // An attribute (`#[cfg(..)]`) may remove it from the
+                    // test build, where a glob could supply another value.
+                    if constant.attrs().next().is_some() {
+                        return None;
+                    }
                     let ty = constant.ty()?.syntax().text().to_string();
                     if !is_integer_type(ty.trim()) {
                         return None;
