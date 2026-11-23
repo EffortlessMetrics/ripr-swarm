@@ -197,8 +197,15 @@ fn powershell_redirect(text: &str) -> Vec<u8> {
 }
 
 /// Drop the digits after each run-local stamp (`unix_ms:<n>`, the analyzer
-/// build's `process:<pid>:<nanos>`) so two runs over the same input compare.
+/// build's `process:<pid>:<nanos>`) and zero the digits of each
+/// `"generated_at"` string (the repo badge's `public_projection` stamps the
+/// wall-clock second it ran), so two runs over the same input compare even when
+/// they straddle a second boundary.
 fn scrub(text: &str) -> String {
+    zero_generated_at_digits(&scrub_stamps(text))
+}
+
+fn scrub_stamps(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = ["unix_ms:", "process:"]
@@ -212,6 +219,61 @@ fn scrub(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Replace each ASCII digit inside every `"generated_at": "<value>"` string
+/// with `0`, keeping the value's shape (`0000-00-00T00:00:00Z`, `unix_ms:`) so
+/// a malformed, empty or differently prefixed stamp still differs from the
+/// control; non-string values (`null`) are left as they are.
+fn zero_generated_at_digits(text: &str) -> String {
+    const KEY: &str = "\"generated_at\"";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find(KEY) {
+        out.push_str(&rest[..index + KEY.len()]);
+        rest = &rest[index + KEY.len()..];
+        let after_colon = rest.trim_start();
+        let Some(after_colon) = after_colon.strip_prefix(':') else {
+            continue;
+        };
+        let value = after_colon.trim_start();
+        let Some(body) = value.strip_prefix('"') else {
+            continue;
+        };
+        let Some(end) = body.find('"') else {
+            continue;
+        };
+        out.push_str(&rest[..rest.len() - body.len()]);
+        out.extend(
+            body[..end]
+                .chars()
+                .map(|c| if c.is_ascii_digit() { '0' } else { c }),
+        );
+        rest = &body[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn scrub_zeroes_generated_at_digits_only() {
+    let control = "{\n  \"generated_at\": \"2026-11-22T23:44:55Z\",\n  \"stale_age_secs\": 0\n}";
+    let later = "{\n  \"generated_at\": \"2026-11-22T23:44:56Z\",\n  \"stale_age_secs\": 0\n}";
+    assert_eq!(scrub(control), scrub(later));
+    assert_eq!(
+        scrub(control),
+        "{\n  \"generated_at\": \"0000-00-00T00:00:00Z\",\n  \"stale_age_secs\": 0\n}"
+    );
+    assert_ne!(
+        scrub(control),
+        scrub("{\n  \"generated_at\": \"\",\n  \"stale_age_secs\": 0\n}")
+    );
+    assert_ne!(
+        scrub("{\"generated_at\": \"unix_ms:1\"}"),
+        scrub("{\"generated_at\": \"1\"}")
+    );
+    assert_eq!(scrub("{\"generated_at\":null}"), "{\"generated_at\":null}");
+    assert_ne!(scrub("{\"other\": \"a\"}"), scrub("{\"other\": \"b\"}"));
 }
 
 /// One command reading one artifact by path.
