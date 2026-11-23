@@ -171,6 +171,7 @@ fn guard_refusal_does_not_override_unestablished_reach() -> Result<(), String> {
 /// A withheld finding has left its Summary bucket, so the unconfirmed-link
 /// note must leave with it. Otherwise the note lands on the bucket's remaining
 /// member, whose reach is established (#15295).
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result<(), String> {
     let name = "mixed_rust_typescript_preview";
@@ -224,6 +225,67 @@ fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result
     assert!(!suppressed.contains("could not confirm"), "{suppressed}");
     assert!(
         suppressed.contains("1 suppressed by your settings"),
+        "{suppressed}"
+    );
+    Ok(())
+}
+
+// Keep the same regression control in the Rust-only advisory profile. Combine
+// two existing Rust fixture findings at the renderer boundary; the TS-enabled
+// case above also exercises the CLI's config and policy application.
+#[cfg(not(feature = "lang-typescript"))]
+#[test]
+fn a_withheld_unconfirmed_finding_is_not_counted_in_the_summary_note() -> Result<(), String> {
+    use ripr::{CheckSuppressionOutcome, SuppressedCheckFinding};
+
+    let mut output = check_fixture("boundary_gap")?;
+    let unconfirmed = check_fixture("owner_return_pin_pointer_glob_shadow")?;
+    assert_eq!(output.findings.len(), 1);
+    assert_eq!(unconfirmed.findings.len(), 1);
+    let withheld = unconfirmed
+        .findings
+        .into_iter()
+        .next()
+        .ok_or_else(|| "owner_return_pin_pointer_glob_shadow produced no finding".to_string())?;
+    assert_ne!(output.findings[0].id, withheld.id);
+    let finding_id = withheld.id.clone();
+    output.findings.push(withheld);
+    output.summary.probes += 1;
+    output.summary.findings += 1;
+    output.summary.weakly_exposed += 1;
+
+    let summary_of = |output: &ripr::CheckOutput| -> Result<String, String> {
+        let human = render_check(output, &OutputFormat::Human)?;
+        human
+            .lines()
+            .find(|line| line.starts_with("Summary: "))
+            .map(str::to_string)
+            .ok_or(human)
+    };
+
+    let unsuppressed = summary_of(&output)?;
+    assert!(
+        unsuppressed.contains("2 partly noticed (1 through a test link ripr could not confirm), "),
+        "{unsuppressed}"
+    );
+
+    output.summary.weakly_exposed -= 1;
+    output.suppression = Some(CheckSuppressionOutcome {
+        policy_path: "weak_reach_hint_15295_policy.toml".into(),
+        suppressed: vec![SuppressedCheckFinding {
+            selector: finding_id.clone(),
+            finding_id,
+        }],
+        warnings: Vec::new(),
+    });
+    let suppressed = summary_of(&output)?;
+    assert!(
+        suppressed.contains("1 partly noticed, 0 reached but not noticed, "),
+        "{suppressed}"
+    );
+    assert!(!suppressed.contains("could not confirm"), "{suppressed}");
+    assert!(
+        suppressed.contains("1 found, 1 suppressed by your settings"),
         "{suppressed}"
     );
     Ok(())
