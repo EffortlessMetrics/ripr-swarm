@@ -12833,6 +12833,107 @@ fn framed_lsp_rejected_pushed_settings_warn_naming_key_and_accepted_values_per_m
 
 #[test]
 #[serial]
+fn pushed_settings_commit_before_their_warning_waits_on_a_wedged_client() -> Result<(), String> {
+    // #15312 review: a push commits its settings before it awaits warning
+    // egress. If the warning went first, an older invalid push suspended on
+    // a slow client could resume after a newer repair of the same key and
+    // overwrite it. Hold the capacity-1 client channel full with the peer
+    // socket undriven, then require each blocked push to have already
+    // committed its value.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        use tower::Service as _;
+        let root = unique_lsp_test_root("pushed-settings-wedged-egress")?;
+        let (mut service, _socket) = build_service(
+            PathBuf::from("."),
+            super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+        );
+        // Initialize through the service so client deliveries are no longer
+        // suppressed and reach the real capacity-1 channel.
+        let initialized = tower::ServiceExt::ready(&mut service)
+            .await
+            .map_err(|err| format!("service never became ready: {err:?}"))?
+            .call(
+                tower_lsp_server::jsonrpc::Request::build("initialize")
+                    .params(
+                        serde_json::to_value(initialize_params(
+                            None,
+                            Some(file_uri_for_path(root.path())?),
+                        ))
+                        .map_err(|err| format!("initialize params serialize failed: {err}"))?,
+                    )
+                    .id(1)
+                    .finish(),
+            )
+            .await
+            .map_err(|err| format!("initialize failed: {err:?}"))?;
+        if initialized
+            .as_ref()
+            .and_then(|response| response.error())
+            .is_some()
+        {
+            return Err("initialize must succeed".to_string());
+        }
+        let backend = service.inner();
+        let held = |backend: &Backend| {
+            backend
+                .analysis_config()
+                .and_then(|config| config.session_options)
+                .and_then(|options| options.get("checkMode").cloned())
+        };
+        // Each invalid push warns; push distinct invalid values until one
+        // blocks on egress. Every push, blocked or not, must already hold
+        // its own value.
+        let mut blocked = false;
+        for attempt in 0..16 {
+            let value = format!("wedged-{attempt}");
+            let finished = tokio::time::timeout(
+                Duration::from_secs(5),
+                backend.apply_session_configuration_change_for_test(
+                    &serde_json::json!({"ripr": {"checkMode": value}}),
+                ),
+            )
+            .await
+            .is_ok();
+            if held(backend) != Some(serde_json::json!(value)) {
+                return Err(format!(
+                    "push {attempt} must commit `{value}` before awaiting client egress; held {:?}",
+                    held(backend)
+                ));
+            }
+            if !finished {
+                blocked = true;
+                break;
+            }
+        }
+        if !blocked {
+            return Err("the undriven client channel never filled".to_string());
+        }
+        // A newer valid push of the same key also commits while the client
+        // stays wedged.
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            backend.apply_session_configuration_change_for_test(
+                &serde_json::json!({"ripr": {"checkMode": "fast"}}),
+            ),
+        )
+        .await;
+        if held(backend) != Some(serde_json::json!("fast")) {
+            return Err(format!(
+                "the repair must be committed: held {:?}",
+                held(backend)
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_lsp_configuration_pull_applies_and_discloses_pull_state() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

@@ -3672,32 +3672,35 @@ impl Backend {
         if shape_repeated {
             rejections.retain(|part| !part.is_shape());
         }
-        if !rejections.is_empty() {
+        let warning = (!rejections.is_empty()).then(|| {
             let listed = rejections
                 .iter()
                 .map(|rejection| bounded_failure_message(&rejection.line))
                 .collect::<Vec<_>>()
                 .join(" | ");
-            let warning = format!("ripr ignored pushed ripr settings: {listed}.");
+            format!("ripr ignored pushed ripr settings: {listed}.")
+        });
+        // Commit the settings before any client I/O. The judgment above and
+        // this merge read the same layer with no await between them, so a
+        // newer notification cannot commit in between; awaiting the warning
+        // first would let an older push, suspended on a slow client, resume
+        // and overwrite a newer repair of the same key.
+        let mut committed = false;
+        if LspAnalysisConfig::has_session_option_changes(settings)
+            && let Some(current) = current
+            && let Some(next) = current.with_changed_session_options(settings)
+            && next != current
+        {
+            self.set_analysis_config(next);
+            committed = true;
+        }
+        if let Some(warning) = warning {
             self.disclose_configuration_reload_failure(warning.clone(), warning)
                 .await;
         }
-        if !LspAnalysisConfig::has_session_option_changes(settings) {
+        if !committed {
             return;
         }
-        // Re-read after the disclosure await: another configuration
-        // notification may have changed the retained layer meanwhile, and the
-        // merge below must start from it so its keys are not overwritten.
-        let Some(current) = self.analysis_config() else {
-            return;
-        };
-        let Some(next) = current.with_changed_session_options(settings) else {
-            return;
-        };
-        if next == current {
-            return;
-        }
-        self.set_analysis_config(next);
         if self.configuration_failure().is_some() {
             // Keep the config_invalid signal visible while repository
             // configuration remains broken. The stored session override is
@@ -3767,6 +3770,13 @@ impl Backend {
         if let Ok(mut features) = self.client_features.lock() {
             *features = profile;
         }
+    }
+
+    /// Drives the push-path settings change directly, so a test can hold
+    /// client egress and observe what was committed before it (#15312).
+    #[cfg(test)]
+    pub(super) async fn apply_session_configuration_change_for_test(&self, settings: &LSPAny) {
+        self.apply_session_configuration_change(settings).await;
     }
 
     /// Poison the profile store so tests can exercise the fail-closed
