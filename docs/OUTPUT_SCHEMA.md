@@ -5340,10 +5340,14 @@ tested against every finding's packet over a set of committed fixtures that
 reaches every classification
 (`crates/ripr/tests/context_json_schema.rs`). Objects are closed: a field
 added to the packet is added to the schema in the same change. Two shapes are
-worth knowing. The top-level `missing_discriminators[]` entries carry only
-`value` and `reason`, while `witness.missing_discriminators[]` entries are the
-full fact with `flow_sink` and `shape`. And `witness` may be `null` only when
-`classification` is `exposed`.
+worth knowing. The top-level `missing_discriminators[]` entries are the
+`ripr check --json` finding's entries field for field: `value`, `reason` and
+`flow_sink` (`{kind, text, line}` or `null`; #10516). The test compares
+every packet's array with its check finding's. `witness.missing_discriminators[]`
+entries are the full fact, whose `flow_sink` also names its `owner` and which
+adds `shape`. `flow_sink` is optional in the schema only so packets written
+before #10516 still conform; this additive field kept packet version `1.1`.
+And `witness` may be `null` only when `classification` is `exposed`.
 
 The context packet contract versions through the top-level `version` key, not
 `schema_version` (#5081). Producers pin the live value in
