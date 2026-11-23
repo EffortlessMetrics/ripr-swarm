@@ -259,7 +259,10 @@ impl Context<'_> {
             return None;
         }
         let statement = ast::LetStmt::cast(ident.syntax().parent()?)?;
+        // An attribute such as `#[cfg(not(test))]` can remove the binding,
+        // and the name then reads something else (#16207 review).
         if statement.let_else().is_some()
+            || statement.attrs().next().is_some()
             || statement.syntax().text_range().end() > self.at
             || statement.syntax().parent()?.parent()? != *self.body.syntax()
         {

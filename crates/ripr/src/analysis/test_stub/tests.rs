@@ -3020,6 +3020,15 @@ fn length_boundary_writes_a_string_of_the_boundary_length() -> Result<(), String
             "s.len() > LIMIT",
             vec![],
         ),
+        // A gated local may be absent from the test build, and the name then
+        // reads the other-gated const instead of the length.
+        (
+            format!(
+                "#[cfg(test)]\nconst N: usize = 9;\npub fn f(s: &str) -> bool {{\n    #[cfg(not(test))]\n    let N = s.len();\n    N > 3\n}}\n{module}"
+            ),
+            "N > 3",
+            vec![],
+        ),
         // A byte count of something else (`s.bytes().count()`) is not read.
         (
             format!("pub fn f(s: &str) -> bool {{\n    s.bytes().count() > 3\n}}\n{module}"),
