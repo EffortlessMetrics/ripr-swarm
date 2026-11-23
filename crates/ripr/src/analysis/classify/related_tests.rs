@@ -6323,6 +6323,45 @@ pub(in crate::analysis) fn call_site_in_let_closure(masked: &str, at: usize) -> 
         || (initializer.starts_with('|') && initializer[1..].contains('|'))
 }
 
+/// Keywords that can precede a `!` as an operator, not a macro name. A
+/// keyword cannot be a macro path, so `if !(..)`, `while !(..)` and
+/// `return !(..)` are negations (#13041 review).
+const NON_MACRO_KEYWORDS: &[&str] = &[
+    "if", "while", "return", "match", "in", "else", "for", "loop", "unsafe", "async", "move",
+    "let", "const", "static", "fn", "impl", "trait", "mod", "struct", "enum", "union", "use",
+    "pub", "crate", "super", "self", "Self", "where", "dyn", "ref", "mut", "as", "break",
+    "continue", "yield", "await", "try", "do", "box", "type", "extern",
+];
+
+/// Macros whose arguments are evaluated, so a call inside one is executable.
+/// `stringify!`, `concat!`, `cfg!`, `env!` and the `include*!` family are not
+/// here: they read tokens or literals at compile time and run no code
+/// (#13041 review).
+const EVALUATING_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "assert_matches",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "matches",
+    "vec",
+    "format",
+    "format_args",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "write",
+    "writeln",
+    "panic",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "dbg",
+];
+
 /// The macro invocations whose delimiters enclose byte `at`, innermost first.
 fn enclosing_macro_names(masked: &str, at: usize) -> Vec<String> {
     let bytes = masked.as_bytes();
@@ -6333,14 +6372,20 @@ fn enclosing_macro_names(masked: &str, at: usize) -> Vec<String> {
             b'(' | b'[' | b'{' => {
                 let before = masked[..index].trim_end();
                 let name = before.strip_suffix('!').and_then(|head| {
-                    let head = head.trim_end();
+                    // The `!` must be attached to the name, and the name must
+                    // not be a keyword: `if !(..)` is a negation, not a macro
+                    // invocation (#13041 review).
+                    if head.chars().next_back().is_some_and(char::is_whitespace) {
+                        return None;
+                    }
                     let start = head
                         .char_indices()
                         .rev()
                         .find(|(_, ch)| !(*ch == '_' || unicode_ident::is_xid_continue(*ch)))
                         .map_or(0, |(i, ch)| i + ch.len_utf8());
                     let name = &head[start..];
-                    (!name.is_empty()).then(|| name.to_string())
+                    (!name.is_empty() && !NON_MACRO_KEYWORDS.contains(&name))
+                        .then(|| name.to_string())
                 });
                 stack.push(name);
             }
@@ -6355,24 +6400,15 @@ fn enclosing_macro_names(masked: &str, at: usize) -> Vec<String> {
 }
 
 /// Whether the call of `method` at byte `at` of `masked` sits inside a macro
-/// invocation whose tokens are not evaluated (`stringify!`, `quote!`). Only
-/// the operands of the evaluating assertion macros are executable call sites;
-/// every other macro is treated as opaque, the same fail-closed stance the
-/// grip evidence takes for a macro around an owner call. Every enclosing
-/// macro is checked, so `stringify!(assert_eq!(..))` is opaque even though
-/// the innermost macro evaluates (#13041 review).
+/// invocation whose tokens are not evaluated (`stringify!`, `concat!`). A
+/// call inside an evaluating macro (`format!`, `vec!`, `matches!`, the
+/// assertion family) is executable. Every enclosing macro is checked, so
+/// `stringify!(assert_eq!(..))` is opaque even though the innermost macro
+/// evaluates (#13041 review).
 pub(in crate::analysis) fn call_site_in_discarded_macro(masked: &str, at: usize) -> bool {
-    enclosing_macro_names(masked, at).iter().any(|name| {
-        !matches!(
-            name.as_str(),
-            "assert"
-                | "assert_eq"
-                | "assert_ne"
-                | "debug_assert"
-                | "debug_assert_eq"
-                | "debug_assert_ne"
-        )
-    })
+    enclosing_macro_names(masked, at)
+        .iter()
+        .any(|name| !EVALUATING_MACROS.contains(&name.as_str()))
 }
 
 /// Whether the call of `method` spelled at byte `at` of `text` resolves its

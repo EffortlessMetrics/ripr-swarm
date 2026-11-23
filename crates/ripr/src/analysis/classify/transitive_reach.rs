@@ -8200,6 +8200,26 @@ fn real() {}
         );
     }
 
+    /// An evaluating macro is not discarded, and a negated condition is not a
+    /// macro invocation (#13041 review).
+    #[test]
+    fn an_evaluating_macro_is_not_discarded_and_a_negation_is_not_a_macro() {
+        let discarded = |text: &str| {
+            let at = text.find("to_text").expect("to_text");
+            crate::analysis::classify::related_tests::call_site_in_discarded_macro(text, at)
+        };
+        // `format!` evaluates its arguments.
+        assert!(!discarded(
+            "assert!(format!(\"{}\", site.to_text()).contains(\"x\"))"
+        ));
+        // `if !(..)`, `while !(..)` and `return !(..)` are negations.
+        assert!(!discarded("if !(x.to_text().is_empty()) { }"));
+        assert!(!discarded("while !(x.to_text().is_empty()) { }"));
+        assert!(!discarded("return !(x.to_text().is_empty());"));
+        // `stringify!` still discards its tokens.
+        assert!(discarded("stringify!(x.to_text())"));
+    }
+
     /// Execution and receiver are coupled at one call site: an executable call
     /// on another type must not combine with a discarded call on the owner
     /// (#13041 review).

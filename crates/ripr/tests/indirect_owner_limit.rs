@@ -39,13 +39,19 @@ impl TempRepo {
     }
 
     fn findings(&self) -> Result<Vec<Finding>, String> {
+        self.findings_with(true)
+    }
+
+    /// `include_unchanged_tests: false` narrows the index, so
+    /// `workspace_index_complete` is false (#13041 review).
+    fn findings_with(&self, include_unchanged_tests: bool) -> Result<Vec<Finding>, String> {
         let output = check_workspace(CheckInput {
             root: self.root.clone(),
             base: None,
             diff_file: Some(self.root.join("diff.patch")),
             mode: Mode::Ready,
             format: OutputFormat::Json,
-            include_unchanged_tests: true,
+            include_unchanged_tests,
             ..CheckInput::default()
         })?;
         Ok(output.findings)
@@ -1950,6 +1956,40 @@ fn a_blanket_hop_beside_an_unrelated_same_name_call_still_withholds() -> Result<
         BLANKET_AFTER,
         "unrelated same-name call",
     )
+}
+
+#[test]
+fn a_partial_index_does_not_withhold_the_blanket_hop() -> Result<(), String> {
+    // With unchanged tests omitted the index is partial, so the blanket hop
+    // must not be credited and the gap must stay (#13041 review).
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+",
+    );
+    let line = line_of(&lib, BLANKET_BEFORE)?;
+    let lib = lib.replacen(BLANKET_BEFORE, BLANKET_AFTER, 1);
+    let repo = TempRepo::create(&lib, &diff(line, BLANKET_BEFORE, BLANKET_AFTER))?;
+    // An unchanged second file makes the changed-files-only selection partial.
+    std::fs::write(
+        repo.root.join("src/other.rs"),
+        "pub fn other() -> i32 { 1 }\n",
+    )
+    .map_err(|error| format!("write second source failed: {error}"))?;
+    let on_line: Vec<Finding> = repo
+        .findings_with(false)?
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == line)
+        .collect();
+    if on_line.iter().any(limited) || !on_line.iter().any(is_gap) {
+        return Err(format!(
+            "partial index: expected the gap to stay, got {:?}",
+            summary(&on_line)
+        ));
+    }
+    Ok(())
 }
 
 #[test]

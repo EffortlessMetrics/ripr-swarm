@@ -3802,7 +3802,7 @@ impl RustAdapter {
                     &index,
                     binding_relation.as_ref(),
                     pre_cap_syntax_only,
-                    true,
+                    workspace_index_complete,
                 );
                 // RIPR-SPEC-0369: name a `verus!` region by the changed file's
                 // own index key; the probe's file is root-joined.
