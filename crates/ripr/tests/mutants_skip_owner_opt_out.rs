@@ -1163,9 +1163,12 @@ fn printed_next(text: &str) -> Result<String, String> {
     }
 }
 
-/// Split a printed command into argv by POSIX single-quote and backslash
-/// rules, without a shell. Anything else a shell would expand (`$`, a
-/// backtick, a glob or a double quote) is refused rather than guessed.
+/// Split a printed command into argv without a shell, inverting the two
+/// quoting forms `shell_arg` prints: POSIX single quotes (with backslash
+/// escapes outside them) and the Windows console form (`"..."`, interior
+/// `""` for `"`, the trailing backslash run doubled before the closing
+/// quote). Anything a shell would expand (`$`, a backtick, a glob or an
+/// operator) is refused rather than guessed.
 fn printed_argv(command: &str) -> Result<Vec<String>, String> {
     let mut argv = Vec::new();
     let mut word: Option<String> = None;
@@ -1187,13 +1190,37 @@ fn printed_argv(command: &str) -> Result<Vec<String>, String> {
                     }
                 }
             }
+            '"' => {
+                let current = word.get_or_insert_with(String::new);
+                let mut quoted = String::new();
+                loop {
+                    match chars.next() {
+                        Some('"') if chars.clone().next() == Some('"') => {
+                            chars.next();
+                            quoted.push('"');
+                        }
+                        Some('"') => break,
+                        Some('$' | '`') => {
+                            return Err(format!("printed command needs a shell: {command}"));
+                        }
+                        Some(inner) => quoted.push(inner),
+                        None => return Err(format!("unterminated quote: {command}")),
+                    }
+                }
+                let run = quoted.chars().rev().take_while(|ch| *ch == '\\').count();
+                if run % 2 != 0 {
+                    return Err(format!("odd trailing backslash run: {command}"));
+                }
+                quoted.truncate(quoted.len() - run / 2);
+                current.push_str(&quoted);
+            }
             '\\' => {
                 let escaped = chars
                     .next()
                     .ok_or_else(|| format!("trailing backslash: {command}"))?;
                 word.get_or_insert_with(String::new).push(escaped);
             }
-            '$' | '`' | '"' | '*' | '?' | '[' | ';' | '&' | '|' | '<' | '>' => {
+            '$' | '`' | '*' | '?' | '[' | ';' | '&' | '|' | '<' | '>' => {
                 return Err(format!("printed command needs a shell: {command}"));
             }
             other => word.get_or_insert_with(String::new).push(other),
@@ -1303,5 +1330,38 @@ fn context_followed_from_explain_keeps_the_owner_opt_out_stop() -> Result<(), St
     assert_ne!(ordinary_packet["recommended_next_step"], "");
     let (edited_ordinary_text, _) = repo.follow_context(&fresh_ordinary)?;
     assert_eq!(ordinary_text, edited_ordinary_text);
+    Ok(())
+}
+
+/// The splitter inverts both `shell_arg` forms on any host, so the context
+/// journey above runs the literal printed command on Windows too.
+#[test]
+fn printed_argv_inverts_both_quoting_forms() -> Result<(), String> {
+    assert_eq!(
+        printed_argv(r#"ripr context id --root 'a b' --diff 'it'\''s'"#)?,
+        ["ripr", "context", "id", "--root", "a b", "--diff", "it's"]
+    );
+    assert_eq!(
+        printed_argv(r#"ripr context id --root "C:\Temp\fx" --from "C:\a b\\" --x "q""t""#)?,
+        [
+            "ripr",
+            "context",
+            "id",
+            "--root",
+            r"C:\Temp\fx",
+            "--from",
+            r"C:\a b\",
+            "--x",
+            "q\"t"
+        ]
+    );
+    for refused in [
+        r#"ripr context "$(printf '\001')""#,
+        "ripr context $HOME",
+        "ripr context a; rm",
+        "ripr context 'open",
+    ] {
+        assert!(printed_argv(refused).is_err(), "{refused}");
+    }
     Ok(())
 }

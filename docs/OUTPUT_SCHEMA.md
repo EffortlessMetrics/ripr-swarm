@@ -4709,6 +4709,12 @@ human glosses and next-step guidance, but no production classifier on current
 main pushes them onto a finding. A future spec slice must name the trigger
 before any emitter lands.
 
+The `ripr context` packet's `stop_reasons` may also carry
+`owner_mutants_skip`, the owner opt-out reason (RIPR-SPEC-0450, #14133),
+when the selected finding is withheld by `#[mutants::skip]`. It is not a
+`StopReason` variant and never appears on a `ripr check` finding's
+`stop_reasons`, which states the withholding as `withheld_by`.
+
 `agent_card_refusal_kind` values:
 
 - `seam_not_found`
