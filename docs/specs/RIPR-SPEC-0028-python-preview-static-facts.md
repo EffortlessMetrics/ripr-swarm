@@ -2200,20 +2200,22 @@ Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap
 A one-line edit whose only change picks another `strip`, `lstrip` or `rstrip`
 on a parameter with no arguments, or another literal digit count in
 `round(<parameter>, <int>)`, or flips the literal `reverse` flag alone on one
-`sorted(<parameter>)` or `<parameter>.sort()` call with no other argument
+`sorted(<parameter>)` or `<parameter>.sort()` call with no other argument, or
+changes the literal fallback alone of `<parameter>.get(<literal key>, <literal>)`
 (#16203), changes the result only for a string with whitespace on a side one
-version keeps, a number with more decimal places than the smaller count, or a
-collection holding two different elements. The parameter must be one the body
-never rebinds; for a sort, the changed line must also be the start of the first
+version keeps, a number with more decimal places than the smaller count, a
+collection holding two different elements, or a dict without the key. The parameter must be one the body
+never rebinds; for a sort or a lookup, the changed line must also be the start of the first
 top-level body statement that names the parameter, and name it once, so the
-sort sees the collection the test passed; because Python normalizes
+call sees the collection the test passed; because Python normalizes
 identifiers, a non-ASCII parameter or statement before that line leaves the
 reading alone. A bare `round` or `sorted` must name
 the builtin (nothing in the owner's file rebinds it), the owner must not call
 itself, and a line inside a multiline string is never read as a call. When
 every strong related call binds the parameter to a plain literal the rule
 evaluates (a quoted string without escapes, an int or decimal float, or a list,
-tuple or set display the call itself spells, not a parametrize case value the
+tuple or set display the call itself spells, or a dict display whose keys
+are all such scalars, not a parametrize case value the
 test may change in place) and both versions give the same result, the edit
 reads `weakly_exposed` and the missing discriminator names the separating
 input. List elements agree only when they share a spelling or are plain strings
@@ -2237,7 +2239,12 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::a_parametrized_list_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::a_recursive_owner_keeps_its_reading`,
 `call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`,
-`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`.
+`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`,
+`call_variant_tests.rs::dicts_holding_the_key_do_not_expose_a_get_fallback_change`,
+`call_variant_tests.rs::a_dict_without_the_key_keeps_a_get_fallback_change_exposed`,
+`call_variant_tests.rs::an_unpacked_dict_keeps_a_get_fallback_change_exposed`,
+`call_variant_tests.rs::only_a_lone_literal_fallback_edit_on_a_named_get_is_read`,
+`call_variant_tests.rs::dict_keys_are_read_only_from_a_literal_display`.
 
 ## Changed Range Header Amendment (#12948)
 

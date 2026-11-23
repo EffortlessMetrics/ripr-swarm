@@ -1,12 +1,14 @@
 //! Tests for the strip-side and `round`-digits gate (#16203): the edit is
 //! discriminated only by an argument the two versions treat differently.
 
-use super::call_variant::{CallVariant, call_variant, elements_agree, variant_agrees};
+use super::call_variant::{
+    CallVariant, call_variant, elements_agree, key_present, literal_dict_keys, variant_agrees,
+};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::reexport_tests::{unique_tempdir, write_file};
 use super::*;
 
-const SOURCE: &str = "def clean(s):\n    return s.strip()\n\n\ndef money(x):\n    return round(x, 2)\n\n\ndef top(xs):\n    return sorted(xs)[0]\n\n\ndef low(xs):\n    xs.append(9)\n    return sorted(xs)[0]\n";
+const SOURCE: &str = "def clean(s):\n    return s.strip()\n\n\ndef money(x):\n    return round(x, 2)\n\n\ndef top(xs):\n    return sorted(xs)[0]\n\n\ndef low(xs):\n    xs.append(9)\n    return sorted(xs)[0]\n\n\ndef score(d):\n    return d.get(\"k\", 0) + 1\n";
 
 fn classify(line: usize, old: &str, new: &str, test_source: &str) -> Result<Finding, String> {
     classify_in(SOURCE, line, old, new, test_source)
@@ -509,4 +511,121 @@ fn a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call() -> Resul
     });
     assert!(!read_as_call, "{:#?}", result.findings);
     Ok(())
+}
+
+fn classify_score(test_source: &str) -> Result<Finding, String> {
+    classify(
+        19,
+        "    return d.get(\"k\", 0) + 1",
+        "    return d.get(\"k\", 5) + 1",
+        test_source,
+    )
+}
+
+#[test]
+fn dicts_holding_the_key_do_not_expose_a_get_fallback_change() -> Result<(), String> {
+    let finding = classify_score(
+        "from src.text import score\n\n\ndef test_score():\n    assert score({\"k\": 2}) == 3\n    assert score({'k': 0, 'j': 9}) == 1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value == "call `score` with `d` without the key \"k\""),
+        "{:?}",
+        finding.activation.missing_discriminators
+    );
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
+    Ok(())
+}
+
+#[test]
+fn a_dict_without_the_key_keeps_a_get_fallback_change_exposed() -> Result<(), String> {
+    let finding = classify_score(
+        "from src.text import score\n\n\ndef test_score():\n    assert score({\"k\": 2}) == 3\n    assert score({}) == 1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Yes);
+    Ok(())
+}
+
+#[test]
+fn an_unpacked_dict_keeps_a_get_fallback_change_exposed() -> Result<(), String> {
+    let finding = classify_score(
+        "from src.text import score\n\nBASE = {}\n\n\ndef test_score():\n    assert score({\"k\": 2}) == 3\n    assert score({**BASE, \"j\": 1}) == 1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn only_a_lone_literal_fallback_edit_on_a_named_get_is_read() {
+    assert_eq!(
+        call_variant("return d.get(\"k\", 0) + 1", "return d.get(\"k\", 5) + 1"),
+        Some(CallVariant::GetFallback {
+            param: "d".to_string(),
+            key: "\"k\"".to_string(),
+            old: "0".to_string(),
+            new: "5".to_string(),
+        })
+    );
+    assert_eq!(
+        call_variant("    x = d.get(1, None)", "    x = d.get(1, \"\")"),
+        Some(CallVariant::GetFallback {
+            param: "d".to_string(),
+            key: "1".to_string(),
+            old: "None".to_string(),
+            new: "\"\"".to_string(),
+        })
+    );
+    // A changed key, a named key or fallback, or an attribute receiver.
+    assert_eq!(
+        call_variant("return d.get(\"k\", 0)", "return d.get(\"j\", 0)"),
+        None
+    );
+    assert_eq!(
+        call_variant("return d.get(k, 0)", "return d.get(k, 5)"),
+        None
+    );
+    assert_eq!(
+        call_variant("return d.get(\"k\", a)", "return d.get(\"k\", b)"),
+        None
+    );
+    assert_eq!(
+        call_variant("return self.d.get(\"k\", 0)", "return self.d.get(\"k\", 5)"),
+        None
+    );
+    // Another method, or a fallback that is not the last argument.
+    assert_eq!(
+        call_variant("return d.pop(\"k\", 0)", "return d.pop(\"k\", 5)"),
+        None
+    );
+    assert_eq!(
+        call_variant("return d.get(\"k\", 0, x)", "return d.get(\"k\", 5, x)"),
+        None
+    );
+}
+
+#[test]
+fn dict_keys_are_read_only_from_a_literal_display() {
+    let keys = |items: &[&str]| {
+        items
+            .iter()
+            .map(|item| item.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        literal_dict_keys("{\"k\": 2, 3: x}"),
+        Some(keys(&["\"k\"", "3"]))
+    );
+    assert_eq!(literal_dict_keys(" {} "), Some(keys(&[])));
+    assert_eq!(literal_dict_keys("{**base}"), None);
+    assert_eq!(literal_dict_keys("{f(): 1}"), None);
+    assert_eq!(literal_dict_keys("{1, 2}"), None);
+    assert_eq!(literal_dict_keys("dict(k=1)"), None);
+    assert_eq!(key_present(&keys(&["\"k\""]), "'k'"), Some(true));
+    assert_eq!(key_present(&keys(&["\"j\""]), "\"k\""), Some(false));
+    assert_eq!(key_present(&keys(&["1"]), "\"1\""), None);
 }
