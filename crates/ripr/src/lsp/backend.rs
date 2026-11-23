@@ -3685,7 +3685,10 @@ impl Backend {
         if !LspAnalysisConfig::has_session_option_changes(settings) {
             return;
         }
-        let Some(current) = current else {
+        // Re-read after the disclosure await: another configuration
+        // notification may have changed the retained layer meanwhile, and the
+        // merge below must start from it so its keys are not overwritten.
+        let Some(current) = self.analysis_config() else {
             return;
         };
         let Some(next) = current.with_changed_session_options(settings) else {

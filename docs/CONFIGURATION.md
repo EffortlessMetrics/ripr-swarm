@@ -755,8 +755,9 @@ Fallback, negotiated from capabilities only (never the client name):
   reported in the log with the key, its accepted values and the value
   received, and also on screen for clients without the `riprEditor`
   integration. A rejected value falls back to its repository or default
-  value and is named once until a push repairs or clears it; a malformed
-  payload or section leaves the settings already in effect unchanged.
+  value and is named once until a push repairs or clears it. A malformed
+  payload changes no setting; a malformed `ripr` section changes no setting
+  itself, while flat settings beside it still apply.
 - `initialization_only` — neither transport; only `initializationOptions`
   apply.
 

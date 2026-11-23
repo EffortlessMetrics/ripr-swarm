@@ -748,7 +748,7 @@ pub(super) fn pushed_setting_rejection_parts(settings: &Value) -> Vec<PushedSett
         parts.push(PushedSettingRejection {
             subject: serde_json::json!(["ripr", section]),
             line: format!(
-                "the pushed `ripr` section must be an object of ripr settings, got {}; that section was ignored and the settings already in effect are unchanged",
+                "the pushed `ripr` section must be an object of ripr settings, got {}; that section was ignored and changed no setting",
                 clipped_value_echo(section)
             ),
             retained_key: None,
@@ -1156,7 +1156,8 @@ include_unchanged_tests = false
         }));
         if mixed.len() != 2
             || !mixed[0].contains("`ripr` section must be an object")
-            || !mixed[0].contains("that section was ignored")
+            || !mixed[0].contains("that section was ignored and changed no setting")
+            || mixed[0].contains("already in effect")
             || !mixed[1].contains("`seamDiagnostics`")
             || mixed
                 .iter()

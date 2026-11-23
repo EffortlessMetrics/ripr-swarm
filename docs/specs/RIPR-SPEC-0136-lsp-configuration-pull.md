@@ -171,9 +171,10 @@ Clients without the `riprEditor` integration also get the warning as
 layer until a push repairs it or clears it with `null`, so an invalid value
 that layer already holds is not named again, whatever else arrives in
 between; a changed but still invalid value is a new mistake and is named. A
-malformed payload or section is not retained: it leaves the settings already
-in effect unchanged, and a verbatim repeat is suppressed only while
-consecutive notifications carry the same malformed shape.
+malformed payload changes no setting; a malformed section changes no setting
+itself, while flat settings beside it still apply. Neither is retained, so a
+verbatim repeat is suppressed only while consecutive notifications carry the
+same malformed shape.
 
 ### Cooperative git invocation deadline (#2303 amendment)
 
