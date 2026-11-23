@@ -271,7 +271,7 @@ fn discriminator_array(
 
 #[cfg(test)]
 mod tests {
-    use super::{render_context_packet, render_context_packet_dto};
+    use super::{render_context_packet, render_context_packet_dto, render_selected_context_packet};
     use crate::domain::context_packet::ContextPacket;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, DiagnosticConfidence, DiagnosticWitness,
