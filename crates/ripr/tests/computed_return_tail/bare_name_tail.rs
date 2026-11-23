@@ -192,3 +192,53 @@ pub fn price(amount: u32, member: bool) -> u32 {
     assert!(!returns_name(&item, "FALLBACK"), "{item:?}");
     Ok(())
 }
+
+#[test]
+fn a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail() -> Result<(), String> {
+    let test = "assert_eq!(price(100, false), 7);";
+    // The `then` block's `let` does not reach the `else` path, whose tail is
+    // the file's constant.
+    let other_branch = "pub const FALLBACK: u32 = 7;
+
+#[allow(non_snake_case)]
+pub fn price(amount: u32, member: bool) -> u32 {
+    if member {
+        let FALLBACK = amount;
+        FALLBACK + 0
+    } else {
+        FALLBACK
+    }
+}";
+    let disjoint = findings_on_edited_line(other_branch, "amount + 1", "FALLBACK", test)?;
+    assert!(!returns_name(&disjoint, "FALLBACK"), "{disjoint:?}");
+    // The `else` block imports the constant it returns; the item declared in
+    // an enclosing block makes the name ambiguous to this reader.
+    let imported = "pub mod defaults {
+    pub const FALLBACK: u32 = 7;
+}
+
+#[allow(non_snake_case)]
+pub fn price(amount: u32, member: bool) -> u32 {
+    if member {
+        let FALLBACK = amount;
+        FALLBACK + 0
+    } else {
+        use crate::defaults::FALLBACK;
+        FALLBACK
+    }
+}";
+    let item = findings_on_edited_line(imported, "amount + 1", "FALLBACK", test)?;
+    assert!(!returns_name(&item, "FALLBACK"), "{item:?}");
+    // Control: a preceding `let` in the returning block itself binds it.
+    let same_block = "pub fn price(amount: u32, member: bool) -> u32 {
+    if member {
+        amount
+    } else {
+        let fallback = 7;
+        fallback
+    }
+}";
+    let bound = findings_on_edited_line(same_block, "amount + 1", "fallback", test)?;
+    assert!(returns_name(&bound, "fallback"), "{bound:?}");
+    Ok(())
+}

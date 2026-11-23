@@ -952,8 +952,9 @@ fn predicate_as_owner_tail(
 /// returns: the body's tail, or, recursively, the tail of a plain block or of
 /// either branch of an `if` in such a position. Fails closed unless the owner
 /// declares a non-unit return type, the probe (before and after the edit) is
-/// one identifier the owner binds (a parameter or a `let` pattern), and its
-/// line holds that identifier once, at a returned position. A constant or
+/// one identifier that resolves, at its own position, to a binding the owner
+/// introduces (a parameter, or a preceding `let` in an enclosing block), and
+/// its line holds that identifier once, at a returned position. A constant or
 /// other item spelled as one identifier is not read here. `self`, paths, generics, labelled or `async`/`unsafe` blocks,
 /// `match` arms, loops and closures add no sink here.
 fn bare_name_returned_tail(
@@ -1034,34 +1035,7 @@ fn bare_name_returned_tail(
     {
         return None;
     }
-    // The name must be bound by the owner itself: a parameter or a `let`
-    // pattern in its body. A constant, static, unit struct or imported item
-    // spelled as one identifier is not read here (#16162 review).
-    let binds_name = |pat: Option<ast::Pat>| {
-        pat.is_some_and(|pat| {
-            std::iter::once(pat.syntax().clone())
-                .chain(pat.syntax().descendants())
-                .filter_map(ast::IdentPat::cast)
-                .any(|ident| {
-                    ident
-                        .name()
-                        .is_some_and(|bound| bound.text() == name.as_str())
-                })
-        })
-    };
     let body = function.body()?;
-    let parameter = function
-        .param_list()?
-        .params()
-        .any(|param| binds_name(param.pat()));
-    let local = body
-        .syntax()
-        .descendants()
-        .filter_map(ast::LetStmt::cast)
-        .any(|statement| binds_name(statement.pat()));
-    if !parameter && !local {
-        return None;
-    }
     let line_of = |node: &ra_ap_syntax::SyntaxNode| {
         let start = usize::from(node.text_range().start());
         owner
@@ -1085,6 +1059,9 @@ fn bare_name_returned_tail(
     if at_probe.next().is_some() {
         return None;
     }
+    if !owner_binding_visible_at(&function, &body, found.syntax(), &name)? {
+        return None;
+    }
     let offset = probe.location.line.checked_sub(owner.start_line)?;
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     let line = masked.lines().nth(offset)?;
@@ -1099,6 +1076,65 @@ fn bare_name_returned_tail(
         line: line_of(found.syntax())?,
         text: name,
     })
+}
+
+/// Whether `name` at `at` resolves to a binding the owner introduces: a
+/// `let` in a block enclosing `at` that precedes it, or else a parameter.
+/// `None` when an item declared in an enclosing block mentions the name (a
+/// `use`, `const` or `static` there may be what the name resolves to), so
+/// the reader declines rather than guess (#16162 review). A `let` in a
+/// disjoint scope, such as the other branch of an `if`, does not count.
+fn owner_binding_visible_at(
+    function: &ra_ap_syntax::ast::Fn,
+    body: &ra_ap_syntax::ast::BlockExpr,
+    at: &ra_ap_syntax::SyntaxNode,
+    name: &str,
+) -> Option<bool> {
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasName},
+    };
+
+    let binds_name = |pat: Option<ast::Pat>| {
+        pat.is_some_and(|pat| {
+            std::iter::once(pat.syntax().clone())
+                .chain(pat.syntax().descendants())
+                .filter_map(ast::IdentPat::cast)
+                .any(|ident| ident.name().is_some_and(|bound| bound.text() == name))
+        })
+    };
+    let at_start = at.text_range().start();
+    let mut local = false;
+    for ancestor in at.ancestors() {
+        if let Some(statements) = ast::StmtList::cast(ancestor.clone()) {
+            for statement in statements.statements() {
+                match statement {
+                    ast::Stmt::Item(item) => {
+                        if identifiers(&item.syntax().text().to_string())
+                            .any(|(word, _, _)| word == name)
+                        {
+                            return None;
+                        }
+                    }
+                    ast::Stmt::LetStmt(binding) => {
+                        local |= binding.syntax().text_range().end() <= at_start
+                            && binds_name(binding.pat());
+                    }
+                    ast::Stmt::ExprStmt(_) => {}
+                }
+            }
+        }
+        if &ancestor == body.syntax() {
+            break;
+        }
+    }
+    Some(
+        local
+            || function
+                .param_list()?
+                .params()
+                .any(|param| binds_name(param.pat())),
+    )
 }
 
 /// The branch value of a tail `if` whose branches are written inline on the

@@ -356,8 +356,11 @@ pin above never applied.
 
 The name now reaches the return sink (`bare_name_returned_tail` in
 `classify/flow.rs`) when the owner declares a non-unit return type, the probe
-is one identifier before and after the edit that the owner binds itself (a
-parameter or a `let` pattern in its body), and the parser places that
+is one identifier before and after the edit that resolves, at its own
+position, to a binding the owner introduces (a `let` in an enclosing block
+that precedes it, or else a parameter; a `let` in a disjoint scope such as
+the other `if` branch does not count, and an item declared in an enclosing
+block that mentions the name makes the reader decline), and the parser places that
 identifier, once on its line, at a position whose value the owner returns:
 the body's tail, or the tail of a plain block or of either `if` branch in
 such a position. `self`, paths, generics, labelled or `async`/`unsafe`
@@ -435,6 +438,7 @@ pin both sides in the evidence-promotion honesty corpus.
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_test_binding_named_like_the_tail_does_not_confirm_it`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_whose_value_is_not_returned_gets_no_return_sink`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::only_a_name_the_owner_binds_gets_the_return_sink`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail`
 
 ## Implementation Mapping
 
@@ -455,7 +459,8 @@ pin both sides in the evidence-promotion honesty corpus.
   admission; `crates/ripr/src/analysis/classify/reveal.rs`: its use in
   observation confirmation.
 - `crates/ripr/src/analysis/classify/flow.rs`: `bare_name_returned_tail`, the
-  return sink of a bare returned name; `crates/ripr/src/analysis/classify/reveal.rs`:
+  return sink of a bare returned name, and `owner_binding_visible_at`, its
+  lexical binding check; `crates/ripr/src/analysis/classify/reveal.rs`:
   `bare_owner_name_tail`, which keeps that name from confirming by token (#13037).
 
 ## Metrics
