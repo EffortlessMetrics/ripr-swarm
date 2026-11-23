@@ -106,6 +106,37 @@ pub(super) struct OwnerResultLocal {
     evidence: bool,
 }
 
+/// Whether `tokens[at]` names `owner` as a call or path, not as a member
+/// (`Other.pick`) or a qualifier the owner does not admit (`Other::pick`).
+/// #16220: the local-carrying fallback must use the resolved owner, not the
+/// bare identifier spelling, or an unrelated method's name token reads as a
+/// free observation of the owner.
+fn token_names_owner(tokens: &[SyntaxToken], at: usize, owner: &OwnerName<'_>) -> bool {
+    let token = &tokens[at];
+    if token.kind() != SyntaxKind::IDENT || token.text() != owner.name {
+        return false;
+    }
+    let before = |back: usize| at.checked_sub(back).and_then(|index| tokens.get(index));
+    let after_dot = before(1).is_some_and(|token| token.kind() == SyntaxKind::DOT);
+    if after_dot && !owner.is_method() {
+        return false;
+    }
+    let qualifier = match before(1).map(|token| token.kind()) {
+        Some(SyntaxKind::COLON2) => before(2)
+            .filter(|token| token.kind() == SyntaxKind::IDENT)
+            .map(|token| token.text().to_string()),
+        Some(SyntaxKind::COLON)
+            if before(2).is_some_and(|token| token.kind() == SyntaxKind::COLON) =>
+        {
+            before(3)
+                .filter(|token| token.kind() == SyntaxKind::IDENT)
+                .map(|token| token.text().to_string())
+        }
+        _ => None,
+    };
+    qualifier.is_none_or(|qualifier| owner.admits_qualifier(&qualifier))
+}
+
 /// Locals of the test `body` that may hold the owner's result. Evidence
 /// locals are declared once as `let name = <owner call>;` (a plain or `mut`
 /// identifier pattern, the initializer one call of the owner, possibly
@@ -144,9 +175,19 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
             .any(|token| {
-                token.kind() == SyntaxKind::IDENT
-                    && ((!owner.name.is_empty() && token.text() == owner.name)
-                        || locals.iter().any(|local| local.name == token.text()))
+                if token.kind() != SyntaxKind::IDENT {
+                    return false;
+                }
+                if locals.iter().any(|local| local.name == token.text()) {
+                    return true;
+                }
+                if owner.name.is_empty() || token.text() != owner.name {
+                    return false;
+                }
+                tokens
+                    .iter()
+                    .position(|candidate| candidate.text_range() == token.text_range())
+                    .is_some_and(|at| token_names_owner(&tokens, at, owner))
             });
         if !carries {
             continue;
@@ -851,6 +892,13 @@ mod tests {
             (
                 "let r = pick(0).unwrap(); let actual = &pick(0);",
                 "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            // #16220: an unrelated method's name token is not a free
+            // observation of the free function, so the demotion still holds.
+            (
+                "let r = pick(0).unwrap(); let actual = Other.pick(0);",
+                "assert_eq!(check_ok!(r), actual)",
                 true,
             ),
             (
