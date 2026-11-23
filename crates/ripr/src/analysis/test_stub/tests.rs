@@ -2980,10 +2980,10 @@ fn length_boundary_writes_a_string_of_the_boundary_length() -> Result<(), String
             "s.len() > LIMIT",
             vec![],
         ),
-        // A const inside an inline module is not the bare name's meaning
-        // for an owner there.
+        // An owner inside an inline module resolves the bare name there;
+        // the const is not read (conservatively, even through a glob).
         (
-            "pub const LIMIT: usize = 3;\npub mod inner {\n    use super::LIMIT;\n    pub fn f(s: &str) -> bool {\n        s.len() > LIMIT\n    }\n    #[cfg(test)]\n    mod tests {\n        use super::*;\n    }\n}\n"
+            "pub const LIMIT: usize = 3;\npub mod inner {\n    use super::*;\n    pub fn f(s: &str) -> bool {\n        s.len() > LIMIT\n    }\n    #[cfg(test)]\n    mod tests {\n        use super::*;\n    }\n}\n"
                 .to_string(),
             "s.len() > LIMIT",
             vec![],

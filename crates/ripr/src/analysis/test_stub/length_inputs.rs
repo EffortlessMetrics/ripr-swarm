@@ -16,7 +16,9 @@
 //! - the length is at most [`MAX_LENGTH`];
 //! - the parameter is not `mut`, and nothing before the comparison rebinds,
 //!   assigns or names it inside a macro call; a local or a `const` bound is
-//!   only read when the owner's body calls no macro at all.
+//!   only read when the owner's body (and any enclosing fn's) calls no
+//!   macro at all, and a `const` bound only when no generic parameter of
+//!   the owner or an enclosing impl or trait could shadow it.
 //!
 //! The string is `x` repeated, so its byte length and char count agree. Two
 //! parameters compared with each other get equal lengths and different text
@@ -97,8 +99,14 @@ fn derive(
         file: &file,
         signature,
         at,
-        has_macro: body
+        // The outermost enclosing fn: a macro in an enclosing body can
+        // define a block-scope `const` the owner sees.
+        has_macro: owner
             .syntax()
+            .ancestors()
+            .filter(|node| node.kind() == SyntaxKind::FN)
+            .last()
+            .unwrap_or_else(|| owner.syntax().clone())
             .descendants()
             .any(|node| node.kind() == SyntaxKind::MACRO_CALL),
     };
@@ -245,13 +253,23 @@ impl Context<'_> {
                 .find_map(ast::Name::cast)
                 .is_some_and(|n| unraw(n.text()) == unraw(name))
         };
-        // A bare name in an owner inside a module resolves in that module.
+        // A bare name in an owner inside a module resolves in that module,
+        // and a const generic parameter of the owner or an enclosing impl
+        // or trait shadows the file-root const.
+        let generic = |node: &ra_ap_syntax::SyntaxNode| {
+            node.children()
+                .filter_map(ast::GenericParamList::cast)
+                .any(|list| {
+                    list.generic_params()
+                        .any(|param| !matches!(param, ast::GenericParam::LifetimeParam(_)))
+                })
+        };
         if self.has_macro
             || self
                 .owner
                 .syntax()
                 .ancestors()
-                .any(|node| node.kind() == SyntaxKind::MODULE)
+                .any(|node| node.kind() == SyntaxKind::MODULE || generic(&node))
         {
             return None;
         }
