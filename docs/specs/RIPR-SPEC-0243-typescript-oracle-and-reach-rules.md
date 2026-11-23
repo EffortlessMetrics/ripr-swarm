@@ -1829,17 +1829,20 @@ reassignable binding), a renamed, defaulted or rest destructure
 (`{ digest: run }`), an `await` loop, and a body-local declaration of the
 name. Every iteration must register the same tests: the path from the loop
 to its tests (the loop body and `describe` / `context` / `suite` callbacks)
-holds only declarations, call statements with a bare identifier callee
+holds only call statements with a bare identifier callee
 (`describe.only`, `describe.skipIf(c)` and `it.each` are refused) and
 blocks, with no `if`,
 `switch`, `continue`, `break`, `return`, `try`, label or `cond && it(...)`,
-and no test body, declaration on that path, or registration argument after
-the title (Vitest's `it(name, { skip }, fn)`) reads another loop binding:
+and no declaration (one can carry per-iteration state), and no test body,
+registration argument after the title (Vitest's `it(name, { skip }, fn)`),
+or argument of a call that takes no title (a hook's
+`beforeEach(skipUnless(supported))`) reads another loop binding:
 the `Object.entries` key or another destructured member (`{ digest,
 supported }` with `if (!supported) return;` refuses `digest`). A suite or
 test title may read the key. A nested or defaulted member pattern refuses
 the loop. `as const`, `satisfies` and other type-only wrappers around the
-table literal keep it. The binding is recorded on the test's
+table literal keep it; a repeated key or a `__proto__` key refuses it.
+The binding is recorded on the test's
 scope binding as `namespace_member_of`; file-fact schema 14 carries it.
 
 Two bindings this rule and the destructured form share are refused (#10401).

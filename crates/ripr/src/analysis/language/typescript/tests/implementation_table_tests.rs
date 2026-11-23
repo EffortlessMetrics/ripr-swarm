@@ -180,6 +180,19 @@ fn a_table_without_the_owner_module_lends_no_reach() -> Result<(), String> {
         BODY,
     );
     assert_unreached("module-built", &pad_finding("module-built", &built)?);
+    // A repeated key or `__proto__` drops the entry that names the module.
+    for (label, table) in [
+        (
+            "module-repeated",
+            "const impls = { js: cryptoJS, js: cryptoNode };\n",
+        ),
+        (
+            "module-proto",
+            "const impls = { __proto__: cryptoJS, node: cryptoNode };\n",
+        ),
+    ] {
+        assert_unreached(label, &pad_finding(label, &entries_test(table, BODY))?);
+    }
     Ok(())
 }
 
@@ -286,7 +299,9 @@ fn a_loop_that_may_skip_an_iteration_lends_no_reach() -> Result<(), String> {
         "  describe(`impl ${name}`, () => {\n    it(name, () => {\n      expect(digest(\"a\")).toBe(\"a=\");\n    });\n  });\n",
     );
     assert_reached("skip-titled", &pad_finding("skip-titled", &titled)?);
-    // Vitest's options argument can skip by the key.
+    // Vitest's options argument can skip by the key. The extractor already
+    // drops a registration whose `skip` option is not literal `false`, so
+    // these hold without the table's own scan of later arguments too.
     let options = loop_test(
         ENTRIES,
         "  it(name, { skip: name === \"js\" }, () => {\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n",
@@ -300,6 +315,15 @@ fn a_loop_that_may_skip_an_iteration_lends_no_reach() -> Result<(), String> {
         "skip-suite-options",
         &pad_finding("skip-suite-options", &suite_options)?,
     );
+    // A hook takes no title: its first argument can skip by the key too.
+    let hook = loop_test(ENTRIES, &format!("  beforeEach(skipFor(name));\n{PLAIN}"));
+    assert_unreached("skip-hook", &pad_finding("skip-hook", &hook)?);
+    // A declaration on the path can carry per-iteration state.
+    let counted = loop_test(
+        ENTRIES,
+        "  const n = counter++;\n  it(name, () => {\n    if (n === 0) return;\n    expect(digest(\"a\")).toBe(\"a=\");\n  });\n",
+    );
+    assert_unreached("skip-counter", &pad_finding("skip-counter", &counted)?);
     Ok(())
 }
 
@@ -325,6 +349,11 @@ fn a_test_that_reads_another_loop_member_lends_no_reach() -> Result<(), String> 
         assert_unreached(
             &format!("member-guard-{label}"),
             &pad_finding(&format!("member-guard-{label}"), &loop_test(header, guard))?,
+        );
+        let hook = format!("  beforeEach(skipUnless(supported));\n{unread}");
+        assert_unreached(
+            &format!("member-hook-{label}"),
+            &pad_finding(&format!("member-hook-{label}"), &loop_test(header, &hook))?,
         );
     }
     Ok(())

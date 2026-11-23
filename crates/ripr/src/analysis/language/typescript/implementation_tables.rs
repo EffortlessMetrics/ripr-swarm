@@ -257,14 +257,15 @@ fn iterated_table<'a>(right: &'a Expression<'a>) -> Option<(&'a str, Enumeration
 }
 
 /// The statements between the loop and its tests run the same way on every
-/// iteration: only declarations, call statements and blocks, recursing into
+/// iteration: only call statements and blocks, recursing into
 /// the callback of a `describe` / `context` / `suite` call. Every call on
 /// that path has a bare identifier callee. No `if`, `switch`, `continue`,
 /// `break`, `return`, `try`, label or conditional expression statement
-/// (`cond && it(...)`) on that path.
+/// (`cond && it(...)`) on that path, and no declaration: one can carry
+/// per-iteration state (`const n = counter++;`) a test body branches on.
 fn registers_unconditionally(statements: &[Statement<'_>]) -> bool {
     statements.iter().all(|statement| match statement {
-        Statement::VariableDeclaration(_) | Statement::EmptyStatement(_) => true,
+        Statement::EmptyStatement(_) => true,
         Statement::BlockStatement(block) => registers_unconditionally(&block.body),
         Statement::ExpressionStatement(expression) => {
             let Expression::CallExpression(call) = &expression.expression else {
@@ -294,12 +295,13 @@ fn registers_unconditionally(statements: &[Statement<'_>]) -> bool {
     })
 }
 
-/// Whether any of `names` appears where a registration can read it: in a
-/// declaration on the registration path (`const skip = name === "js"`), in
-/// the callback of a call that is not a suite (`it`, `test`, a hook: the test
-/// bodies), or in any argument after the first that is not a suite callback
-/// (Vitest's `it(title, { skip: name === "js" }, fn)`). A call's title, its
-/// first argument, may mention them, and a suite callback is walked.
+/// Whether any of `names` appears where a registration can read it: in the
+/// callback of a call that is not a suite (`it`, `test`, a hook: the test
+/// bodies), or in any other argument that is not a suite callback (Vitest's
+/// `it(title, { skip: name === "js" }, fn)`, a hook's
+/// `beforeEach(skipUnless(supported))`). Only the first argument of a test
+/// or suite registration, its title, may mention them; a suite callback is
+/// walked.
 fn test_bodies_mention(statements: &[Statement<'_>], source: &str, names: &[&str]) -> bool {
     let text = |start: u32, end: u32| source.get(start as usize..end as usize).unwrap_or("");
     let mentions = |start: u32, end: u32| {
@@ -313,7 +315,12 @@ fn test_bodies_mention(statements: &[Statement<'_>], source: &str, names: &[&str
             let Expression::CallExpression(call) = &expression.expression else {
                 return false;
             };
-            let suite = matches!(&call.callee, Expression::Identifier(callee) if matches!(callee.name.as_str(), "describe" | "context" | "suite"));
+            let callee = match &call.callee {
+                Expression::Identifier(callee) => callee.name.as_str(),
+                _ => "",
+            };
+            let suite = matches!(callee, "describe" | "context" | "suite");
+            let titled = suite || matches!(callee, "it" | "test" | "specify");
             call.arguments
                 .iter()
                 .enumerate()
@@ -329,15 +336,12 @@ fn test_bodies_mention(statements: &[Statement<'_>], source: &str, names: &[&str
                         let span = argument.span();
                         mentions(span.start, span.end)
                     }
-                    _ if index == 0 => false,
+                    _ if index == 0 && titled => false,
                     _ => {
                         let span = argument.span();
                         mentions(span.start, span.end)
                     }
                 })
-        }
-        Statement::VariableDeclaration(declaration) => {
-            mentions(declaration.span.start, declaration.span.end)
         }
         _ => false,
     })
@@ -378,6 +382,7 @@ fn identifier_values(init: &Expression<'_>) -> Option<(bool, Vec<String>)> {
     match super::tests_extract::runtime_expression(init) {
         Expression::ObjectExpression(object) => {
             let mut values = Vec::new();
+            let mut keys: Vec<String> = Vec::new();
             for property in &object.properties {
                 let ObjectPropertyKind::ObjectProperty(property) = property else {
                     return None;
@@ -391,6 +396,13 @@ fn identifier_values(init: &Expression<'_>) -> Option<(bool, Vec<String>)> {
                 let Expression::Identifier(value) = &property.value else {
                     return None;
                 };
+                // A repeated key or `__proto__` drops an entry that
+                // `Object.entries` / `Object.values` then never yields.
+                let key = property.key.static_name()?.to_string();
+                if key == "__proto__" || keys.contains(&key) {
+                    return None;
+                }
+                keys.push(key);
                 values.push(value.name.to_string());
             }
             (!values.is_empty()).then_some((false, values))
