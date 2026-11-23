@@ -819,7 +819,10 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.'",
             false,
         ),
-        ("SOURCE_REVIEW_READY\n> No blocker found.\n> That is false.", false),
+        (
+            "SOURCE_REVIEW_READY\n> No blocker found.\n> That is false.",
+            false,
+        ),
         // The interaction: the widened filler must not open a new quoted fail-open.
         (
             "SOURCE_REVIEW_READY\nThe earlier review said 'No new source blocker found.' That is false.",
@@ -831,8 +834,14 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             false,
         ),
         // Same-line state token after a stripped phrase: the PR head admits this, main refuses.
-        ("SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.", false),
-        ("SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.", false),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.",
+            false,
+        ),
         // The widened filler must not strip a phrase whose remainder reports a
         // live defect in a form NEGATION did not cover before.
         (
@@ -924,135 +933,486 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             false,
         ),
         // Subject-agnostic remainder predicate: any subject plus a defect.
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is incomplete.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is unreadable.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The gap is reported.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is broken.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is red.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is failing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane fails.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The run is broken.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The run is red.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The check is failing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The check fails.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The job is broken.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The job is red.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The job fails.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The test is failing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The tests are failing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The tests are red.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is incomplete.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is unreadable.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is reported.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is incomplete.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is unreadable.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is reported.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is incomplete.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is unreadable.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is missing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is absent.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stuck.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stalled.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is hung.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is dead.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is down.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is unavailable.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is unreachable.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is missing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is absent.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is empty.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stale.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is outdated.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is revoked.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is rejected.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is nacked.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not green.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not passing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not complete.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not done.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not finished.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not merged.", false),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The run is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The run is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The check is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The check fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job is broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job is red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The job fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The test is failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests are failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests are red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is unreadable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is missing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is absent.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stuck.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stalled.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is hung.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is dead.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is unavailable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is unreachable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is missing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is absent.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is stale.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is outdated.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is revoked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is rejected.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is nacked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not passing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not complete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not done.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is not merged.",
+            false,
+        ),
         // Must-admit controls for the subject-agnostic predicate.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates current main; the hosted lane has not run on this head.",
             true,
         ),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The block layout is unchanged.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is green.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. All checks pass.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The tests pass.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is complete.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. No changes needed.", true),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The block layout is unchanged.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is green.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. All checks pass.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests pass.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is complete.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. No changes needed.",
+            true,
+        ),
         ("SOURCE_REVIEW_READY\nNo source blocker found.", true),
         ("SOURCE_REVIEW_READY\nNo code change needed.", true),
         // Broader defect vocabulary: adjectives and verbs.
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite crashes.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is crashing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is not working.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is not yet green.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is still not green.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is corrupt.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is invalid.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is misconfigured.", false),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite crashes.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is crashing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is not working.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is not yet green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is still not green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is corrupt.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is invalid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is misconfigured.",
+            false,
+        ),
         // Homograph exceptions: these are benign in context.
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is down to the last check.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is down to one job.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The queue is empty.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The backlog is empty.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The queue is empty and the lane is green.", true),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the run log.", true),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane is down to the last check.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is down to one job.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The queue is empty.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The backlog is empty.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The queue is empty and the lane is green.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the run log.",
+            true,
+        ),
         // The same words stay defects for the other subjects.
-        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.", false),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.",
+            false,
+        ),
         // Auxiliary negation: has/have/had/did/do/does/is/are/was/were + not.
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not fully green.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been green.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not passed.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build did not pass.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build didn't pass.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The tests have not run.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The lane has not finished.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.", false),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not fully green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not passed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build did not pass.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build didn't pass.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The tests have not run.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The lane has not finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.",
+            false,
+        ),
         // "has not been <participle>" for the defect vocabulary.
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been tested.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been verified.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been reviewed.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been qualified.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been checked.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been validated.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been confirmed.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been deployed.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been released.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been shipped.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been landed.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been completed.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been finished.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been ready.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been working.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been functional.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been operational.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been available.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been reachable.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been responsive.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been stable.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been healthy.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been correct.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been valid.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been sound.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been solid.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been clean.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been covered.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been documented.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been recorded.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been noted.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been described.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been explained.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been linked.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been attached.", false),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been included.", false),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been tested.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been verified.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been reviewed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been qualified.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been checked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been validated.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been confirmed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been deployed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been released.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been shipped.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been landed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been completed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been finished.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been ready.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been working.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been functional.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been operational.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been available.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been reachable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been responsive.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been stable.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been healthy.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been correct.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been valid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been sound.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been solid.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been clean.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been covered.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been documented.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been recorded.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been noted.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been described.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been explained.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been linked.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been attached.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build has not been included.",
+            false,
+        ),
         // The #15525 benign negations still admit.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result is not native composed-tree proof.",
@@ -1063,11 +1423,26 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             true,
         ),
         // "still fails" is subject-anchored, so narration admits.
-        ("SOURCE_REVIEW_READY\na wrongly gated control still fails", true),
-        ("SOURCE_REVIEW_READY\nA `>` redirect's CRLF therefore still fails", true),
-        ("SOURCE_REVIEW_READY\na UTF-16 redirect still fails it on CRLF", true),
-        ("SOURCE_REVIEW_READY\nscalar roles still fail (existing tests)", true),
-        ("SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed", true),
+        (
+            "SOURCE_REVIEW_READY\na wrongly gated control still fails",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nA `>` redirect's CRLF therefore still fails",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\na UTF-16 redirect still fails it on CRLF",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nscalar roles still fail (existing tests)",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed",
+            true,
+        ),
         (
             "SOURCE_REVIEW_READY\nIt still fails when no string value carries the missing root",
             true,
@@ -1084,7 +1459,10 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             "SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the summary.",
             true,
         ),
-        ("SOURCE_REVIEW_READY\nNo blocker found. The cache is empty.", true),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The cache is empty.",
+            true,
+        ),
         (
             "SOURCE_REVIEW_READY\nNo blocker found. The lane is down for maintenance.",
             true,
