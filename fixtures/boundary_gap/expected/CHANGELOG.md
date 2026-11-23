@@ -1,5 +1,16 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.194 for non-empty array loops (#14116)
+
+An assertion inside a `for` loop over any non-empty array now counts as run,
+not only one over a constant-row table, which bumps the analyzer cache schema
+to 1.194 (1.193 is left for #13041 and #16195). Move the portable
+unchanged-attempt snapshots to 1.194, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.192 for manifest-rebound assertion roots (#10150)
 
 A `std::` or `core::` assertion whose root the test's own manifest binds to a

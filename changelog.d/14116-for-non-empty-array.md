@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An assertion inside `for x in [a, b, ..]` now counts as run when the array is non-empty, even when its rows call functions or name constants. Before, only rows of literals counted, so a table such as `for (input, before) in [(POW2, "..")]` was reported as "may run zero times". A row's value still counts as an expected value only when every row is constant, so `for (x, want) in [(4, f(4))]` does not credit `want` (#14116).

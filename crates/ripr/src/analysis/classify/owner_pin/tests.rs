@@ -7380,7 +7380,7 @@ fn each_refusal_names_the_gate_that_failed() {
 }
 
 #[test]
-fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
+fn a_for_loop_over_a_non_empty_array_runs_its_assertion() {
     let refusal = |body: &str| {
         weight_refusal(
             &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
@@ -7401,6 +7401,16 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
         format!("for (x, want) in [(&[4], vec![12]), (&[], vec![])] {{ {pin} }}"),
         format!("for (x, want) in [(4, Ok(12)), (0, Err(Kind::Empty))] {{ {pin} }}"),
         format!("for (x, want) in [(4, 12)] {{ {pin} if x > 9 {{ break; }} }}"),
+        // A non-empty array runs its body whatever its rows hold; whether a
+        // row's value proves anything is each oracle rule's own question.
+        format!("for (x, want) in [(4, weight(4))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, EXPECTED)] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Wrap::of(12))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Expected(4))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Twelve)] {{ {pin} }}"),
+        format!("for (x, want) in [(4, vec![weight(4)])] {{ {pin} }}"),
+        format!("let cases = [(four(), 12)];\nfor (x, want) in cases {{ {pin} }}"),
+        format!("for x in [four(), 5] {{ assert_eq!(weight(x), 12); }}"),
     ] {
         assert_eq!(refusal(&admitted), None, "{admitted}");
     }
@@ -7411,19 +7421,15 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
         format!("for (x, want) in [(4, 12); 0] {{ {pin} }}"),
         format!("for (x, want) in rows() {{ {pin} }}"),
         format!("for x in 0..4 {{ let want = x * 3; {pin} }}"),
-        // A row could hold the owner's own output.
-        format!("for (x, want) in [(4, weight(4))] {{ {pin} }}"),
-        format!("for (x, want) in [(4, EXPECTED)] {{ {pin} }}"),
-        format!("for (x, want) in [(4, Wrap::of(12))] {{ {pin} }}"),
-        format!("for (x, want) in [(4, Expected(4))] {{ {pin} }}"),
-        format!("for (x, want) in [(4, Twelve)] {{ {pin} }}"),
+        format!("for (x, want) in vec![(4, 12)] {{ {pin} }}"),
+        format!("for (x, want) in [(4, 12)].iter().skip(1) {{ {pin} }}"),
+        format!("for (x, want) in [] {{ {pin} }}"),
         // A `cfg` may remove every row.
         format!("for (x, want) in [#[cfg(any())] (4, 0)] {{ {pin} }}"),
         format!(
             "let cases: [(u32, u32); 0] = [#[cfg(any())] (4, 0)];\nfor (x, want) in cases {{ {pin} }}"
         ),
         format!("for (x, want) in [(4, #[cfg(any())] 0)] {{ {pin} }}"),
-        format!("for (x, want) in [(4, vec![weight(4)])] {{ {pin} }}"),
         // The bound rows may change or are not the ones iterated.
         format!("let mut cases = [(4, 12)];\ncases[0].1 = 0;\nfor (x, want) in cases {{ {pin} }}"),
         format!(
@@ -7447,6 +7453,13 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
     );
     // Only the loop body is admitted; the iterable is not on its path.
     assert!(refusal("for _ in [assert_eq!(weight(4), 12)] {}").is_some());
+    // A row that leaves the loop before the body still skips it.
+    assert!(
+        refusal(&format!(
+            "for (x, want) in [(4, 12), (return, 0)] {{ {pin} }}"
+        ))
+        .is_some()
+    );
 }
 
 #[test]
