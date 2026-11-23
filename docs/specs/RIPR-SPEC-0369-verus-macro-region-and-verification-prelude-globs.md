@@ -262,9 +262,10 @@ assertions, a test that reads `env!` or `concat!`, or makes a standard
 wrapper call (`assert!` around `assert_eq!`) a named wrapper. It still
 reports every other trusted name: `vec`, `format`, `print`, `println`,
 `eprint`, `eprintln` and `dbg`, which a `#![no_std]` prelude lacks, the
-claims and expect-test macros, and `json`. A `use std::NAME;` or
-`use core::NAME;` of one of these names imports the standard macro itself
-and reports no site.
+claims and expect-test macros, and `json`. The rule covers bare calls beside
+a glob only: an explicit `use std::concat;` keeps its import site, since in a
+`#![no_std]` target a glob may supply a module named `std`. The
+assertion-family imports keep the #15263 reading.
 
 The rule does not reach a scope under `#[no_implicit_prelude]`, where a glob
 does bind the name without error; that attribute reports its own site for

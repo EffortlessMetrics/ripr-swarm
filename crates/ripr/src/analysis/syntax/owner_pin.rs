@@ -2959,7 +2959,12 @@ fn is_core_prelude_macro(name: &str) -> bool {
 fn is_standard_macro_import(item: &ast::UseTree, name: &str) -> bool {
     let exporters: &[&str] = match name {
         "vec" | "format" => &["std", "alloc"],
-        name if is_core_prelude_macro(name) => &["std", "core"],
+        // The assertion family only (#15263). The rest of the core prelude
+        // keeps its explicit-import site: in a `#![no_std]` target a glob
+        // may supply a module named `std`, which the manifest check does
+        // not see (#16182 review).
+        "assert" | "assert_eq" | "assert_ne" | "debug_assert" | "debug_assert_eq"
+        | "debug_assert_ne" | "matches" | "panic" | "unreachable" => &["std", "core"],
         _ => &[],
     };
     let segments = use_tree_segments(item);

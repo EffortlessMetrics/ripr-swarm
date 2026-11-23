@@ -178,9 +178,10 @@ fn the_widened_prelude_names_keep_every_non_glob_site() {
                 "{source:?} must keep a {name} site"
             );
         }
-        // `core` and `std` export each at their root, so with both roots
-        // verified the import names the standard macro itself (#15263);
-        // an unverified root keeps its site.
+        // An explicit `use std::NAME;` keeps its site even with the root
+        // verified: in a `#![no_std]` target a glob may supply a module
+        // named `std` (#16182 review). `env` and the include pair are
+        // standard drop-ins (#15446, #14116) and read through that rule.
         let trusted = assertion_context_macros();
         let scan = |source: &str, verified: bool| -> BTreeSet<String> {
             crate::analysis::syntax::macro_binding_scan(source, &BTreeSet::new(), &trusted, &|_| {
@@ -190,10 +191,11 @@ fn the_widened_prelude_names_keep_every_non_glob_site() {
             .map(|(name, _)| name)
             .collect()
         };
-        for root in ["std", "core"] {
-            let source = format!("use {root}::{name};\n");
-            assert!(!scan(&source, true).contains(name), "{source:?}");
-            assert!(scan(&source, false).contains(name), "{source:?}");
+        if !matches!(name, "env" | "include_str") {
+            for root in ["std", "core"] {
+                let source = format!("use {root}::{name};\n");
+                assert!(scan(&source, true).contains(name), "{source:?}");
+            }
         }
         let other = format!("use other::{name};\n");
         assert!(scan(&other, true).contains(name), "{other:?}");
