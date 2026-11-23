@@ -1182,6 +1182,17 @@ fn classify_change_for_owner_inner<'a>(
             &focus,
         )
     });
+    // A strip side or `round` digit count edit (#16203) differs only for an
+    // argument with whitespace on the dropped side or more decimal places.
+    let call_variant_gap = old_line_text.and_then(|old| {
+        super::call_variant::python_call_variant_evidence(
+            old,
+            line_text,
+            owner,
+            &related_candidates,
+            &focus,
+        )
+    });
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
@@ -1745,6 +1756,7 @@ fn classify_change_for_owner_inner<'a>(
         && default_keyword.is_none()
         && positional_only_gap.is_none()
         && connective_gap.is_none()
+        && call_variant_gap.is_none()
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
@@ -1854,6 +1866,27 @@ fn classify_change_for_owner_inner<'a>(
                 owner.name,
                 swap.left,
                 swap.right,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(variant) = &call_variant_gap
+    {
+        // Every strong related call passes an argument both versions of the
+        // changed call treat alike (#16203).
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the edit only changes `{}` to `{}`, and no strong related call passes {}; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `{}` with {}.",
+                owner.name,
+                variant.old_call,
+                variant.new_call,
+                variant.discriminator,
+                owner.name,
+                variant.discriminator,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -2348,6 +2381,20 @@ fn classify_change_for_owner_inner<'a>(
                 reason: format!(
                     "the change at line {line} only swaps `and`/`or`, and every related call makes both operands {}",
                     agreed_phrase(&swap.agreed)
+                ),
+                flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
+        } else if let Some(variant) = call_variant_gap
+            .as_ref()
+            .filter(|_| changed_default_override.is_none())
+        {
+            vec![MissingDiscriminatorFact {
+                value: format!("call `{}` with {}", owner.name, variant.discriminator),
+                reason: format!(
+                    "the change at line {line} only changes `{}` to `{}`, and no related call passes {}",
+                    variant.old_call, variant.new_call, variant.discriminator
                 ),
                 flow_sink: flow_sink.clone(),
                 shape: DiscriminatorShape::Other,

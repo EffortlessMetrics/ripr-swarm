@@ -2195,6 +2195,25 @@ Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap
 `connective_swap_tests.rs::an_if_condition_with_a_module_constant_reads_agreeing_calls`,
 `connective_swap_tests.rs::only_a_lone_connective_swap_between_simple_operands_is_read`.
 
+A one-line edit whose only change picks another `strip`, `lstrip` or `rstrip`
+on a parameter with no arguments, or another literal digit count in
+`round(<parameter>, <int>)` (#16203), changes the result only for a string
+with whitespace on a side one version keeps, or a number with more decimal
+places than the smaller count. The parameter must be one the body never
+rebinds. When every strong related call binds it to a plain literal the rule
+evaluates (a quoted string without escapes, or an int or decimal float) and
+both versions give the same result, the edit reads `weakly_exposed` and the
+missing discriminator names the separating input. A call the reader cannot
+resolve, or no resolved call at all, leaves the reading to the other rules.
+
+Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
+`call_variant_tests.rs::an_input_with_trailing_whitespace_keeps_strip_to_lstrip_exposed`,
+`call_variant_tests.rs::inputs_within_the_smaller_digit_count_do_not_expose_a_round_change`,
+`call_variant_tests.rs::an_input_with_more_decimals_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::an_unread_argument_keeps_its_reading`,
+`call_variant_tests.rs::only_a_strip_side_or_round_digits_edit_on_a_name_is_read`,
+`call_variant_tests.rs::agreement_follows_python_strip_and_round`.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed
