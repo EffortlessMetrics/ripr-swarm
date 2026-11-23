@@ -611,6 +611,8 @@ pub(super) fn unpair_runs_without_code(
     // folded into that code; otherwise the run's code carries the rewrite.
     let quiet = |added: &ChangedLine| {
         comment_or_blank.contains(&added.line)
+            || (!super::line_is_in_ranges(added.line, string_lines)
+                && is_python_structural_line(&added.text))
             || is_python_import_line(&added.text)
             || super::line_is_in_ranges(added.line, imports.added)
     };
@@ -660,25 +662,43 @@ pub(super) fn unpair_runs_without_code(
 /// Whether every name and number of `removed` appears among the code lines
 /// of an added run: the removed statement was folded into them
 /// (`x = min(x * 2, CAP)` into `return max(min(x * 2, CAP), 0)`), not deleted.
-/// A removed line with no name or number is never read as folded.
+/// Names and numbers are read with the Python lexer, so string and comment
+/// text is neither a name nor a cut point. A removed line with no name or
+/// number is never read as folded; a line the lexer refuses on its own keeps
+/// the pairing.
 fn folded_into(removed: &str, code: &[&ChangedLine]) -> bool {
-    const KEYWORDS: &[&str] = &[
-        "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
-        "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is",
-        "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with",
-        "yield",
-    ];
-    let words = |text: &str| -> std::collections::BTreeSet<String> {
-        let code = text.split('#').next().unwrap_or_default();
-        code.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-            .filter(|word| !word.is_empty() && !KEYWORDS.contains(word))
-            .map(str::to_string)
-            .collect()
+    let Some(removed_words) = names_and_numbers(removed) else {
+        return true;
     };
-    let removed_words = words(removed);
-    let added_words: std::collections::BTreeSet<String> =
-        code.iter().flat_map(|added| words(&added.text)).collect();
+    let mut added_words = std::collections::BTreeSet::new();
+    for added in code {
+        let Some(words) = names_and_numbers(&added.text) else {
+            return true;
+        };
+        added_words.extend(words);
+    }
     !removed_words.is_empty() && removed_words.is_subset(&added_words)
+}
+
+/// The name and number tokens of one line, as spelled; None when the trimmed
+/// line does not lex on its own.
+fn names_and_numbers(line: &str) -> Option<std::collections::BTreeSet<String>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let text = line.trim();
+    let mut words = std::collections::BTreeSet::new();
+    for result in lex(text, Mode::Module) {
+        let (tok, range) = result.ok()?;
+        if matches!(
+            tok,
+            Tok::Name { .. } | Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }
+        ) {
+            words.insert(
+                text.get(range.start().into()..range.end().into())?
+                    .to_string(),
+            );
+        }
+    }
+    Some(words)
 }
 
 /// For each added line, whether it is `quiet` (no behavior, structural, or an

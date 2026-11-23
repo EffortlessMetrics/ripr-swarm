@@ -2278,10 +2278,47 @@ fn comment_replacing_a_removed_import_is_no_finding() -> Result<(), String> {
         &[2],
         vec![line(2, 2, "    import textwrap")],
     )?;
+    // A removed import records nothing, and the comment is no finding.
+    assert_eq!(findings.len(), 0, "{findings:?}");
+    Ok(())
+}
+
+/// A lone closing bracket in the run is structure, not rewritten code, so
+/// it does not keep a comment's pair alive (#16011 review).
+#[test]
+fn lone_closer_beside_a_comment_does_not_hide_a_deleted_argument() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    return min(\n        total,\n        # Use the default cap.\n        cap + 1,\n    )\n";
+    let findings = analyze_with_test(
+        "comment-with-closer",
+        source,
+        CAP_TEST_PY,
+        &[4, 5, 6],
+        vec![line(4, 4, "        total * 2,"), line(5, 4, "        cap)")],
+    )?;
     assert!(
-        findings
-            .iter()
-            .all(|finding| !finding.probe.expression.trim().starts_with('#')),
+        base_side_texts(&findings).contains(&"total * 2,".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// Names inside a string are text: a removed guard whose expression only
+/// survives inside a string literal was deleted (#16011 review).
+#[test]
+fn guard_named_only_inside_a_string_is_deleted() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    # The cap moved to the caller.\n    log(\"total > cap\")\n    return total\n";
+    let findings = analyze_with_test(
+        "comment-with-string",
+        source,
+        CAP_TEST_PY,
+        &[2, 3],
+        vec![
+            line(2, 2, "    if total > cap:"),
+            line(3, 2, "        total = log(cap)"),
+        ],
+    )?;
+    assert!(
+        base_side_texts(&findings).contains(&"if total > cap:".to_string()),
         "{findings:?}"
     );
     Ok(())
