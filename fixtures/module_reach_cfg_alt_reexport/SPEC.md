@@ -16,6 +16,8 @@ cargo xtask fixtures module_reach_cfg_alt_reexport
 
 Not related: the library does not unconditionally bind `inner` to `src/inner.rs`.
 
+Since #15877 the only `mod inner;` is behind `#[cfg(any())]`, so rustc never compiles `src/inner.rs`: the change seeds no finding and the outcome names the file as unreached by any Cargo target.
+
 ## Must Not
 
 - Credit the test as calling the changed entry.

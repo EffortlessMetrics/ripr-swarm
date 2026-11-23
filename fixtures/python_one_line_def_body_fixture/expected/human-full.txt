@@ -45,7 +45,7 @@ Evidence
   - related test tests/test_discount.py:4 test_bulk_discount_at_threshold uses strong exact value oracle: assert bulk_discount(quantity) == 0.1
 
 Weakness
-  - Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value
+  - Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture, and static analysis cannot tell whether it supplies an input that exercises the change or the value the test expects
 
 Stop reasons:
   - ripr could not model this change well enough to classify it (static_probe_unknown)

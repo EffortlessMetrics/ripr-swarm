@@ -214,7 +214,8 @@ jobs:
                 verdict_pass=false
               fi
             done
-          } | tee target/windows-gate-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
+          } > target/windows-gate-verdict.md
+          tee -a "$GITHUB_STEP_SUMMARY" < target/windows-gate-verdict.md
           echo "verdict_pass=$verdict_pass" >> "$GITHUB_OUTPUT"
 
       - name: Upload gate subset evidence

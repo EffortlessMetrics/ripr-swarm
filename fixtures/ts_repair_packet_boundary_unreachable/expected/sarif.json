@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_auth.ts:typescript_preview:23e9836b|probe:src_auth.ts:typescript_preview:23e9836b|src/auth.ts"
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_auth.ts:typescript_preview:23e9836b|probe:src_auth.ts:typescript_preview:23e9836b|fixtures/ts_repair_packet_boundary_unreachable/input/src/auth.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/auth.ts"
+                  "uri": "fixtures/ts_repair_packet_boundary_unreachable/input/src/auth.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "Missing check: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator. weakly_exposed static exposure for predicate probe:   if (user.length >= 3) {. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `user.length == 3`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_auth.ts:typescript_preview:23e9836b|probe:src_auth.ts:typescript_preview:23e9836b|src/auth.ts"
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_auth.ts:typescript_preview:23e9836b|probe:src_auth.ts:typescript_preview:23e9836b|fixtures/ts_repair_packet_boundary_unreachable/input/src/auth.ts"
           },
           "properties": {
             "changed_expression": "  if (user.length >= 3) {",

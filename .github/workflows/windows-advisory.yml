@@ -71,6 +71,24 @@ concurrency:
 # The suite runs **twice** on purpose, because one sample cannot separate a
 # reproducible failure from a load-dependent flake.
 #
+# Each sample is split by test target across jobs (#3922, #12668). One
+# `cargo test --workspace` per sample ran 54 to 107 minutes on the hosted
+# runners, whose speed differs by a factor of 2.4 from night to night (the
+# same `ripr` unit binary: 462 s on 2026-11-11, 1125 s on 2026-11-20), so the
+# 110- and 90-minute run deadlines were met on fast nights only: no night
+# from 2026-11-15 to 2026-11-21 ended in a verdict. The split:
+#
+#   - `windows-advisory-integration` (three jobs): every integration target of
+#     the workspace, by first letter of its name, twice;
+#   - `windows-advisory`: unit targets (`--lib --bins`, the one `test = true`
+#     example) and doctests, twice, then the verdict over all parts.
+#
+# The three name patterns are complementary, so no integration target can
+# fall between them. The summarizer still does not take the split on trust:
+# it refuses a target that two parts both ran, and it checks every sample
+# against the executables `cargo test --workspace --no-run` built
+# (`--expected-targets`), so a target that no part selects fails the lane.
+#
 # Two samples still do not license a bare failed/flaky split. A test missing
 # from a run has not been observed passing — it may have been masked, filtered,
 # or never reached — so the summarizer tracks three states per run (failed,
@@ -86,16 +104,139 @@ concurrency:
 # this lane, so a green run means every control was executed twice.
 
 jobs:
-  windows-advisory:
-    name: windows-advisory
+  # The integration targets of both samples (#3922, #12668); see the split
+  # described above. Each job builds its third of the integration targets and
+  # runs it twice on one machine, so the two samples of a part still compare
+  # the same compiled artifacts on the same host. Test outcomes are advisory
+  # here as everywhere in this lane: every step exits 0, and the logs and
+  # statuses go to `windows-advisory`, which owns the verdict. A part that is
+  # missing there, or cut by its deadline, is an evidence failure there.
+  windows-advisory-integration:
+    name: windows-advisory-integration-${{ matrix.part }}
     if: ${{ !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     runs-on: windows-latest
-    # The hosted maximum. The cargo step deadlines below sum to 395 minutes
-    # (15+15+45+15+45+115+95+25+25: checks, runner build, no-default-features
-    # tests, the test-binary build, both runs, real-ACL and file-policy), more
-    # than any job may run, so they cannot all be exhausted in one night. A
-    # night that does is cancelled by this limit and fails the job; it cannot
-    # report green. Observed nights take about 4 hours (42450272038: 4h03m).
+    # Above the step deadlines below (15+45+65+65+45), which bound the work.
+    # Measured on 2026-11-21, a slow night: 19 to 23 minutes per sample.
+    timeout-minutes: 250
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `[a-c]*`, `[d-o]*` and `[!a-o]*` are complementary: the first two
+          # are exactly `[a-o]*`. Change them only as a set.
+          - part: a-c
+            pattern: "[a-c]*"
+          - part: d-o
+            pattern: "[d-o]*"
+          - part: rest
+            pattern: "[!a-o]*"
+    env:
+      # The same filter as the other half of each sample, so one sample has one filter.
+      ACL_SKIPS: --skip denies_creation --skip denying_subdirectories --skip real_unreadable_subtree
+      PART: ${{ matrix.part }}
+      PATTERN: ${{ matrix.pattern }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
+          save-if: false
+
+      - name: Prepare locked owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+
+      - name: Prepare locked JSON owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+
+      - name: Prepare locked proptest profile dependencies
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
+      - name: Build advisory step runner
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          cargo build -p xtask && mkdir -p target/advisory-run && cp target/debug/xtask.exe target/advisory-run/xtask.exe
+
+      # `--workspace` on every invocation of the split, so Cargo resolves the
+      # same features as the unsplit `cargo test --workspace` and the parts
+      # run the targets that build would have run.
+      - name: Build this part's integration test binaries (advisory, before run 1)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log "target/windows-integration-$PART-build.log" --status "target/windows-integration-$PART-build.status" -- cargo test --workspace --no-run --test "$PATTERN" || echo "windows-advisory-run failed ($?); run 1 rebuilds and reports what is missing"; exit 0
+
+      - name: Run this part's integration tests (advisory, run 1)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 65
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 60 --log "target/windows-integration-$PART-run1.log" --status "target/windows-integration-$PART-run1.status" -- cargo test --workspace --no-fail-fast --test "$PATTERN" -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      - name: Run this part's integration tests (advisory, run 2)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 65
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 60 --log "target/windows-integration-$PART-run2.log" --status "target/windows-integration-$PART-run2.status" -- cargo test --workspace --no-fail-fast --test "$PATTERN" -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      # Feature-combination testing (#2400, #16036): this part's `ripr`
+      # integration targets with the Rust-only feature set. One step of
+      # `cargo test -p ripr --no-default-features --features lang-rust` in
+      # `windows-advisory` ran 8 minutes of build, 11 of unit tests and then
+      # reached only the `l*` integration targets before its 40-minute
+      # deadline (44952408835: a-c took 15 minutes, d-k 6). Here each part
+      # builds and runs its own third, after both samples, so swapping
+      # `target/debug/ripr.exe` for the Rust-only build cannot reach them.
+      # `windows-advisory` runs the unit targets and doctests of the same
+      # feature set and reports every part's row.
+      - name: Test this part's integration targets with --no-default-features (advisory)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log "target/nofeatures-test-$PART.log" --status "target/nofeatures-test-$PART.status" -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast --test "$PATTERN" -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      # `always()`, so a cancelled or cut job still hands over what it wrote:
+      # the summarizer then names the missing or truncated part itself.
+      - name: Upload this part's logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-windows-advisory-integration-${{ matrix.part }}
+          path: |
+            target/windows-integration-${{ matrix.part }}-build.log
+            target/windows-integration-${{ matrix.part }}-build.status
+            target/windows-integration-${{ matrix.part }}-run1.log
+            target/windows-integration-${{ matrix.part }}-run1.status
+            target/windows-integration-${{ matrix.part }}-run2.log
+            target/windows-integration-${{ matrix.part }}-run2.status
+            target/nofeatures-test-${{ matrix.part }}.log
+            target/nofeatures-test-${{ matrix.part }}.status
+          if-no-files-found: warn
+
+  windows-advisory:
+    name: windows-advisory
+    # After the integration jobs, whatever they concluded: `!cancelled()`
+    # keeps this job, and so the verdict, when one of them failed or was cut.
+    needs: windows-advisory-integration
+    if: ${{ !cancelled() && !inputs.runner_probe_only && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'windows-ci') || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
+    runs-on: windows-latest
+    # The hosted maximum. The cargo step deadlines below sum to 455 minutes
+    # (15+15+45+20+15+45+115+95+20+20+25+25: checks, runner build,
+    # no-default-features unit tests and doctests, the test-binary build, both unit runs, both
+    # doctest runs, real-ACL and file-policy), more than any job may run, so
+    # they cannot all be exhausted in one night. A night that does is cancelled
+    # by this limit and fails the job; it cannot report green. Before the
+    # integration targets moved to their own jobs, nights took about 4 hours
+    # (42450272038: 4h03m) with both runs at or past their deadlines.
     timeout-minutes: 360
     env:
       # Tests that need a real `icacls (AD)` deny cannot establish their precondition under
@@ -169,12 +310,24 @@ jobs:
         run: |
           cargo build -p xtask && mkdir -p target/advisory-run && cp target/debug/xtask.exe target/advisory-run/xtask.exe
 
-      - name: Test --no-default-features (advisory)
+      # The unit targets and doctests of the Rust-only feature set (#2400).
+      # Its integration targets run in the `windows-advisory-integration`
+      # parts (#16036): the whole package in this one step did not fit its
+      # deadline. On 2026-11-21 the build took 8 minutes and the `ripr` unit
+      # binary 11.
+      - name: Test --no-default-features unit targets (advisory)
         if: ${{ !cancelled() }}
         timeout-minutes: 45
         shell: bash
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test.log --status target/nofeatures-test.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 40 --log target/nofeatures-test-unit.log --status target/nofeatures-test-unit.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast --lib --bins -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      - name: Test --no-default-features doctests (advisory)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 15 --log target/nofeatures-test-doc.log --status target/nofeatures-test-doc.status -- cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast --doc || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Check --all-features (advisory)
         if: ${{ !cancelled() }}
@@ -223,6 +376,11 @@ jobs:
       # same margin class as run 1. A deadline-truncated run still fails the
       # lane as incomplete evidence, so these budgets are the honest fix, not a
       # relaxation of the summarizer.
+      #
+      # Since the split (#3922, #12668) these two steps run the unit targets
+      # only: `--lib --bins` plus the one example with `test = true`. On
+      # 2026-11-21 those took about 40 minutes in run 1 and 25 in run 2 of the
+      # 107 and 90+ the whole workspace took. The deadlines are unchanged.
       - name: Run workspace tests (advisory, run 1)
         if: ${{ !cancelled() }}
         timeout-minutes: 115
@@ -232,7 +390,7 @@ jobs:
           # recompiles `ripr` after a `--no-run` here) in the retained log.
           CARGO_LOG: cargo::core::compiler::fingerprint=info
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 110 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 110 --log target/windows-run1.log --status target/windows-run1.status -- cargo test --workspace --no-fail-fast --lib --bins --example contabo_product_proof -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
 
       - name: Run workspace tests (advisory, run 2)
         if: ${{ !cancelled() }}
@@ -243,7 +401,34 @@ jobs:
           # recompiles `ripr` after a `--no-run` here) in the retained log.
           CARGO_LOG: cargo::core::compiler::fingerprint=info
         run: |
-          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 90 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 90 --log target/windows-run2.log --status target/windows-run2.status -- cargo test --workspace --no-fail-fast --lib --bins --example contabo_product_proof -- $ACL_SKIPS || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      # Doctests cannot share an invocation with `--lib --bins`, so each
+      # sample's doctests are a part of their own (about 20 seconds).
+      - name: Run workspace doctests (advisory, run 1)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 15 --log target/windows-doc-run1.log --status target/windows-doc-run1.status -- cargo test --workspace --no-fail-fast --doc || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      - name: Run workspace doctests (advisory, run 2)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          mkdir -p target; target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 15 --log target/windows-doc-run2.log --status target/windows-doc-run2.status -- cargo test --workspace --no-fail-fast --doc || echo "windows-advisory-run failed ($?); the missing status is reported by the summarizer"; exit 0
+
+      # The integration parts of both samples, from the jobs above. A part
+      # that did not arrive is named by the summarizer, which reads the
+      # missing log as missing evidence and fails the lane.
+      - name: Fetch the integration parts
+        if: ${{ !cancelled() }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ripr-windows-advisory-integration-*
+          path: target/integration
+          merge-multiple: true
 
       # pwsh starts with SeBackupPrivilege and SeRestorePrivilege disabled and its children
       # inherit that, so the deny is enforced and these tests establish their precondition.
@@ -290,7 +475,7 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run1-status target/windows-run1.status --run2 target/windows-run2.log --run2-status target/windows-run2.status | tee target/windows-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
+          cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run1-status target/windows-run1.status --run2 target/windows-run2.log --run2-status target/windows-run2.status --run1-part target/windows-doc-run1.log target/windows-doc-run1.status --run1-part target/integration/windows-integration-a-c-run1.log target/integration/windows-integration-a-c-run1.status --run1-part target/integration/windows-integration-d-o-run1.log target/integration/windows-integration-d-o-run1.status --run1-part target/integration/windows-integration-rest-run1.log target/integration/windows-integration-rest-run1.status --run2-part target/windows-doc-run2.log target/windows-doc-run2.status --run2-part target/integration/windows-integration-a-c-run2.log target/integration/windows-integration-a-c-run2.status --run2-part target/integration/windows-integration-d-o-run2.log target/integration/windows-integration-d-o-run2.status --run2-part target/integration/windows-integration-rest-run2.log target/integration/windows-integration-rest-run2.status --expected-targets target/windows-build.log | tee target/windows-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The artifact upload retains file-policy.md with if-no-files-found: ignore,
       # so upload success alone cannot establish provenance. Run the real facade
@@ -312,25 +497,21 @@ jobs:
             --head "$(git rev-parse HEAD)"
 
       # A missing status file is `not_run`, never silence: a lane that drops a
-      # row it did not execute reads as if nothing was wrong. The rows are
-      # echoed to the job log as well: the step summary is not retrievable
-      # through the API, and the artifact needs a separate authenticated
-      # download.
+      # row it did not execute reads as if nothing was wrong. A part cut by
+      # its deadline (124) or that could not start (127) is INCOMPLETE:
+      # missing evidence, not a test failure (#16036). `nofeatures-test` joins
+      # its parts (unit targets, doctests and the three integration parts):
+      # FAIL when any part failed, PASS only when every part passed, otherwise
+      # INCOMPLETE; `windows-advisory-feature-rows` owns those rules and its
+      # tests. The rows are echoed to the job log as well: the step summary is
+      # not retrievable through the API, and the artifact needs a separate
+      # authenticated download.
       - name: Summarize feature-combination results
         if: ${{ !cancelled() }}
         shell: bash
         run: |
           printf '\n### Feature-combination tests (#2400)\n\n' >> target/windows-verdict.md
-          for label in nofeatures-check nofeatures-test allfeatures-check; do
-            status_file="target/${label}.status"
-            if [ ! -f "$status_file" ]; then
-              echo "- $label: not_run (no status file)"
-            elif [ "$(cat "$status_file")" = "0" ]; then
-              echo "- $label: PASS"
-            else
-              echo "- $label: FAIL (exit $(cat "$status_file"))"
-            fi
-          done | tee -a target/windows-verdict.md
+          cargo xtask windows-advisory-feature-rows --join nofeatures-test --row nofeatures-check target/nofeatures-check.status --part nofeatures-test-unit target/nofeatures-test-unit.status --part nofeatures-test-doc target/nofeatures-test-doc.status --part nofeatures-test-a-c target/integration/nofeatures-test-a-c.status --part nofeatures-test-d-o target/integration/nofeatures-test-d-o.status --part nofeatures-test-rest target/integration/nofeatures-test-rest.status --row allfeatures-check target/allfeatures-check.status | tee -a target/windows-verdict.md
           cat target/windows-verdict.md >> "$GITHUB_STEP_SUMMARY"
 
       # Manual, ref-selected isolation for #4377. Broad workspace runs
@@ -394,6 +575,10 @@ jobs:
             target/windows-run2.log
             target/windows-run1.status
             target/windows-run2.status
+            target/windows-doc-run1.log
+            target/windows-doc-run2.log
+            target/windows-doc-run1.status
+            target/windows-doc-run2.status
             target/windows-acl.log
             target/windows-acl.status
             target/file-policy-facade.log
@@ -402,8 +587,10 @@ jobs:
             target/ripr/reports/file-policy.subject.json
             target/nofeatures-check.log
             target/nofeatures-check.status
-            target/nofeatures-test.log
-            target/nofeatures-test.status
+            target/nofeatures-test-unit.log
+            target/nofeatures-test-unit.status
+            target/nofeatures-test-doc.log
+            target/nofeatures-test-doc.status
             target/allfeatures-check.log
             target/allfeatures-check.status
             target/nested-alias-isolated-*.log
@@ -1109,6 +1296,11 @@ jobs:
           exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
+      # #16121: the producer peak is the single `ripr` lib rustc, not -j 2 overlap. It
+      # grew from 8.14 GB (15 Nov) past the 8 GiB Job cap (22 Nov). The two --config
+      # overrides on the build below drop line tables and split codegen finer for `ripr`
+      # only, so cached dependencies keep their fingerprints. Measured on Linux at -j 2:
+      # 6.99 -> 6.00 GiB peak, 182 -> 160 s. The replay needs neither; the cap stays 8 GiB.
       - name: Produce and replay exact-head selector recovery (advisory)
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         shell: pwsh
@@ -1430,7 +1622,7 @@ jobs:
               require(alias.is_junction() and alias.resolve() == target, "cache target mapping drift")
               ownership["target"] = True
               receipt["owned_producer_target"] = {"path": str(target), "state": "RETAINED_FOR_CACHE", "owner_sha256": digest(owner_path)}
-              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--target-dir", str(target), "--message-format=json"],
+              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--config", "profile.dev.package.ripr.debug=0", "--config", "profile.dev.package.ripr.codegen-units=1024", "--target-dir", str(target), "--message-format=json"],
                                       root, seconds=600, memory=8 * 1024**3, output_cap=16 * 1024**2, active=0)
               require(status == 0, "exact-head CLI build failed")
               require(git_value("rev-parse", "HEAD") == actual_head and git_value("rev-parse", "HEAD^{tree}") == source_tree, "producer source moved")
@@ -1683,9 +1875,24 @@ jobs:
               stats = report.get('stats', {})
               if len(observed) != len(expected) or set(observed) != expected:
                   raise SystemExit('fixture producer PASS is missing native process controls')
-              if any(stats.get(key) != value for key, value in {'tests': 38, 'passes': 31, 'failures': 0, 'pending': 7}.items()):
+              expected_pending = {
+                  "Fixture producer process observation reports stopped when procfs reads ESRCH after a successful native probe",
+                  "Fixture producer process observation rechecks missing procfs evidence in the native namespace",
+                  "Fixture producer process observation propagates procfs and native permission and unexpected errors",
+                  "Fixture producer process observation distinguishes active processes from zombie and dead states",
+                  "Developer setup capability boundary a process reaped between the stat open and read is not alive",
+                  "Genuine fixture producer adapter preserves test, executable and queue validation before publishing the receipt",
+                  "Genuine fixture producer adapter zero executed producer tests cannot publish an accepted receipt",
+                  "Genuine fixture producer adapter timeout retains the underlying producer failure and restores signal handlers",
+              }
+              pending = [row['fullTitle'] for row in report.get('pending', [])]
+              if len(pending) != len(expected_pending) or set(pending) != expected_pending:
+                  missing = sorted(expected_pending - set(pending))
+                  unexpected = sorted(set(pending) - expected_pending)
+                  raise SystemExit(f'fixture producer PASS skipped an unexpected set of POSIX-only controls; not pending: {missing}; newly pending: {unexpected}; observed {len(pending)} for {len(expected_pending)} expected')
+              if any(stats.get(key) != value for key, value in {'tests': 39, 'passes': 31, 'failures': 0, 'pending': 8}.items()):
                   raise SystemExit('fixture producer PASS has an unexpected Windows denominator')
-              print('Verified 31 native process/setup controls; seven POSIX-only controls (three adapter, four procfs observation) are pending.')
+              print('Verified 31 native process/setup controls; eight POSIX-only controls (three adapter, four procfs observation, one developer setup ESRCH) are pending.')
           PY
 
       - name: Require selector consumer receipt, log and native status

@@ -341,6 +341,7 @@ mod tests {
 
     fn match_probe(line: usize, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:src_lib_rs:{line}:match_arm")),
             location: SourceLocation::new("src/lib.rs", line, 1),
             owner: Some(SymbolId("src/lib.rs::reason".into())),

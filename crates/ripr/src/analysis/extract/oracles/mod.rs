@@ -3,12 +3,14 @@ mod bool_operands;
 mod classify;
 mod pattern_admission;
 mod patterns;
+mod placeholder_scope;
+pub(crate) use placeholder_scope::PlaceholderScope;
 mod reach;
 mod scan;
 
 pub(crate) use arguments::{
-    assertion_compares_only_literals, assertion_oracle_text, equality_assertion_arguments,
-    outer_assertion_condition,
+    assertion_compared_operands, assertion_compares_only_literals, assertion_oracle_text,
+    equality_assertion_arguments, outer_assertion_condition,
 };
 pub(crate) use classify::{
     assertion_reads_placeholder, classify_assertion, classify_assertion_with,

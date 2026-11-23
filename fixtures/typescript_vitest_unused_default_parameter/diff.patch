@@ -1,0 +1,11 @@
+diff --git a/src/def.ts b/src/def.ts
+--- a/src/def.ts
++++ b/src/def.ts
+@@ -1,6 +1,6 @@
+ export function pick(
+   name: string,
+-  opts: { level: string } = { level: 'AA' },
++  opts: { level: string } = { level: 'AAA' },
+ ): string {
+   return name + opts.level;
+ }

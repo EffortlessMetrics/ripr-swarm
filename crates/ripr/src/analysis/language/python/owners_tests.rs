@@ -556,8 +556,7 @@ fn owner_from_function(
                 .all(|decorator| super::cli_runner::is_click_decorator_name(decorator, &alias))
         });
     // A decorator whose name cannot be read still wraps the call.
-    let binding_only = !is_async
-        && decorator_names.len() == decorators.len()
+    let binding_only = decorator_names.len() == decorators.len()
         && decorator_names
             .iter()
             .all(|decorator| matches!(decorator.as_str(), "classmethod" | "staticmethod"));
@@ -639,6 +638,7 @@ fn owner_from_function(
         decorator_lines,
         parameters,
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -787,6 +787,7 @@ fn owner_from_class(
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -832,6 +833,7 @@ pub(super) fn module_owner(
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1109,6 +1111,7 @@ pub(super) fn collect_tests_from_statements(
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
+                    value_helpers: Vec::new(),
                     direct_parametrized,
                     unsettled_indirect,
                     parametrize_argnames,
@@ -1257,6 +1260,7 @@ pub(super) fn collect_tests_from_statements(
                     fixtures,
                     setup_receivers: setup_receivers.clone(),
                     fixture_defs: Vec::new(),
+                    value_helpers: Vec::new(),
                     direct_parametrized,
                     unsettled_indirect,
                     parametrize_argnames,

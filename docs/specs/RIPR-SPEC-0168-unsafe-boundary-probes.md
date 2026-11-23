@@ -44,6 +44,16 @@ containing the changed line. The probe family is `static_unknown` by
 construction, so the classifier cannot promote reach plus an oracle into
 `exposed` for this family.
 
+The probe's expression is the boundary label (`unsafe fn inline_len`,
+`unsafe block`), which sets its id and gap id. When the changed line is not the
+boundary's opening line, the probe's changed (`after`) text is the trimmed
+changed line instead of the label (#14333), so `Changed behavior` names the
+edit and pairs with the removed line in `before`. A mid-line `unsafe {}` block
+inside an `unsafe fn` (`let repr = unsafe { .. };`) still projects the
+enclosing `unsafe fn` boundary, keeping its `unsafe_obligation`; only the
+displayed changed text moves to the edited statement. An edited opening line
+keeps the label as its changed text.
+
 An `unsafe fn` boundary probe, and an `unsafe {}` block whose parsed calls
 include `unreachable_unchecked` or `assert_unchecked` (probe label
 `unsafe block (unchecked assumption)`), carry the stop reason

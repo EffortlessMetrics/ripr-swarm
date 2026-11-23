@@ -200,6 +200,12 @@ a reaching row ranked below the window goes uncounted.
   directory, found by name, and fails if any drifts or a corpus directory
   has no `corpus.json`. Reports for languages other than Rust nest under
   `target/ripr/reports/verdict-corpus/<language>/`.
+- `check-affected` is a local check over supplied changed paths. It reports
+  the selected languages and identifies omitted corpora as unrun. A change
+  to the shared scorer, fixture preparation, process runner or xtask
+  entrypoint selects every discovered corpus. For example, removing
+  `lang-perl` from the Rust fixture builder affects the Perl corpus. The
+  protected Rust gate continues to run `check-all`.
 - `bless` runs the whole corpus and replaces `expected/` with one row file
   per case.
 - `split` moves a one-file `corpus.json`'s subjects and cases into record
@@ -326,12 +332,21 @@ loads the rows. Its per-case identity for the avoidable rate binds the flag,
 so a case whose citation comes to require an abstention reads as a changed
 definition, not as an analyzer improvement.
 The dx scoreboard puts the abstention bar on the avoidable rate
-(`trust.verdict_corpus_avoidable_abstention`, target 0.2). It keeps the total
+(`trust.verdict_corpus_avoidable_abstention`, target 0.28). The bar started
+at 0.20 and moved to 0.28 on measured evidence (#12766): on 871 rows, 0.20
+needs 102 sound flips, and analyzer slices have landed 3 to 6 sound rows each.
+Only 124 of the 276 avoidable rows are credit-side; the other 152 are rows the
+tests miss, where a flip is a gap claim, the actionable direction a false
+positive hurts most. So 0.20 means flipping 82% of the credit-side rows or
+making gap claims. 0.28 is about 33 flips. The bar is lowered again whenever landed slices pass it; it is
+never raised to absorb a regression (a dx-scoreboard population
+test pins the target to one constant, so any move is a reviewed edit there). It keeps the total
 (`trust.verdict_corpus_abstention`) visible and ratcheted, and its target is
 the avoidable bar plus the abstention-expected share, rounded down: 0.0128
-when the split landed (0.21), and 39/862 = 0.0452 once `[abstain]`-marked
-examples counted (#12766, so 0.24). A change to that share recomputes the
-total's target the same way; the avoidable bar does not move with it.
+when the split landed (0.21), 39/862 = 0.0452 once `[abstain]`-marked
+examples counted (#12766, 0.24), and 0.28 + 39/871 = 0.3248 with the revised
+bar (0.32). A change to that share recomputes the total's target the same
+way; the avoidable bar does not move with it.
 
 The contradiction rate counts candidate-current findings across each case's
 whole `ripr check` run, not only the anchor line, because a
@@ -742,6 +757,11 @@ reported but never gated. `validate` does not run the grid.
 
 Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 
+- `check_affected_classification_matrix` maps fixture and process-runner
+  changes to every corpus and checks ordinary language-specific paths.
+- `check_affected_selection_and_output_lines` covers combined selections and
+  the disclosure of unrun languages.
+
 - `score_follows_the_truth_table_in_both_error_directions`
 - `finding_verdict_mirrors_triage_classes_and_named_limits`
 - `anchored_findings_keep_only_candidate_current_findings_on_the_anchor`
@@ -873,9 +893,9 @@ Oracle-accuracy tests live in
 - `verdict_corpus_false_actionable_rate`
 - `verdict_corpus_contradiction_rate`
 - `verdict_corpus_avoidable_abstention_rate` (dx-scoreboard
-  `trust.verdict_corpus_avoidable_abstention`, target 0.2, lower is better);
+  `trust.verdict_corpus_avoidable_abstention`, target 0.28, lower is better);
   the total `verdict_corpus_abstention_rate` stays reported
-  (`trust.verdict_corpus_abstention`, target 0.24)
+  (`trust.verdict_corpus_abstention`, target 0.32)
 - `verdict_corpus_spec_example_coverage` (dx-scoreboard
   `trust.verdict_corpus_spec_example_coverage`, target 1.0, regression
   margin 0)
