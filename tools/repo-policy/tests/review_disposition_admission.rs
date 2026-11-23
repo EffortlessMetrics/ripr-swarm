@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 39] = [
+    let cases: [(&str, bool); 41] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -855,7 +855,10 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             "SOURCE_REVIEW_READY\nNo new blocker found. The golden still disagrees.",
             false,
         ),
-        // STATE_TOKEN now covers the bare BLOCK and INCOMPLETE tokens.
+        // The bare BLOCK and INCOMPLETE tokens are scoped to the same-line
+        // guard and stay case-sensitive, so ordinary prose still admits.
+        ("SOURCE_REVIEW_READY\nThe block layout is unchanged.", true),
+        ("SOURCE_REVIEW_READY\n```\nblock\n```", true),
         ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", false),
         ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", false),
     ];

@@ -85,9 +85,14 @@ TAIL_LITERALS = (
 # such a line is only allowed when it is itself an exact positive line.
 STATE_TOKEN = re.compile(
     r"(?:SOURCE_)?REVIEW_(?:READY|INCOMPLETE|BLOCKED)|REPAIR_REQUIRED"
-    r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED|\bBLOCK\b|\bINCOMPLETE\b",
+    r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED",
     re.IGNORECASE,
 )
+# #15980 review: a bare BLOCK or INCOMPLETE after a stripped phrase is a
+# disposition, but the same word is ordinary prose elsewhere ("the block
+# layout", a fenced block, a table row). Scope it to the same-line guard and
+# keep it case-sensitive, so only the uppercase token fires.
+BARE_STATE_TOKEN = re.compile(r"\b(?:BLOCK|INCOMPLETE)\b")
 STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
 # A line that states a disposition: after optional list (bulleted, numbered or task),
 # quote, heading, emphasis or code markers it opens with a ``disposition:`` field or a state token. Only such a line
@@ -617,7 +622,7 @@ def strip_negated_change(line: str) -> str:
         # #15980 review: a state token later on the same line is a disposition,
         # not a resolved finding. Stripping the phrase would hide it from the
         # line-anchored state scan, so keep the phrase in place.
-        if STATE_TOKEN.search(after):
+        if STATE_TOKEN.search(after) or BARE_STATE_TOKEN.search(after):
             return match.group(0)
         # #14355: a cue only refutes the phrase in its own clause. A comma
         # resets the clause, so "The Devin thread was a false positive, no code
@@ -655,7 +660,7 @@ def strip_negated_blocker(line: str) -> str:
         # #15980 review: a state token later on the same line is a disposition,
         # not a resolved finding. Stripping the phrase would hide it from the
         # line-anchored state scan, so keep the phrase in place.
-        if STATE_TOKEN.search(after):
+        if STATE_TOKEN.search(after) or BARE_STATE_TOKEN.search(after):
             return match.group(0)
         before_clause = before.rsplit(",", 1)[-1]
         if (
@@ -1844,9 +1849,17 @@ def self_test() -> None:
             "SOURCE_REVIEW_READY\nNo new blocker found. The golden still disagrees.",
             False,
         ),
-        # #15980: STATE_TOKEN now covers the bare BLOCK and INCOMPLETE tokens.
+        # #15980: the bare BLOCK and INCOMPLETE tokens are scoped to the
+        # same-line guard and stay case-sensitive, so ordinary prose admits.
+        ("SOURCE_REVIEW_READY\nThe block layout is unchanged.", True),
+        ("SOURCE_REVIEW_READY\n```\nblock\n```", True),
         ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", False),
         ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", False),
+        # #15980: the Rust carrier's changed row, mirrored here.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
+            False,
+        ),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
