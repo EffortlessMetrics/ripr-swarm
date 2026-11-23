@@ -70,14 +70,30 @@ pub(crate) fn owners_from_program(
         &extract_imports_for_test_file(&program.body),
     );
     for owner in &mut owners {
-        // A `ModuleFunction` owner is a non-callable `const` initializer; it
-        // carries entries only when it is a followable read-only value node
-        // (#13592 B2), never through the bare-call edges of a factory const.
+        // A `ModuleFunction` owner is a non-callable `const` initializer. A
+        // followable read-only value node (#13592 B2) keeps its reader
+        // entries as they are; any other (a call-built constant) reads every
+        // entry as a closure entry.
         if owner.class_name.is_none()
-            && (owner.owner_kind != OwnerKind::ModuleFunction || value_names.contains(&owner.name))
             && let Some(owner_entries) = entries.get(&owner.name)
         {
-            owner.module_entries = owner_entries.clone();
+            owner.module_entries = if owner.owner_kind == OwnerKind::ModuleFunction
+                && !value_names.contains(&owner.name)
+            {
+                // A call-built constant runs its callbacks when the value is
+                // invoked, which the graph does not model (#13592): even a
+                // bare call of it (`Rule(s)`) reaches its initializer's code
+                // only as a closure does, so every entry reads as one.
+                owner_entries
+                    .iter()
+                    .map(|entry| TypeScriptModuleEntry {
+                        closure: true,
+                        ..entry.clone()
+                    })
+                    .collect()
+            } else {
+                owner_entries.clone()
+            };
         }
     }
     let instance_fields = class_instance_field_names(program);
@@ -2407,6 +2423,8 @@ pub(crate) struct PhaseTwoFacts {
     /// each covered line carries exactly one shape. Lines with no fact
     /// keep the classifier's line-text fallback.
     pub(crate) probe_shapes: Vec<ProbeShapeFact>,
+    /// Bindings with a numeric initializer or nullish fallback on a later line.
+    pub(crate) default_bindings: std::collections::BTreeMap<usize, String>,
 }
 
 impl PhaseTwoFacts {
@@ -2515,7 +2533,7 @@ pub(crate) fn phase_two_facts_from_program(
     }
     collect_enum_members(&program.body, source, &text, &mut facts.enum_members);
     collect_ambient_ranges(&program.body, &text, &mut facts.ambient_ranges);
-    facts.probe_shapes = collect_probe_shapes(program, &text);
+    facts.probe_shapes = collect_probe_shapes(program, &text, &mut facts.default_bindings);
     facts
 }
 
@@ -2650,15 +2668,29 @@ pub(crate) fn inside_private_member_boundary(ranges: &[(usize, usize)], line: us
 fn collect_probe_shapes(
     program: &oxc_ast::ast::Program<'_>,
     source: &SourceText<'_>,
+    default_bindings: &mut std::collections::BTreeMap<usize, String>,
 ) -> Vec<ProbeShapeFact> {
-    struct Collector<'s> {
+    struct Collector<'s, 'facts> {
+        default_bindings: &'facts mut std::collections::BTreeMap<usize, String>,
         source: &'s SourceText<'s>,
         candidates: Vec<(u8, usize, usize, usize, TypeScriptProbeShape)>,
         concise_arrow_depth: usize,
         keep_concise_arrow_body: bool,
         top_start: usize,
     }
-    impl Collector<'_> {
+    impl Collector<'_, '_> {
+        fn record_default(&mut self, binding: &BindingPattern<'_>, init: &Expression<'_>) {
+            let Some(name) = binding_identifier_name(binding) else {
+                return;
+            };
+            if let Expression::NumericLiteral(literal) = init {
+                let line = self.source.line_for_offset(literal.span.start as usize);
+                if line > self.source.line_for_offset(binding.span().start as usize) {
+                    self.default_bindings.insert(line, name.to_owned());
+                }
+            }
+        }
+
         fn push(&mut self, span: oxc_span::Span, shape: TypeScriptProbeShape) {
             self.candidates.push((
                 1,
@@ -2726,7 +2758,7 @@ fn collect_probe_shapes(
             _ => TypeScriptProbeShape::new(ProbeFamily::ReturnValue, DeltaKind::Value),
         }
     }
-    impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_> {
+    impl<'a> oxc_ast_visit::Visit<'a> for Collector<'_, '_> {
         fn visit_program(&mut self, it: &oxc_ast::ast::Program<'a>) {
             for statement in &it.body {
                 self.top_start = oxc_span::GetSpan::span(statement).start as usize;
@@ -2878,7 +2910,19 @@ fn collect_probe_shapes(
             );
             oxc_ast_visit::walk::walk_assignment_expression(self, it);
         }
+        fn visit_formal_parameter(&mut self, it: &oxc_ast::ast::FormalParameter<'a>) {
+            if let Some(init) = &it.initializer {
+                self.record_default(&it.pattern, init);
+            }
+            oxc_ast_visit::walk::walk_formal_parameter(self, it);
+        }
+
         fn visit_variable_declarator(&mut self, it: &oxc_ast::ast::VariableDeclarator<'a>) {
+            if let Some(Expression::LogicalExpression(init)) = &it.init
+                && init.operator.as_str() == "??"
+            {
+                self.record_default(&it.id, &init.right);
+            }
             // An object property needs no own candidate: a returned object
             // already carries FieldConstruction from its return node, and
             // a standalone property line keeps the line-text field shape.
@@ -2906,6 +2950,7 @@ fn collect_probe_shapes(
     }
     let mut collector = Collector {
         source,
+        default_bindings,
         candidates: Vec::new(),
         concise_arrow_depth: 0,
         keep_concise_arrow_body: false,

@@ -2,7 +2,7 @@
 [[extend]]
 id = "RIPR-SPEC-0038"
 tests = [
-  "crates/ripr/tests/generated_review_workflow.rs::the_pull_request_comment_states_a_blocking_gate",
+  "crates/ripr/tests/generated_review_workflow/main.rs::the_pull_request_comment_states_a_blocking_gate",
   "crates/ripr/src/output/pr_summary_comment.rs::tests::the_footer_says_it_can_block_merging_exactly_when_the_job_can_fail",
   "crates/ripr/src/output/pr_summary_comment.rs::tests::a_blocked_gate_is_stated_first_and_always_posted",
   "crates/ripr/src/output/pr_summary_comment.rs::tests::a_config_error_and_an_unknown_mode_are_named_as_setup_problems",

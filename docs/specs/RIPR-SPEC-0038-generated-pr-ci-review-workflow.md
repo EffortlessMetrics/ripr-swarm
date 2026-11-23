@@ -80,24 +80,34 @@ come from `policy/distribution.toml`, bound by drift tests. The step:
 - stops with an explicit unsupported error on Windows ARM64.
 
 `tests/ripr_check_action.rs` and the archive replays in
-`tests/generated_review_workflow.rs` run that block with the version the
+`tests/generated_review_workflow/main.rs` run that block with the version the
 generated workflow passes. A ripr already on `PATH` is reused only when it
 reports exactly the pinned version.
 
-Its `Run ripr check` step (#14800):
+Its `Pick the ripr check base` step (#14800, #15399) chooses the base and
+the one remote ref that holds it, then the `Run ripr check` step runs with it:
 
-- on `pull_request` with no explicit `base`, fetches the base branch and, only
-  in a shallow checkout, deepens both sides in doubling steps (50 to 1,600
-  commits, then `--unshallow`) until HEAD has a merge base with it; a full
-  checkout runs no `--depth` or `--deepen`, and a failed fetch warns and leaves
-  the repair message to `ripr check`;
+- with no explicit `base`: on `pull_request`, the base branch; on `push` to the
+  default branch, the commit before the push (`github.event.before`; an
+  all-zero value leaves the base to ripr); on `push` to another branch, the
+  default branch; elsewhere, ripr's own detection;
+- an explicit `origin/<branch>`, bare branch name or full commit SHA is fetched
+  the same way; a bare name with no remote branch reaches ripr unchanged; a
+  `base` starting with `-` or spanning lines is refused with exit 2 before git
+  or ripr runs;
+- fetches that ref and, only in a shallow checkout, deepens both sides in
+  doubling steps (50 to 1,600 commits, then `--unshallow`) until HEAD has a
+  merge base with it; a full checkout runs no `--depth` or `--deepen`, and a
+  failed fetch warns and leaves the repair message to `ripr check`;
 - restores ripr's analysis cache under `runner.temp` (`RIPR_CACHE_DIR`) with a
   commit-pinned `actions/cache` when the `cache` input is `true` (default);
 - writes the report to a fresh per-invocation file (output `report`) and the job
   log, a text report also to the job summary, and the exit status to output
   `exit-code`; `ripr check` exit codes are unchanged, so findings stay advisory;
 - on a nonzero exit, fails the step with one escaped `::error` annotation that
-  names the exit meaning and ripr's first reason lines;
+  names the exit meaning and up to eight of ripr's reason lines, with
+  `RIPR_QUIET` set and `ripr progress:` lines dropped so a configuration
+  error keeps its fix hint;
 - replays report and stderr text inside a `::stop-commands::` window, each
   marker on its own line, so quoted text cannot issue workflow commands; only
   the `format: github` report is emitted before the window.
@@ -175,6 +185,14 @@ Advisory limits
 When an expected artifact is missing, the summary or packet index should show
 the missing artifact and the regeneration command when known. If no command is
 known, the missing entry must say so explicitly.
+
+Commands and paths the summary shows from the packets (front panel, first
+action, start-here and the first-action fallback) name the repository root
+(`.`) wherever a packet wrote the runner's checkout path, so they paste into a
+reader's own checkout. That covers the producer's display spelling of the
+root (forward slashes on Windows) and its shell-quoted form: a checkout whose
+path holds an apostrophe or a space is shown as `'.'` inside its quotes. The
+uploaded artifact and the step log keep the real path.
 
 When the pull request analysis did not run, the visible first-run status says
 why instead of leaving the reason in the uploaded start-here report:
@@ -297,6 +315,10 @@ that generated CI can create tests, edit source, or run provider-backed repair.
 - A configured blocked gate makes `ripr reports ci-packet` exit `3` (the gate's
   decision exit) when no other required step failed; any other required
   failure exits `2`, even when the gate also blocked (docs/EXIT_CODES.md).
+- A pull request file named `a<newline>::error::forged` appears in a
+  `ripr reports ci-packet` child report inside a `::stop-commands::` window, so
+  the runner reads no workflow command from it; child stderr is replayed in
+  the same window on the packet's stdout (#15918).
 - A TypeScript preview packet groups advisory evidence under a preview label,
   includes separately labeled JavaScript preview evidence when present, reports
   actionability and repair-packet-ready counts, and keeps gate impact at none.

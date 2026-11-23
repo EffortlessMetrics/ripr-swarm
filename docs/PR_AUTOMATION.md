@@ -356,6 +356,7 @@ cargo xtask lsp-cockpit-report
 cargo xtask lsp-performance-report
 cargo xtask markdown-links
 cargo xtask merge-queue capture [--repo <owner/name>] [--out <dir>] [--input <path>] [--prior <path>]
+cargo xtask merge-queue conflicts <new-output-directory> [--input <saved-queue-pages.json>]
 cargo xtask metrics
 cargo xtask module-health [--threshold <n>]
 cargo xtask mutation-calibration [root] --mutants-json <path>
@@ -375,6 +376,10 @@ cargo xtask release-readiness --version <version>
 cargo xtask release-server-archive --version <version> --target <triple> --executable <name> --archive <zip\|tar.gz>
 cargo xtask release-server-manifest --version <version> --repository <owner/repo>
 cargo xtask release-upload-assets --version <version>
+cargo xtask release-crates-io-transaction-observe --request <request.json>
+cargo xtask release-crates-io-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>
+cargo xtask release-github-transaction-observe --request <request.json>
+cargo xtask release-github-transaction-plan --request <request.json> --authorization <authorization.json> --inventory <inventory.json>
 cargo xtask repo-badge-artifacts [--gap-ledger <path>]
 cargo xtask repo-contract-report
 cargo xtask repo-exposure-latency-report
@@ -728,6 +733,9 @@ desired settings, live observation, apply-route capability, and rollback
 identity as separate facts under `--out` (default
 `target/ripr/reports/merge-queue`). Tests use `--input`; live mode uses GET-only
 `gh api` calls. It never applies settings or enables a queue.
+
+For conflicting queued PR heads, the operator can inspect a frozen
+[main-versus-head report](CI.md#inspect-queued-heads-against-main).
 
 `suggested-fixes` writes `target/ripr/reports/suggested-fixes.patch` and
 `target/ripr/reports/suggested-fixes.md` with safe deterministic repair

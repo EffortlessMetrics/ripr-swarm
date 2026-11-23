@@ -23,7 +23,7 @@ pub(crate) use crate::analysis::repair_route::{
     cross_language_oracle_visibility_unresolved, cross_language_test_target_unresolved,
 };
 use crate::analysis::seams::{SeamGripClass, SeamKind};
-use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for};
+use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for_seam};
 use crate::domain::{CommandSpec, EvidenceState, StaticLimitKind};
 use crate::domain::{OracleKind, OracleStrength, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
@@ -487,7 +487,7 @@ pub(crate) fn evidence_record_with_bound_verify_command(
             .related_tests
             .iter()
             .take(MAX_RELATED_TESTS_PER_EVIDENCE_RECORD)
-            .map(|test| related_test_record(test, entry.seam.kind()))
+            .map(|test| related_test_record(test, &entry.seam))
             .collect(),
         recommendation,
         actionability,
@@ -1113,7 +1113,7 @@ fn recommendation_for(
                         )
                     })
             })
-            .map(|test| related_test_record(test, entry.seam.kind()));
+            .map(|test| related_test_record(test, &entry.seam));
 
     EvidenceRecordRecommendation {
         action: action.to_string(),
@@ -1219,9 +1219,9 @@ fn assertion_shape_record(shape: AssertionShape) -> Option<EvidenceRecordAsserti
 
 fn related_test_record(
     test: &crate::analysis::test_grip_evidence::RelatedTestGrip,
-    seam_kind: SeamKind,
+    seam: &crate::analysis::seams::RepoSeam,
 ) -> EvidenceRecordRelatedTest {
-    let semantics = oracle_semantics_record(&test.oracle_kind, &test.oracle_strength, seam_kind);
+    let semantics = oracle_semantics_record(&test.oracle_kind, &test.oracle_strength, seam);
     EvidenceRecordRelatedTest {
         name: test.test_name.clone(),
         file: display_path(&test.file),
@@ -1238,9 +1238,9 @@ fn related_test_record(
 fn oracle_semantics_record(
     kind: &OracleKind,
     strength: &OracleStrength,
-    seam_kind: SeamKind,
+    seam: &crate::analysis::seams::RepoSeam,
 ) -> EvidenceRecordOracleSemantics {
-    let semantics = oracle_semantics_for(kind, strength, seam_kind);
+    let semantics = oracle_semantics_for_seam(kind, strength, seam);
     EvidenceRecordOracleSemantics {
         observes: semantics.observes,
         missing: semantics.missing,
@@ -2170,6 +2170,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "below_threshold_has_no_discount".to_string(),
                     file: PathBuf::from("tests/pricing_tests.rs"),
                     line: 12,
@@ -2293,6 +2294,7 @@ mod tests {
 
     fn external_language_related_test(file: &str, evidence_summary: &str) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "blob copies shared buffers".to_string(),
             file: PathBuf::from(file),
             line: 41,
@@ -2322,6 +2324,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "target_token_affinity_is_not_owner_call".to_string(),
                     file: PathBuf::from("tests/target_affinity.rs"),
                     line: 9,
@@ -4097,6 +4100,7 @@ mod tests {
             .evidence
             .related_tests
             .push(std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "pricing_module_smoke".to_string(),
                 file: PathBuf::from("tests/pricing/integration.rs"),
                 line: 44,

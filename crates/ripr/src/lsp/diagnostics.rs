@@ -970,9 +970,18 @@ pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<
 pub(super) fn empty_scope_diagnostic(snapshot: &AnalysisSnapshot) -> Diagnostic {
     // The not-all-clear fact and recovery route come from the shared wording
     // owner (#12416), so the marker cannot drift from hover and status.
+    //
+    // `snapshot.base` is the base the run resolved, which is a branch name
+    // even when no base was requested. The cause sentence needs the requested
+    // base, which the bound input identity records; hover and status read the
+    // same requested value from the session configuration (#15951).
+    let requested_base = match snapshot.input_identity.as_ref() {
+        Some(identity) => identity.requested_base.as_deref(),
+        None => snapshot.base.as_deref(),
+    };
     let disclosure = super::backend::empty_scope_disclosure(
         snapshot.analysis_outcome.as_ref(),
-        snapshot.base.as_deref(),
+        requested_base,
         false,
     )
     .unwrap_or_else(|| super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE.to_string());
@@ -1218,7 +1227,16 @@ fn analysis_pending_diagnostic_for(
     recovery: AnalysisPendingRecovery,
     withdrawn: bool,
 ) -> Diagnostic {
-    let message = if withdrawn {
+    let message = if withdrawn && matches!(recovery, AnalysisPendingRecovery::AnalysisFailed { .. })
+    {
+        // #15312: the retained findings answer an earlier base, so they are
+        // withdrawn rather than shown as the answer to the current one.
+        format!(
+            "ripr could not analyze this workspace with the current settings, so previously \
+             reported findings are withdrawn — this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if withdrawn {
         format!(
             "ripr analysis is paused and previously reported findings are withdrawn — \
              this is not evidence of a clean workspace. {}",
@@ -1245,10 +1263,10 @@ fn analysis_pending_diagnostic_for(
     };
     let mut data = serde_json::json!({
         "kind": "delivery_limitation",
-        "state": if withdrawn {
-            "withdrawn_configuration_failure"
-        } else {
-            "no_snapshot"
+        "state": match (withdrawn, &recovery) {
+            (true, AnalysisPendingRecovery::AnalysisFailed { .. }) => "withdrawn_analysis_failure",
+            (true, _) => "withdrawn_configuration_failure",
+            (false, _) => "no_snapshot",
         },
         "recovery": recovery.recovery_id(),
     });
@@ -1556,6 +1574,19 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
     .map_err(String::from)
 }
 
+/// Whether a full (non-deferred) refresh builds the repo-wide spot inventory
+/// under `config`: the full diagnostic profile, spot diagnostics enabled and
+/// Rust enabled.
+fn seam_inventory_enabled(config: &LspAnalysisConfig) -> bool {
+    config.diagnostic_profile == LspDiagnosticProfile::Full
+        && config.enable_seam_diagnostics
+        && config
+            .repo_config()
+            .languages()
+            .enabled()
+            .contains(&LanguageId::Rust)
+}
+
 /// The typed outcome for a seam inventory that cannot run because its
 /// configuration switches are off (#6001). The default `actionable` profile
 /// lands here in every default-profile session, so the wire must carry the
@@ -1802,13 +1833,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // not gap-record repair packets — the WARNING/INFORMATION mapping
     // is owned by SeverityConfig. When run is not full, seam WARNINGs
     // downgrade to INFORMATION. The exception is documented here.
-    let seam_inventory_enabled = config.diagnostic_profile == LspDiagnosticProfile::Full
-        && config.enable_seam_diagnostics
-        && config
-            .repo_config()
-            .languages()
-            .enabled()
-            .contains(&LanguageId::Rust);
+    let seam_inventory_enabled = seam_inventory_enabled(config);
     let (raw_seams, repair_card_candidate_seams, seam_outcome) = if defer_seam_inventory {
         (
             Vec::new(),
@@ -1997,6 +2022,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled,
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
@@ -2020,10 +2046,14 @@ pub(super) fn finding_is_withheld_gap(finding: &Finding) -> bool {
 
 /// Every preview-language finding the actionable profile withholds from
 /// diagnostics (#11296), including gap-class, `*_unknown`, and
-/// static-limited preview evidence.
+/// static-limited preview evidence. An `exposed` finding is not withheld
+/// evidence: there is no gap to show, so it never feeds the "not shown in
+/// the editor" marker or count (#13636); the status's `resolved_findings`
+/// names the gaps that became exposed.
 pub(super) fn finding_is_withheld_preview_profile_finding(finding: &Finding) -> bool {
     finding.language_status == Some(LanguageStatus::Preview)
         && finding.is_candidate_actionable()
+        && !matches!(finding.class, ExposureClass::Exposed)
         && !finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, finding)
 }
 
@@ -2800,6 +2830,7 @@ fn git_timeout_limited_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled(config),
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
@@ -2908,6 +2939,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled(config),
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
@@ -5100,6 +5132,7 @@ mod seam_diagnostic_tests {
 
     fn related_grip(name: &str, file: &str, line: usize) -> std::sync::Arc<RelatedTestGrip> {
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from(file),
             line,
@@ -6198,6 +6231,7 @@ mod seam_diagnostic_tests {
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
             typescript_package_root: None,
+            verify_cwd: None,
         }
     }
 
@@ -6790,6 +6824,7 @@ mod diagnostic_policy_tests {
             id: "probe:pricing:42:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing:42:predicate".to_string()),
                 location: SourceLocation {
                     file: std::path::PathBuf::from("src/pricing.rs"),
@@ -6960,6 +6995,7 @@ mod diagnostic_policy_tests {
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
             typescript_package_root: None,
+            verify_cwd: None,
         }
     }
 
@@ -8864,6 +8900,25 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    /// #13636: the snapshot's promise that a full refresh brings repair
+    /// spots back holds only where the full refresh builds the inventory.
+    #[test]
+    fn seam_inventory_on_full_refresh_follows_the_inventory_gate() {
+        assert!(!seam_inventory_enabled(&LspAnalysisConfig::default()));
+        let mut full = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            ..LspAnalysisConfig::default()
+        };
+        full.repo_config.languages.enabled = vec![LanguageId::Rust];
+        assert!(seam_inventory_enabled(&full));
+        let mut seams_off = full.clone();
+        seams_off.enable_seam_diagnostics = false;
+        assert!(!seam_inventory_enabled(&seams_off));
+        let mut rust_off = full.clone();
+        rust_off.repo_config.languages.enabled = vec![LanguageId::TypeScript];
+        assert!(!seam_inventory_enabled(&rust_off));
+    }
+
     #[test]
     fn seam_inventory_status_prose_uses_plain_words() -> Result<(), String> {
         let features = crate::lsp::client_features::ClientFeatureProfile::unsupported();
@@ -9067,6 +9122,7 @@ mod lsp_next_step_parity_tests {
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_discount.ts:typescript_preview:2396aec1".to_string()),
                 location: SourceLocation::new("src/discount.ts", 2, 1),
                 owner: Some(SymbolId(
@@ -9307,6 +9363,7 @@ mod canonical_group_member_tests {
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation {
                     file: std::path::PathBuf::from("src/lib.rs"),
@@ -9588,6 +9645,7 @@ mod delivery_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

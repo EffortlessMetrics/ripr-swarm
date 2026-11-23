@@ -3,46 +3,75 @@
 //! Cargo's executable and ordinary registry-cache integrity are instrument
 //! assumptions. This does not certify arbitrary CLI configuration or a compiler.
 mod registry;
-use registry::eligible_json_manifest_bytes;
 #[cfg(test)]
-use registry::json_manifest_digests;
+use registry::{JSON_MEMBER_BUDGET, json_manifest_digests};
+use registry::{
+    JsonRootDeclaration, json_member_declares, json_member_manifests, json_root_declaration,
+};
 pub(crate) use registry::{
     LiteralJsonIdentity, eligible_json_root, eligible_proptest_root, locked_at_audited_version,
     verified_bolero_identity, verified_json_identity, verified_proptest_identity,
     verified_proptest_identity_result,
 };
 
-/// One previously parsed manifest, scoped to a drop-in authority. Every query
-/// still reads the current bounded bytes; only the pure parse is reusable.
+/// Previously parsed manifests, scoped to a drop-in authority. Every query
+/// still reads the current bounded bytes; only the pure parses are reusable.
 #[derive(Debug, Default)]
 pub(crate) struct JsonRootEligibilityMemo {
-    previous: Mutex<Option<(Vec<u8>, bool)>>,
+    previous: Mutex<Option<(Vec<u8>, JsonRootDeclaration)>>,
+    members: Mutex<Option<(MemberManifests, bool)>>,
 }
 
+type MemberManifests = Option<Vec<Vec<u8>>>;
+
 impl JsonRootEligibilityMemo {
+    /// Same verdict as [`eligible_json_root`], reusing a parse only for
+    /// byte-identical current inputs.
     pub(crate) fn eligible(&self, root: &Path) -> bool {
         // Read before locking or consulting the memo. Absence and read errors
         // cannot reuse a previously eligible manifest.
         let Some(bytes) = read_optional(&root.join("Cargo.toml")).flatten() else {
             return false;
         };
+        match self.declaration(bytes) {
+            JsonRootDeclaration::Declared => true,
+            JsonRootDeclaration::Members(members) if members.is_empty() => false,
+            JsonRootDeclaration::Members(members) => {
+                // The member directories and manifests are read again too.
+                let manifests = json_member_manifests(root, &members);
+                let Ok(mut previous) = self.members.lock() else {
+                    return json_member_declares(&manifests);
+                };
+                if let Some((old, verdict)) = previous.as_ref()
+                    && old == &manifests
+                {
+                    return *verdict;
+                }
+                let verdict = json_member_declares(&manifests);
+                *previous = Some((manifests, verdict));
+                verdict
+            }
+        }
+    }
+
+    fn declaration(&self, bytes: Vec<u8>) -> JsonRootDeclaration {
         let Ok(mut previous) = self.previous.lock() else {
             return Self::counted_parse(&bytes);
         };
-        if let Some((old, verdict)) = previous.as_ref()
+        if let Some((old, declaration)) = previous.as_ref()
             && old == &bytes
         {
-            return *verdict;
+            return declaration.clone();
         }
-        let verdict = Self::counted_parse(&bytes);
-        *previous = Some((bytes, verdict));
-        verdict
+        let declaration = Self::counted_parse(&bytes);
+        *previous = Some((bytes, declaration.clone()));
+        declaration
     }
 
-    fn counted_parse(bytes: &[u8]) -> bool {
+    fn counted_parse(bytes: &[u8]) -> JsonRootDeclaration {
         #[cfg(test)]
         JSON_ROOT_ELIGIBILITY_PARSES.with(|count| count.set(count.get() + 1));
-        eligible_json_manifest_bytes(bytes)
+        json_root_declaration(bytes)
     }
 }
 

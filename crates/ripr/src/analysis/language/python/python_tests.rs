@@ -867,6 +867,36 @@ fn cli_output_discriminators_cover_echo_streams_and_exit_codes() {
 }
 
 #[test]
+fn appended_value_discriminator_names_contents_not_length() {
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(msg.upper())").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("self.buf.append(msg)").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(python_output_or_call_discriminator("buf.append()"), None);
+    // A literal argument keeps the literal-based shapes below it.
+    assert_eq!(
+        python_output_or_call_discriminator("print(\"queued\")").as_deref(),
+        Some("output contains \"queued\"")
+    );
+    // A literal append keeps its concrete discriminator; the placeholder
+    // contents shape applies only when no string literal names the value.
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(\"queued\")").as_deref(),
+        Some("call includes \"queued\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append('queued')").as_deref(),
+        Some("call includes 'queued'")
+    );
+    // `.push(` is not a Python list append and names no discriminator.
+    assert_eq!(python_output_or_call_discriminator("buf.push(msg)"), None);
+}
+
+#[test]
 fn extract_tests_records_vararg_and_kwarg_pytest_fixtures() -> Result<(), String> {
     let tests = extract_tests(
         Path::new("tests/test_fixtures.py"),
@@ -1278,6 +1308,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1891,6 +1922,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1965,6 +1997,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2061,6 +2094,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2127,6 +2161,7 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: vec!["core".to_string()],
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2197,6 +2232,7 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: vec!["core".to_string()],
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2258,6 +2294,7 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2379,6 +2416,7 @@ fn same_stem_related_handles_missing_stems() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5006,6 +5044,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5097,6 +5136,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5193,6 +5233,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -6015,6 +6056,7 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -6125,6 +6167,7 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),

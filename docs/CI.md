@@ -418,7 +418,7 @@ remain in their producing workflows.
 | Workflow / artifact | Consumer and retained evidence |
 | --- | --- |
 | `future-clippy.yml` / `ripr-future-clippy` | Maintainer investigation of lint readiness and instrumentation failures. Native status and identity are also printed in the job summary; the scan log is streamed to the job log. |
-| `macos-advisory.yml` / `macos-advisory-logs` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
+| `macos-advisory.yml` / `macos-advisory-logs-clippy`, `macos-advisory-logs-lib-tests` | Maintainer investigation of native Clippy and library-test outcomes. The job judges its local logs and statuses before upload and retains the verdict in its summary. |
 | `windows-gate.yml` / `ripr-windows-gate-subset` | Maintainer investigation of the subset logs and statuses. `Ripr Windows Gate Result` consumes job outputs, not the uploaded artifact. |
 | `kani.yml` / `ripr-kani` | Maintainer inspection of the per-harness report. `cargo xtask kani` prints the same report to the job log and judges the run before upload. |
 
@@ -614,7 +614,14 @@ and single-platform CI was the root cause enabling both.
 
 `.github/workflows/windows-advisory.yml` (#2442) closes the gap:
 
-- **Scope.** `cargo test --workspace`, twice. No test or golden `cargo xtask`
+- **Scope.** `cargo test --workspace`, twice. Each sample is split by test
+  target: three `windows-advisory-integration` jobs run every integration
+  target (by first letter of its name, with complementary patterns), and the
+  `windows-advisory` job runs the unit targets and doctests, then joins all
+  parts into one verdict. The summarizer refuses a target two parts both ran
+  and checks each sample against the executables an unsplit
+  `cargo test --workspace --no-run` built, so a target no part selects fails
+  the lane. No test or golden `cargo xtask`
   gates and no blessing — a Windows lane that blessed or checked goldens would
   institutionalize the #2337 drift it exists to catch. There is one required
   `cargo xtask` step, `windows-advisory-summary`, which validates the two run
@@ -649,16 +656,27 @@ and single-platform CI was the root cause enabling both.
   each serialized Cargo build. RSS is the largest command or waited descendant,
   not aggregate memory or necessarily rustc. Missing measurements are unavailable,
   not zero; diagnostics neither add a build nor change its exit status.
+  The hosted `rust-gates.yml` job adds the same 8 GiB swap file before its two
+  Clippy passes (#15935). The `ripr` lib-test lint unit alone reaches about
+  11 GiB resident and the workspace pass checks `xtask` beside it, which lost
+  the 16 GiB runner mid-step (exit 143) at three build jobs with only the
+  image's 4 GB swap file. The swap step prints `lint_memory_before_pswpout`
+  and `lint_memory_before_oom_kill` from `/proc/vmstat`, and the
+  `Report lint memory pressure` step prints the matching `lint_memory_after_`
+  lines, so the difference is what the lint passes cost on a run that
+  finished. A lost runner reaches neither report. The scratch route is
+  unchanged.
 - **`Linux Nextest Shards`** (`linux-nextest-shards.yml`, manual `workflow_dispatch` only) runs the required Rust test step as four `cargo nextest --partition count:N/4` jobs on hosted 4-core runners and reports each shard's build and run seconds and JUnit test count and checks the four partitions are a disjoint cover of the workspace test list, so the wall-clock of a sharded step can be measured (#10341; the hosted required route now shards, see `Rust Test Shards`). It is advisory, not wired to pull requests, and does not replace `Ripr Rust Small Result`.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). The four tests that need a real directory deny ACL are excluded from those bash partitions and run in a `shell: pwsh` step of shard 1 (20-minute step timeout, own `acl.log` and `acl.status`), because Git for Windows bash enables backup and restore privileges that bypass the deny. Each shard records `JOB_START` at the first step and the nextest watchdog fires at `min(44 min, time left before the 80-minute job cap minus an 8-minute summarize/upload reserve)`, writing a SLOW/TIMEOUT/FAIL heartbeat so a hang that would otherwise be cancelled at the job cap still leaves a named in-flight test, a status, and an `always()` artifact; the shard-1 real-ACL step is skipped once the watchdog fired so it cannot spend that reserve (#12338). It is advisory and does not replace the nightly lane.
 - **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
 - **`Pilot Measure`** (`pilot-measure.yml`, manual `workflow_dispatch` only) builds a release `ripr` on a hosted runner, runs `ripr pilot` on this repository with default budgets and reports the byte sizes of `repo-exposure.json`, `agent-seam-packets.json` and the output tree, the exit code and each document's `run_status` in the job summary, then runs `ripr check --format agent --committed` on the pinned humantime commit plus the fortnight gap patch from `docs/AGENT_AS_USER_RUNS.md` and prints whether the terminal state is `open=` or `stop=`. It asserts nothing and never fails on a size or finding; the pilot output uploads as a 7-day `pilot-measure` artifact. It exists so #11951 (packet size target) and #12058 (humantime `open=`) can be confirmed on a current-main release binary.
 - **Test steps run under `windows-advisory-run`** (#9272, #9660). The
-  `--no-default-features` test step and both workspace runs go through
+  `--no-default-features` test parts and both workspace runs go through
   `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
   Object on Windows). It streams output to the job log as it arrives and into
   the log file, ends the whole tree at its own deadline (40 minutes for the
-  `--no-default-features` tests, 70 for each workspace run), and on a timeout
+  `--no-default-features` unit targets and for each integration part, 15 for
+  its doctests, 70 for each workspace run), and on a timeout
   names every test libtest reported as running for over 60 seconds with no
   result, so a stuck run points at a test. It records cargo's exit code in the
   status file (124 when it enforced the deadline, 127 when the command could
@@ -694,6 +712,21 @@ and single-platform CI was the root cause enabling both.
   exhaust it (setup, summary compilation and the manual isolation repeats have
   no separate deadline). The manual nested-alias isolation repeats use the
   redirect-and-replay form.
+- **Rust-only tests in parts (#2400, #16036).** One
+  `cargo test -p ripr --no-default-features --features lang-rust` step did not
+  fit its 40-minute deadline (run 44952408835: 8 minutes of build, 11 of unit
+  tests, then only the `a*` to `l*` integration targets). `windows-advisory`
+  now runs that feature set's unit targets (`--lib --bins`) and doctests, and
+  each `windows-advisory-integration` part runs its third of the `ripr`
+  integration targets after both samples, under its own deadline. On run
+  45008347596 the parts took 21 minutes (unit), under 1 (doctests), and 27,
+  20 and 34 (`a-c`, `d-o`, `rest`), each with every target reached.
+  `cargo xtask windows-advisory-feature-rows` prints the feature-combination
+  section: one row per part and a joined `nofeatures-test` row that is FAIL
+  when a part failed, PASS only when every part passed, and INCOMPLETE when a
+  part was cut at its deadline (124), could not start (127) or left no
+  status. A cut part is missing evidence, not a test failure. The rows stay
+  advisory.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
   tracks three states per test (failed, observed pass, not observed) and reports
@@ -704,6 +737,18 @@ and single-platform CI was the root cause enabling both.
   job. A missing log, a missing captured exit status, or a summarizer crash
   does. A lane that reports success while proving nothing is exactly the
   false-confidence condition it exists to prevent.
+- **Public's no-default-features fallback is superseded (#16122).** Public ripr
+  #1745 added `windows-advisory-summary --nofeatures-log <path>
+  --nofeatures-status <path>` after run 35497884041, where the unbounded
+  `--no-default-features` test step consumed the whole job before either
+  workspace run started, so the verdict could only report two missing logs. In
+  this lane that step runs under `windows-advisory-run`, which ends it at its
+  own deadline and names every test libtest reported as running for over 60
+  seconds with no result, and the workspace runs start regardless. The
+  summarizer refuses both flags and the catalog does not list them; a test holds
+  the catalog entry, its documented arity and the parser's listed flags to
+  agreement. When swarm returns to public, the option's removal there is
+  deliberate.
 - **Selection.** A daily schedule and explicit `workflow_dispatch`. PR and
   label subscriptions are retired. `runner_probe_only` selects the manual
   runner probe instead of the full and subset jobs.
@@ -821,8 +866,15 @@ gating (#8055, #8060), `/var` -> `/private/var` temp paths and APFS case or
 normalization behavior surfaced only on a maintainer's local run.
 
 - **What runs.** On `macos-15`: `cargo clippy -p ripr -p xtask --all-targets
-  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`. The integration
-  suites are not part of this lane.
+  -- -D warnings` and `cargo test -p ripr --lib --no-fail-fast`, each in its
+  own job (`macos-advisory-clippy`, `macos-advisory-lib-tests`) under the same
+  40-minute limit: as steps of one job they were cancelled by it every night
+  from 2026-11-12, before the tests had finished compiling. Clippy now
+  fits (25 to 30 minutes cold). The library tests do not yet: the `ripr` test
+  build alone takes about 30 minutes and its tests about 14, so that job
+  fails at its 34-minute step deadline as missing evidence until the build
+  and the run are separate jobs (#8391). The integration suites are not part
+  of this lane.
 - **Contract.** Clippy and test outcomes are advisory and appear in the job
   summary. A missing log or exit status, or a library run that executed zero
   tests, fails the job. It is not a required check.
@@ -1207,7 +1259,7 @@ cargo xtask release-readiness --version "$release_version"
 `cargo xtask publish-dry-run` is the ADR 0027 lockstep rehearsal: it dry-runs
 `ripr-contract`, packages `ripr` from the publish stage (a copy of the
 workspace whose `ripr` source has no inline `#[cfg(test)]` modules, #14198)
-against a vendored source tree, fails when a packaged crate is over the
+together with `ripr-contract` in one multi-package `cargo package`, fails when a packaged crate is over the
 crates.io default upload limit, then builds
 the packaged crate the way `cargo install ripr` without `--locked` does: it
 unpacks the `.crate`, deletes its `Cargo.lock`, re-resolves, and checks. It
@@ -1308,6 +1360,16 @@ target/sample build residue and shares the same badge endpoint boundary.
 expected-output scaffolding without accepting output drift. `golden-drift`
 writes advisory Markdown and JSON summaries of semantic expected-output drift
 for reviewers. Required Rust CI runs `cargo xtask goldens check-with-fixtures`.
+For a PR running without an explicit subject SHA, the gate checks for an advanced base.
+A clean merge against that base runs in a temporary worktree under the resolved
+job scratch directory (`TMPDIR`, falling back to `RUNNER_TEMP` on hosted jobs).
+An unchanged base or an unavailable base fetch leaves goldens on the admitted
+checkout. A confirmed merge conflict fails preparation. Exact-subject runs use
+their admitted checkout directly. For a fresh merge, Cargo gives its workspace packages a distinct artifact identity, reuses
+registry dependencies, and writes the fresh executables under that worktree.
+The original admitted checkout and its binaries remain available for capability,
+verdict and PR evidence checks. The gate writes its golden reports and wildcard
+calibration outputs to the usual upload paths.
 It evaluates each selected fixture once and writes both `fixtures.md` and the existing golden
 reports from that in-memory result. It retains preparation, assistant-loop corpus,
 expected-class ratchet, drift, line-ending and provenance checks. The fixture
@@ -1560,6 +1622,91 @@ not qualified, as are PRs without the `merge-ready` label (no request was made);
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
 shape (no dispatch command, no `actions: write`), the in-flight check, and
 the `mergeable_state` column.
+
+#### Inspect queued heads against main
+
+See the [operator observation contract](MERGE_WATCH_POLICY.md#operator-queue-conflict-observation-contract)
+for partial fetches, pathless conflicts and private output-directory permissions.
+
+Run `cargo xtask merge-queue conflicts <new-output-directory>` to inspect the
+current private swarm queue on demand. It requires Git with `--attr-source`
+and `merge-tree --write-tree`, authenticated read
+access through `gh api --paginate --slurp` (GitHub CLI 2.48 or newer), and Git read access to the swarm through SSH. Saved-page replay skips `gh` and requires Git read access for nonempty snapshots. The output
+directory's parent must exist. The initial fetch can use the operator's configured
+transport and credential helpers. It disables hooks and fetches complete
+objects. The later Git comparisons disable lazy fetching, ignore system and
+global Git configuration such as custom merge drivers, use each compared
+base commit as the source for repository attributes (including built-in merge
+rules), ignore the user attributes file, and do not check out
+the candidate trees. An unsupported `--attr-source` is detected once and leaves every head
+unexamined with a Git upgrade hint. The command records the paginated queue response
+as `queue-pages.json`, fetches the observed commits into a fresh bare
+`objects.git`, and writes `queue-conflicts.json`. To repeat the comparison on
+exactly the same input, pass `--input <saved-queue-pages.json>` with a new
+output directory. Normal completion and handled failures remove the private
+object store. A killed process may leave `<new-output-directory>/objects.git`;
+remove that directory after confirming its command has exited.
+
+Each entry compares the PR's observed head to the same main commit. GitHub's
+queue order and speculative merge-group results are separate evidence.
+Pagination refuses differing main commits, inconsistent counts or positions,
+and repeated PRs. The pages describe the observed membership during the
+read; GitHub can change membership afterward.
+
+A conflict lists Git's paths. Where the same path stays conflicted up to a
+verified first-parent edge, the report identifies the commit at which its
+latest continuous conflicting interval began. The command walks back at most
+64 first-parent edges per conflicted head after finishing the base comparisons.
+A null boundary carries the reason history could not establish the transition.
+The whole command gives its child operations a shared 480-second budget.
+Missing objects, timeouts and other failed comparisons produce an explicit
+`unexamined` row and a nonzero exit once the report has been written. A failed
+census cannot produce a complete report. The operator can inspect the evidence
+and coordinate with the PR owner. The command has no GitHub write operation
+and the scheduled watchdog does not invoke it (#14705).
+
+### Preview or post one queued conflict notice
+
+From a conflict row in `queue-conflicts.json`, copy the PR number, the observed
+main SHA and the PR head SHA. Use a separate, new output directory for every
+attempt. Preview requires authenticated read access to the repository and its queue.
+
+```sh
+cargo xtask merge-queue conflict-notice <new-output-directory> <pr> <main-sha> <head-sha>
+```
+
+The command checks the live queue entry, fetches just the selected commits and
+reruns the Git comparisons. A preview includes the paths and their verified
+first-parent transitions. Clean heads and incomplete or unattributed
+comparisons produce no advisory. The JSON receipt records the comparison and
+the disposition. The existing private-directory guidance applies.
+
+To publish the previewed observation, repeat the command with the same SHAs,
+a fresh output directory, and `--post`. That mode requires a local operator
+with permission to comment on the PR. It can add one comment. It reads
+existing comments across all pages and checks current main, PR head and native
+entry again immediately before submission. Serialize attempts for the same
+PR. GitHub's comment endpoint has no atomic membership check or unique marker
+constraint. The comment therefore names both observed commits. A later serial
+run suppresses the same trusted marker. The command commits the immutable
+`queue-conflict-notice-pending.json` intent before dispatch and writes the final
+`queue-conflict-notice.json` separately. A failed final membership or comment
+read records `not_submitted`. A transport failure after dispatch records
+`unconfirmed`. If the terminal receipt cannot be committed, the diagnostic
+retains the comment ID or the transport error alongside the storage error.
+After an uncertain submission, copy the first line of the saved intent's
+`body` and look for that exact marker in comments on the original PR:
+
+```bash
+gh api --hostname github.com --paginate repos/EffortlessMetrics/ripr-swarm/issues/<pr>/comments --jq '.[] | [.id, .user.login, .author_association, (.body | split("\n")[0])] | @json'
+```
+
+Compare the first line and confirm the author is the authenticated operator or
+has a MEMBER, OWNER or COLLABORATOR association. This read also works after main
+moves or the PR leaves the queue. A matching comment supplies its ID. An
+incomplete API read leaves delivery uncertain. While the original membership
+and commits still match, a preview in a fresh directory also checks for the
+marker. The scheduled watchdog does not run this command.
 
 ### Issue Staleness Watchdog
 
@@ -1952,17 +2099,23 @@ published) or a commit SHA of `EffortlessMetrics/ripr`, not a branch. The defaul
 `pull_request` event the Action fetches the base branch and deepens a shallow
 checkout in doubling steps (50, 100, ... 1,600 commits, then the rest) until
 HEAD meets the base, so the diff has a merge base (#14800). A full checkout is
-not touched. On other events, or with an explicit `base`, use
-`fetch-depth: 0`. If history is still missing, `ripr check` names the repair.
+not touched. An explicit branch `base` (`origin/main` or `main`) or full
+commit SHA is fetched and deepened the same way; a `base` starting with `-` is
+refused with exit 2 (#15399). On a `push` event to the default branch the base
+is the commit before the push, so the pushed commits are what ripr checks; on
+a push to any other branch it is the default branch. Elsewhere, or with a base
+such as a tag or `origin/main~1`, use `fetch-depth: 0`. If history is still
+missing, `ripr check` names the repair.
 
 Inputs: `install-only` (`true` installs ripr onto PATH and skips `ripr check`
 and the cache step; the generated workflow uses this), `version` (default: the release pinned in the Action at that tag; installs that
 release's prebuilt archive after checking its published SHA-256, and falls
 back to `cargo install ripr --version <version> --locked` where no archive
-exists), `mode` (`draft`, `deep`, `ready`), `format` (any `ripr check` format,
+exists), `mode` (`instant`, `draft`, `fast`, `deep`, `ready`), `format` (any `ripr check` format,
 for example `human`, `json`, `sarif` or `github` for file annotations), `base`
 and `cache`. An empty `base` uses the pull request base branch on
-`pull_request` events and ripr's own default-branch detection elsewhere.
+`pull_request` events, the push bases above on `push` events, and ripr's own
+default-branch detection elsewhere.
 `cache` (default `true`) restores and saves ripr's analysis cache under the
 runner's temp directory with `actions/cache` pinned to a commit SHA, so later
 pushes re-analyze only changed files. ripr checks each entry against file
@@ -1974,7 +2127,9 @@ to the job summary (cut at 60 KB). Step outputs are `exit-code` and `report`
 are advisory: a completed check exits 0 whatever it found. A check that could
 not complete (exit 2, or 3 when ripr declines) fails the step. It also emits one
 error annotation and a job-summary line that give the exit meaning and ripr's
-own first reason lines ([exit codes](EXIT_CODES.md)). Replayed report and stderr
+own reason (up to eight lines, so a configuration error keeps its fix hint;
+the Action sets `RIPR_QUIET` so progress lines stay out of it) ([exit
+codes](EXIT_CODES.md)). Replayed report and stderr
 text cannot issue workflow commands, except the report of `format: github`,
 whose annotations are the point. To block on new gaps,
 use the generated workflow's gate modes ([adopting in CI](ADOPTING_IN_CI.md)).
@@ -2098,6 +2253,14 @@ group named after the step it replaced. `ripr help reports` lists its
 failure rules, and `--step NAME` reruns one step locally. The packet exits
 `3` when the gate blocked and nothing else required failed, and `2` when a
 required step could not complete ([EXIT_CODES.md](EXIT_CODES.md#ci-integration)).
+
+Whatever a child command sends to the job log reaches it on the packet's
+stdout inside a `::stop-commands::` window with a fresh random token: always
+the child's stderr, and its stdout unless the step writes that to a report
+file. A report quotes repository text, and a pull request can name a file
+`x<newline>::error::...`; inside the window the runner reads no line of it as
+a workflow command (#15918). The packet's own group markers, step errors and
+changed-line annotations are printed outside the windows.
 
 When `ripr agent start` exits 3 for the top seam, the packet logs `RIPR agent
 loop skipped: ... declined` and moves on. Exit 3 means ripr declined (see
@@ -3207,11 +3370,17 @@ PRs skip those test builds.
 ## Changelog Fold
 
 `cargo xtask fold-changelog [--dry-run | --write] [--limit <N>]
-[--keep-fragments]` (#5114) folds `changelog.d/` fragments into the first
-matching `### <Section>` under `## Unreleased` at the release cut, in file-name
-order, and deletes them with `--write`. The default is a dry run. It reuses the
-`check-changelog-fragments` validator, refuses malformed fragments by file name
-and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
+[--keep-fragments] [--release-cut]` (#5114) folds `changelog.d/` fragments into
+the first matching `### <Section>` under `## Unreleased` at the release cut, in
+file-name order, and deletes them with `--write`. The default is a dry run.
+Advance folds use fold-and-delete batches (`--write --limit 149` so each batch
+PR touches at most 150 changed files including `CHANGELOG.md`);
+`--keep-fragments` is for local inspection only because
+`check-changelog-fragments` rejects fragments duplicating `Unreleased` entries.
+It runs the whole `check-changelog-fragments` check before it folds and
+refuses with nothing written when that fails, refuses malformed fragments by
+file name and is not part of `precommit`. `changelog.d/README.md`
+has the batch procedure.
 
 ## Install Receipt
 

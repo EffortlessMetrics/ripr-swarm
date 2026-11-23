@@ -15,6 +15,7 @@ fn assistant_loop_health_stays_in_the_production_fixture_contract_gate() -> Resu
     // the benchmark-oracle command tests. Never mutate the checkout's corpus.
     crate::tests::with_temp_cwd("assistant-loop-health-production-gate", |root| {
         crate::tests::copy_dir_recursive(&repo.join("fixtures"), &root.join("fixtures"))?;
+        crate::fixture_contracts::denominator_floor::seed_floor_in_cwd()?;
         let base = root.join(CORPUS_DIR);
         let path = base.join("corpus.json");
         let original = fs::read(&path).map_err(|error| error.to_string())?;

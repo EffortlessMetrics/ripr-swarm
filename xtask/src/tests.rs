@@ -90,12 +90,11 @@ use super::{
     EVIDENCE_QUALITY_TREND_PREVIOUS_ARTIFACT_UNAVAILABLE, EvidenceQualityScorecardInput,
     EvidenceQualityScorecardInputs, EvidenceQualityScorecardReport, EvidenceQualityTrendInputs,
     EvidenceQualityTrendReport, FixKind, GENERATED_CI_COCKPIT_COMMAND,
-    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
-    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest,
-    GhPrStatusReview, Lane1EvidenceAuditRepoExposureGeneration,
-    Lane1EvidenceAuditRepoExposureOutcome, LocalContextAllow, LocalMarkdownTarget,
-    LspCockpitFixture, MarkdownLink, PYTHON_REAL_REPO_EVAL_REQUIRED_CASES,
-    PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
+    GENERATED_CI_PACKET_INDEX_REPAIR, GhPrStatusPullRequest, GhPrStatusReview,
+    Lane1EvidenceAuditRepoExposureGeneration, Lane1EvidenceAuditRepoExposureOutcome,
+    LocalContextAllow, LocalMarkdownTarget, LspCockpitFixture, MarkdownLink,
+    PYTHON_REAL_REPO_EVAL_REQUIRED_CASES, PYTHON_REAL_REPO_EVAL_REQUIRED_NO_ACTION_CASES,
     PYTHON_REAL_REPO_EVAL_REQUIRED_STATIC_LIMIT_CASES, PrTriageCheck, PrTriageFinding,
     PrTriagePullRequest, REAL_REPAIR_ATTEMPTS_CORPUS, REAL_REPAIR_ATTEMPTS_REQUIRED_CASES,
     REPO_BADGE_ARTIFACT_DEFAULT_TIMEOUT_MS, REPO_BADGE_ARTIFACT_TIMEOUT_ENV,
@@ -535,6 +534,38 @@ fn evidence_promotion_semantic_assertions_reject_bare_empty_false_clean() {
 
     assert!(report.contains("must_not_report_clean"), "{report}");
     assert!(report.contains("no non-clean signal"), "{report}");
+}
+
+#[test]
+fn evidence_promotion_outcome_limitation_is_not_a_clean_result() {
+    let assertions = vec![
+        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
+        super::EvidencePromotionSemanticAssertion::MustReportClean,
+    ];
+    let partial = serde_json::json!({
+        "summary": {"findings": 0},
+        "findings": [],
+        "analysis_outcome": {
+            "analysis_complete": false,
+            "outcome": {
+                "kind": "partial_with_limitations",
+                "limitations": [{"kind": "language_scope_unsupported", "path": "src/inner.rs"}]
+            }
+        }
+    });
+
+    let report = super::evidence_promotion_semantic_violations(
+        "partial_outcome",
+        Some("fixtures/module_reach_cfg_comment_hidden"),
+        &assertions,
+        &partial,
+        None,
+        false,
+    )
+    .join("\n");
+
+    assert!(!report.contains("no non-clean signal"), "{report}");
+    assert!(report.contains("`must_report_clean` requires"), "{report}");
 }
 
 fn semver_external_case_for_test() -> super::EvidencePromotionExternalCase {
@@ -6695,6 +6726,15 @@ fn non_rust_programming_policy_requires_retention_rule() {
     );
     assert!(non_rust_programming_retention_reason("examples/tools/run.py").is_none());
     assert!(non_rust_programming_retention_reason("examples/project/build.sh").is_none());
+    assert!(
+        non_rust_programming_retention_reason(
+            "benchmarks/mutation_spot_check/run_python_calibration.py"
+        )
+        .is_some()
+    );
+    assert!(
+        non_rust_programming_retention_reason("benchmarks/mutation_spot_check/other.py").is_none()
+    );
 }
 
 #[test]
@@ -12297,6 +12337,27 @@ fn golden_drift_semantics_summarize_json_changes() {
             .iter()
             .any(|value| value.contains("Assert the exact variant"))
     );
+}
+
+#[test]
+fn golden_drift_human_evidence_classification() {
+    let before = include_str!("../../fixtures/manual_let_else_pairing/expected/human.txt");
+    let classify =
+        |after: &str| super::golden_drift_type(&golden_drift_semantics("human.txt", before, after));
+    let window = before.replace("    - propagation yes: Complete propagation witness reaches returned value: let Some(rhs) = rhs.next() else {", "    - infection unknown: No reachable tests were found, so infection cannot be established");
+    assert_eq!(classify(&window), "detail_window_changed");
+    let semantic = window.replace(" · infection unknown ·", " · infection yes ·");
+    assert_eq!(
+        classify(&semantic),
+        "stage_states_changed [infection: unknown -> yes]"
+    );
+    for malformed in [" · infection nonsense ·", " · reach weak ·", " · "] {
+        assert_eq!(
+            classify(&before.replace(" · infection unknown ·", malformed)),
+            "stage_states_unavailable"
+        );
+    }
+    assert!(classify(&before.replace("Summary:", "Overview:")).starts_with("formatting_only"));
 }
 
 #[test]
@@ -19890,6 +19951,15 @@ jobs:
           path: |
             target/ripr/reports
 ";
+    let first_pr_line = concat!(
+        "- Safe next action: run `ripr first-pr --root . --base origin/main --head HEAD",
+        " --gap-ledger target/ripr/reports/gap-decision-ledger.json",
+        " --first-action target/ripr/reports/first-useful-action.json",
+        " --review-comments target/ripr/review/comments.json",
+        " --agent-packet target/ripr/workflow/agent-packet.json",
+        " --gate-decision target/ripr/reports/gate-decision.json",
+        " --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`.",
+    );
     let summary = format!(
         "\
 ## RIPR advisory summary
@@ -19899,7 +19969,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 ### Start here
 - Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
-- {GENERATED_CI_FIRST_PR_REPAIR}
+{first_pr_line}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
 - {GENERATED_CI_PACKET_INDEX_REPAIR}
 
@@ -19924,6 +19994,31 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
     assert!(run.default_advisory);
     assert!(run.artifact_upload);
     assert_eq!(run.language_grouping_status, "checked");
+
+    for (name, changed_summary) in [
+        (
+            "wrong-first-pr-output-dir",
+            summary.replace(
+                "--output-dir target/ripr/reports`",
+                "--output-dir target/ripr/reports-wrong`",
+            ),
+        ),
+        ("missing-first-pr", summary.replace(first_pr_line, "")),
+    ] {
+        let changed = dogfood_generated_ci_cockpit_run_from_surfaces(
+            name,
+            command,
+            10,
+            workflow,
+            &changed_summary,
+        );
+        assert_eq!(changed.repair_commands, 3, "{name}");
+        assert_eq!(
+            changed.errors,
+            ["expected 4 cockpit regeneration commands, got 3"],
+            "{name}"
+        );
+    }
 
     let missing =
         dogfood_generated_ci_cockpit_run_from_surfaces("missing", command, 10, "name: RIPR", "");
@@ -20047,10 +20142,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
 
     // Generated CI names the PR range since #4260; the unscoped form it
     // replaced must not satisfy the first-pr repair command.
-    let unscoped = summary.replace(
-        GENERATED_CI_FIRST_PR_REPAIR,
-        "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
-    );
+    let unscoped = summary.replace(" --base origin/main --head HEAD", "");
     let stale = dogfood_generated_ci_cockpit_run_from_surfaces(
         "unscoped-first-pr",
         command,
@@ -30458,7 +30550,7 @@ fn assert_packet_coverage_report() -> Result<(), String> {
 }
 
 fn packet_coverage_report_fixture() -> String {
-    let host = if cfg!(windows) { "windows" } else { "unix" };
+    let host = crate::policy::file_policy_retained_evidence::host_label();
     let native = if cfg!(windows) {
         "not_applicable; selected=not_enumerated".to_string()
     } else {
@@ -30821,6 +30913,8 @@ fn file_policy_allowlist_toml_comments_preserve_coverage_commands() -> Result<()
             ("covered_by", None),
             ("covered_by_unix", Some(crate::FilePolicyHost::Unix)),
             ("covered_by_windows", Some(crate::FilePolicyHost::Windows)),
+            ("covered_by_linux", Some(crate::FilePolicyHost::Linux)),
+            ("covered_by_macos", Some(crate::FilePolicyHost::Macos)),
         ] {
             let plain = r#"["cargo test -p xtask first", "cargo test -p xtask second"]"#;
             let baseline: toml::Value =
@@ -30885,6 +30979,8 @@ fn file_policy_allowlist_toml_strings_preserve_decoded_selectors() -> Result<(),
             ("covered_by", None),
             ("covered_by_unix", Some(crate::FilePolicyHost::Unix)),
             ("covered_by_windows", Some(crate::FilePolicyHost::Windows)),
+            ("covered_by_linux", Some(crate::FilePolicyHost::Linux)),
+            ("covered_by_macos", Some(crate::FilePolicyHost::Macos)),
         ] {
             for (case, value, expected) in [
                 (
@@ -31170,7 +31266,13 @@ fn file_policy_allowlist_toml_keeps_governed_field_refusals() -> Result<(), Stri
         let path = root.join("allowlist.toml");
         let valid = file_policy_toml_coverage_fixture("covered_by", "[\"cargo test common\"]");
         let mut cases = Vec::new();
-        for field in ["covered_by", "covered_by_unix", "covered_by_windows"] {
+        for field in [
+            "covered_by",
+            "covered_by_unix",
+            "covered_by_windows",
+            "covered_by_linux",
+            "covered_by_macos",
+        ] {
             for invalid in [
                 "42",
                 "[42]",
@@ -31190,9 +31292,13 @@ fn file_policy_allowlist_toml_keeps_governed_field_refusals() -> Result<(), Stri
             ));
         }
         for invalid in [
-            "covered_by_linux = [\"cargo test selected\"]",
+            "covered_by_unknown = [\"cargo test selected\"]",
             "covered_by_Unix = [\"cargo test selected\"]",
             "covered_by_unix = []",
+            "covered_by_linux = []",
+            "covered_by_macos = []",
+            "covered_by_linux = [\"cargo xtask check-file-policy\"]",
+            r#"covered_by_macos = [" "]"#,
             "covered_by_windows = []",
             "covered_by_unix = [\" \" ]",
             "covered_by_windows = [\"cargo xtask check-file-policy\"]",
@@ -31251,11 +31357,15 @@ fn file_policy_allowlist_rejects_malformed_host_coverage() -> Result<(), String>
             "reason = \"Explicit applicability\"\ncovered_by = [\"cargo test common\"]\n",
         );
         for invalid in [
-            "covered_by_linux = [\"cargo test native\"]",
+            "covered_by_unknown = [\"cargo test native\"]",
             "covered_by_Unix = [\"cargo test native\"]",
             "covered_by_unix = \"cargo test native\"",
             "covered_by_unix = [1]",
             "covered_by_unix = []",
+            "covered_by_linux = []",
+            "covered_by_macos = []",
+            "covered_by_linux = [\"cargo xtask check-file-policy\"]",
+            r#"covered_by_macos = [" "]"#,
             "covered_by_windows = [\" \" ]",
             "covered_by_windows = [\"cargo xtask check-file-policy\"]",
             "covered_by_unix = [\"cargo test native\",,]",

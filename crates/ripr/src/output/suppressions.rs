@@ -731,6 +731,11 @@ pub(crate) fn read_root_manifest(
 /// projects with no accepted debt). Parse violations are returned via
 /// `Err` so the orchestrator can surface them through the existing
 /// badge-rendering error path.
+///
+/// Production reads the repository-controlled policy through the confined
+/// wrapper in `suppressions_confined.rs`; this unconfined form is kept for
+/// the unix audit control that pins `read_root_manifest`'s refusal messages.
+#[cfg(all(test, unix))]
 pub fn load_suppressions_for_root_at(
     root: &Path,
     relative_path: &Path,
@@ -2642,21 +2647,30 @@ mod audit_controls {
             .ok_or("duplicate policy must fail closed")?;
         assert!(error.contains("custom-policy.toml:8 duplicate"), "{error}");
         assert!(!error.contains(SUPPRESSIONS_PATH), "{error}");
-        load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
-            .err()
-            .ok_or("duplicate implicit policy must fail closed")?;
+        crate::output::suppressions::load_suppressions_for_root_at(
+            &root,
+            Path::new("custom-policy.toml"),
+        )
+        .err()
+        .ok_or("duplicate implicit policy must fail closed")?;
         std::fs::write(&path, VALID).map_err(|e| e.to_string())?;
         assert_eq!(load_check_suppression_policy(&path)?.len(), 1);
         assert_eq!(
-            load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
-                .map_err(|e| e.join("\n"))?
-                .len(),
+            crate::output::suppressions::load_suppressions_for_root_at(
+                &root,
+                Path::new("custom-policy.toml")
+            )
+            .map_err(|e| e.join("\n"))?
+            .len(),
             1
         );
         assert!(
-            load_suppressions_for_root_at(&root, Path::new("missing.toml"))
-                .map_err(|e| e.join("\n"))?
-                .is_empty()
+            crate::output::suppressions::load_suppressions_for_root_at(
+                &root,
+                Path::new("missing.toml")
+            )
+            .map_err(|e| e.join("\n"))?
+            .is_empty()
         );
         load_check_suppression_policy(&root.join("missing.toml"))
             .err()
@@ -2853,4 +2867,5 @@ mod audit_controls {
 }
 
 #[cfg(test)]
+#[path = "suppressions/typo_hint_tests.rs"]
 mod typo_hint_tests;

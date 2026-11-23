@@ -15,7 +15,7 @@ fn perl_executable_rejects_nul_without_echoing_the_path() {
     for value in [r#""\u0000""#, r#""tools/\u0000exporter""#] {
         let result = parse_config(&format!("[perl]\nexecutable = {value}\n"));
         assert!(
-            matches!(result, Err(ref message) if message == "perl.executable must not contain NUL characters"),
+            matches!(result, Err(ref message) if message == "perl.executable must not contain NUL characters; set it to the exporter's path, or remove the key to use the default exporter"),
             "a NUL-bearing executable must fail with a source-free diagnostic: {result:?}"
         );
     }

@@ -64,6 +64,7 @@ fn the_changed_field_needs_matching_keys_and_exactly_one_new_value() {
         Some(TypeScriptChangedField {
             key: "b".to_string(),
             value: "3".to_string(),
+            old_value: "2".to_string(),
         })
     );
     // Parenthesized, nested commas and quoted commas stay in their value.

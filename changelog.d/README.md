@@ -58,53 +58,58 @@ fold inside an ordinary feature PR.
 
 ```bash
 cargo xtask fold-changelog                       # dry run: print the plan, write nothing
-# preflight, then fold and delete one batch; the write runs only if the check passes
-cargo xtask check-changelog-fragments && cargo xtask fold-changelog --write --limit 150
+# fold and delete one batch (149 fragments + CHANGELOG.md = 150 changed files)
+cargo xtask fold-changelog --write --limit 149
 ```
 
 The default is a dry run. `--limit N` takes the first N fragments in name
-order, so a 150-fragment batch plus `CHANGELOG.md` is 151 files, under the
-160-file candidate-admission cap;
-rerun for the next batch. The command refuses, naming the file, any fragment
-with an unknown section, a missing section line or another format violation,
-and any fragment whose whole entry text already appears in `Unreleased`, and
-then writes nothing. That fold-time guard compares each fragment's entry text
-as one block, not bullet by bullet, so a fragment that repeats one existing
-bullet next to a new one still folds and duplicates the old bullet.
-`check-changelog-fragments` compares each bullet; run it and require it to pass
-before either `--write` command (including `--release-cut`, whose own check
-runs only after it has rewritten `CHANGELOG.md` and deleted the fragments).
-Once folded fragments are deleted, a rerun has nothing left to fold.
+order so each PR folds and deletes its batch together and stays within 150
+changed files (`--limit 149` plus `CHANGELOG.md` = 150 paths; the
+candidate-admission ceiling is 160 files); rerun for the next batch. The
+command refuses, naming the file, any fragment with an unknown section, a
+missing section line or another format violation, and any fragment with a
+bullet that already appears in `Unreleased` (compared bullet by bullet, so a
+fragment that repeats one existing bullet next to a new one is refused too),
+and then writes nothing. Every run, dry or `--write`, `--limit` or
+`--release-cut`, first runs the whole `check-changelog-fragments` check and
+refuses with `CHANGELOG.md` and every fragment untouched when it fails, so no
+separate preflight is needed. Once folded fragments are deleted, a rerun has
+nothing left to fold.
 
-The fold may also run ahead of the cut as a snapshot, so the cut itself folds
-only what is left. Fold and delete each batch in the same PR (`--write
---limit 150`, or a rolled-up summary for `Internal / CI` per
-`docs/CHANGELOG_POLICY.md`): `check-changelog-fragments` fails any fragment
-whose entry exactly duplicates an `Unreleased` entry, so a
-`--keep-fragments` roll-up that leaves its fragments in place cannot pass on
-its own. Batches built from one base can insert at different bullets of a
-section so they merge in any order. A fragment added after a snapshot stays
-until the next snapshot or the cut. After the final
-fold, `cargo xtask check-changelog-fragments --release-cut` must pass: it
-fails on any fragment still here.
+An advance fold before the cut uses fold-and-delete batches (`--write --limit
+149`, or anchored batches with at most 150 changed files each including
+`CHANGELOG.md`, or a rolled-up summary for `Internal / CI` per
+`docs/CHANGELOG_POLICY.md`) so the roll-up and the deletion of its fragments
+land in the same PR. Do not use `--write --keep-fragments` to open a snapshot
+roll-up PR: `check-changelog-fragments` fails every fragment whose entry
+duplicates an `Unreleased` entry, so a kept-fragment PR cannot pass on its own.
+`--keep-fragments` is for local inspection only (never for a PR). Batches built
+from one base can insert at different bullets of a section so they merge in any
+order. After the final fold, `cargo xtask check-changelog-fragments
+--release-cut` must pass: it fails on any fragment still here.
 
-On cut day run the preflight, then one write command. `--release-cut` folds
-every fragment (it cannot be combined with `--limit` or `--keep-fragments`),
-deletes them, and then requires `check-changelog-fragments --release-cut` to
-pass, so a leftover or malformed fragment fails the same step. That final
-check runs after the write, so a duplicated bullet is caught only once the
-inputs are already rewritten; the preflight check catches it first:
+On cut day run one write command. `--release-cut` folds every fragment (it
+cannot be combined with `--limit` or `--keep-fragments`), deletes them, and
+then requires `check-changelog-fragments --release-cut` to pass, so a leftover
+fragment fails the same step. The ordinary check runs before the write, so a
+duplicated bullet, a malformed fragment or an untraceable `Unreleased` bullet
+is refused while both inputs are still as they were:
 
 ```bash
-cargo xtask fold-changelog --release-cut           # dry run: plan only
-# preflight, then fold, delete, verify; the write runs only if the check passes
-cargo xtask check-changelog-fragments && cargo xtask fold-changelog --write --release-cut
+cargo xtask fold-changelog --release-cut           # dry run: check, then plan only
+cargo xtask fold-changelog --write --release-cut   # check, fold, delete, verify
 ```
 
-It prints a warning when the PR (every fragment plus `CHANGELOG.md`) would exceed
-the 160-file admission cap; fold a snapshot ahead of the cut in that case. The
-fold appends entries verbatim, so run the correctness pass over `Unreleased`
-(duplicates, sections, claims that overstate what shipped) after it.
+It prints an advisory warning (not a write guard) when the PR (every fragment
+plus `CHANGELOG.md`) would exceed the 160-file admission cap; fold and delete
+in batches ahead of the cut with `--write --limit 149` in that case. Note that
+on `--write` both the size warning and the final
+`check-changelog-fragments --release-cut` run after writing `CHANGELOG.md` and
+deleting fragments, and a dry run does not execute that final check; read the
+dry-run plan for the size first, and inspect the diff on any nonzero exit
+rather than retrying in place. The fold appends entries
+verbatim, so run the correctness pass over `Unreleased` (duplicates, sections,
+claims that overstate what shipped) after it.
 
 Both ordinary and `--release-cut` checks reject repeated column-zero
 `### <Section>` headings within the first `## Unreleased` block. The diagnostic

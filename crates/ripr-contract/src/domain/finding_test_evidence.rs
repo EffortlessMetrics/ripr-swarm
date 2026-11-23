@@ -120,6 +120,7 @@ mod tests {
                 normalized_discriminator: "amount == threshold".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing".to_string()),
                 location: SourceLocation::new("src/pricing.rs", 12, 5),
                 owner: None,

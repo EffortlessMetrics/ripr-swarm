@@ -4,7 +4,9 @@
 //! first `### <Section>` heading under `## Unreleased` in `CHANGELOG.md`, in
 //! file-name order, then deletes the folded fragment. The default writes
 //! nothing. Fragment validation is the `check-changelog-fragments` owner's
-//! `fragment_violations`, so the fold cannot accept what the check refuses.
+//! `fragment_violations`, so the fold cannot accept what the check refuses,
+//! and the command runs that owner's whole check before it folds, so a tree
+//! the check refuses is refused with both inputs untouched (#15606).
 
 use std::fs;
 use std::path::Path;
@@ -17,6 +19,9 @@ use super::changelog_fragments::{
 const USAGE: &str = "usage: cargo xtask fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments] [--release-cut]";
 /// Candidate-admission ceiling on changed files in one PR.
 const ADMISSION_FILE_CAP: usize = 160;
+/// Recommended maximum fragments per advance fold-and-delete batch PR so the
+/// batch plus `CHANGELOG.md` stays within 150 changed files.
+const RECOMMENDED_BATCH_LIMIT: usize = 149;
 const UNRELEASED: &str = "## Unreleased";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -42,8 +47,14 @@ pub(super) struct FoldReport {
 }
 
 pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
+    fold_changelog_in(Path::new("."), args)
+}
+
+/// The whole command against `root`, so a test can drive the same path the
+/// CLI takes.
+pub(super) fn fold_changelog_in(root: &Path, args: &[String]) -> Result<(), String> {
     let options = parse_args(args)?;
-    let report = fold_in(Path::new("."), &options)?;
+    let report = fold_checked(root, &options)?;
     let verb = if options.write {
         "folded"
     } else {
@@ -60,20 +71,17 @@ pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
     if !options.write {
         println!("dry run: nothing written; pass --write to apply");
     } else if options.keep_fragments {
-        println!("--keep-fragments: fragment files were not deleted");
+        println!(
+            "--keep-fragments: fragment files were not deleted (local inspection only; \
+             check-changelog-fragments rejects PRs that keep fragments duplicating Unreleased entries)"
+        );
     }
     if options.release_cut {
-        // The PR carries every deleted fragment plus CHANGELOG.md.
-        if report.folded.len() + 1 > ADMISSION_FILE_CAP {
-            println!(
-                "warning: {} changed files exceeds the {ADMISSION_FILE_CAP}-file admission cap; \
-                 fold a snapshot ahead of the cut with `--write --keep-fragments --limit` and \
-                 delete in batches (changelog.d/README.md)",
-                report.folded.len() + 1
-            );
+        if let Some(warning) = oversize_release_cut_warning(report.folded.len()) {
+            println!("{warning}");
         }
         if options.write {
-            let violations = changelog_fragment_violations(Path::new("."), true)?;
+            let violations = changelog_fragment_violations(root, true)?;
             if !violations.is_empty() {
                 return Err(format!(
                     "release-cut check failed after the fold:\n  {}",
@@ -82,10 +90,28 @@ pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
             }
             println!("release-cut check passed: {FRAGMENT_DIR}/ holds no fragments");
         } else {
-            println!("dry run: the release-cut check runs after --write");
+            println!(
+                "dry run: check-changelog-fragments passes now; the release-cut check runs after --write"
+            );
         }
     }
     Ok(())
+}
+
+/// Advisory warning when a release-cut PR (every deleted fragment plus
+/// `CHANGELOG.md`) exceeds the candidate-admission file cap.
+pub(super) fn oversize_release_cut_warning(folded_count: usize) -> Option<String> {
+    let changed_files = folded_count + 1;
+    if changed_files > ADMISSION_FILE_CAP {
+        Some(format!(
+            "warning: {changed_files} changed files exceeds the {ADMISSION_FILE_CAP}-file admission cap \
+             (advisory only, not a write guard); fold and delete in batches ahead of the cut with \
+             `--write --limit {RECOMMENDED_BATCH_LIMIT}` (at most {RECOMMENDED_BATCH_LIMIT} fragments \
+             plus {CHANGELOG} = 150 paths per PR; see {FRAGMENT_DIR}/{README})"
+        ))
+    } else {
+        None
+    }
 }
 
 pub(super) fn parse_args(args: &[String]) -> Result<FoldOptions, String> {
@@ -136,6 +162,22 @@ fn parse_limit(value: &str) -> Result<usize, String> {
             "--limit needs a positive whole number, found `{value}`\n{USAGE}"
         )),
     }
+}
+
+/// The command's fold: the ordinary `check-changelog-fragments` check first,
+/// then [`fold_in`]. Nothing the fold writes can repair a violation that
+/// check reports, so a failing tree is refused before `CHANGELOG.md` is
+/// rewritten or a fragment is deleted, and a dry run fails the same way
+/// `--write` would (#15606).
+pub(super) fn fold_checked(root: &Path, options: &FoldOptions) -> Result<FoldReport, String> {
+    let violations = changelog_fragment_violations(root, false)?;
+    if !violations.is_empty() {
+        return Err(format!(
+            "refusing to fold: check-changelog-fragments fails on the current tree, nothing written:\n  {}",
+            violations.join("\n  ")
+        ));
+    }
+    fold_in(root, options)
 }
 
 pub(super) fn fold_in(root: &Path, options: &FoldOptions) -> Result<FoldReport, String> {

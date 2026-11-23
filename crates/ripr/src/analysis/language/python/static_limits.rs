@@ -2172,6 +2172,7 @@ pub(super) mod tests {
             decorator_lines: None,
             parameters: Vec::new(),
             reexport_modules: Vec::new(),
+            class_reexport_modules: Vec::new(),
             star_exported: false,
             ambiguous_src_modules: Vec::new(),
             test_local_shadows: Vec::new(),

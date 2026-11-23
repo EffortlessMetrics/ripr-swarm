@@ -1,0 +1,45 @@
+{
+  "case_id": "py-membership-removed-member-passed",
+  "subject_id": "authored-py-pytest-membership",
+  "diff": "cases/py-membership-removed-member-passed.diff",
+  "anchor": {
+    "file": "truthy/convert.py",
+    "line": 11
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_parametrized_table",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.18, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if val in (False, \"false\", \"f\", \"no\", \"off\", \"0\", 0):",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_convert.py::test_falsy[n]",
+        "equivalence_review": "not equivalent: to_bool(\"n\") raises ValueError instead of returning False"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 34 control: the edit removes \"n\" from the falsy collection, and the test_falsy parametrize row \"n\" passes the removed member, so the exact check fails.",
+  "labeling_observation": {
+    "ripr_commit": "b1dd0b51",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
