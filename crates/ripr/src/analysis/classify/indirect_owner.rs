@@ -73,6 +73,7 @@ impl Form {
 pub(in crate::analysis) fn withhold_indirect_owner_gap(
     finding: &mut Finding,
     index: &RustIndex,
+    workspace_complete: bool,
 ) -> bool {
     if finding.static_limit_kind.is_some()
         || !matches!(
@@ -91,7 +92,7 @@ pub(in crate::analysis) fn withhold_indirect_owner_gap(
         })
     });
     let judged: Vec<(String, Form)> = match owner {
-        Some(owner) => judged_for_owner(finding, owner, index),
+        Some(owner) => judged_for_owner(finding, owner, index, workspace_complete),
         None => generated_owner(finding, index).into_iter().collect(),
     };
     if judged.is_empty() {
@@ -171,6 +172,7 @@ fn judged_for_owner(
     finding: &Finding,
     owner: &FunctionFact,
     index: &RustIndex,
+    workspace_complete: bool,
 ) -> Vec<(String, Form)> {
     let mut judged = Vec::new();
     let is_related = |test: &TestFact, direct_only: bool| {
@@ -222,7 +224,8 @@ fn judged_for_owner(
         // is #13754's saving. Only the blanket hop (#6732) is defined by the
         // test NOT spelling the name, so it is judged here without the mask.
         if !test.body.contains(&*owner.name) {
-            if calls_blanket_entry(test)
+            if workspace_complete
+                && calls_blanket_entry(test)
                 && super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
                     test, owner, index,
                 )
@@ -256,7 +259,8 @@ fn judged_for_owner(
         // is judged even beside one that calls the owner by name: that direct
         // call can be weak while the blanket test discriminates, so the
         // direct assertion cannot establish a gap for the combined test set.
-        if calls_blanket_entry(test)
+        if workspace_complete
+            && calls_blanket_entry(test)
             && reaches_owner_only_through_blanket_impl(&code, owner, test, index)
         {
             judged.push((label(test), Form::BlanketImpl));
@@ -274,9 +278,16 @@ fn reaches_owner_only_through_blanket_impl(
     test: &TestFact,
     index: &RustIndex,
 ) -> bool {
-    // A mere mention of the owner's name (a local `let render = 0;`, a path
-    // segment) is not a call, so it must not block the judgment; only a direct
-    // call does (#13041 review).
+    // A direct call to the owner is a call site that resolves to the owner's
+    // impl type and trait. A same-named call on another receiver or through
+    // another module (`other::render()`) is not the owner and must not block
+    // the blanket judgment (#13041 review).
+    let (Some(owner_impl_type), Some(owner_trait)) = (
+        super::related_tests::impl_self_type_name(&owner.id.0),
+        super::related_tests::impl_trait_name(&owner.id.0),
+    ) else {
+        return false;
+    };
     let calls_owner = identifier_offsets(code, &owner.name).any(|at| {
         let after = code[at + owner.name.len()..].trim_start();
         let turbofish = after
@@ -284,7 +295,15 @@ fn reaches_owner_only_through_blanket_impl(
             .and_then(|rest| rest.trim_start().strip_prefix('<'))
             .and_then(after_generic_arguments)
             .is_some_and(|rest| rest.trim_start().starts_with('('));
-        after.starts_with(['(', '!']) || turbofish
+        (after.starts_with(['(', '!']) || turbofish)
+            && super::related_tests::method_call_site_resolves_to_impl_type_and_trait_in(
+                test,
+                code,
+                at,
+                &owner.name,
+                &owner_impl_type,
+                &owner_trait,
+            )
     });
     !calls_owner
         && super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(

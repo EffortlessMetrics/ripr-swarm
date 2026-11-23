@@ -6969,17 +6969,32 @@ pub(in crate::analysis) fn method_call_resolves_to_impl_type_in(
     method_call_resolves_to_impl_in(test, masked_body, method, impl_type, None)
 }
 
-/// [`method_call_resolves_to_impl_type_in`] with the dispatch trait known, so
-/// a qualified `Trait::method(&receiver)` or `<Type as Trait>::method(..)`
-/// resolves to the impl (#13041 review).
-pub(in crate::analysis) fn method_call_resolves_to_impl_type_and_trait_in(
+/// Whether the call of `method` at byte `at` of `masked_body` resolves its
+/// receiver to `impl_type` through `impl_trait`. Callers that must couple
+/// execution and receiver at one site use this instead of a whole-body scan,
+/// which can pair an executable site with a different site's receiver
+/// (#13041 review).
+pub(in crate::analysis) fn method_call_site_resolves_to_impl_type_and_trait_in(
     test: &TestSummary,
     masked_body: &str,
+    at: usize,
     method: &str,
     impl_type: &str,
     impl_trait: &str,
 ) -> bool {
-    method_call_resolves_to_impl_in(test, masked_body, method, impl_type, Some(impl_trait))
+    if method.is_empty() || impl_type.is_empty() {
+        return false;
+    }
+    call_site_resolves_to_type(
+        masked_body,
+        at,
+        method,
+        impl_type,
+        Some(impl_trait),
+        masked_body,
+        &test.body,
+        true,
+    )
 }
 
 fn method_call_resolves_to_impl_in(

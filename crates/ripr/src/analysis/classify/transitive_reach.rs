@@ -4287,6 +4287,31 @@ fn blanket_impl_type_param(header: &str) -> Option<String> {
     names_generic_param.then(|| param.to_string())
 }
 
+/// Whether a block head opens a nested item body. The keyword must be followed
+/// by the item's name (or `<` for a generic `impl`), so a `fn()` type in an
+/// `if` condition is not a nested item (#13041 review).
+fn head_opens_nested_item(head: &str) -> bool {
+    for keyword in ["fn", "impl", "trait", "mod"] {
+        let mut search = 0;
+        while let Some(relative) = head[search..].find(keyword) {
+            let at = search + relative;
+            let after = at + keyword.len();
+            let boundary_before = head[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch == '_' || ch.is_ascii_alphanumeric()));
+            let rest = head[after..].trim_start();
+            let boundary_after = rest.starts_with('<')
+                || rest.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_');
+            if boundary_before && boundary_after {
+                return true;
+            }
+            search = after;
+        }
+    }
+    false
+}
+
 /// Byte ranges of nested item bodies (`fn`, `impl`, `trait`, `mod`) inside
 /// `masked`, so a `self` call in a nested item is not read as the entry's own
 /// call. The entry's own body brace is the first one and is never a range
@@ -4301,10 +4326,7 @@ fn nested_item_body_ranges(masked: &str) -> Vec<(usize, usize)> {
         match byte {
             b'{' => {
                 let head = &masked[head_start..index];
-                let nested_item = !first_body
-                    && head
-                        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                        .any(|word| matches!(word, "fn" | "impl" | "trait" | "mod"));
+                let nested_item = !first_body && head_opens_nested_item(head);
                 first_body = false;
                 stack.push((index, nested_item));
                 head_start = index + 1;
@@ -4704,25 +4726,22 @@ pub(in crate::analysis) fn test_reaches_trait_owner_through_blanket_impl(
                     .and_then(header_trait_path)
                     .and_then(|path| bare_trait_name(&path).map(str::to_string));
                 entry_trait.is_some_and(|entry_trait| {
-                    // A call inside a closure the test never runs, or inside a
-                    // macro that discards its tokens, is not an executable
-                    // call site (#13041 review).
-                    let executable_call = super::related_tests::method_call_sites(
-                        &masked,
-                        entry.name.as_str(),
-                    )
-                    .any(|at| {
+                    // Execution and receiver are decided at the same call
+                    // site: an executable site that resolves to another type
+                    // must not combine with a discarded site that resolves to
+                    // the owner (#13041 review).
+                    super::related_tests::method_call_sites(&masked, entry.name.as_str()).any(|at| {
                         !super::related_tests::call_site_in_let_closure(&masked, at)
                             && !super::related_tests::call_site_in_discarded_macro(&masked, at)
-                    });
-                    executable_call
-                        && super::related_tests::method_call_resolves_to_impl_type_and_trait_in(
-                            test,
-                            &masked,
-                            entry.name.as_str(),
-                            &owner_impl_type,
-                            &entry_trait,
-                        )
+                            && super::related_tests::method_call_site_resolves_to_impl_type_and_trait_in(
+                                test,
+                                &masked,
+                                at,
+                                entry.name.as_str(),
+                                &owner_impl_type,
+                                &entry_trait,
+                            )
+                    })
                 })
             }
     })
@@ -8048,10 +8067,12 @@ fn real() {}
         entry.body = "fn to_text(&self) -> String {\n    stringify!(self.render())\n}".into();
         assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
         // A `self` call in a nested item belongs to that item, not the entry.
-        entry.body =
-            "fn to_text(&self) -> String {\n    fn unused(&self) { self.render(); }\n    String::new()\n}"
-                .into();
+        entry.body = "fn to_text(&self) -> String {\n    struct Unused;\n    impl Unused { fn render(&self) { self.render(); } }\n    String::new()\n}".into();
         assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
+        // A `fn()` type in a block head is not a nested item, so the outer
+        // call still counts.
+        entry.body = "fn to_text(&self) -> String {\n    if std::mem::size_of::<fn()>() > 0 { return self.render(); }\n    String::new()\n}".into();
+        assert!(blanket_impl_body_calls_self_method(&entry, "render"));
     }
 
     #[test]
@@ -8177,6 +8198,54 @@ fn real() {}
             crate::analysis::classify::related_tests::call_site_in_discarded_macro(text, at),
             "{text}"
         );
+    }
+
+    /// Execution and receiver are coupled at one call site: an executable call
+    /// on another type must not combine with a discarded call on the owner
+    /// (#13041 review).
+    #[test]
+    fn a_discarded_owner_call_does_not_combine_with_an_executable_other_call() {
+        let render_f64 = make_impl_fn(
+            "render",
+            "impl Render for f64",
+            vec![("is_sign_negative", "self.is_sign_negative()")],
+        );
+        let to_text_blanket = make_impl_fn(
+            "to_text",
+            "impl <T: Render> ToText for T",
+            vec![("render", "self.render()")],
+        );
+        let mut test = make_test("negative_zero", vec!["to_text"]);
+        test.body =
+            "let _ = (1u8).to_text();\nlet _ = stringify!((-0.0f64).to_text());\nassert_eq!(1, 1);"
+                .into();
+        test.calls = vec![
+            CallFact {
+                line: 1,
+                name: "to_text".to_string(),
+                text: "(1u8).to_text()".into(),
+            },
+            CallFact {
+                line: 2,
+                name: "to_text".to_string(),
+                text: "(-0.0f64).to_text()".into(),
+            },
+        ]
+        .into();
+        let index = index_with(
+            vec![
+                render_f64.clone(),
+                to_text_blanket,
+                trait_decl("render", "Render"),
+                trait_decl("to_text", "ToText"),
+            ],
+            vec![test.clone()],
+        );
+        assert!(!test_reaches_trait_owner_through_blanket_impl(
+            &test,
+            &render_f64,
+            &index,
+        ));
     }
 
     /// The blanket, the owner impl and the bound trait's declaration share one

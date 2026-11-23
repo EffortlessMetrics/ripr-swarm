@@ -1932,6 +1932,27 @@ fn a_blanket_hop_beside_an_unrelated_local_of_the_owner_name_still_withholds() -
 }
 
 #[test]
+fn a_blanket_hop_beside_an_unrelated_same_name_call_still_withholds() -> Result<(), String> {
+    // `other.render()` is a call on another receiver, not the owner, so the
+    // blanket hop is still the only reach (#13041 review).
+    let lib = blanket(
+        "    #[test]
+    fn negative_zero_keeps_its_sign() {
+        let other = 0i32;
+        assert_eq!(other.render(), 0);
+        assert_eq!((-0.0f64).to_text(), \"-0.0\");
+    }
+",
+    );
+    withheld(
+        &lib,
+        BLANKET_BEFORE,
+        BLANKET_AFTER,
+        "unrelated same-name call",
+    )
+}
+
+#[test]
 fn a_trait_qualified_blanket_call_is_reach() -> Result<(), String> {
     // `ToText::to_text(&-0.0f64)` names the entry trait outright (#13041 review).
     let lib = blanket(
