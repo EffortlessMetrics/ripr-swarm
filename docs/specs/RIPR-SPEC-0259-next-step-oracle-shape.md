@@ -70,8 +70,9 @@ alone:
   value). Each family states both branches so the reader is never left at a
   dead end. The step claims no observation and the class stays
   `weakly_exposed`. A related assertion that compares a value with a copy of
-  itself (`assert_eq!(b.0, b.0.clone())`, up to a trailing `.clone()`,
-  `.to_owned()`, `.to_vec()` or a leading borrow) never takes this step,
+  itself (`assert_eq!(b.0, b.0.clone())`: one place read on both sides, up to
+  a trailing `.clone()`, `.to_owned()`, `.to_vec()` or a leading borrow, as
+  RIPR-SPEC-0094 defines it) never takes this step,
   whatever strength the row carries: it cannot discriminate, so the family
   template stands.
 - Only reach-establishing rows are eligible: the row's relation reason must

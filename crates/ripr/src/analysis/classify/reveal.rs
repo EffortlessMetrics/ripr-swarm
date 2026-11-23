@@ -3984,32 +3984,49 @@ fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
 #[cfg(kani)]
 mod kani_proofs;
 
-/// True when an equality assertion's two operands are the same expression up
-/// to a trailing copy (`.clone()`, `.to_owned()`, `.to_vec()`) or a leading
-/// borrow (#13037). Such an assertion cannot tell the changed behavior from a
-/// wrong one. An exact self-comparison (`assert_eq!(x, x)`) is already a weak
+/// True when an equality assertion compares one stable value read with a copy
+/// of itself (#13037): both operands are the same place (a binding with
+/// optional field or tuple-index projections, `b.0`, `cfg.limits.max`), each
+/// with at most a leading borrow and trailing `.clone()`, `.to_owned()` or
+/// `.to_vec()` calls. Such an assertion cannot tell the changed behavior from a
+/// wrong one. Anything else is not read as a self-comparison: an operand with
+/// a call (`counter.next()` runs twice and can observe a state change), a
+/// literal (`render("a b")` and `render("ab")` differ), an index, a macro or an
+/// operator. An exact self-comparison (`assert_eq!(x, x)`) is already a weak
 /// relation at extraction (RIPR-SPEC-0231 step 3); this reads the copy forms
 /// relative to a probe, so the #6692 clone-field pin can still admit them.
 pub(in crate::analysis::classify) fn compares_value_with_its_own_copy(assertion: &str) -> bool {
-    fn base(operand: &str) -> String {
-        let mut text: String = operand.chars().filter(|c| !c.is_whitespace()).collect();
+    fn place(operand: &str) -> Option<String> {
+        let mut text = operand.trim();
         loop {
             let before = text.len();
+            text = text.strip_prefix('&').unwrap_or(text).trim_start();
             for suffix in [".clone()", ".to_owned()", ".to_vec()"] {
-                if let Some(stripped) = text.strip_suffix(suffix) {
-                    text = stripped.to_string();
-                }
-            }
-            if let Some(stripped) = text.strip_prefix('&') {
-                text = stripped.to_string();
+                text = text.strip_suffix(suffix).unwrap_or(text).trim_end();
             }
             if text.len() == before {
-                return text;
+                break;
             }
         }
+        let identifier = |segment: &str| {
+            segment
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_alphabetic() || ch == '_')
+                && segment.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        };
+        let segments: Vec<&str> = text.split('.').map(str::trim).collect();
+        let (root, projections) = segments.split_first()?;
+        (identifier(root)
+            && projections.iter().all(|segment| {
+                identifier(segment)
+                    || (!segment.is_empty() && segment.chars().all(|ch| ch.is_ascii_digit()))
+            }))
+        .then(|| segments.join("."))
     }
-    equality_operands(assertion)
-        .is_some_and(|[left, right]| !left.trim().is_empty() && base(&left) == base(&right))
+    equality_operands(assertion).is_some_and(|[left, right]| {
+        place(&left).is_some_and(|left| place(&right).is_some_and(|right| left == right))
+    })
 }
 
 /// A self-computed assertion's probe-relative strength is at most `weak`.
@@ -14801,6 +14818,39 @@ return Err(\"typed pin\".into());
         assert!(!compares_value_with_its_own_copy(
             "assert_eq!(b.0.len(), 1);"
         ));
+        // Review of #16154: only a stable place read is a self-comparison.
+        // A call runs twice and may observe state; literals keep their
+        // spaces; an index or operator is not a place.
+        assert!(compares_value_with_its_own_copy(
+            "assert_eq!(cfg . limits.max, &cfg.limits.max.to_owned());"
+        ));
+        for distinct in [
+            "assert_eq!(counter.next(), counter.next().clone());",
+            "assert_eq!(render(\"a b\"), render(\"ab\").clone());",
+            "assert_eq!(render(\"ab\"), render(\"ab\").clone());",
+            "assert_eq!(v[0], v[0].clone());",
+            "assert_eq!(a + b, (a + b).clone());",
+            "assert_eq!(b.0.len(), b.0.clone().len());",
+        ] {
+            assert!(!compares_value_with_its_own_copy(distinct), "{distinct}");
+        }
+        // A self-comparison beside an independent pin in the same test does
+        // not cost that pin its credit.
+        let test = test_with_assertions(
+            "rate_is_itself_and_pinned",
+            vec![
+                exact("assert_eq!(RATE, RATE.clone());"),
+                exact("assert_eq!(RATE, 8);"),
+            ],
+        );
+        let (discriminate, strength) = tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
+        assert_eq!(strength, OracleStrength::Strong);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
     }
 
     #[test]

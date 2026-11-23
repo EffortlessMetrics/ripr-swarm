@@ -709,10 +709,14 @@ nothing. These
 rules govern diff-mode reveal; repo exposure grading (`test_grip_evidence`)
 does not apply them yet.
 
-An equality that compares a value with a copy of itself (#13037), with the
-same operands up to a trailing `.clone()`, `.to_owned()` or `.to_vec()` and a
-leading borrow (`assert_eq!(b.0, b.0.clone())`), passes whatever the code under
-test produced. It is read like a self-computed expected value: it never
+An equality that compares one stable value read with a copy of itself
+(#13037) passes whatever the code under test produced. Both operands must be
+the same place, a binding with optional field or tuple-index projections
+(`b.0`, `cfg.limits.max`), up to a leading borrow and trailing `.clone()`,
+`.to_owned()` or `.to_vec()` calls (`assert_eq!(b.0, b.0.clone())`). An
+operand with a call is not one value read twice (`counter.next()` runs twice
+and can observe a state change), and a literal, index, macro or operator is
+not a place, so those keep their reading. It is read like a self-computed expected value: it never
 confirms observation and its probe-relative strength is at most `weak`, for
 every family, whether or not either side calls the owner. The one exception is
 the #6692 clone-field pin, where the owner is a hand-written `Clone::clone` and
