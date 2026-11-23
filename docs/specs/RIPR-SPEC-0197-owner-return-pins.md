@@ -2874,15 +2874,27 @@ call is the root of `?`, `.await`, parentheses and standard pass-through
 methods (`unwrap`, `expect`, `unwrap_or`, `clone`, `into` and similar), whose
 arguments are values the method selects or converts rather than invokes. A
 method that invokes a caller-supplied function item (`map(helper)`) is also
-transparent, because a function item cannot capture. A method that invokes a
-caller-supplied closure (`inspect(|v| seen = ..)`) is not, because the
-closure can capture and record the result where a later assertion reads it.
-Any other method is not transparent. A chain rooted
-anywhere else (`other(pick(0))`, `x.pick(0)` for a free function) does not
-count either. A read outside the untrusted macro of any other local whose
-initializer names the owner or such a local (`let actual = &pick(0);`, then
-`*actual`) observes the result, so the assertion keeps its parsed reading. Only the macro-held assertion loses its reading; an
-`.unwrap()` in the initializer still runs and keeps its own smoke oracle.
+transparent, because a function item cannot capture. A path argument is a
+function item only when it is not a local binding in the test: a closure bound
+to a local (`let callback = |v| ..; .inspect(callback)`) is also a path at its
+call site, and it can capture and record the result, so it is not transparent.
+A method that invokes a caller-supplied closure (`inspect(|v| seen = ..)`) is
+not transparent either, because the closure can capture and record the result
+where a later assertion reads it. Any other method is not transparent. A chain
+rooted anywhere else (`other(pick(0))`, `x.pick(0)` for a free function) does
+not count either. For a method owner, `.pick` is a call only when an argument
+list follows; `Holder { pick: .. }.pick` is a field access, not a call of the
+owner. A method call outside the macro is a free use of the owner only when
+its receiver is the receiver of a call the macro holds, `self`, `Self`, an
+owner type, or an owner-result local; an unrelated `other.new()` is not a call
+of `Widget::new`. A read
+outside the untrusted macro of any other local whose initializer names a call
+of the owner or such a local (`let actual = &pick(0);`, then `*actual`)
+observes the result, so the assertion keeps its parsed reading. A bare path to
+the function item (`let f = pick;`) or a field access (`let m = cfg.pick;`)
+names no call, so it does not make the alias carry the owner's result. Only
+the macro-held assertion loses its reading; an `.unwrap()` in the initializer
+still runs and keeps its own smoke oracle.
 
 ## Required Evidence
 
