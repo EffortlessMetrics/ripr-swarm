@@ -8,10 +8,10 @@
 
 use super::parse_clean_source_file;
 use super::ra::module_attributes_require_test;
-use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
+use crate::analysis::facts::cfg_predicates::{attribute_test_build_availability, rust_ident_name};
 use ra_ap_syntax::{
     AstNode, SyntaxKind, TextSize,
-    ast::{self, HasArgList, HasGenericParams, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
 };
 
 /// How the owner takes `self`, when it is a method.
@@ -68,6 +68,8 @@ pub(crate) struct OwnerSignature {
     pub(crate) is_unsafe: bool,
     /// Type or const generic parameters (lifetimes do not count).
     pub(crate) has_type_generics: bool,
+    /// A parameter projection cannot be spelled through the implemented trait in a test.
+    pub(crate) has_unnameable_parameter_projection: bool,
     /// Production (non-`cfg(test)`) modules enclosing the owner, outermost
     /// first, matching `production_owner_module_path`.
     pub(crate) parent_modules: Vec<String>,
@@ -872,9 +874,13 @@ fn signature_of(function: &ast::Fn) -> OwnerSignature {
         .filter_map(|module| module.name().map(|name| name.text().to_string()))
         .collect::<Vec<_>>();
     parent_modules.reverse();
+    let container = container_of(function);
+    let has_unnameable_parameter_projection = matches!(container, OwnerContainer::TraitImpl { .. })
+        && !stub_parameter_projections_are_nameable(function);
     OwnerSignature {
         name,
-        container: container_of(function),
+        container,
+        has_unnameable_parameter_projection,
         receiver,
         params,
         return_type,
@@ -883,6 +889,76 @@ fn signature_of(function: &ast::Fn) -> OwnerSignature {
         has_type_generics,
         parent_modules,
     }
+}
+
+/// A binding in this impl establishes that `<T as Trait>::Name`
+/// names the same item as `Self::Name`. A supertrait can supply that name too.
+fn stub_parameter_projections_are_nameable(function: &ast::Fn) -> bool {
+    let mut types = function
+        .param_list()
+        .into_iter()
+        .flat_map(|params| params.params())
+        .filter_map(|param| param.ty());
+    let items = function
+        .syntax()
+        .parent()
+        .and_then(ast::AssocItemList::cast);
+    let defines_member = |name: &str| {
+        items
+            .iter()
+            .flat_map(|items| items.assoc_items())
+            .any(|item| {
+                // Array lengths and const arguments may also use `Self::NAME`.
+                let (declared, mut attrs) = match item {
+                    ast::AssocItem::TypeAlias(alias) => (alias.name(), alias.attrs()),
+                    ast::AssocItem::Const(constant) => (constant.name(), constant.attrs()),
+                    _ => return false,
+                };
+                declared.is_some_and(|declared| {
+                    rust_ident_name(declared.text()) == rust_ident_name(name)
+                }) && attrs.all(|attr| {
+                    attribute_test_build_availability(&attr.syntax().text().to_string())
+                        == Some(true)
+                })
+            })
+    };
+    types.all(|ty| {
+        // Include projections inside type macros. Ignore comments and literals.
+        let mut tokens = ty
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+            .peekable();
+        while let Some(token) = tokens.next() {
+            if token.text() != "Self" {
+                continue;
+            }
+            let Some(colons) = tokens
+                .next_if(|token| matches!(token.kind(), SyntaxKind::COLON2 | SyntaxKind::COLON))
+            else {
+                continue;
+            };
+            // Macro token trees carry the two punctuation tokens separately.
+            if colons.kind() == SyntaxKind::COLON
+                && tokens
+                    .next_if(|token| token.kind() == SyntaxKind::COLON)
+                    .is_none()
+            {
+                continue;
+            }
+            let Some(name) = tokens.next() else {
+                return false;
+            };
+            // The type renderer rewrites the literal prefix `Self::`.
+            if token.text_range().end() != colons.text_range().start()
+                || !defines_member(name.text())
+            {
+                return false;
+            }
+        }
+        true
+    })
 }
 
 fn container_of(function: &ast::Fn) -> OwnerContainer {
