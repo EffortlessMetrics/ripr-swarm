@@ -130,6 +130,7 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
         if statement.let_else().is_some() || !is_owner_call(&initializer, owner) {
             continue;
         }
+        let declared_at = name.syntax().text_range();
         let name = name.text().to_string();
         let declarations = function
             .syntax()
@@ -146,13 +147,15 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
             .filter_map(|element| element.into_token())
             .filter(|token| !token.kind().is_trivia())
             .collect();
-        let mentions = (0..tokens.len())
-            .filter(|&at| reads_local(&tokens, at, &name))
+        // The declaring name token is excluded by its range, so a typed
+        // `let r: T = ..` (whose name a `:` follows) is not miscounted.
+        let uses = (0..tokens.len())
+            .filter(|&at| {
+                !declared_at.contains_range(tokens[at].text_range())
+                    && reads_local(&tokens, at, &name)
+            })
             .count();
-        locals.push(OwnerResultLocal {
-            name,
-            uses: mentions.saturating_sub(1),
-        });
+        locals.push(OwnerResultLocal { name, uses });
     }
     locals
 }
@@ -682,6 +685,16 @@ mod tests {
             ),
             (
                 "let r = pick(0); let _ = fixture.r; let _ = m::r; let _ = S { r: 1 };",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let r: Result<Mode, ()> = pick(0); let s = r.clone();",
+                "assert_eq!(check_ok!(r), s)",
+                false,
+            ),
+            (
+                "let r: Result<Mode, ()> = pick(0);",
                 "assert_eq!(check_ok!(r), Mode::A)",
                 true,
             ),

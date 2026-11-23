@@ -281,6 +281,13 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "whole_object_equality",
         ),
         (
+            "a typed local read again through a clone is observed",
+            CHECK_OK,
+            "let r: Result<Mode, ()> = pick(0);\n        let s = r.clone();\n        assert_eq!(check_ok!(r), s);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
             "the standard vec! evaluates the bound result",
             "",
             "let r = pick(0);\n        assert_eq!(vec![r], vec![Ok(Mode::A)]);",
