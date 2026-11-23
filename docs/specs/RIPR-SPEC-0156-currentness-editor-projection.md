@@ -83,7 +83,11 @@ no end-to-end corpus a downstream consumer could run against.
     after a closed comment (`/* note */ return value;`) is code, and an
     unreadable candidate file unpairs nothing. A comment line inside a
     template literal is not told apart from a comment. A comment added beside replacement code keeps its
-    pairing: the code line of the run carries the change. Before this
+    pairing: the code line of the run carries the change. In Python that
+    holds only while a code line of the run has no counterpart of its own
+    (#16011): when every code line of the run is already paired, the
+    comment replaced nothing, so its removed line keeps the removed-only
+    record instead of disappearing behind a line that carries no probe. Before this
     rule Python reported the comment text as a changed `predicate` and
     could grade it `exposed`, and TypeScript recorded nothing for the
     removed line.

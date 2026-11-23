@@ -2217,6 +2217,36 @@ fn code_replaced_by_a_comment_and_an_import_is_base_side_evidence() -> Result<()
     Ok(())
 }
 
+/// A comment that opens an added run with code replaces nothing either
+/// (#16011). The diff pairs it with the first removed line by coordinate;
+/// keeping that pair hid the removed line, since a comment inside a run with
+/// code carries no probe, so the deletion had no record at all.
+#[test]
+fn code_beside_a_comment_in_a_run_with_code_keeps_its_base_side_record() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Clamp below as well.\n    result = max(result, 0)\n    return result\n";
+    let findings = analyze_with_test(
+        "comment-in-code-run",
+        source,
+        CAP_TEST_PY,
+        &[3, 4],
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+        ],
+    )?;
+    assert!(
+        candidate_side(&findings)
+            .iter()
+            .all(|(_, text)| !text.starts_with('#')),
+        "{findings:?}"
+    );
+    assert!(
+        base_side_texts(&findings).contains(&"if total > cap:".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
 /// A `#` line inside a multi-line string is content. It replaced the old
 /// content line, so the pair stays an edit on the candidate side.
 #[test]

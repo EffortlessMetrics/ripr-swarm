@@ -569,9 +569,13 @@ pub(super) struct ImportLines<'a> {
 /// its comment or blank lines was deleted, so it keeps its own base-side
 /// record instead of lending its probe shape to the comment text; so does a
 /// removed line an added `import` stands on, unless it was an import itself
-/// (an import that replaces an import re-points a name). A line inside a
-/// multi-line string is content, not a comment; with no `string_lines` (an
-/// unreadable or unlexable file) every pair is kept.
+/// (an import that replaces an import re-points a name). A comment or blank
+/// added line in a run with code replaced nothing either when every code
+/// line of the run has its own counterpart (#16011): its pair is dropped
+/// too, so the removed line is not hidden behind a line that carries no
+/// probe. A line inside a multi-line string is content, not a
+/// comment; with no `string_lines` (an unreadable or unlexable file) every
+/// pair is kept.
 pub(super) fn unpair_runs_without_code(
     changed: &super::ChangedFile,
     string_lines: Option<&[std::ops::RangeInclusive<usize>]>,
@@ -594,20 +598,49 @@ pub(super) fn unpair_runs_without_code(
                 || is_python_import_line(&added.text)
                 || super::line_is_in_ranges(added.line, imports.added))
     });
-    if codeless.is_empty() {
-        return;
-    }
     let comment_or_blank: std::collections::BTreeSet<usize> = changed
         .added_lines
         .iter()
-        .filter(|added| codeless.contains(&added.line) && is_comment_or_blank(&added.text))
+        .filter(|added| {
+            !super::line_is_in_ranges(added.line, string_lines) && is_comment_or_blank(&added.text)
+        })
         .map(|added| added.line)
         .collect();
+    // A comment pair in a run with code is dropped only when every code line
+    // of the run already has its own counterpart; an unpaired code line in
+    // the run is where the removed line was rewritten, and it carries the
+    // probe.
+    let quiet = |added: &ChangedLine| {
+        comment_or_blank.contains(&added.line)
+            || is_python_import_line(&added.text)
+            || super::line_is_in_ranges(added.line, imports.added)
+    };
+    let added_at: std::collections::BTreeMap<usize, &ChangedLine> = changed
+        .added_lines
+        .iter()
+        .map(|added| (added.line, added))
+        .collect();
+    let run_has_unpaired_code = |line: usize| {
+        let mut start = line;
+        while start > 0 && added_at.contains_key(&(start - 1)) {
+            start -= 1;
+        }
+        (start..)
+            .map_while(|index| added_at.get(&index))
+            .any(|added| !quiet(added) && !counterparts.contains_key(&added.line))
+    };
+    let replaced_nothing: std::collections::BTreeSet<usize> = comment_or_blank
+        .iter()
+        .copied()
+        .filter(|line| counterparts.contains_key(line) && !run_has_unpaired_code(*line))
+        .collect();
     counterparts.retain(|added_line, removed| {
+        if replaced_nothing.contains(added_line) {
+            return false;
+        }
         !codeless.contains(added_line)
-            || (!comment_or_blank.contains(added_line)
-                && (is_python_import_line(&removed.text)
-                    || super::line_is_in_ranges(removed.line, imports.removed)))
+            || is_python_import_line(&removed.text)
+            || super::line_is_in_ranges(removed.line, imports.removed)
     });
 }
 
