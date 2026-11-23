@@ -138,7 +138,7 @@ impl PythonTermFacts {
 
 /// The rule 20 facts of a function owner.
 pub(super) fn term_facts(
-    source: &str,
+    source: &SourceText<'_>,
     body: &[Stmt],
     parameters: &[PythonParameter],
     owner_text: &str,
@@ -178,15 +178,24 @@ pub(super) fn term_facts(
         }
         _ => None,
     };
+    // Each statement's text and start line are read once; the line comes
+    // from the source's line index, not a rescan of the file prefix.
+    let statements: Vec<(String, usize)> = body
+        .iter()
+        .map(|statement| {
+            (
+                text_for_range(source, statement.range()),
+                line_for_range_start(source, statement.range()),
+            )
+        })
+        .collect();
     let first_mention_lines = parameters
         .iter()
         .filter_map(|parameter| {
-            let statement = body.iter().find(|statement| {
-                code_mentions(&text_for_range(source, statement.range()), &parameter.name)
-            })?;
-            let start = usize::from(statement.range().start());
-            let line = source.get(..start)?.matches('\n').count() + 1;
-            Some((parameter.name.clone(), line))
+            let (_, line) = statements
+                .iter()
+                .find(|(text, _)| code_mentions(text, &parameter.name))?;
+            Some((parameter.name.clone(), *line))
         })
         .collect();
     PythonTermFacts {

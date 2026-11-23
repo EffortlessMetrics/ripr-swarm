@@ -39,7 +39,7 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `clean`
-  - infection weak: Related tests reach the changed call, but no strong related test call passes `s` with trailing whitespace, so `s.strip()` and `s.lstrip()` return the same value
+  - infection weak: Related tests reach the changed call, but no strong related test call passes `s` with text followed by trailing whitespace, so `s.strip()` and `s.lstrip()` return the same value
   - propagation yes: Changed Python return value is already at the owner output boundary
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
@@ -47,11 +47,11 @@ Evidence
   - related test tests/test_lib.py:4 test_clean uses strong exact value oracle: assert clean("  a") == "a"
 
 Weakness
-  - A strong Python oracle reaches `clean`, but the edit only changes `s.strip()` to `s.lstrip()`, and no strong related call passes `s` with trailing whitespace; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `clean` with `s` with trailing whitespace
-  - missing discriminator call `clean` with `s` with trailing whitespace: the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call passes `s` with trailing whitespace
+  - A strong Python oracle reaches `clean`, but the edit only changes `s.strip()` to `s.lstrip()`, and no strong related call passes `s` with text followed by trailing whitespace; both versions return the same value for every related input, so static evidence cannot confirm the change is discriminated. Add a test that calls `clean` with `s` with text followed by trailing whitespace
+  - missing discriminator call `clean` with `s` with text followed by trailing whitespace: the change at line 2 only changes `s.strip()` to `s.lstrip()`, and no related call passes `s` with text followed by trailing whitespace
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `clean` with `s` with trailing whitespace`
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `clean` with `s` with text followed by trailing whitespace`
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -61,8 +61,8 @@ Python repair card (preview/advisory)
   changed owner: clean
   changed behavior: return_value changed at src/lib.py:2: `return s.lstrip()`
   current test evidence: tests/test_lib.py:4 test_clean currently has oracle_strength=strong, oracle_kind=exact_value: assert clean("  a") == "a"
-  missing discriminator: call `clean` with `s` with trailing whitespace
-  recommended test shape: Strengthen the existing pytest exact return-value assertion for `call `clean` with `s` with trailing whitespace`.
+  missing discriminator: call `clean` with `s` with text followed by trailing whitespace
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `call `clean` with `s` with text followed by trailing whitespace`.
   suggested assertion: Assert the returned value equals the expected value for the changed inputs.
   suggested file: tests/test_lib.py
   suggested test: test_clean

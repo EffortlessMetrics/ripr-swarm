@@ -18,8 +18,9 @@
 //! no call at all, leaves the verdict to the other rules.
 
 use super::PythonOwner;
+use super::arm_activation::builtin_names_intact;
 use super::assertion_selection::PythonAssertionFocus;
-use super::boundary::{literals_equal, strong_owner_call_values};
+use super::boundary::{PARAMETRIZE_ROW_MARKER, strong_owner_call_values};
 use super::discriminators::python_string_literal_value;
 use super::related_tests::PythonRelatedCandidate;
 use super::term_activation::code_mention_count;
@@ -216,16 +217,32 @@ pub(super) fn python_call_variant_evidence(
     new_line: &str,
     line: usize,
     owner: &PythonOwner,
+    owner_source: Option<&str>,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<PythonCallVariantEvidence> {
     if !matches!(
         owner.owner_kind,
         Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
-    ) {
+    ) || owner.term_facts.calls_own_name()
+    {
+        // A recursive call can pass the changed call a value no test call
+        // spells.
         return None;
     }
     let variant = call_variant(old_line, new_line)?;
+    // A bare `round` or `sorted` is the builtin only when nothing in the
+    // owner's file rebinds the name.
+    let builtin = match &variant {
+        CallVariant::Round { .. } => Some("round"),
+        CallVariant::Sort { old_call, .. } if old_call.starts_with("sorted(") => Some("sorted"),
+        _ => None,
+    };
+    if let Some(name) = builtin
+        && !owner_source.is_some_and(|source| builtin_names_intact(owner, source, &[name]))
+    {
+        return None;
+    }
     let param = match &variant {
         CallVariant::Strip { param, .. }
         | CallVariant::Round { param, .. }
@@ -254,6 +271,11 @@ pub(super) fn python_call_variant_evidence(
     }
     for row in &rows {
         let agrees = if matches!(variant, CallVariant::Sort { .. }) {
+            // A parametrized list may be changed in place by the test body
+            // before the call, so only a list the call spells is read.
+            if row.text.contains(PARAMETRIZE_ROW_MARKER) {
+                return None;
+            }
             elements_agree(row.elements.get(param)?)?
         } else {
             variant_agrees(&variant, row.values.get(param)?)?
@@ -297,11 +319,28 @@ pub(super) fn elements_agree(elements: &[String]) -> Option<bool> {
         return Some(true);
     };
     for element in elements {
-        if !literals_equal(first, element)? {
+        if !same_element(first, element)? {
             return Some(false);
         }
     }
     Some(true)
+}
+
+/// Whether two element literals hold the same value: the same spelling, two
+/// plain strings with the same text, or two ints with the same value. Mixed
+/// or float spellings are not read: an int and a float that print alike can
+/// differ once the float is rounded to binary (`2**53 + 1` and its float).
+fn same_element(left: &str, right: &str) -> Option<bool> {
+    let (left, right) = (left.trim(), right.trim());
+    if left == right {
+        return Some(true);
+    }
+    let plain = |text: &str| text.starts_with(['"', '\'']) && !text.contains('\\');
+    if plain(left) && plain(right) {
+        return Some(python_string_literal_value(left)? == python_string_literal_value(right)?);
+    }
+    let int = |text: &str| text.replace('_', "").parse::<i128>().ok();
+    Some(int(left)? == int(right)?)
 }
 
 /// Whether both versions of the call give the same result for one literal
@@ -340,9 +379,9 @@ fn strip<'a>(text: &'a str, side: &str) -> Option<&'a str> {
 
 fn strip_discriminator(old: &str, new: &str) -> &'static str {
     match (old, new) {
-        ("strip", "lstrip") | ("lstrip", "strip") => "trailing whitespace",
-        ("strip", "rstrip") | ("rstrip", "strip") => "leading whitespace",
-        _ => "leading or trailing whitespace",
+        ("strip", "lstrip") | ("lstrip", "strip") => "text followed by trailing whitespace",
+        ("strip", "rstrip") | ("rstrip", "strip") => "leading whitespace before text",
+        _ => "leading or trailing whitespace around text",
     }
 }
 

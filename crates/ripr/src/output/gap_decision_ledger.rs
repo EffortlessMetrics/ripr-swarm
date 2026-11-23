@@ -5907,7 +5907,10 @@ mod tests {
         // `python_strip_side_no_exposed_credit` keeps a `strip` -> `lstrip`
         // edit no related call separates weakly exposed; its card names a
         // string with trailing whitespace, one more direct-aligned card.
-        if (direct, no_strong, orthogonal, family_selection) != (30, 36, 49, 2) {
+        // `python_round_digits_no_exposed_credit` and
+        // `python_sort_direction_no_exposed_credit` do the same for a `round`
+        // digit count and a sort direction, two more direct-aligned cards.
+        if (direct, no_strong, orthogonal, family_selection) != (32, 36, 49, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

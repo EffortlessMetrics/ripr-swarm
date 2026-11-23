@@ -2206,12 +2206,17 @@ version keeps, a number with more decimal places than the smaller count, or a
 collection holding two different elements. The parameter must be one the body
 never rebinds; for a sort, the changed line must also be the start of the first
 top-level body statement that names the parameter, and name it once, so the
-sort sees the collection the test passed. When every strong related call binds
-it to a plain literal the rule evaluates (a quoted string without escapes, an
-int or decimal float, or a list, tuple or set display of such scalars) and both
-versions give the same result, the edit reads `weakly_exposed` and the missing
-discriminator names the separating input. A call the reader cannot
-resolve, or no resolved call at all, leaves the reading to the other rules.
+sort sees the collection the test passed. A bare `round` or `sorted` must name
+the builtin (nothing in the owner's file rebinds it), the owner must not call
+itself, and a line inside a multiline string is never read as a call. When
+every strong related call binds the parameter to a plain literal the rule
+evaluates (a quoted string without escapes, an int or decimal float, or a list,
+tuple or set display the call itself spells, not a parametrize case value the
+test may change in place) and both versions give the same result, the edit
+reads `weakly_exposed` and the missing discriminator names the separating
+input. List elements agree only when they share a spelling or are plain strings
+or ints of equal value. A call the reader cannot resolve, or no resolved call
+at all, leaves the reading to the other rules.
 
 Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
 `call_variant_tests.rs::an_input_with_trailing_whitespace_keeps_strip_to_lstrip_exposed`,
@@ -2225,7 +2230,11 @@ Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_
 `call_variant_tests.rs::an_unread_list_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::a_list_the_body_changes_before_the_sort_keeps_its_reading`,
 `call_variant_tests.rs::only_a_lone_reverse_flag_flip_on_a_named_sort_is_read`,
-`call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`.
+`call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`,
+`call_variant_tests.rs::a_module_round_or_sorted_keeps_its_reading`,
+`call_variant_tests.rs::a_parametrized_list_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_recursive_owner_keeps_its_reading`,
+`call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`.
 
 ## Changed Range Header Amendment (#12948)
 

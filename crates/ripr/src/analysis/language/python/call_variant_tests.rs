@@ -3,20 +3,34 @@
 
 use super::call_variant::{CallVariant, call_variant, elements_agree, variant_agrees};
 use super::owners_tests::{extract_owners, extract_tests};
+use super::reexport_tests::{unique_tempdir, write_file};
 use super::*;
 
 const SOURCE: &str = "def clean(s):\n    return s.strip()\n\n\ndef money(x):\n    return round(x, 2)\n\n\ndef top(xs):\n    return sorted(xs)[0]\n\n\ndef low(xs):\n    xs.append(9)\n    return sorted(xs)[0]\n";
 
 fn classify(line: usize, old: &str, new: &str, test_source: &str) -> Result<Finding, String> {
-    let owners = extract_owners(Path::new("src/text.py"), SOURCE);
+    classify_in(SOURCE, line, old, new, test_source)
+}
+
+/// Classifies a change with the owner file's new-side source, as the diff
+/// path does, so the builtin-name check can read it.
+fn classify_in(
+    source: &str,
+    line: usize,
+    old: &str,
+    new: &str,
+    test_source: &str,
+) -> Result<Finding, String> {
+    let owners = extract_owners(Path::new("src/text.py"), source);
     let tests = extract_tests(Path::new("tests/test_text.py"), test_source);
-    classify_change_with_old(
+    classify_change_with_source(
         Path::new("src/text.py"),
         line,
         new,
         Some(old),
         &owners,
         &tests,
+        Some(source),
     )
     .ok_or_else(|| "a call change should classify".to_string())
 }
@@ -59,7 +73,8 @@ fn inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip() -> Result<
             .activation
             .missing_discriminators
             .iter()
-            .any(|fact| fact.value == "call `clean` with `s` with trailing whitespace"),
+            .any(|fact| fact.value
+                == "call `clean` with `s` with text followed by trailing whitespace"),
         "{:?}",
         finding.activation.missing_discriminators
     );
@@ -329,8 +344,131 @@ fn sorting_agrees_only_without_two_different_elements() {
     };
     assert_eq!(elements_agree(&list(&[])), Some(true));
     assert_eq!(elements_agree(&list(&["4"])), Some(true));
-    assert_eq!(elements_agree(&list(&["2", "2.0"])), Some(true));
+    assert_eq!(elements_agree(&list(&["2", "2"])), Some(true));
+    assert_eq!(elements_agree(&list(&["1_000", "1000"])), Some(true));
+    // An int and a float are not read: `2**53 + 1` and its float differ.
+    assert_eq!(
+        elements_agree(&list(&["9007199254740993", "9007199254740993.0"])),
+        None
+    );
+    assert_eq!(elements_agree(&list(&["2", "2.0"])), None);
     assert_eq!(elements_agree(&list(&["\"a\"", "'a'"])), Some(true));
     assert_eq!(elements_agree(&list(&["4", "1"])), Some(false));
     assert_eq!(elements_agree(&list(&["\"a\"", "\"b\""])), Some(false));
+    assert_eq!(elements_agree(&list(&["\"a\\n\"", "'a\\n'"])), None);
+}
+
+#[test]
+fn a_module_round_or_sorted_keeps_its_reading() -> Result<(), String> {
+    // The module's own `round` adds its digits, so `money(1.5)` gives 3.5
+    // before and 4.5 after; the builtin model must not be applied.
+    let round_source =
+        "def round(x, n):\n    return x + n\n\n\ndef money(x):\n    return round(x, 2)\n";
+    let finding = classify_in(
+        round_source,
+        6,
+        "    return round(x, 2)",
+        "    return round(x, 3)",
+        "from src.text import money\n\n\ndef test_money():\n    assert money(1.5) == 3.5\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    // The module's own `sorted` ignores the flag here, but the rule cannot
+    // know what a rebound name does, so it leaves the reading alone.
+    let sorted_source = "def sorted(xs, reverse=False):\n    return list(xs)\n\n\ndef top(xs):\n    return sorted(xs)[0]\n";
+    let finding = classify_in(
+        sorted_source,
+        6,
+        "    return sorted(xs)[0]",
+        "    return sorted(xs, reverse=True)[0]",
+        "from src.text import top\n\n\ndef test_top():\n    assert top([4]) == 4\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    // The same sort with the builtin intact still reads weakly.
+    let finding = classify_in(
+        "def top(xs):\n    return sorted(xs)[0]\n",
+        2,
+        "    return sorted(xs)[0]",
+        "    return sorted(xs, reverse=True)[0]",
+        "from src.text import top\n\n\ndef test_top():\n    assert top([4]) == 4\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn a_parametrized_list_keeps_a_sort_direction_flip_exposed() -> Result<(), String> {
+    // The test changes the decorator's list in place before the call.
+    let finding = classify_top(
+        "import pytest\n\nfrom src.text import top\n\n\n@pytest.mark.parametrize(\"xs\", [[4]])\ndef test_top(xs):\n    xs.append(9)\n    assert top(xs) == 4\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_recursive_owner_keeps_its_reading() -> Result<(), String> {
+    // `tidy("a!")` recurses with `"a "`, where `strip` and `lstrip` differ.
+    let source = "def tidy(s):\n    if s.endswith(\"!\"):\n        return tidy(s[:-1] + \" \")\n    return s.strip()\n";
+    let finding = classify_in(
+        source,
+        4,
+        "    return s.strip()",
+        "    return s.lstrip()",
+        "from src.text import tidy\n\n\ndef test_tidy():\n    assert tidy(\"a!\") == \"a\"\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call() -> Result<(), String> {
+    let root = unique_tempdir("call-variant-multiline-string")?;
+    let production = PathBuf::from("src/text.py");
+    write_file(
+        &root.join(&production),
+        "def template(s):\n    return \"\"\"\n    return s.lstrip()\n    \"\"\".strip() + s\n",
+    )?;
+    write_file(
+        &root.join("tests/test_text.py"),
+        "from src.text import template\n\n\ndef test_template():\n    assert template(\"a\") == \"return s.strip()a\"\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let changed_line = |text: &str| crate::analysis::diff::ChangedLine {
+        line: 3,
+        new_side_line: 3,
+        text: text.to_string(),
+    };
+    let changed_files = vec![ChangedFile {
+        path: production,
+        added_lines: vec![changed_line("    return s.lstrip()")],
+        removed_lines: vec![changed_line("    return s.strip()")],
+    }];
+    let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    let read_as_call = result.findings.iter().any(|finding| {
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value.contains("trailing whitespace"))
+    });
+    assert!(!read_as_call, "{:#?}", result.findings);
+    Ok(())
 }

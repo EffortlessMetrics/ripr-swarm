@@ -22,15 +22,18 @@ Start here:
   Gap ID (for scripts): gap:python:src/lib.py:clean:return_value:return_value:s.lstrip
   Changed behavior: return s.lstrip()
   Missing check (1 of 2): A strong Python oracle reaches `clean`, but the edit only changes
-    `s.strip()` to `s.lstrip()`, and no strong related call passes `s` with trailing whitespace;
-    both versions return the same value for every related input, so static evidence cannot confirm
-    the change is discriminated. Add a test that calls `clean` with `s` with trailing whitespace
+    `s.strip()` to `s.lstrip()`, and no strong related call passes `s` with text followed by
+    trailing whitespace; both versions return the same value for every related input, so static
+    evidence cannot confirm the change is discriminated. Add a test that calls `clean` with `s` with
+    text followed by trailing whitespace
   Related test: tests/test_lib.py:4 test_clean
   Suggested test file: tests/test_lib.py
   Suggested test: test_clean
   Test node: tests/test_lib.py::test_clean
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_strip_side_no_exposed_credit/input && python -m pytest tests/test_lib.py::test_clean) (high)
-  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `call `clean` with `s` with trailing whitespace`
+  Next step — Python preview: strengthen the existing related test with an exact return-value
+    assertion for the missing check `call `clean` with `s` with text followed by trailing
+    whitespace`
   Evidence: reach yes · infection weak · propagation yes · observation weak · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -43,7 +46,7 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 1 related Python test(s) found for owner `clean`
-    - infection weak: Related tests reach the changed call, but no strong related test call passes `s` with trailing whitespace, so `s.strip()` and `s.lstrip()` return the same value
+    - infection weak: Related tests reach the changed call, but no strong related test call passes `s` with text followed by trailing whitespace, so `s.strip()` and `s.lstrip()` return…
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
