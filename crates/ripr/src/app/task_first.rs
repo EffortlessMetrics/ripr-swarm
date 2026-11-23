@@ -1372,8 +1372,9 @@ pub(crate) fn resolve_repair_start(
                             ))
                         } else if super::gap_bound_repair::finding_is_static_limited(finding) {
                             // #15926: check's top gap (the finding its human
-                            // triage selects) leads the open rows, so the cap
-                            // never hides it; the rest follow report order.
+                            // triage selects), when it is a changed candidate
+                            // check closes, leads the open rows so the cap
+                            // does not hide it; the rest follow report order.
                             let rank = if check_top.is_some_and(|top| std::ptr::eq(top, finding)) {
                                 0
                             } else {
