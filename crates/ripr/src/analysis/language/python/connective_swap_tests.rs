@@ -2,7 +2,7 @@
 //! swaps `and` for `or` is discriminated only by a call where its operands
 //! disagree.
 
-use super::connective_swap::swapped_connective;
+use super::connective_swap::{compare, swapped_connective, truthy};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::*;
 
@@ -54,6 +54,12 @@ fn agreeing_operands_do_not_expose_an_and_or_swap() -> Result<(), String> {
         "{:?}",
         finding.activation.missing_discriminators
     );
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
+    assert!(
+        finding.ripr.infect.summary.contains("same truth value"),
+        "{}",
+        finding.ripr.infect.summary
+    );
     Ok(())
 }
 
@@ -63,6 +69,7 @@ fn a_call_with_disagreeing_operands_keeps_exposed() -> Result<(), String> {
         "from src.rules import ok\n\n\ndef test_ok():\n    assert ok(1, 2) is True\n    assert ok(1, -2) is False\n",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Yes);
     Ok(())
 }
 
@@ -126,6 +133,19 @@ fn only_a_lone_connective_swap_between_simple_operands_is_read() {
         swapped_connective("return f(a) and b", "return f(a) or b"),
         None
     );
+    // A `return` of a bare operand gives that operand's value, not its
+    // truth value: `1 and 2` is 2, `1 or 2` is 1.
+    assert_eq!(swapped_connective("return a and b", "return a or b"), None);
+    assert_eq!(
+        swapped_connective("return a > 0 and b", "return a > 0 or b"),
+        None
+    );
+    assert_eq!(
+        swapped_connective("if a and b:", "if a or b:"),
+        Some(("a".to_string(), "b".to_string()))
+    );
+    // A line that also changes its block.
+    assert_eq!(swapped_connective("    if a and b:", "if a or b:"), None);
     // Not a condition statement.
     assert_eq!(swapped_connective("x = a and b", "x = a or b"), None);
     // A comment on the line.
@@ -133,4 +153,55 @@ fn only_a_lone_connective_swap_between_simple_operands_is_read() {
         swapped_connective("return a and b  # both", "return a or b  # both"),
         None
     );
+}
+
+#[test]
+fn a_static_method_swap_reads_its_calls() -> Result<(), String> {
+    let source =
+        "class Rules:\n    @staticmethod\n    def ok(a, b):\n        return a > 0 and b > 0\n";
+    let owners = extract_owners(Path::new("src/rules.py"), source);
+    let finding = |test_source: &str| {
+        let tests = extract_tests(Path::new("tests/test_rules.py"), test_source);
+        classify_change_with_old(
+            Path::new("src/rules.py"),
+            4,
+            "        return a > 0 or b > 0",
+            Some("        return a > 0 and b > 0"),
+            &owners,
+            &tests,
+        )
+        .ok_or_else(|| "a condition change should classify".to_string())
+    };
+    let agreeing = finding(
+        "from src.rules import Rules\n\n\ndef test_ok():\n    assert Rules.ok(1, 2) is True\n",
+    )?;
+    assert_eq!(agreeing.class, ExposureClass::WeaklyExposed);
+    let disagreeing = finding(
+        "from src.rules import Rules\n\n\ndef test_ok():\n    assert Rules.ok(1, -2) is False\n",
+    )?;
+    assert_eq!(disagreeing.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn operand_values_follow_python_comparison_and_truth() {
+    // Ints compare exactly, past the last exact float.
+    assert_eq!(
+        compare("1700000000000000001", ">", "1700000000000000000"),
+        Some(true)
+    );
+    assert_eq!(
+        compare("9007199254740993", "==", "9007199254740992.0"),
+        None
+    );
+    assert_eq!(compare("2", ">=", "1.5"), Some(true));
+    // Strings with escapes or prefixes are not read.
+    assert_eq!(compare("\"\\n\"", "==", "\"\\x0a\""), None);
+    assert_eq!(compare("\"a\"", "==", "'a'"), Some(true));
+    assert_eq!(truthy("\"\"\"\"\"\""), Some(false));
+    assert_eq!(truthy("''"), Some(false));
+    assert_eq!(truthy("' '"), Some(true));
+    assert_eq!(truthy("b''"), None);
+    assert_eq!(truthy("0.000"), Some(false));
+    assert_eq!(truthy("-0.5"), Some(true));
 }

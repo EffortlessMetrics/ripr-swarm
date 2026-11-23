@@ -8,8 +8,9 @@
 //!
 //! The rule reads one line: `return <A> <op> <B>` or `if`/`elif <A> <op> <B>:`,
 //! where `<op>` is the only top-level `and`/`or` and each operand is a
-//! parameter, `not` a parameter, or one comparison between a parameter, a
-//! literal or an unrebound module constant. Operand values come from the
+//! parameter (in a condition only: `return a or b` returns an operand, not
+//! its truth value), `not` a parameter, or one comparison between a
+//! parameter, a literal or an unrebound module constant. Operand values come from the
 //! strong related calls the boundary rule reads (`boundary.rs`). Any call that
 //! does not resolve both operands, a parameter the body may rebind, or no call
 //! at all, leaves the verdict to the other rules.
@@ -20,6 +21,7 @@ use super::boundary::{
     PythonOwnerCallValues, literals_equal, static_operand, strong_owner_call_values,
     unrebound_constants,
 };
+use super::discriminators::python_string_literal_value;
 use super::module_constants::PythonModuleConstant;
 use super::related_tests::PythonRelatedCandidate;
 use crate::domain::OwnerKind;
@@ -40,6 +42,12 @@ type Token = (Tok, String);
 /// The two operands of a changed line whose only edit swaps its one
 /// top-level `and`/`or`, as spelled; None for anything else.
 pub(super) fn swapped_connective(old_line: &str, new_line: &str) -> Option<(String, String)> {
+    // A line that also moves out of (or into) a block changes which code
+    // runs around it, which operand agreement says nothing about.
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    if old_line.get(..indent(old_line)) != new_line.get(..indent(new_line)) {
+        return None;
+    }
     let old = spellings(old_line)?;
     let new = spellings(new_line)?;
     if old.len() != new.len() {
@@ -71,6 +79,13 @@ pub(super) fn swapped_connective(old_line: &str, new_line: &str) -> Option<(Stri
     };
     let split = index - 1;
     let (left, right) = (&body[..split], &body[split + 1..]);
+    // `and`/`or` return one operand, not a bool: `return a and b` gives `b`
+    // and `return a or b` gives `a` when both are truthy. A `return` swap
+    // reads only operands that are always bool (`not name`, a comparison).
+    let bare_name = |part: &[Token]| matches!(part, [(Tok::Name { .. }, _)]);
+    if !colon && (bare_name(left) || bare_name(right)) {
+        return None;
+    }
     Some((simple_operand(left)?, simple_operand(right)?))
 }
 
@@ -85,7 +100,7 @@ pub(super) fn python_connective_evidence(
 ) -> Option<PythonConnectiveEvidence> {
     if !matches!(
         owner.owner_kind,
-        Some(OwnerKind::Function | OwnerKind::Method)
+        Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
     ) {
         return None;
     }
@@ -235,25 +250,37 @@ fn value_of(
 }
 
 /// Python truthiness of a scalar literal the rule can read.
-fn truthy(value: &str) -> Option<bool> {
+pub(super) fn truthy(value: &str) -> Option<bool> {
     match value {
         "True" => Some(true),
         "False" | "None" => Some(false),
         _ => {
-            if let Some(number) = decimal(value) {
-                return Some(number != 0.0);
+            if decimal(value).is_some() {
+                return Some(value.chars().any(|ch| ('1'..='9').contains(&ch)));
             }
-            let unquoted = value
-                .strip_prefix('"')
-                .and_then(|rest| rest.strip_suffix('"'))
-                .or_else(|| {
-                    value
-                        .strip_prefix('\'')
-                        .and_then(|rest| rest.strip_suffix('\''))
-                })?;
-            (!unquoted.contains('\\')).then_some(!unquoted.is_empty())
+            plain_string(value).map(|text| !text.is_empty())
         }
     }
+}
+
+/// The content of a quoted string literal with no prefix and no escapes;
+/// None for anything else, since an escape can spell one character several
+/// ways (`"\n"`, `"\x0a"`).
+fn plain_string(value: &str) -> Option<String> {
+    if !value.trim_start().starts_with(['"', '\'']) {
+        return None;
+    }
+    python_string_literal_value(value).filter(|text| !text.contains('\\'))
+}
+
+/// An int literal Python compares exactly; None for a float or other text.
+fn integer(value: &str) -> Option<i128> {
+    let text = value.replace('_', "");
+    let digits = text.strip_prefix('-').unwrap_or(&text);
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    text.parse().ok()
 }
 
 fn decimal(value: &str) -> Option<f64> {
@@ -268,7 +295,30 @@ fn decimal(value: &str) -> Option<f64> {
     text.parse().ok()
 }
 
-fn compare(left: &str, operator: &str, right: &str) -> Option<bool> {
+pub(super) fn compare(left: &str, operator: &str, right: &str) -> Option<bool> {
+    let quoted = |value: &str| value.trim_start().starts_with(['"', '\'']);
+    if (quoted(left) && plain_string(left).is_none())
+        || (quoted(right) && plain_string(right).is_none())
+    {
+        return None;
+    }
+    if let (Some(left), Some(right)) = (integer(left), integer(right)) {
+        return Some(match operator {
+            "==" => left == right,
+            "!=" => left != right,
+            "<" => left < right,
+            "<=" => left <= right,
+            ">" => left > right,
+            ">=" => left >= right,
+            _ => return None,
+        });
+    }
+    // An int beyond 2**53 has no exact float, so a mixed comparison with it
+    // is not read.
+    let exact = |value: &str| integer(value).is_none_or(|number| number.unsigned_abs() <= 1 << 53);
+    if !exact(left) || !exact(right) {
+        return None;
+    }
     match operator {
         "==" => literals_equal(left, right),
         "!=" => literals_equal(left, right).map(|equal| !equal),

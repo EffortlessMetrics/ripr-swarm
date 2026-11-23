@@ -1291,6 +1291,7 @@ fn classify_change_for_owner_inner<'a>(
         )
     });
     let mut boundary_downgraded = false;
+    let mut connective_downgraded = false;
     // A removed or added additive call term changes the result only where the
     // term is nonzero (#6733). When every strong related call gives it the
     // value 0, a strong oracle passes either way.
@@ -1852,6 +1853,7 @@ fn classify_change_for_owner_inner<'a>(
     {
         // Every strong related call gives both operands the same truth
         // value, where `and` and `or` agree (#16203).
+        connective_downgraded = true;
         (
             ExposureClass::WeaklyExposed,
             StageState::Yes,
@@ -2170,6 +2172,7 @@ fn classify_change_for_owner_inner<'a>(
         if static_limit.is_some() || matches!(class, ExposureClass::InfectionUnknown) {
             StageState::Unknown
         } else if boundary_downgraded
+            || connective_downgraded
             || term_downgraded
             || guarded_arm_downgraded
             || table_downgraded
@@ -2194,6 +2197,8 @@ fn classify_change_for_owner_inner<'a>(
             } else {
                 "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
             }
+        } else if connective_downgraded {
+            "Related tests reach the changed condition, but every strong related test call gives both operands the same truth value, where `and` and `or` agree.".to_string()
         } else if guarded_arm_downgraded
             && guarded_arm_gap
                 .as_ref()
