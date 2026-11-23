@@ -18449,7 +18449,7 @@ Field contract:
   phase finishes only with a focused `--test-result FILE` and how to produce
   FILE, in the finish gate's own words. Where the proposed Rust integration
   file's package manifest and cargo target resolve, it names that exact
-  command (`cargo +nightly test --manifest-path M --test T -- -Z
+  command (`cargo +nightly test --manifest-path M -p P --test T -- -Z
   unstable-options --format json`) in place of the generic placeholders
   (#16186).
   Without `--json`, stdout is a short prose summary whose

@@ -2158,9 +2158,11 @@ pub(crate) fn focused_test_run_command(
     if !plain_name {
         return None;
     }
-    let (file, manifest, target) = focused_integration_target(root, test_file)?;
+    let resolved = focused_integration_target(root, test_file)?;
     let integration = RustTestStub {
-        placement: TestStubPlacement::ExistingIntegrationFile { file },
+        placement: TestStubPlacement::ExistingIntegrationFile {
+            file: resolved.file,
+        },
         test_name: test_name.to_string(),
         text: String::new(),
         already_present: false,
@@ -2168,7 +2170,7 @@ pub(crate) fn focused_test_run_command(
         derived_inputs: Vec::new(),
         receiver_setup: None,
     };
-    run_command(&manifest, &integration, Some(&target))
+    run_command(&resolved.manifest_arg, &integration, Some(&resolved.target))
 }
 
 /// The command that produces a new-test proposal's focused result (#16186):
@@ -2180,16 +2182,47 @@ pub(crate) fn focused_test_run_command(
 /// Libtest JSON is unstable, so the command selects a nightly toolchain.
 /// `None` under the same conditions as [`focused_test_run_command`], so an
 /// inline test keeps the generic guidance.
+///
+/// The package is named explicitly (`-p`): a workspace root manifest that
+/// also defines a package selects the workspace's default members, not that
+/// package, when no package is given. A proposed flat file whose sibling
+/// directory target (`tests/NAME/main.rs`) already exists gets no command:
+/// creating the file makes that target name ambiguous to Cargo.
 pub(crate) fn focused_result_run_command(root: &Path, test_file: &str) -> Option<String> {
-    let (_, manifest, target) = focused_integration_target(root, test_file)?;
+    let resolved = focused_integration_target(root, test_file)?;
+    let file = root.join(&resolved.file);
+    if !file.exists() && file.with_extension("").join("main.rs").is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(root.join(&resolved.manifest)).ok()?;
+    let parsed = text.parse::<toml::Table>().ok()?;
+    let package = parsed.get("package")?.as_table()?.get("name")?.as_str()?;
+    if package.is_empty() {
+        return None;
+    }
     Some(format!(
-        "cargo +nightly test --manifest-path {manifest} --test {target} -- -Z unstable-options --format json"
+        "cargo +nightly test --manifest-path {} -p {} --test {} -- -Z unstable-options --format json",
+        resolved.manifest_arg,
+        shell_arg(package),
+        resolved.target
     ))
+}
+
+/// A Rust integration test file's resolved package manifest and plain cargo
+/// target name.
+struct FocusedIntegrationTarget {
+    /// The file as the stub placement spells it.
+    file: PathBuf,
+    /// The package manifest, relative to the root.
+    manifest: PathBuf,
+    /// The manifest as a shell-ready argument.
+    manifest_arg: String,
+    target: String,
 }
 
 /// The shell-ready manifest and plain cargo target name of a Rust
 /// integration test file, with the file as the stub placement spells it.
-fn focused_integration_target(root: &Path, test_file: &str) -> Option<(PathBuf, String, String)> {
+fn focused_integration_target(root: &Path, test_file: &str) -> Option<FocusedIntegrationTarget> {
     let spelled = test_file.replace('\\', "/");
     let file = PathBuf::from(spelled.strip_prefix("./").unwrap_or(&spelled));
     if file.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
@@ -2220,11 +2253,16 @@ fn focused_integration_target(root: &Path, test_file: &str) -> Option<(PathBuf, 
         }
         _ => return None,
     };
-    let manifest = root.join(&manifest);
+    let joined = root.join(&manifest);
     // A literal `\` in a Unix checkout root is part of the path, so the
     // manifest renders natively, as the repair start command renders it.
-    let manifest = root_path_display(manifest.strip_prefix(".").unwrap_or(&manifest));
-    Some((file, shell_arg(&manifest), target))
+    let display = root_path_display(joined.strip_prefix(".").unwrap_or(&joined));
+    Some(FocusedIntegrationTarget {
+        file,
+        manifest,
+        manifest_arg: shell_arg(&display),
+        target,
+    })
 }
 
 #[cfg(test)]
@@ -3136,12 +3174,22 @@ mod tests {
         assert_eq!(
             focused_result_run_command(&root, "beta/tests/pricing.rs"),
             Some(format!(
-                "cargo +nightly test --manifest-path {manifest} --test pricing -- -Z unstable-options --format json"
+                "cargo +nightly test --manifest-path {manifest} -p beta --test pricing -- -Z unstable-options --format json"
             ))
         );
         assert_eq!(focused_result_run_command(&root, "beta/src/lib.rs"), None);
         assert_eq!(
             focused_result_run_command(&root, "beta/tests/pricing.py"),
+            None
+        );
+        // An existing directory target of the same name: creating the flat
+        // file would make `--test pricing` ambiguous, so nothing is printed.
+        std::fs::create_dir_all(root.join("beta/tests/pricing"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("beta/tests/pricing/main.rs"), "")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_result_run_command(&root, "beta/tests/pricing.rs"),
             None
         );
         let _ = std::fs::remove_dir_all(&root);
