@@ -446,6 +446,7 @@ pin both sides in the evidence-promotion honesty corpus.
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_in_a_preceding_let_else_is_not_read_as_a_local`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_name_spelled_like_an_item_is_not_read_as_a_local`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::an_item_in_an_enclosing_block_shadows_an_outer_local`
 
 ## Implementation Mapping
 

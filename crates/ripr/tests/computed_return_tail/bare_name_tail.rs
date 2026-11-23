@@ -282,3 +282,33 @@ pub fn pick(input: Fallback, member: bool) -> Fallback {
     assert!(!returns_name(&findings, "Fallback"), "{findings:?}");
     Ok(())
 }
+
+#[test]
+fn an_item_in_an_enclosing_block_shadows_an_outer_local() -> Result<(), String> {
+    // The `else` block's `use` shadows the outer `let fallback`, so the tail
+    // returns the imported constant; the enclosing-block item makes the
+    // reader decline.
+    let source = "pub mod defaults {
+    #[allow(non_upper_case_globals)]
+    pub const fallback: u32 = 7;
+}
+
+#[allow(unused_variables)]
+pub fn price(amount: u32, member: bool) -> u32 {
+    let fallback = amount;
+    if member {
+        amount
+    } else {
+        use crate::defaults::fallback;
+        fallback
+    }
+}";
+    let findings = findings_on_edited_line(
+        source,
+        "amount + 1",
+        "fallback",
+        "assert_eq!(price(100, false), 7);",
+    )?;
+    assert!(!returns_name(&findings, "fallback"), "{findings:?}");
+    Ok(())
+}
