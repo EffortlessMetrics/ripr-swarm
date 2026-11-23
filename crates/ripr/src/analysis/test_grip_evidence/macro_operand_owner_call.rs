@@ -231,11 +231,35 @@ fn placeholder_reads(placeholder: &str, name: &str) -> bool {
         })
 }
 
-/// Whether `expression` is a call of the owner, possibly followed by method
-/// calls, `?`, `.await` or parentheses that take it as their receiver
-/// (`pick(0).unwrap()`, `(pick(0))?`). The value then derives only from that
-/// call; a chain rooted anywhere else (`x.pick(0)` for a free function,
-/// `other(pick(0))`) is not the owner's result.
+/// Standard unwrapping and conversion methods that observe nothing beyond
+/// their receiver when every argument is a literal. Any other method, or a
+/// closure or path argument (`inspect(|v| seen = ..)`, `map(helper)`), may
+/// record the owner's result where a later assertion reads it.
+const PASS_THROUGH_METHODS: &[&str] = &[
+    "unwrap",
+    "expect",
+    "unwrap_or",
+    "unwrap_or_default",
+    "unwrap_err",
+    "expect_err",
+    "clone",
+    "cloned",
+    "copied",
+    "ok",
+    "err",
+    "into",
+    "to_owned",
+    "to_string",
+    "as_ref",
+    "as_deref",
+];
+
+/// Whether `expression` is a call of the owner, possibly followed by `?`,
+/// `.await`, parentheses or pass-through methods with literal arguments
+/// (`pick(0).unwrap()`, `(pick(0))?`, `pick(0).expect("..")`). The value
+/// then derives only from that call, and nothing else in the chain can
+/// observe it. A chain rooted anywhere else (`x.pick(0)` for a free
+/// function, `other(pick(0))`) is not the owner's result.
 fn owner_rooted(expression: &ast::Expr, owner: &OwnerName<'_>) -> bool {
     let mut current = expression.clone();
     loop {
@@ -243,7 +267,21 @@ fn owner_rooted(expression: &ast::Expr, owner: &OwnerName<'_>) -> bool {
             return true;
         }
         let next = match &current {
-            ast::Expr::MethodCallExpr(call) => call.receiver(),
+            ast::Expr::MethodCallExpr(call) => {
+                let pass_through = call.name_ref().is_some_and(|name| {
+                    PASS_THROUGH_METHODS
+                        .iter()
+                        .any(|method| name.text() == *method)
+                }) && ast::HasArgList::arg_list(call).is_some_and(|arguments| {
+                    arguments
+                        .args()
+                        .all(|argument| matches!(argument, ast::Expr::Literal(_)))
+                });
+                if !pass_through {
+                    return false;
+                }
+                call.receiver()
+            }
             ast::Expr::TryExpr(tried) => tried.expr(),
             ast::Expr::AwaitExpr(awaited) => awaited.expr(),
             ast::Expr::ParenExpr(inner) => inner.expr(),
@@ -712,6 +750,31 @@ mod tests {
             (
                 "let r = pick(0).unwrap();",
                 "assert_eq!(check_ok!(r), r)",
+                false,
+            ),
+            (
+                "let r = pick(0).expect(\"picked\");",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let mut seen = Ok(Mode::B); let r = pick(0).inspect(|v| { seen = Ok(v.clone()); });",
+                "assert_eq!(check_ok!(r), seen)",
+                false,
+            ),
+            (
+                "let r = pick(0).map(helper);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0).unwrap_or(fallback);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0).record();",
+                "assert_eq!(check_ok!(r), Mode::A)",
                 false,
             ),
             (

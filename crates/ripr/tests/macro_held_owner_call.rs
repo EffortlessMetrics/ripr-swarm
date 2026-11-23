@@ -260,6 +260,13 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "smoke_only",
         ),
         (
+            "a callback in the chain records the result for the assertion",
+            CHECK_OK,
+            "let mut seen = Ok(Mode::B);\n        let r = pick(0).inspect(|v| { seen = Ok(v.clone()); });\n        assert_eq!(check_ok!(r), seen);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
             "the unwrapped local is asserted plainly",
             CHECK_OK,
             "let r = pick(0).unwrap();\n        assert_eq!(r, Mode::A);",
