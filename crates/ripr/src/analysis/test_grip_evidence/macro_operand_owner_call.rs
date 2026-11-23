@@ -117,6 +117,13 @@ fn token_names_owner(tokens: &[SyntaxToken], at: usize, owner: &OwnerName<'_>) -
         return false;
     }
     let before = |back: usize| at.checked_sub(back).and_then(|index| tokens.get(index));
+    let after = |ahead: usize| at.checked_add(ahead).and_then(|index| tokens.get(index));
+    // A field label (`pick: ..`) names a field, not the owner.
+    if after(1).is_some_and(|token| token.kind() == SyntaxKind::COLON)
+        && after(2).is_none_or(|token| token.kind() != SyntaxKind::COLON)
+    {
+        return false;
+    }
     let after_dot = before(1).is_some_and(|token| token.kind() == SyntaxKind::DOT);
     if after_dot && !owner.is_method() {
         return false;
@@ -178,16 +185,22 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
                 if token.kind() != SyntaxKind::IDENT {
                     return false;
                 }
+                let Some(at) = tokens
+                    .iter()
+                    .position(|candidate| candidate.text_range() == token.text_range())
+                else {
+                    return false;
+                };
+                // #16220: a field label (`r: ..`) or a member (`.r`) names a
+                // field, not a read of the local, so it does not make the
+                // alias carry the owner's result.
                 if locals.iter().any(|local| local.name == token.text()) {
-                    return true;
+                    return reads_local(&tokens, at, token.text());
                 }
                 if owner.name.is_empty() || token.text() != owner.name {
                     return false;
                 }
-                tokens
-                    .iter()
-                    .position(|candidate| candidate.text_range() == token.text_range())
-                    .is_some_and(|at| token_names_owner(&tokens, at, owner))
+                token_names_owner(&tokens, at, owner)
             });
         if !carries {
             continue;
@@ -351,6 +364,24 @@ const PASS_THROUGH_METHODS: &[&str] = &[
     "as_deref",
 ];
 
+/// Methods that invoke a caller-supplied function. They are transparent only
+/// when every argument is a function item or a literal: a function item
+/// cannot capture, so `map(helper)` cannot record the result, while a closure
+/// (`inspect(|v| seen = ..)`) can. #16220.
+const TRANSFORMING_METHODS: &[&str] = &[
+    "map",
+    "and_then",
+    "map_err",
+    "filter",
+    "filter_map",
+    "flat_map",
+    "inspect",
+    "map_or",
+    "map_or_else",
+    "or_else",
+    "unwrap_or_else",
+];
+
 /// Whether `expression` is a call of the owner, possibly followed by `?`,
 /// `.await`, parentheses or pass-through methods with literal arguments
 /// (`pick(0).unwrap()`, `(pick(0))?`, `pick(0).expect("..")`). The value
@@ -365,14 +396,25 @@ fn owner_rooted(expression: &ast::Expr, owner: &OwnerName<'_>) -> bool {
         }
         let next = match &current {
             ast::Expr::MethodCallExpr(call) => {
+                // #16220: the method's semantics decide, not the argument's
+                // spelling. A pass-through method selects or converts, so its
+                // argument is a value, not a callback. A transforming method
+                // is transparent only when every argument is a function item
+                // or a literal: a function item cannot capture, so
+                // `map(helper)` cannot record the result, while a closure
+                // (`inspect(|v| seen = ..)`) can.
                 let pass_through = call.name_ref().is_some_and(|name| {
-                    PASS_THROUGH_METHODS
-                        .iter()
-                        .any(|method| name.text() == *method)
-                }) && ast::HasArgList::arg_list(call).is_some_and(|arguments| {
-                    arguments
-                        .args()
-                        .all(|argument| matches!(argument, ast::Expr::Literal(_)))
+                    let name = name.text();
+                    PASS_THROUGH_METHODS.iter().any(|method| name == *method)
+                        || (TRANSFORMING_METHODS.iter().any(|method| name == *method)
+                            && ast::HasArgList::arg_list(call).is_some_and(|arguments| {
+                                arguments.args().all(|argument| {
+                                    matches!(
+                                        argument,
+                                        ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
+                                    )
+                                })
+                            }))
                 });
                 if !pass_through {
                     return false;
@@ -859,15 +901,18 @@ mod tests {
                 "assert_eq!(check_ok!(r), seen)",
                 false,
             ),
+            // #16220: a function item cannot capture, so `map(helper)` is
+            // transparent and the demotion fires; `unwrap_or` selects rather
+            // than invokes, so its path fallback is transparent too.
             (
                 "let r = pick(0).map(helper);",
                 "assert_eq!(check_ok!(r), Mode::A)",
-                false,
+                true,
             ),
             (
                 "let r = pick(0).unwrap_or(fallback);",
                 "assert_eq!(check_ok!(r), Mode::A)",
-                false,
+                true,
             ),
             (
                 "let r = pick(0).record();",
@@ -1029,6 +1074,89 @@ mod tests {
             (
                 "let r = pick(0); println!(\"{r}\");",
                 "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+        ];
+        for (setup, assertion, expected) in cases {
+            let body = format!("fn t() {{ {setup} {assertion}; }}");
+            let locals = owner_result_locals(&body, &pick);
+            assert_eq!(
+                owner_use_only_inside_untrusted_macro(assertion, &pick, &locals, Some(local)),
+                *expected,
+                "{setup} {assertion}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_function_item_argument_is_transparent_but_a_closure_is_not() {
+        // #16220: `map(helper)` invokes a function item, which cannot capture,
+        // so the local is evidence and the demotion fires. `inspect(|v| ..)`
+        // invokes a closure, which can capture and record, so the local is not
+        // evidence and the test keeps its parsed reading. `unwrap_or(fallback)`
+        // selects rather than invokes, so its path fallback is transparent.
+        let pick = OwnerName {
+            name: "pick",
+            types: Vec::new(),
+        };
+        let local = "macro_rules! check_ok { ($e:expr) => { 1 }; }";
+        let cases: &[(&str, &str, bool)] = &[
+            (
+                "let r = pick(0).map(helper);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let r = pick(0).unwrap_or(fallback);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let mut seen = Ok(Mode::B); let r = pick(0).inspect(|v| { seen = Ok(v.clone()); });",
+                "assert_eq!(check_ok!(r), seen)",
+                false,
+            ),
+            (
+                "let r = pick(0).map(|v| v);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+        ];
+        for (setup, assertion, expected) in cases {
+            let body = format!("fn t() {{ {setup} {assertion}; }}");
+            let locals = owner_result_locals(&body, &pick);
+            assert_eq!(
+                owner_use_only_inside_untrusted_macro(assertion, &pick, &locals, Some(local)),
+                *expected,
+                "{setup} {assertion}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_field_label_or_member_does_not_make_an_alias_carry_the_local() {
+        // #16220: `Holder { r: .. }.r` names a field, not a read of the local
+        // `r`, so `actual` does not carry the owner's result and the demotion
+        // still fires. The real borrow control stays tracked.
+        let pick = OwnerName {
+            name: "pick",
+            types: Vec::new(),
+        };
+        let local = "macro_rules! check_ok { ($e:expr) => { 1 }; }";
+        let cases: &[(&str, &str, bool)] = &[
+            (
+                "let r = pick(0).unwrap(); let actual = Holder { r: Ok(Mode::A) }.r;",
+                "assert_eq!(check_ok!(r), actual)",
+                true,
+            ),
+            (
+                "let r = pick(0).unwrap(); let actual = Holder { pick: Ok(Mode::A) }.pick;",
+                "assert_eq!(check_ok!(r), actual)",
+                true,
+            ),
+            (
+                "let r = pick(0).unwrap(); let actual = &pick(0);",
+                "assert_eq!(check_ok!(r), *actual)",
                 false,
             ),
         ];

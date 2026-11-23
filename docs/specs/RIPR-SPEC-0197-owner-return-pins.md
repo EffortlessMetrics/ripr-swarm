@@ -2871,10 +2871,13 @@ parsed reading.
 The initializer may also unwrap or chain the call (#16219): `let r =
 pick(0).unwrap();` or `let r = pick(0)?;` counts the same way when the owner
 call is the root of `?`, `.await`, parentheses and standard pass-through
-methods (`unwrap`, `expect`, `unwrap_or`, `clone`, `into` and similar) whose
-arguments are all literals. Any other method, or a closure or path argument
-(`inspect(|v| seen = ..)`, `map(helper)`), may record the result where a
-later assertion reads it, so the local does not count. A chain rooted
+methods (`unwrap`, `expect`, `unwrap_or`, `clone`, `into` and similar), whose
+arguments are values the method selects or converts rather than invokes. A
+method that invokes a caller-supplied function item (`map(helper)`) is also
+transparent, because a function item cannot capture. A method that invokes a
+caller-supplied closure (`inspect(|v| seen = ..)`) is not, because the
+closure can capture and record the result where a later assertion reads it.
+Any other method is not transparent. A chain rooted
 anywhere else (`other(pick(0))`, `x.pick(0)` for a free function) does not
 count either. A read outside the untrusted macro of any other local whose
 initializer names the owner or such a local (`let actual = &pick(0);`, then
