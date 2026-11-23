@@ -1186,9 +1186,20 @@ pub(crate) fn resolve_repair_start(
     let mut changed_caveats: Vec<String> = Vec::new();
     let mut outside_reasons: Vec<String> = Vec::new();
     let mut outside = OutsideCounts::default();
+    // The gripped rows on the change, kept for the verdict after check's
+    // closure below when it closes every candidate as noticed.
+    let gripped_on_change_reasons: Vec<String> = gripped_reasons
+        .iter()
+        .filter(|(off, _)| !off)
+        .map(|(_, reason)| reason.clone())
+        .collect();
+    // A changed candidate is still open until check's closure decides it, so
+    // only a change with none takes the already-checked shortcut; otherwise a
+    // candidate check cannot judge would end on "nothing to do" (#16216).
     let all_changed_checked = matches!(scope, Some(ChangeScope::TouchesSeams(_)))
         && gripped_on_change > 0
-        && open_on_change == 0;
+        && open_on_change == 0
+        && candidates.is_empty();
     let mut change = if all_changed_checked {
         NoEligibleChange::AlreadyChecked
     } else if matches!(scope, Some(ChangeScope::TouchesNoSeam(_))) {
@@ -1380,6 +1391,12 @@ pub(crate) fn resolve_repair_start(
             candidates = kept;
             change = change_after_closure(change, !candidates.is_empty(), left_open, before > 0);
         }
+    }
+    if change == NoEligibleChange::AlreadyChecked && !all_changed_checked {
+        // Check's closure found every changed candidate already noticed, so
+        // nothing on the change is open: name the gripped spots themselves,
+        // not as "a different check than the one still open".
+        changed_caveats = gripped_on_change_reasons;
     }
     changed_reasons.append(&mut changed_caveats);
     let (reasons, reasons_total) =

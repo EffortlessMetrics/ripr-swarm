@@ -1189,7 +1189,7 @@ fn no_eligible_seam_message(
             // the same-base check lists; pilot tours the whole repository.
             if change == NoEligibleChange::OpenOnChange {
                 message.push_str(&format!(
-                    "\n  (and {more} more on your changed lines; `{check}` lists each one)"
+                    "\n  (and {more} more on your changed lines; `{check}` shows the change's findings)"
                 ));
             } else {
                 message.push_str(&format!(
@@ -1481,7 +1481,8 @@ mod tests {
         );
         for expected in [
             "none is ready for an automatic repair on your changed lines.",
-            "(and 2 more on your changed lines; `ripr check --root . --base main` lists each one)",
+            "(and 2 more on your changed lines; `ripr check --root ",
+            " --base main` shows the change's findings)",
         ] {
             if !open.contains(expected) {
                 return Err(format!("open change must carry {expected:?}: {open}"));

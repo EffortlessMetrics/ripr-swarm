@@ -818,8 +818,15 @@ cap and both kinds are present, the outside counts fold into one row
 follows at most two leading rows (framing notes, then changed rows), so a changed spot is never hidden behind
 outside counts. For an open change the lead reads "none is ready for an
 automatic repair on your changed lines", and changed rows past the cap are
-disclosed as "(and N more on your changed lines; `ripr check ...` lists each
-one)" with the same base. Rows that fit keep their own wording.
+disclosed as "(and N more on your changed lines; `ripr check ...` shows the
+change's findings)" with the same base. Rows that fit keep their own wording.
+
+A change whose every changed spot is already gripped takes the nothing-to-do
+outcome only when no repair candidate sits on the changed lines. A candidate is
+open until `ripr check`'s closure decides it: one that check cannot judge
+leaves the change open (and keeps the outside counts), and one that check reads
+as noticed ends on the nothing-to-do outcome with the gripped spots named
+directly.
 
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
