@@ -196,21 +196,6 @@ pub fn price(amount: u32, member: bool) -> u32 {
 #[test]
 fn a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail() -> Result<(), String> {
     let test = "assert_eq!(price(100, false), 7);";
-    // The `then` block's `let` does not reach the `else` path, whose tail is
-    // the file's constant.
-    let other_branch = "pub const FALLBACK: u32 = 7;
-
-#[allow(non_snake_case)]
-pub fn price(amount: u32, member: bool) -> u32 {
-    if member {
-        let FALLBACK = amount;
-        FALLBACK + 0
-    } else {
-        FALLBACK
-    }
-}";
-    let disjoint = findings_on_edited_line(other_branch, "amount + 1", "FALLBACK", test)?;
-    assert!(!returns_name(&disjoint, "FALLBACK"), "{disjoint:?}");
     // The `else` block imports the constant it returns; the item declared in
     // an enclosing block makes the name ambiguous to this reader.
     let imported = "pub mod defaults {
@@ -240,5 +225,30 @@ pub fn price(amount: u32, member: bool) -> u32 {
 }";
     let bound = findings_on_edited_line(same_block, "amount + 1", "fallback", test)?;
     assert!(returns_name(&bound, "fallback"), "{bound:?}");
+    Ok(())
+}
+
+#[test]
+fn a_bare_name_in_a_preceding_let_else_is_not_read_as_a_local() -> Result<(), String> {
+    // With the constant in scope, `let FALLBACK = amount else { .. };` is a
+    // constant pattern, not a new binding, so the tail returns the constant.
+    let source = "pub const FALLBACK: u32 = 7;
+
+pub fn price(amount: u32, member: bool) -> u32 {
+    if member {
+        return amount;
+    }
+    let FALLBACK = amount else {
+        return 0;
+    };
+    FALLBACK
+}";
+    let findings = findings_on_edited_line(
+        source,
+        "amount + 1",
+        "FALLBACK",
+        "assert_eq!(price(7, false), 7);",
+    )?;
+    assert!(!returns_name(&findings, "FALLBACK"), "{findings:?}");
     Ok(())
 }

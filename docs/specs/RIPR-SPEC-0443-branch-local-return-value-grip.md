@@ -359,8 +359,10 @@ The name now reaches the return sink (`bare_name_returned_tail` in
 is one identifier before and after the edit that resolves, at its own
 position, to a binding the owner introduces (a `let` in an enclosing block
 that precedes it, or else a parameter; a `let` in a disjoint scope such as
-the other `if` branch does not count, and an item declared in an enclosing
-block that mentions the name makes the reader decline), and the parser places that
+the other `if` branch does not count; an item declared in an enclosing
+block that mentions the name, or a preceding `let .. else` that names it,
+where a bare name may be a constant pattern, makes the reader decline), and
+the parser places that
 identifier, once on its line, at a position whose value the owner returns:
 the body's tail, or the tail of a plain block or of either `if` branch in
 such a position. `self`, paths, generics, labelled or `async`/`unsafe`
@@ -439,6 +441,7 @@ pin both sides in the evidence-promotion honesty corpus.
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_whose_value_is_not_returned_gets_no_return_sink`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::only_a_name_the_owner_binds_gets_the_return_sink`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_in_a_preceding_let_else_is_not_read_as_a_local`
 
 ## Implementation Mapping
 

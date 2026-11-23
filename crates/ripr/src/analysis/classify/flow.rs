@@ -1081,8 +1081,10 @@ fn bare_name_returned_tail(
 /// Whether `name` at `at` resolves to a binding the owner introduces: a
 /// `let` in a block enclosing `at` that precedes it, or else a parameter.
 /// `None` when an item declared in an enclosing block mentions the name (a
-/// `use`, `const` or `static` there may be what the name resolves to), so
-/// the reader declines rather than guess (#16162 review). A `let` in a
+/// `use`, `const` or `static` there may be what the name resolves to), or
+/// when a preceding `let .. else` names it (a refutable pattern, where a
+/// bare name may be a constant pattern), so the reader declines rather than
+/// guess (#16162 review). A `let` in a
 /// disjoint scope, such as the other branch of an `if`, does not count.
 fn owner_binding_visible_at(
     function: &ra_ap_syntax::ast::Fn,
@@ -1117,8 +1119,18 @@ fn owner_binding_visible_at(
                         }
                     }
                     ast::Stmt::LetStmt(binding) => {
-                        local |= binding.syntax().text_range().end() <= at_start
-                            && binds_name(binding.pat());
+                        if binding.syntax().text_range().end() > at_start
+                            || !binds_name(binding.pat())
+                        {
+                            continue;
+                        }
+                        // A `let .. else` pattern is refutable, so a bare name
+                        // in it may be a constant pattern rather than a new
+                        // binding; syntax alone cannot tell, so decline.
+                        if binding.let_else().is_some() {
+                            return None;
+                        }
+                        local = true;
                     }
                     ast::Stmt::ExprStmt(_) => {}
                 }
