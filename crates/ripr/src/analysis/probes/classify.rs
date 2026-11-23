@@ -162,6 +162,11 @@ pub(crate) struct ParserProbeShape<'a> {
     pub(crate) text: &'a str,
     pub(crate) standalone_call: bool,
     pub(super) unsafe_boundary: Option<UnsafeBoundary>,
+    /// #14333: an unsafe boundary opened on a line before the changed line.
+    /// Its label (`unsafe fn inline_len`) names the enclosing obligation, not
+    /// the edit, so the probe built from it carries the changed line as its
+    /// `after` text while the label stays the expression and identity.
+    pub(crate) unsafe_interior: bool,
 }
 
 pub(crate) fn parser_probe_shapes_for_changed_line<'a>(
@@ -288,6 +293,7 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
             // is linear in the line per shape (#9895).
             standalone_call: true,
             unsafe_boundary,
+            unsafe_interior: unsafe_boundary.is_some() && shape.start_line() < line,
         };
         if let Some(position) = selected
             .iter()
@@ -2430,6 +2436,7 @@ mod tests {
                     text: shape.text.as_str(),
                     standalone_call: true,
                     unsafe_boundary: None,
+                    unsafe_interior: false,
                 };
                 if let Some(position) = expected
                     .iter()

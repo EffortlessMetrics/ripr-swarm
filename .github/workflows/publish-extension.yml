@@ -263,7 +263,7 @@ jobs:
     # The Release tag comes from the version input. This runs before the
     # marketplace publishes so the first channel's VSIX becomes the one every
     # later channel reuses.
-    needs: [admit-dispatch, package]
+    needs: [admit-dispatch, verify-server-assets, package]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -273,29 +273,52 @@ jobs:
           name: ripr-vsix
           path: dist
 
+      - name: Require the receipted VSIX before any Release write
+        run: |
+          # An attached asset is never replaced, so wrong bytes attached here
+          # would stay on the Release. This job therefore checks its own
+          # subject before it writes: the artifact must be the VSIX `package`
+          # digested, and that VSIX must embed the receipted manifest digest.
+          set -euo pipefail
+          version="${RAW_VERSION#v}"
+          vsix="dist/ripr-${version}.vsix"
+          [[ "$MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "::error::no receipted manifest_sha256 reached the attach job"; exit 1; }
+          [[ "$EXPECTED_VSIX_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "::error::package reported no VSIX digest to the attach job"; exit 1; }
+          echo "${EXPECTED_VSIX_SHA256}  ${vsix}" | sha256sum -c -
+          # To a file, not a pipe: `grep -q` closing a pipe early would fail
+          # the extraction under pipefail.
+          unzip -p "$vsix" extension/out/src/serverDescriptor.js > serverDescriptor.js
+          grep -Fq "$MANIFEST_SHA256" serverDescriptor.js \
+            || { echo "::error::the VSIX to attach does not embed the receipted manifest digest $MANIFEST_SHA256"; exit 1; }
+        env:
+          # Through env, not template expansion, so the inputs are data; their
+          # format is checked in admit-dispatch.
+          RAW_VERSION: ${{ github.event.inputs.version }}
+          MANIFEST_SHA256: ${{ github.event.inputs.manifest_sha256 }}
+          EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
+
       - name: Attach VSIX to GitHub Release
         run: |
           # The GitHub Release has exactly one creator (the release transaction).
           # Attach to it only; never create it or replace an existing asset, so
-          # a second channel dispatch keeps the first attached VSIX.
+          # a second channel dispatch keeps the first attached VSIX. Only the
+          # one file checked above is attached, never a glob of `dist`.
           set -euo pipefail
-          release_tag="v${RAW_VERSION#v}"
+          version="${RAW_VERSION#v}"
+          release_tag="v${version}"
+          name="ripr-${version}.vsix"
           existing="$(gh release view "$release_tag" --json assets --jq '.assets[].name')"
-          for vsix in dist/*.vsix; do
-            name="$(basename "$vsix")"
-            if printf '%s\n' "$existing" | grep -Fxq "$name"; then
-              echo "$name is already attached to $release_tag; leaving it in place"
-            else
-              gh release upload "$release_tag" "$vsix"
-            fi
-          done
+          if printf '%s\n' "$existing" | grep -Fxq "$name"; then
+            echo "$name is already attached to $release_tag; leaving it in place"
+          else
+            gh release upload "$release_tag" "dist/$name"
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          # Through env, not template expansion, so the input is data; its
-          # format is checked in admit-dispatch.
           RAW_VERSION: ${{ github.event.inputs.version }}
-          EXPECTED_VSIX_SHA256: ${{ needs.package.outputs.vsix_sha256 }}
 
       - name: Require the Release to hold exactly this run's VSIX
         run: |
@@ -348,10 +371,43 @@ jobs:
           version="${RAW_VERSION#v}"
           echo "${EXPECTED_VSIX_SHA256}  dist/ripr-${version}.vsix" | sha256sum -c -
 
+      - name: Compare any published bytes for this version
+        id: published
+        env:
+          CHANNEL: VS Marketplace
+          # `{version}` is substituted in the script so the input stays data.
+          PUBLISHED_VSIX_URL: https://marketplace.visualstudio.com/_apis/public/gallery/publishers/EffortlessMetrics/vsextensions/ripr/{version}/vspackage
+        # A version number on the channel is not content identity. Fetch what
+        # the channel serves for this version and compare bytes: absent (404)
+        # means publish, identical bytes mean this release is already there,
+        # and anything else (other bytes, any other status, a failed fetch)
+        # stops the job.
+        run: |
+          set -euo pipefail
+          version="${RAW_VERSION#v}"
+          [[ "$EXPECTED_VSIX_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "::error::package reported no VSIX digest"; exit 1; }
+          url="${PUBLISHED_VSIX_URL//\{version\}/$version}"
+          status="$(curl -sS -L --compressed --retry 3 --max-time 300 -o published.vsix -w '%{http_code}' "$url")" \
+            || { echo "::error::could not fetch $url"; exit 1; }
+          case "$status" in
+            404) echo "state=absent" >> "$GITHUB_OUTPUT" ;;
+            200)
+              got="$(sha256sum published.vsix | cut -d' ' -f1)"
+              [ "$got" = "$EXPECTED_VSIX_SHA256" ] \
+                || { echo "::error::$CHANNEL already serves version $version with SHA-256 $got, not this release's $EXPECTED_VSIX_SHA256"; exit 1; }
+              echo "$CHANNEL already serves this release's VSIX ($got); nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "state=identical" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "::error::$url answered HTTP $status; cannot tell whether $CHANNEL serves version $version"; exit 1 ;;
+          esac
+
       # The PAT is visible to this one step only (not checkout, setup-node or
       # npm ci). The secrets context is unavailable in `if:`, so a missing
-      # token is checked inside the step.
+      # token is checked inside the step. A duplicate version is refused by
+      # the channel and fails the step.
       - name: Publish to VS Marketplace
+        if: ${{ steps.published.outputs.state == 'absent' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
@@ -362,15 +418,6 @@ jobs:
           version="${RAW_VERSION#v}"
           vsix_file="$PWD/dist/ripr-${version}.vsix"
           vsce="$PWD/editors/vscode/node_modules/.bin/vsce"
-          PUBLISHED_VERSION="$(
-            "$vsce" show EffortlessMetrics.ripr --json 2>/dev/null \
-              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['versions'][0]['version'])" \
-              2>/dev/null || echo ""
-          )"
-          if [ "$PUBLISHED_VERSION" = "$version" ]; then
-            echo "::warning::VS Code Marketplace already has version $version; skipping publish."
-            exit 0
-          fi
           "$vsce" publish --packagePath "$vsix_file" --pat "$VSCE_PAT"
 
   publish-open-vsx:
@@ -411,8 +458,40 @@ jobs:
           version="${RAW_VERSION#v}"
           echo "${EXPECTED_VSIX_SHA256}  dist/ripr-${version}.vsix" | sha256sum -c -
 
+      - name: Compare any published bytes for this version
+        id: published
+        env:
+          CHANNEL: Open VSX
+          # `{version}` is substituted in the script so the input stays data.
+          PUBLISHED_VSIX_URL: https://open-vsx.org/api/EffortlessMetrics/ripr/{version}/file/EffortlessMetrics.ripr-{version}.vsix
+        # A version number on the channel is not content identity. Fetch what
+        # the channel serves for this version and compare bytes: absent (404)
+        # means publish, identical bytes mean this release is already there,
+        # and anything else (other bytes, any other status, a failed fetch)
+        # stops the job.
+        run: |
+          set -euo pipefail
+          version="${RAW_VERSION#v}"
+          [[ "$EXPECTED_VSIX_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "::error::package reported no VSIX digest"; exit 1; }
+          url="${PUBLISHED_VSIX_URL//\{version\}/$version}"
+          status="$(curl -sS -L --compressed --retry 3 --max-time 300 -o published.vsix -w '%{http_code}' "$url")" \
+            || { echo "::error::could not fetch $url"; exit 1; }
+          case "$status" in
+            404) echo "state=absent" >> "$GITHUB_OUTPUT" ;;
+            200)
+              got="$(sha256sum published.vsix | cut -d' ' -f1)"
+              [ "$got" = "$EXPECTED_VSIX_SHA256" ] \
+                || { echo "::error::$CHANNEL already serves version $version with SHA-256 $got, not this release's $EXPECTED_VSIX_SHA256"; exit 1; }
+              echo "$CHANNEL already serves this release's VSIX ($got); nothing to publish" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "state=identical" >> "$GITHUB_OUTPUT"
+              ;;
+            *) echo "::error::$url answered HTTP $status; cannot tell whether $CHANNEL serves version $version"; exit 1 ;;
+          esac
+
       # The PAT is visible to this one step only; see publish-vs-marketplace.
       - name: Publish to Open VSX
+        if: ${{ steps.published.outputs.state == 'absent' }}
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
@@ -423,4 +502,4 @@ jobs:
           version="${RAW_VERSION#v}"
           # Lockfile-pinned (.github/ovsx), audited install: a floating
           # `npx -y ovsx` would run unreviewed npm code in a job holding OVSX_PAT.
-          "$PWD/.github/ovsx/node_modules/.bin/ovsx" publish "$PWD/dist/ripr-${version}.vsix" -p "$OVSX_PAT" --skip-duplicate
+          "$PWD/.github/ovsx/node_modules/.bin/ovsx" publish "$PWD/dist/ripr-${version}.vsix" -p "$OVSX_PAT"

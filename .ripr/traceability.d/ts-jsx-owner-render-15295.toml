@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/tests/typescript_jsx_owner_render.rs::a_rendered_owner_is_reached_and_not_told_to_call_it",
+  "crates/ripr/tests/typescript_jsx_owner_render.rs::a_render_with_no_assertion_never_credits_oracle_strength",
+  "crates/ripr/tests/typescript_jsx_owner_render.rs::a_same_named_component_from_another_module_is_not_the_owner",
+  "crates/ripr/tests/typescript_jsx_owner_render.rs::an_unrendered_owner_is_not_reached",
+  "crates/ripr/tests/typescript_jsx_owner_render.rs::a_render_nested_directly_inside_another_element_is_reached",
+  "crates/ripr/tests/typescript_jsx_owner_render.rs::a_render_with_an_unrelated_exact_assertion_is_not_exposed",
+  "crates/ripr/tests/typescript_jsx_owner_render.rs::a_generic_type_parameter_named_like_the_owner_is_not_a_render",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/jsx_render.rs",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+]

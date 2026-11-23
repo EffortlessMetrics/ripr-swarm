@@ -2203,9 +2203,11 @@ pub(crate) fn front_panel_case_inputs(case: &Value) -> (String, Vec<ArtifactRout
         .iter()
         .filter(|(key, _)| key.as_str() != "root")
         .filter_map(|(key, value)| {
-            value
-                .as_str()
-                .map(|path| ArtifactRouterInput::at(&key.replace('_', "-"), path))
+            value.as_str().map(|path| {
+                let mut input = ArtifactRouterInput::at(&key.replace('_', "-"), path);
+                input.absent = case.get("absent_input").and_then(Value::as_str) == Some(key);
+                input
+            })
         })
         .collect::<Vec<_>>();
     let root = inputs
@@ -2978,6 +2980,8 @@ pub(crate) struct ArtifactRouterInput {
     pub(crate) flag: String,
     /// Repo-relative path passed on the command line; the router echoes it.
     pub(crate) path: String,
+    /// The corpus explicitly requires this checkout path to be absent.
+    pub(crate) absent: bool,
     /// Committed file copied to `path` in the render root. `None` copies
     /// `path` itself when the checkout has it, and otherwise passes the flag
     /// with nothing behind it, which is how a case pins an absent artifact.
@@ -2990,6 +2994,7 @@ impl ArtifactRouterInput {
         Self {
             flag: flag.to_string(),
             path: path.to_string(),
+            absent: false,
             source: None,
         }
     }
@@ -3000,6 +3005,7 @@ impl ArtifactRouterInput {
         Self {
             flag: flag.to_string(),
             path: path.to_string(),
+            absent: false,
             source: Some(source.to_string()),
         }
     }
@@ -3082,6 +3088,19 @@ pub(crate) fn render_artifact_router_case(
     }
     fs::create_dir_all(&render_root)
         .map_err(|err| format!("failed to create {}: {err}", normalize_path(&render_root)))?;
+    // The child runs inside the render root, and `pr-review front-panel`
+    // refuses a `--root` that is not a directory there (#15249). Its root is
+    // only a label in the report, so mirror the relative fixture root as an
+    // empty directory instead of rewriting the recorded argument.
+    // `.` already names the render root; only plain relative labels are
+    // mirrored, so a label can never create a directory outside it.
+    if case.family == "pr-review-front-panel"
+        && artifact_router_path_violation(case.family, case.root).is_none()
+    {
+        let mirrored_root = render_root.join(case.root);
+        fs::create_dir_all(&mirrored_root)
+            .map_err(|err| format!("failed to create {}: {err}", normalize_path(&mirrored_root)))?;
+    }
 
     let mut args = case
         .subcommand
@@ -3090,7 +3109,13 @@ pub(crate) fn render_artifact_router_case(
         .collect::<Vec<_>>();
     args.extend(["--root".to_string(), case.root.to_string()]);
     for input in case.inputs {
-        if let Some(source) = input.copy_source() {
+        if input.absent {
+            match fs::symlink_metadata(&input.path) {
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_) => return Err(format!("expected absent input exists: {}", input.path)),
+                Err(err) => return Err(format!("cannot check absent input {}: {err}", input.path)),
+            }
+        } else if let Some(source) = input.copy_source() {
             if !source.is_file() {
                 return Err(format!(
                     "{} input source is missing or not a plain file: {}",
@@ -3407,10 +3432,9 @@ pub(crate) fn dogfood_report_packet_index_run(
 }
 
 pub(crate) const GENERATED_CI_FIRST_ACTION_REPAIR: &str = "Safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.";
-/// Range-scoped first-pr command `ripr reports ci-summary` prints on a first
-/// run (`--base-ref main`). The GitHub expression that used to sit in the
-/// workflow shell is no longer the text (#6958).
-pub(crate) const GENERATED_CI_FIRST_PR_REPAIR: &str = "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports";
+/// Complete inline command printed by `ripr reports ci-summary` on a first
+/// run (`--base-ref main`). The backticks pin both command boundaries.
+const GENERATED_CI_FIRST_PR_REPAIR: &str = "`ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`";
 /// Receipt command for the generated-CI cockpit family. The unique fixture
 /// path is a placeholder because each live run uses a distinct directory;
 /// `duration_ms` is wall-clock across both producers (#6958).

@@ -1,0 +1,7 @@
+# Consumers that open a stable-path-text file name decode it first (#15354).
+[[extend]]
+id = "RIPR-SPEC-0170"
+tests = [
+  "crates/ripr/tests/user_journeys.rs::rust_repair_closes_when_the_source_file_name_has_a_percent",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_decodes_a_percent_escaped_packet_path",
+]

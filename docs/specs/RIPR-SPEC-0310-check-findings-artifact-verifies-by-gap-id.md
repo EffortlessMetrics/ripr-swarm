@@ -159,9 +159,11 @@ could not be verified without trusting hand-authored JSON.
    refuses with exit `3`, says the test pins the old raised type `ValueError`
    and is expected to fail against the new `TypeError` raise, and names
    `pytest.raises(TypeError, ...)` as the next step. The
-   corrected `pytest.raises(TypeError, ...)` test then closes the gap, as do
-   `excinfo.type is TypeError` and an old-type assertion when the new class
-   subclasses the old one.
+   corrected `pytest.raises(TypeError, ...)` test then closes the gap, as does
+   `excinfo.type is TypeError`. An old-type assertion when the new class
+   subclasses the old one, or a tuple that also names the new class or a
+   broader class, is no stale pin, but it passes against the old and the new
+   raise alike, so it does not close the gap either (#15356).
 
 ## Test Mapping
 
@@ -187,7 +189,7 @@ could not be verified without trusting hand-authored JSON.
 - `crates/ripr/tests/python_stale_raised_type_closure.rs` (#13622, behavior 7):
   `stale_old_type_test_is_not_reported_closed_and_names_both_types`,
   `new_type_forms_close_the_gap`,
-  `old_type_assertion_closes_when_the_new_type_subclasses_it`.
+  `old_type_assertion_of_a_subclass_raise_is_not_stale_and_does_not_close`.
 - `crates/ripr/src/agent/artifact.rs` tests:
   `stale_raised_type_pin_refuses_python_closure_and_names_both_types`;
   `crates/ripr/src/analysis/stale_raised_type_pin.rs`:

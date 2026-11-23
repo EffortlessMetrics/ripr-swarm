@@ -480,3 +480,54 @@ fn filter_listing_runs_inside_the_callers_deadline() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #15101: a status or diff call that names no submodule option still keeps
+/// git out of a submodule's working tree; an explicit caller choice, a path
+/// after `--`, and other subcommands are left as given.
+#[test]
+fn submodule_examining_calls_get_pointers_only() {
+    let cases: [(&[&str], &[&str]); 7] = [
+        (
+            &["status", "--porcelain", "--", "."],
+            &["status", SUBMODULE_POINTERS_ONLY, "--porcelain", "--", "."],
+        ),
+        (
+            &["-c", "core.quotePath=true", "diff", "HEAD"],
+            &[
+                "-c",
+                "core.quotePath=true",
+                "diff",
+                SUBMODULE_POINTERS_ONLY,
+                "HEAD",
+            ],
+        ),
+        (
+            &["--literal-pathspecs", "diff-files", "-z"],
+            &[
+                "--literal-pathspecs",
+                "diff-files",
+                SUBMODULE_POINTERS_ONLY,
+                "-z",
+            ],
+        ),
+        (
+            &["diff-index", "HEAD", "--", "--ignore-submodules=all"],
+            &[
+                "diff-index",
+                SUBMODULE_POINTERS_ONLY,
+                "HEAD",
+                "--",
+                "--ignore-submodules=all",
+            ],
+        ),
+        (
+            &["diff", "--ignore-submodules=all", "HEAD"],
+            &["diff", "--ignore-submodules=all", "HEAD"],
+        ),
+        (&["log", "-1", "HEAD"], &["log", "-1", "HEAD"]),
+        (&["-C", "status", "ls-files"], &["-C", "status", "ls-files"]),
+    ];
+    for (args, expected) in cases {
+        assert_eq!(with_submodule_pointers_only(args), expected, "{args:?}");
+    }
+}

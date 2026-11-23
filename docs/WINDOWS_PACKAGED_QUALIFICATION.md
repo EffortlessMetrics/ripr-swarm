@@ -18,6 +18,30 @@ the ref does not resolve to the same commit. It uses Rust 1.95, Node 24, an
 isolated Cargo home/target/prefix, and an extracted VSIX directory. The
 installed CLI path and crate, binary, and VSIX SHA-256 digests are retained.
 
+## Packaged crate
+
+The lane installs the archive the release ships. `ripr` is published from the
+publish stage, whose source has its inline `#[cfg(test)]` modules removed
+([Crate tarball contents](RELEASE.md#crate-tarball-contents), #14198); the
+checkout's own crate is over the crates.io upload limit and is never uploaded,
+so a binary built from it is not the released one. The job therefore runs
+`cargo xtask publish-dry-run`, the release's own producer, and installs
+`target/package/ripr-<version>.crate` from it. A bare `cargo package -p ripr`
+also cannot resolve the exact `ripr-contract` requirement (ADR 0027) before
+that crate is on crates.io; the install takes `ripr-contract` from the archive
+packaged beside it through a `patch.crates-io` path entry and keeps the
+packaged lockfile (`--locked`) for every other dependency.
+
+Before installing, the job requires the run's `publish-receipt.json` to record
+`packaged-check-passed`, a stage commit equal to `candidate_sha`, and the
+SHA-256 of both archives it is about to extract. The receipt is retained with
+the lane's evidence, and `crate-install-identity.json` records
+`package_source: publish-stage`, the stage commit and the strip digest.
+
+The archives are packaged on the Windows runner. They hold the same staged
+source as the archives packaged for publication, but the lane does not compare
+their bytes with an archive packaged on another host.
+
 ## Journeys and evidence
 
 The Windows runner creates an independent two-commit fixture and runs the

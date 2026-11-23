@@ -94,6 +94,21 @@ relative path ONLY when ALL of:
    `src/owner.cts`) resolve to `None`, and a near-miss suffix that is not a
    routed source extension is not a candidate.
 
+Amendment (#15914): a target that names a directory. When the substituted
+target has no source extension, names a directory without a `package.json`, and
+the effective module resolution performs directory lookup, the directory's
+`index.ts`, `index.tsx`, `index.js` and `index.jsx` join the candidates of
+rule 5, under the same exactly-one rule (`x.ts` beside `x/index.ts` resolves
+nothing). Directory lookup is taken as performed for `moduleResolution`
+`node`, `node10` or `bundler`, and, with no `moduleResolution`, for a `module`
+that is absent, `commonjs` or `preserve`. It is not for `node16`, `nodenext`
+or `classic`, for another `module` value with no `moduleResolution`, or when
+an `extends` base that was not followed could have set `moduleResolution`.
+Both options are read through the same `extends` chain as `paths`. A target
+written with a source extension names that file only, and a directory with a
+`package.json` stays unresolved because its entry fields are not read. Tests:
+`crates/ripr/tests/typescript_paths_directory_target.rs`.
+
 Amendment (#4549): the config is read as JSONC, matching `tsc`. `//` and
 `/* */` comments and trailing commas before `}` / `]` are removed outside
 string literals, then the text is parsed strictly. An unterminated block
@@ -261,6 +276,31 @@ a directory index) when the manifest exists, else to `<dir>/index`. An
 unreadable or invalid manifest, a non-string, absolute, root-escaping or
 unresolvable `main`, a symlink, or a join that escaped the root keeps the
 lexical module (fail-closed). The alias branch is unchanged.
+
+Own-package build entry (#15342): when a relative directory import names the
+importer's own package and its JavaScript `main` names unindexed build output,
+the adapter can attribute the import to the manifest's single `source` or a
+unique indexed `src/` counterpart with the same build stem. Both the source
+and manifest must be tracked. A declared filename with an extension must
+match as written. A competing module, package directory index,
+or root export, an ambiguous source, and a source owned by a nested package
+withhold the relation. For a nested package the adapter checks sibling files
+as well as directory indexes. It withholds for `.js`, `.jsx`, `.mjs`, `.cjs`,
+`.ts`, `.tsx`, `.mts`, `.cts`, `.json` and `.node`, including symlinks.
+That set covers TypeScript runners as well as Node's CommonJS lookup.
+An uncredited name-matched import reports the unread build entry. When the
+tracked source is known, the diagnostic names it and explains that the test
+could not be attributed to it. An explicit file import retains its file
+identity. This is static source attribution. The
+bundle's contents and the test runner's loaded code remain unverified.
+
+This fallback covers non-namespace imports and JavaScript outputs in a
+recognized build directory. A root-level bundle or a direct call through a
+CommonJS namespace binding gets no build-source link. A test file with mock
+declarations is excluded even when the mock names a different dependency.
+Stronger related-test candidates take precedence over this fallback. A dirty
+snapshot input beside the manifest can also withhold it during committed
+analysis.
 
 Build-output amendment (#4551): with a known workspace root, a relative
 import whose in-root join lies under the root `tsconfig.json`'s own

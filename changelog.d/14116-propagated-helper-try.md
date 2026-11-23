@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test-local check helper that uses `?` now lends its assertion when the test calls it as `check(..)?` in a test that returns `Result`. An error that skips the helper's assertion then fails the test, so the assertion cannot be skipped while the test passes. Before, any `?` in the helper read "ripr could not identify the test function uniquely". A call that discards the helper's result (`let _ = check(..)`, `.ok()`) still refuses (#14116).

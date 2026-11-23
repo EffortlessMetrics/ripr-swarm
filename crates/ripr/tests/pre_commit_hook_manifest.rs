@@ -182,18 +182,23 @@ fn project() -> Result<Scratch, String> {
 /// Runs a hook entry as pre-commit would: split on whitespace, the first word
 /// resolved from PATH (here the binary under test), from the repository root.
 fn run_entry(root: &Path, entry: &str) -> Result<Output, String> {
+    run_entry_with_env(root, entry, &[])
+}
+
+fn run_entry_with_env(root: &Path, entry: &str, envs: &[(&str, &str)]) -> Result<Output, String> {
     let mut words = entry.split_whitespace();
     let program = words.next().ok_or("empty entry")?;
     if program != "ripr" {
         return Err(format!("entry must start with `ripr`: {entry}"));
     }
-    without_git_selectors(
-        Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .current_dir(root)
-            .args(words),
-    )
-    .output()
-    .map_err(|error| format!("spawn {entry}: {error}"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .current_dir(root)
+        .args(words)
+        .envs(envs.iter().copied());
+    without_git_selectors(&mut command)
+        .output()
+        .map_err(|error| format!("spawn {entry}: {error}"))
 }
 
 fn hook<'a>(hooks: &'a [Hook], id: &str) -> Result<&'a Hook, String> {
@@ -263,7 +268,12 @@ fn without_quiet_the_same_entry_writes_progress_lines() -> Result<(), String> {
     let out = run_entry(&scratch.0, &entry)?;
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
-    assert!(stderr.contains("ripr progress"), "{stderr}");
+    // A fast run on a piped stderr holds progress for 2s, so it prints
+    // nothing by default; without `--quiet` the forced stream is the control.
+    assert!(!stderr.contains("ripr progress"), "{stderr}");
+    let forced = run_entry_with_env(&scratch.0, &entry, &[("RIPR_PROGRESS", "1")])?;
+    let forced_stderr = String::from_utf8_lossy(&forced.stderr);
+    assert!(forced_stderr.contains("ripr progress"), "{forced_stderr}");
     Ok(())
 }
 

@@ -490,6 +490,45 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
     }
 }
 
+/// The flag a proposal attempt's printed after-phase command carries (#16164):
+/// `FILE` is a placeholder the caller replaces with the focused result it
+/// produced, the same placeholder the refusal recovery names.
+pub(crate) const PROPOSAL_FOCUSED_RESULT_FLAG: &str = " --test-result FILE";
+
+/// How a caller produces `FILE` for [`PROPOSAL_FOCUSED_RESULT_FLAG`]. One
+/// source for the up-front requirement (start, status, continue) and the
+/// gate's missing-result refusal, so the two cannot drift apart (#16164).
+/// Libtest JSON output is unstable, so the run needs a nightly toolchain, and
+/// it must select the proposed file's own package and target: from a
+/// workspace root a bare `cargo test` runs only the default members.
+const PROPOSAL_FOCUSED_RESULT_HOW_TO: &str = "run the new test on a nightly toolchain, selecting its package and target (`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json`, or `--lib` in place of `--test TARGET` for an inline test), and pass its events with `--test-result FILE`";
+
+/// The shape of `FILE`, named once so the requirement says how to build it.
+const PROPOSAL_FOCUSED_RESULT_FILE_SHAPE: &str = "FILE is a JSON document saved outside the checkout with schema_version `0.1`, kind `focused_test_result`, attempt_id, head, test_file and libtest_events";
+
+/// The requirement a new-test proposal attempt must meet to finish, stated for
+/// `subject` (an attempt id in backticks, or "this attempt").
+///
+/// `resolved_run` is the command resolved for the proposed file's own package
+/// and target (#16186, from `app::test_stub::focused_result_run_command`),
+/// with the proposed file exactly as the result's `test_file` must spell it.
+/// When present it replaces the generic placeholder form; `None` (an inline
+/// test, an unresolved target, or a surface without the proposed file) keeps
+/// the generic guidance.
+pub(crate) fn proposal_focused_result_requirement(
+    subject: &str,
+    resolved_run: Option<(&str, &str)>,
+) -> String {
+    match resolved_run {
+        Some((command, test_file)) => format!(
+            "{subject} follows a new-test proposal, so finishing needs a focused test result; run the new test file's target on a nightly toolchain (`{command}`) and pass its events with `--test-result FILE`. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}; its test_file is `{test_file}`"
+        ),
+        None => format!(
+            "{subject} follows a new-test proposal, so finishing needs a focused test result; {PROPOSAL_FOCUSED_RESULT_HOW_TO}. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}"
+        ),
+    }
+}
+
 /// The full-proof finish gate for an attempt that follows a new-test proposal
 /// (#13203 slice C): a finish needs a recorded focused result with at least one
 /// counted test and no failed test. The result's attribution stays the
@@ -500,8 +539,9 @@ pub(crate) fn require_passing_run(
     baseline: Option<&ProposalBaseline>,
 ) -> Result<(), String> {
     let Some(record) = record else {
-        return Err(format!(
-            "attempt `{attempt_id}` follows a new-test proposal, so finishing needs a focused test result; run the new test (`cargo test -- --format json -Z unstable-options`) and pass its events with `--test-result FILE`"
+        return Err(proposal_focused_result_requirement(
+            &format!("attempt `{attempt_id}`"),
+            None,
         ));
     };
     if record.counted() == 0 {

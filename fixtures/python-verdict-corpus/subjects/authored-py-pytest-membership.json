@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-membership",
+  "origin": "authored",
+  "version_label": "authored@b1dd0b51",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "cac7e278d777be985ff3f36db7b89369395e757159afc96ae119b14e1bd71c6f"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/test_convert.py",
+      "sha256": "4dabf523443be1089bc6e5aa620f27612e86cb116dda55313492c59295942554"
+    },
+    {
+      "path": "truthy/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "truthy/convert.py",
+      "sha256": "bf0a6289f20820284d2407c9b53673eacd3b82abe9ba540072c1f9d241584800"
+    }
+  ]
+}

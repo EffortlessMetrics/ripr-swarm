@@ -28,6 +28,8 @@ pub(crate) use fn_cfg_gates::unestablished_cfg_gates_of_fn;
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 #[cfg(test)]
 pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
+#[cfg(test)]
+pub(crate) use owner_pin::CORE_PRELUDE_MACROS;
 pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
@@ -39,16 +41,18 @@ pub(crate) use owner_pin::{
     direct_literal_call_column, empty_local_macro_invocation_ranges,
     empty_macro_binding_ambiguities, err_return_guard_key, literal_root_macro_exports,
     local_empty_macro_names, macro_binding_scan, macro_call_is_statement, node_has_macro_escape,
-    owner_pin_assertions, owner_pin_assertions_with_default_features, owner_reference_count,
-    qualified_matches_paths, returns_leave_the_function, skipping_table_column,
-    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
-    standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites, use_rebinds_crate_name,
+    opaque_row_names, owner_pin_assertions, owner_pin_assertions_with_default_features,
+    owner_reference_count, qualified_matches_paths, returns_leave_the_function,
+    skipping_table_column, source_binds_value_name, source_declares_value_name,
+    source_imported_claims_macros, standard_derive_names, supported_targeted_item_context,
+    trusted_macro_binding_site_sets, trusted_macro_binding_sites, use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{
     ClaimsMacroKind, claims_macro_names, claims_payload_variant, decimal_u8,
     is_test_scoped_trusted_macro, literal_check_syntax, literal_owner_syntax,
 };
+#[cfg(test)]
+pub(crate) use owner_pin::{returns_leave_reads, returns_leave_the_function_uncached};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 

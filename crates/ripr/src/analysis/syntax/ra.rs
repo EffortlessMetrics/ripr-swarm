@@ -52,8 +52,7 @@ use crate::analysis::rust_index::{
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
-    placeholder_bound_variables, unwrap_err_bound_variables, without_unfilled_expected,
-    without_unfilled_expected_parts,
+    unwrap_err_bound_variables, without_unfilled_expected, without_unfilled_expected_parts,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2965,10 +2964,12 @@ fn extract_parser_oracles(
         &original_function_text,
     );
     let bound_error_vars = unwrap_err_bound_variables(&function_text);
-    // #14810: a local the body binds only to an unfilled placeholder macro
-    // (`let expected: i32 = todo!(..)`) pins no expected value, so an
-    // assertion compared with it earns no strong credit.
-    let placeholder_vars = placeholder_bound_variables(&function_text);
+    let function_offset = function.syntax().text_range().start();
+    let scope = crate::analysis::extract::PlaceholderScope::from_node(
+        function.syntax(),
+        &function_text,
+        usize::from(function_offset),
+    );
 
     let mut assertions = Vec::new();
     for macro_call in function
@@ -3003,8 +3004,11 @@ fn extract_parser_oracles(
             classification.kind = OracleKind::ExactErrorVariant;
             classification.strength = OracleStrength::Strong;
         }
-        let classification =
-            without_unfilled_expected(classification, &assertion_text, &placeholder_vars);
+        let classification = without_unfilled_expected(
+            classification,
+            &assertion_text,
+            &scope.at(usize::from(range.start() - function_offset)),
+        );
         assertions.push(OracleFact {
             line: line_index.line(range.start()),
             kind: classification.kind,
@@ -3132,8 +3136,12 @@ fn extract_parser_oracles(
         };
         // #14882: lower after the ceiling, or its fallback would turn an
         // unfilled `todo!()` compared value back into a medium snapshot.
-        let (kind, strength) =
-            without_unfilled_expected_parts(kind, strength, &assertion_text, &placeholder_vars);
+        let (kind, strength) = without_unfilled_expected_parts(
+            kind,
+            strength,
+            &assertion_text,
+            &scope.at(usize::from(range.start() - function_offset)),
+        );
         let line = line_index.line(range.start());
         expect_test_comparisons.push((
             line..=line_index.line_for_range_end(range.end()),
@@ -3152,7 +3160,7 @@ fn extract_parser_oracles(
     let function_start = line_index.line(function.syntax().text_range().start());
     // #3284: terminal Err-return guards credit as their assertion twins
     // on the parser path too, so both adapters agree.
-    for oracle in err_return_guard_oracles(&function_text, function_start, &placeholder_vars) {
+    for oracle in err_return_guard_oracles(&function_text, function_start, &scope) {
         assertions.push(oracle);
     }
     // #3727 Slice A: parser-backed shadow facts over the scanned text. The
@@ -3202,7 +3210,7 @@ fn extract_parser_oracles(
             oracle.kind,
             oracle.strength,
             &oracle.text,
-            &placeholder_vars,
+            &scope.on_line(&function_text, oracle.line - function_start, &oracle.text),
         );
         oracle.kind = kind;
         oracle.strength = strength;
@@ -3805,6 +3813,95 @@ fn early_error() -> Result<(), String> {
             return Err(format!(
                 "a line-scanned assertion naming a placeholder must lower: {fact:?}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn lexical_placeholder_reads_follow_the_assertion_scope() -> Result<(), String> {
+        use crate::domain::OracleStrength::{Strong, Unknown};
+        for assertion in [
+            "assert_eq!(price(10), expected);",
+            "ensure!(price(10) == expected);",
+        ] {
+            let unrelated = format!(
+                "#[test]\nfn t() {{\nlet expected: i32 = todo!();\nlet other = |expected: i32| expected + 1;\n{assertion}\n}}"
+            );
+            let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &unrelated)?;
+            let fact = facts
+                .tests
+                .iter()
+                .flat_map(|t| &t.assertions)
+                .find(|fact| fact.text.trim_end_matches(';') == assertion.trim_end_matches(';'))
+                .ok_or_else(|| format!("missing assertion: {unrelated}"))?;
+            assert_eq!(fact.strength, Unknown, "{unrelated}");
+            for (opening, closing) in [
+                (
+                    "let other = |unused: i32,\nexpected: i32| {",
+                    "}; other(0, 7);",
+                ),
+                ("match (1, 2) { (expected, _) => {", "} }"),
+                ("match (1, 2) { (_, expected) => {", "} }"),
+                ("{ let Pair { expected, other } = pair();", "}"),
+            ] {
+                let source = format!(
+                    "#[test]\nfn t() {{\nlet expected: i32 = todo!();\n{opening}\n{assertion}\n{closing}\n{assertion}\n}}"
+                );
+                let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+                let readings: Vec<_> = facts
+                    .tests
+                    .iter()
+                    .flat_map(|t| &t.assertions)
+                    .filter(|f| f.text.trim_end_matches(';') == assertion.trim_end_matches(';'))
+                    .map(|f| f.strength.clone())
+                    .collect();
+                assert_eq!(readings, [Strong, Unknown], "{source}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn placeholder_operands_and_inline_helpers_resolve_at_the_read() -> Result<(), String> {
+        use crate::domain::OracleStrength::{Strong, Unknown};
+        for (declaration, observer, expected) in [
+            (
+                "",
+                "assert_eq!(price(10), { let expected: i32 = todo!(); expected });",
+                Unknown,
+            ),
+            (
+                "let expected: i32 = todo!();",
+                "assert_eq!(price(10), { let expected = 7; expected });",
+                Strong,
+            ),
+            (
+                "",
+                "ensure!(price(10) == { let expected: i32 = todo!(); expected });",
+                Unknown,
+            ),
+            (
+                "let expected: i32 = todo!();",
+                "let check = |expected: i32| checks::assert_eq(price(10), expected);",
+                Strong,
+            ),
+        ] {
+            let call = if observer.starts_with("let check") {
+                "check(7);"
+            } else {
+                ""
+            };
+            let source = format!("#[test]\nfn t() {{\n{declaration}\n{observer}\n{call}\n}}");
+            let ast = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &source)?;
+            let parser = ast.tests.iter().flat_map(|t| &t.assertions);
+            let scanned = crate::analysis::extract::extract_assertions(&source, 1);
+            for facts in [parser.collect::<Vec<_>>(), scanned.iter().collect()] {
+                let fact = facts
+                    .iter()
+                    .find(|f| f.text.contains("price(10)"))
+                    .ok_or_else(|| format!("missing oracle in {source}"))?;
+                assert_eq!(fact.strength, expected, "{source}: {fact:?}");
+            }
         }
         Ok(())
     }
@@ -5521,8 +5618,8 @@ const TRUSTED: &str = std::include_str!("data.json");
     fn one_scan_serves_every_scope_without_reparsing() -> Result<(), String> {
         // The same scan answers for different package scopes: only the scope
         // decides `shadowed`, so the producer parses each file once.
-        use crate::analysis::syntax::nesting::CLEAN_PARSE_CALLS;
-        let before = CLEAN_PARSE_CALLS.with(|calls| calls.get());
+        use crate::analysis::syntax::nesting_parse_calls;
+        let before = nesting_parse_calls();
         let scan = rust_embed_file_scan(r#"const D: &str = include_str!("d.json");"#, 16);
         assert!(!scan.directives(EmbedMacroShadows::default())?[0].shadowed);
         assert!(scan.directives(shadows_of("macro_rules! include_str { () => {}; }"))?[0].shadowed);
@@ -5533,7 +5630,7 @@ const TRUSTED: &str = std::include_str!("data.json");
         assert!(!scan.directives(EmbedMacroShadows::default())?[0].shadowed);
         // The discriminator: scanning and four scope queries parse exactly once.
         // `shadows_of` parses its own scope source, so count those separately.
-        let after = CLEAN_PARSE_CALLS.with(|calls| calls.get());
+        let after = nesting_parse_calls();
         assert_eq!(
             after - before,
             3,

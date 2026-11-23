@@ -128,13 +128,17 @@ pub(super) fn term_facts(
     parameters: &[PythonParameter],
     owner_text: &str,
     wrapped: bool,
-    // Synchronous, with every decorator `@classmethod` or `@staticmethod`.
+    // Every decorator is `@classmethod` or `@staticmethod`.
     binding_only: bool,
 ) -> PythonTermFacts {
     let bound_names = body_bound_names(body);
+    // The outer async declaration changes how a caller obtains the return
+    // value. It does not rebind a parameter inside the function.
+    let async_signature = owner_text.strip_prefix("async");
+    let scope_text = async_signature.unwrap_or(owner_text);
     let opaque_scope = ["lambda", "for", "async", "await", ":="]
         .into_iter()
-        .any(|keyword| code_mentions(owner_text, keyword));
+        .any(|keyword| code_mentions(scope_text, keyword));
     let stable_parameters = match (&bound_names, opaque_scope) {
         (Some(bound), false) => parameters
             .iter()
@@ -164,7 +168,12 @@ pub(super) fn term_facts(
         guarded_return: (!wrapped)
             .then(|| guarded_return(source, body, parameters))
             .flatten(),
-        stable_parameters,
+        // Existing call-site propagation only models synchronous callers.
+        stable_parameters: if async_signature.is_some() {
+            Vec::new()
+        } else {
+            stable_parameters
+        },
         bound_names,
         returned_parameter,
         calls_own_name: false,

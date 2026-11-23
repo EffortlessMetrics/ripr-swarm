@@ -162,11 +162,25 @@ fn unused_const_and_a_callable_const_get_no_edge() {
 }
 
 #[test]
-fn factory_const_keeps_its_previous_no_entry_reading() {
+fn factory_const_is_reached_only_as_a_closure() {
     // A factory product is a function node, not a value: bare-call reach to it
-    // must not start attaching entries to its `ModuleFunction` owner.
+    // never gives its `ModuleFunction` owner a call entry. What a call of it
+    // runs is the code it was built from, so every entry is a closure entry
+    // (#13592 closure continuation), which reads `static_unknown` at most.
     let source = "function build() {\n  return (a: number) => a;\n}\nconst made = build();\nexport function f() {\n  return made(1);\n}\n";
-    assert!(entry_names(source, "made").is_empty());
+    let entries = extract_owners(Path::new("src/c.ts"), source)
+        .into_iter()
+        .find(|candidate| candidate.name == "made")
+        .map(|candidate| candidate.module_entries)
+        .unwrap_or_default();
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["f"]
+    );
+    assert!(entries.iter().all(|entry| entry.closure), "{entries:?}");
 }
 
 #[test]

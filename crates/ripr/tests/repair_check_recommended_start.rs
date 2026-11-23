@@ -45,6 +45,12 @@ fn ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("spawn ripr {args:?}: {error}"))
 }
 
+/// Bare repair read without a diff scope. The fixtures that are not on a
+/// feature branch commit the change on `main`; a bare repair there follows
+/// check's last-commit rescope (#16082), so the unscoped read names the empty
+/// range `HEAD..HEAD` explicitly.
+const UNSCOPED_REPAIR: &[&str] = &["repair", "--base", "HEAD"];
+
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -150,7 +156,7 @@ fn assert_several_eligible_without_scope(
     test: &str,
 ) -> Result<(), String> {
     let repo = repo(&format!("{label}-pre"), base, changed, test, false)?;
-    let repair = ripr(&repo.root, &["repair"])?;
+    let repair = ripr(&repo.root, UNSCOPED_REPAIR)?;
     let err = text(&repair.stderr);
     let listed = err
         .lines()
@@ -174,7 +180,7 @@ fn assert_starts_without_scope(
     test: &str,
 ) -> Result<(), String> {
     let repo = repo(&format!("{label}-pre"), base, changed, test, false)?;
-    let repair = ripr(&repo.root, &["repair"])?;
+    let repair = ripr(&repo.root, UNSCOPED_REPAIR)?;
     let (out, err) = (text(&repair.stdout), text(&repair.stderr));
     if repair.status.code() != Some(0)
         || !out.contains("Ready to repair")
@@ -282,8 +288,8 @@ fn a_change_check_reads_as_noticed_and_unknown_lists_no_start() -> Result<(), St
     Ok(())
 }
 
-/// Guard (passes with or without the narrowing): with the change committed on the default branch there is no
-/// diff to scope to, so check's recommendation does not apply to bare repair
+/// Guard (passes with or without the narrowing): with an empty range
+/// ([`UNSCOPED_REPAIR`]) there is no diff to scope to, so check's recommendation does not apply to bare repair
 /// and the prompt stays.
 #[test]
 fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
@@ -295,7 +301,7 @@ fn an_unscoped_change_keeps_the_selection() -> Result<(), String> {
         false,
     )?;
     let root = &repo.root;
-    let repair = ripr(root, &["repair"])?;
+    let repair = ripr(root, UNSCOPED_REPAIR)?;
     let err = text(&repair.stderr);
     if repair.status.code() != Some(3) || !err.contains("code=several_eligible_seams") {
         return Err(format!("unscoped bare repair must keep the prompt:\n{err}"));
@@ -331,7 +337,7 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
         return Err(format!("scoped refusal must close on the reasons:\n{err}"));
     }
     let unscoped = repo("nx-unscoped", FLIP_BASE, FLIP_NEW, FLIP_TEST, false)?;
-    let repair = ripr(&unscoped.root, &["repair"])?;
+    let repair = ripr(&unscoped.root, UNSCOPED_REPAIR)?;
     let (out, err) = (text(&repair.stdout), text(&repair.stderr));
     if repair.status.code() != Some(0)
         || out.contains("each changed spot below says")
@@ -344,7 +350,7 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
     // The unscoped FLIP fixture starts a repair instead of refusing, so the
     // old-route contrast uses a refusing fixture read without a diff scope.
     let field = repo("nx-field", FIELD_BASE, FIELD_NEW, FIELD_TEST, false)?;
-    let repair = ripr(&field.root, &["repair"])?;
+    let repair = ripr(&field.root, UNSCOPED_REPAIR)?;
     let err = text(&repair.stderr);
     if repair.status.code() != Some(3)
         || !err.contains("code=no_eligible_seam")
@@ -352,6 +358,153 @@ fn open_spots_on_the_change_close_on_the_per_spot_reasons() -> Result<(), String
         || err.contains("each changed spot below says")
     {
         return Err(format!("unscoped refusal keeps the old route:\n{err}"));
+    }
+    Ok(())
+}
+
+/// Unchanged code beside the FLIP change: a repairable boundary, a field
+/// read that cannot start, and a gripped doubling, each outside the change.
+const OUTSIDE_SPOTS: &str = "\npub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n\npub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn default_config() -> Config {\n    Config {\n        retries: 3,\n        verbose: false,\n    }\n}\n\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n";
+const OUTSIDE_TESTS: &str = "\n#[test]\nfn adult_far_above() {\n    assert!(fx::is_adult(40));\n}\n\n#[test]\nfn default_config_is_quiet() {\n    assert!(!fx::default_config().verbose);\n}\n\n#[test]\nfn doubled_works() {\n    assert_eq!(fx::doubled(2), 4);\n}\n";
+
+/// #15615: when the changed spot cannot start and several spots outside the
+/// change are counted, the capped reason list names the changed spot first
+/// and folds the outside counts into one row, instead of hiding the changed
+/// spot behind an "(and 1 more)" remainder.
+#[test]
+fn the_changed_spot_is_listed_before_the_outside_counts() -> Result<(), String> {
+    let base = format!("{FLIP_BASE}{OUTSIDE_SPOTS}");
+    let changed = format!("{FLIP_NEW}{OUTSIDE_SPOTS}");
+    let test = format!("{FLIP_TEST}{OUTSIDE_TESTS}");
+    let repo = repo("changed-first", &base, &changed, &test, true)?;
+    let repair = ripr(&repo.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
+        return Err(format!("the change must refuse:\n{err}"));
+    }
+    let why: Vec<&str> = err
+        .lines()
+        .skip_while(|line| *line != "Why:")
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .collect();
+    let changed_row = why
+        .iter()
+        .position(|row| row.contains("src/lib.rs:2"))
+        .ok_or_else(|| format!("the changed spot must be listed:\n{err}"))?;
+    let outside_row = why
+        .iter()
+        .position(|row| row.contains("outside your changed lines"))
+        .ok_or_else(|| format!("the outside spots must still be counted:\n{err}"))?;
+    // The outside counts fold into one row, which ends the capped list.
+    if why.len() != 3
+        || outside_row != 2
+        || !why[outside_row].starts_with("  - outside your changed lines, ")
+    {
+        return Err(format!(
+            "the outside counts must fold into the last row:\n{err}"
+        ));
+    }
+    if changed_row > outside_row
+        || !err.contains("none is ready for an automatic repair on your changed lines.")
+        || !err.contains("Next: each changed spot below says what it still needs")
+        || err.contains("(and 1 more")
+    {
+        return Err(format!(
+            "the changed spot must lead the outside counts:\n{err}"
+        ));
+    }
+    if attempts(&repo.root) != 0 {
+        return Err("no attempt may start".to_string());
+    }
+    Ok(())
+}
+
+/// A boundary module the test includes by `#[path]`, so `ripr check` cannot
+/// tie its call to the owner and reads the changed boundary as unknown.
+const PATH_MODULE_BASE: &str = "pub fn digits(v: u32) -> u32 {\n    if v >= 1000 {\n        4\n    } else {\n        3\n    }\n}\n";
+const PATH_MODULE_NEW: &str = "pub fn digits(v: u32) -> u32 {\n    if v > 1000 {\n        4\n    } else {\n        3\n    }\n}\n";
+const MIXED_BASE: &str = "pub mod m;\n\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n\npub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n\npub fn halved(x: i32) -> i32 {\n    x / 2\n}\n";
+const MIXED_TEST: &str = "#[path = \"../src/m.rs\"]\nmod m;\n\n#[test]\nfn four_digits() {\n    assert_eq!(m::digits(5000), 4);\n}\n\n#[test]\nfn doubles() {\n    assert_eq!(fx::doubled(2), 6);\n}\n\n#[test]\nfn adult() {\n    assert!(fx::is_adult(40));\n}\n\n#[test]\nfn halves() {\n    assert_eq!(fx::halved(4), 2);\n}\n";
+
+/// #16216 review: a change with one already-gripped spot and one repair
+/// candidate that `ripr check` reads as unknown is still open, so the refusal
+/// must not take the already-checked shortcut ("Nothing to do"), and it keeps
+/// the counts of the spots outside the change.
+#[test]
+fn a_gripped_spot_beside_an_unknown_candidate_is_not_called_checked() -> Result<(), String> {
+    let changed = MIXED_BASE.replace("x * 2", "x * 3");
+    let repo = repo_with_src_files(
+        "mixed-unknown",
+        MIXED_BASE,
+        &changed,
+        MIXED_TEST,
+        true,
+        &[("src/m.rs", PATH_MODULE_BASE)],
+    )?;
+    let root = &repo.root;
+    std::fs::write(root.join("src/m.rs"), PATH_MODULE_NEW).map_err(|e| e.to_string())?;
+    git(root, &["commit", "-q", "-am", "boundary"])?;
+    let repair = ripr(root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
+        return Err(format!("the change must refuse:\n{err}"));
+    }
+    for expected in [
+        "the code at src/m.rs:2 `v > 1000`: `ripr check` cannot tell from reading the code",
+        "1 other part of your changed lines is already noticed by existing tests",
+        "none is ready for an automatic repair on your changed lines.",
+        "outside your changed lines",
+    ] {
+        if !err.contains(expected) {
+            return Err(format!("the refusal must carry {expected:?}:\n{err}"));
+        }
+    }
+    if err.contains("Nothing to do for this change") {
+        return Err(format!("an unknown candidate is not checked:\n{err}"));
+    }
+    if attempts(root) != 0 {
+        return Err("no attempt may start".to_string());
+    }
+    Ok(())
+}
+
+/// A changed flip a test pins (check reads it as noticed) beside a changed
+/// doubling a test already grips, with spots outside the change.
+const NOTICED_BASE: &str = "pub fn open(blocked: bool) -> bool {\n    !blocked\n}\n\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n\npub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n\npub fn halved(x: i32) -> i32 {\n    x / 2\n}\n";
+const NOTICED_TEST: &str = "use fx::*;\n\n#[test]\nfn open_when_not_blocked() {\n    assert!(open(false));\n}\n\n#[test]\nfn doubles() {\n    assert_eq!(doubled(2), 6);\n}\n\n#[test]\nfn adult() {\n    assert!(is_adult(40));\n}\n\n#[test]\nfn halves() {\n    assert_eq!(halved(4), 2);\n}\n";
+
+/// #16216 review, the mirror of the unknown case: when check closes every
+/// changed candidate as noticed beside an already-gripped changed spot, the
+/// change is already checked. The refusal says nothing to do, names the
+/// gripped spot directly, and lists no spot outside the change.
+#[test]
+fn a_gripped_spot_beside_a_noticed_candidate_is_already_checked() -> Result<(), String> {
+    let changed = NOTICED_BASE
+        .replace("    !blocked\n", "    blocked\n")
+        .replace("x * 2", "x * 3");
+    let repo = repo("mixed-noticed", NOTICED_BASE, &changed, NOTICED_TEST, true)?;
+    let repair = ripr(&repo.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
+        return Err(format!("the change must refuse:\n{err}"));
+    }
+    for expected in [
+        "Nothing to do for this change",
+        "`blocked`: `ripr check` reads this changed code as already noticed by a test",
+        "the code at src/lib.rs:6 `x * 3`: existing tests already check it",
+    ] {
+        if !err.contains(expected) {
+            return Err(format!("the refusal must carry {expected:?}:\n{err}"));
+        }
+    }
+    if err.contains("outside your changed lines") || err.contains("different check") {
+        return Err(format!(
+            "an already-checked change lists no outside spot and no open check:\n{err}"
+        ));
+    }
+    if attempts(&repo.root) != 0 {
+        return Err("no attempt may start".to_string());
     }
     Ok(())
 }

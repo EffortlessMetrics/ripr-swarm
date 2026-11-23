@@ -584,6 +584,7 @@ fn benchmark_semantic_controls_production_command_keeps_separate_counts() -> Res
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     crate::tests::with_temp_cwd("historical-controls-production-report", |root| {
         crate::tests::copy_dir_recursive(&repo.join("fixtures"), &root.join("fixtures"))?;
+        crate::fixture_contracts::denominator_floor::seed_floor_in_cwd()?;
         crate::fixture_contracts::check_fixture_contracts()?;
         let report_path = root.join("target/ripr/reports/fixture-contracts.md");
         let report = fs::read_to_string(&report_path).map_err(|error| error.to_string())?;

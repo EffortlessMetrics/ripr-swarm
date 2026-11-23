@@ -1,7 +1,4 @@
-use super::actions::{
-    SERVER_EXECUTED_COMMANDS, code_action_response, disable_retained_analysis_actions,
-    resolve_action,
-};
+use super::actions::{SERVER_EXECUTED_COMMANDS, code_action_response, resolve_action};
 use super::backend::{
     Backend, RefreshLogSummary, WatchedFileChanges, deadline_exceeded_log_message,
     refresh_completed_log_message, refresh_failed_log_message, workspace_input_path_is_relevant,
@@ -597,7 +594,7 @@ fn watched_diagnostics_inputs_register_root_anchored_and_refresh_over_the_wire()
             serde_json::json!({
                 "globPattern": {
                     "baseUri": root_uri.as_str(),
-                    "pattern": "**/*.{rs,py,pm,pl,t,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+                    "pattern": "**/*.{rs,py,pm,pl,t,psgi,ts,tsx,mts,cts,js,jsx,mjs,cjs}",
                 },
                 "kind": 2,
             }),
@@ -1081,6 +1078,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         id: format!("probe:{file}:10:predicate:aabbccdd"),
         canonical_gap: None,
         probe: Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:{file}:10:predicate:aabbccdd")),
             location: SourceLocation::new(file, 10, 1),
             owner: Some(SymbolId("owner::fn".to_string())),
@@ -1183,6 +1181,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -2024,6 +2023,138 @@ fn framed_lsp_refresh_resolves_git_inputs_once_and_projects_the_record() -> Resu
         )
         .await?;
         let shutdown = read_lsp_response(&mut client_read, 4).await?;
+        assert!(shutdown.get("error").is_none());
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "exit",
+                "params": null
+            }),
+        )
+        .await?;
+        client_write
+            .shutdown()
+            .await
+            .map_err(|err| format!("failed to close test client: {err}"))?;
+        match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server_task).await {
+            Ok(join_result) => {
+                join_result.map_err(|err| format!("LSP server task failed: {err}"))?;
+            }
+            Err(_) => {
+                server_task.abort();
+                return Err("LSP server did not stop after exit notification".to_string());
+            }
+        }
+        Ok(())
+    })
+}
+
+/// No `workspace/codeLens/refresh` is attempted while `initialize` is still
+/// being handled (RIPR-SPEC-0138). The initialize-time root transition
+/// clears the lens view, but tower-lsp-server refuses server->client
+/// requests while `initialize` is handled (-32002) and the client requests
+/// lenses itself once the session starts, so an attempt only produced a "code lens refresh request failed"
+/// warning on every session start.
+#[test]
+fn framed_code_lens_refresh_is_not_attempted_before_initialized() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("framed-code-lens-refresh-before-initialized")?;
+        write_lsp_scope_fixture(&root.path)?;
+        let root_uri = file_uri_for_path(root.path())?;
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let mut client_read = client_read;
+
+        let lens_refresh_traffic = |messages: &[serde_json::Value]| -> Vec<String> {
+            let mut seen: Vec<String> = log_notification_messages(messages)
+                .into_iter()
+                .filter(|text| text.contains("code lens refresh"))
+                .collect();
+            seen.extend(
+                messages
+                    .iter()
+                    .filter(|message| {
+                        message.get("method").and_then(serde_json::Value::as_str)
+                            == Some("workspace/codeLens/refresh")
+                    })
+                    .map(ToString::to_string),
+            );
+            seen
+        };
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "capabilities": {
+                        "workspace": {
+                            "codeLens": { "refreshSupport": true }
+                        }
+                    }
+                }
+            }),
+        )
+        .await?;
+        let (initialize, before_response) =
+            read_lsp_response_with_notifications(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        let early = lens_refresh_traffic(&before_response);
+        if !early.is_empty() {
+            return Err(format!(
+                "no code lens refresh may be attempted while initialize is handled: {early:?}"
+            ));
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {}
+            }),
+        )
+        .await?;
+        let after_initialized =
+            read_lsp_messages_for(&mut client_read, Duration::from_millis(500)).await?;
+        let late = lens_refresh_traffic(&after_initialized);
+        if !late.is_empty() {
+            return Err(format!(
+                "the skipped initialize-time refresh must not surface after initialized: {late:?}"
+            ));
+        }
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "shutdown",
+                "params": null
+            }),
+        )
+        .await?;
+        let shutdown = read_lsp_response(&mut client_read, 2).await?;
         assert!(shutdown.get("error").is_none());
         write_lsp_message(
             &mut client_write,
@@ -5728,6 +5859,7 @@ fn seam_repair_card_binds_only_through_the_complete_raw_candidates() -> Result<(
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "discounted_total_boundary".to_string(),
                     file: PathBuf::from("tests/pricing.rs"),
                     line: 12,
@@ -6432,6 +6564,7 @@ fn route_ready_seam_with_external_language_related_test() -> crate::analysis::Cl
     seam.evidence
         .related_tests
         .push(std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "discounted total at threshold".to_string(),
             file: PathBuf::from("tests/pricing.test.ts"),
             line: 4,
@@ -8109,7 +8242,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
 
         for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
             let mut retained = actions.clone();
-            disable_retained_analysis_actions(
+            super::actions::disable_retained_analysis_actions(
                 &mut retained,
                 &AnalysisHealth {
                     state,
@@ -8162,7 +8295,7 @@ fn retained_health_preserves_gap_producer_refusals() -> Result<(), String> {
         .to_string();
     for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Failed] {
         let mut retained = stale.clone();
-        disable_retained_analysis_actions(
+        super::actions::disable_retained_analysis_actions(
             &mut retained,
             &AnalysisHealth {
                 state,
@@ -9224,6 +9357,234 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
     Ok(())
 }
 
+/// #13636: an interactive save deferred the full spot inventory, so a
+/// gap-class finding has no seam-bound start. A disabled-capable client
+/// sees "Start repair" inert with the full refresh named; a legacy client
+/// keeps the omission; a full (non-deferred) snapshot and an exposed
+/// finding never get the inert start.
+#[test]
+fn snapshot_without_spot_inventory_lists_an_inert_start_naming_the_blocker() -> Result<(), String> {
+    let finding = sample_finding();
+    assert!(finding.is_candidate_actionable());
+    let finding_diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let mut snapshot = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        vec![finding_diagnostic.clone()],
+        vec![finding.clone()],
+    );
+    snapshot.seams_deferred = true;
+    // A full refresh under this configuration builds the spot inventory.
+    snapshot.seam_inventory_on_full_refresh = true;
+    let params = code_action_params(vec![finding_diagnostic.clone()])?;
+    let commands = vscode_advertised_client_commands()?;
+    let borrowed = commands.iter().map(String::as_str).collect::<Vec<_>>();
+    let disabled_client = client_features_with_disabled_support(&borrowed)?;
+    let start_title = "Start repair: copy repair command";
+
+    let deferred_actions = code_action_response(&params, Some(&snapshot), &disabled_client);
+    let literals = code_action_literals(&deferred_actions)?;
+    let start = literals
+        .iter()
+        .find(|action| action.title == start_title)
+        .ok_or_else(|| format!("the inert start must be listed: {literals:?}"))?;
+    assert!(start.command.is_none(), "{start:?}");
+    assert_eq!(
+        start
+            .disabled
+            .as_ref()
+            .map(|disabled| disabled.reason.as_str()),
+        Some(
+            "The last save ran a quick analysis that skips repair spots, so there is no repair start here yet; run \"ripr: Refresh Full Analysis\", then check this finding again."
+        )
+    );
+    let data = start.data.as_ref().ok_or("inert start carries data")?;
+    assert_eq!(data["disabled_reason"], "seam_evidence_deferred");
+    assert_eq!(data["action_name"], "copy_agent_repair_command");
+    assert_disabled_action_invariants(start)?;
+    assert!(
+        literals.iter().any(
+            |action| action.title == "Inspect finding: copy context packet"
+                && action.command.is_some()
+        ),
+        "the context packet stays enabled: {literals:?}"
+    );
+
+    // A client without disabled support keeps the legacy omission.
+    let legacy = code_action_commands(&code_action_response(
+        &params,
+        Some(&snapshot),
+        &vscode_client_features()?,
+    ))?;
+    assert!(
+        legacy.iter().all(|(title, _, _)| title != start_title),
+        "{legacy:?}"
+    );
+
+    // Discriminators: a full snapshot, and an exposed finding, list no start.
+    let mut full = snapshot.clone();
+    full.seams_deferred = false;
+    let full_actions = code_action_response(&params, Some(&full), &disabled_client);
+    let full_literals = code_action_literals(&full_actions)?;
+    assert!(
+        full_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{full_literals:?}"
+    );
+    let mut exposed = snapshot.clone();
+    exposed.findings[0].class = ExposureClass::Exposed;
+    let exposed_actions = code_action_response(&params, Some(&exposed), &disabled_client);
+    let exposed_literals = code_action_literals(&exposed_actions)?;
+    assert!(
+        exposed_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{exposed_literals:?}"
+    );
+    // While the full refresh it names is queued or running, the retained
+    // start says to wait instead of asking for that refresh again.
+    for state in [AnalysisAttemptState::Queued, AnalysisAttemptState::Running] {
+        let mut retained = deferred_actions.clone();
+        super::actions::disable_retained_analysis_actions(
+            &mut retained,
+            &AnalysisHealth {
+                state,
+                ..AnalysisHealth::default()
+            },
+        );
+        let retained_literals = code_action_literals(&retained)?;
+        let retained_start = retained_literals
+            .iter()
+            .find(|action| action.title == start_title)
+            .ok_or_else(|| format!("retained start listed: {retained_literals:?}"))?;
+        let retained_data = retained_start.data.as_ref().ok_or("retained data")?;
+        assert_eq!(retained_data["disabled_reason"], "analysis_not_current");
+    }
+
+    // Under a configuration whose full refresh builds no spots (the default
+    // actionable profile, or spot diagnostics off) the refresh would not
+    // bring a start back: the start names the setting instead, deferred or
+    // not. While a refresh runs (often the one a setting change started) the
+    // retained start says to wait instead.
+    for deferred in [true, false] {
+        let mut no_inventory = snapshot.clone();
+        no_inventory.seams_deferred = deferred;
+        no_inventory.seam_inventory_on_full_refresh = false;
+        let no_inventory_actions =
+            code_action_response(&params, Some(&no_inventory), &disabled_client);
+        let no_inventory_literals = code_action_literals(&no_inventory_actions)?;
+        let blocked = no_inventory_literals
+            .iter()
+            .find(|action| action.title == start_title)
+            .ok_or_else(|| format!("the settings-blocked start: {no_inventory_literals:?}"))?;
+        assert!(blocked.command.is_none(), "{blocked:?}");
+        let blocked_data = blocked.data.as_ref().ok_or("blocked start data")?;
+        assert_eq!(
+            blocked_data["disabled_reason"],
+            "seam_inventory_not_enabled"
+        );
+        let reason = blocked
+            .disabled
+            .as_ref()
+            .map(|disabled| disabled.reason.as_str())
+            .unwrap_or_default();
+        // The full text is pinned: the VS Code e2e mocks this exact string.
+        assert_eq!(
+            reason,
+            "Your ripr settings skip repair spots, so there is no repair start here; set ripr.diagnosticProfile to \"full\" and ripr.seamDiagnostics to true in your editor settings (diagnostic_profile and seam_diagnostics under [lsp] in ripr.toml apply only where no editor setting overrides them, and \"rust\" must be enabled under [languages]), then run \"ripr: Refresh Full Analysis\"."
+        );
+        let mut retained = no_inventory_actions.clone();
+        super::actions::disable_retained_analysis_actions(
+            &mut retained,
+            &AnalysisHealth {
+                state: AnalysisAttemptState::Running,
+                ..AnalysisHealth::default()
+            },
+        );
+        let retained_literals = code_action_literals(&retained)?;
+        let retained_start = retained_literals
+            .iter()
+            .find(|action| action.title == start_title)
+            .ok_or("retained settings-blocked start")?;
+        let retained_data = retained_start.data.as_ref().ok_or("retained data")?;
+        assert_eq!(retained_data["disabled_reason"], "analysis_not_current");
+        // A client without disabled support keeps the legacy omission.
+        let legacy = code_action_commands(&code_action_response(
+            &params,
+            Some(&no_inventory),
+            &vscode_client_features()?,
+        ))?;
+        assert!(
+            legacy.iter().all(|(title, _, _)| title != start_title),
+            "{legacy:?}"
+        );
+        // A gap record in the same request carries its own repair-packet
+        // actions, so the finding adds no inert start beside them.
+        let mut gap_record = finding_diagnostic.clone();
+        gap_record.data = Some(serde_json::json!({ "gap_id": "gap:0011223344556677" }));
+        let with_gap = code_action_params(vec![finding_diagnostic.clone(), gap_record])?;
+        let with_gap_actions =
+            code_action_response(&with_gap, Some(&no_inventory), &disabled_client);
+        let with_gap_literals = code_action_literals(&with_gap_actions)?;
+        assert!(
+            with_gap_literals.iter().all(|action| action
+                .data
+                .as_ref()
+                .is_none_or(|data| data["disabled_reason"] != "seam_inventory_not_enabled")),
+            "{with_gap_literals:?}"
+        );
+    }
+    // A non-Rust finding gets no spot start from a full refresh either.
+    let mut python = snapshot.clone();
+    python.findings[0].language = Some(crate::domain::LanguageId::Python);
+    let python_actions = code_action_response(&params, Some(&python), &disabled_client);
+    let python_literals = code_action_literals(&python_actions)?;
+    assert!(
+        python_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{python_literals:?}"
+    );
+
+    // A static-limited finding and a base-side finding have no start either.
+    let mut limited = snapshot.clone();
+    limited.findings[0].static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+    let limited_actions = code_action_response(&params, Some(&limited), &disabled_client);
+    let limited_literals = code_action_literals(&limited_actions)?;
+    assert!(
+        limited_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{limited_literals:?}"
+    );
+    let mut base_side = snapshot.clone();
+    base_side.findings[0].source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    assert!(!base_side.findings[0].is_candidate_actionable());
+    let base_actions = code_action_response(&params, Some(&base_side), &disabled_client);
+    let base_literals = code_action_literals(&base_actions)?;
+    assert!(
+        base_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{base_literals:?}"
+    );
+    // A preview-language finding has no producer-backed start, deferred or
+    // not, so the deferral must not invent one.
+    let mut preview = snapshot.clone();
+    preview.findings[0].language_status = Some(crate::domain::LanguageStatus::Preview);
+    let preview_actions = code_action_response(&params, Some(&preview), &disabled_client);
+    let preview_literals = code_action_literals(&preview_actions)?;
+    assert!(
+        preview_literals
+            .iter()
+            .all(|action| action.title != start_title),
+        "{preview_literals:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Result<(), String> {
     use crate::analysis::test_grip_evidence::{
@@ -9233,6 +9594,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "nearby_smoke_reaches_owner".to_string(),
             file: PathBuf::from("tests/smoke.rs"),
             line: 7,
@@ -9244,6 +9606,7 @@ fn seam_code_actions_open_strong_related_test_before_first_related_test() -> Res
             relation_confidence: RelationConfidence::High,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "below_threshold_has_no_discount".to_string(),
             file: PathBuf::from("tests/pricing.rs"),
             line: 12,
@@ -9297,6 +9660,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
     let mut seam = sample_classified_seam();
     seam.evidence.related_tests = vec![
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "opaque_fixture_hint".to_string(),
             file: PathBuf::from("tests/opaque.rs"),
             line: 3,
@@ -9308,6 +9672,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Opaque,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "low_confidence_smoke".to_string(),
             file: PathBuf::from("tests/low.rs"),
             line: 5,
@@ -9319,6 +9684,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Low,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "medium_confidence_property".to_string(),
             file: PathBuf::from("tests/medium.rs"),
             line: 9,
@@ -9330,6 +9696,7 @@ fn seam_code_actions_open_highest_confidence_related_test_when_no_strong_test_ex
             relation_confidence: RelationConfidence::Medium,
         }),
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "high_confidence_weak_assertion".to_string(),
             file: PathBuf::from("tests/high.rs"),
             line: 11,
@@ -9383,6 +9750,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     };
 
     let same_file_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "same_file_strong_neighbour".to_string(),
         file: PathBuf::from("tests/neighbour.rs"),
         line: 4,
@@ -9394,6 +9762,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let token_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "token_substring_strong".to_string(),
         file: PathBuf::from("tests/token.rs"),
         line: 6,
@@ -9405,6 +9774,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let calling_weak = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "calls_owner_weakly".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -9457,6 +9827,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
     // A strong test that only carries the owner's name ranks after the weak
     // test that calls the owner.
     let name_strong = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "owner_named_strong".to_string(),
         file: PathBuf::from("tests/named.rs"),
         line: 2,
@@ -9468,6 +9839,7 @@ fn seam_code_actions_skip_proximity_only_related_tests() -> Result<(), String> {
         relation_confidence: RelationConfidence::High,
     });
     let calling = std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "calls_owner_weakly".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -9676,6 +10048,7 @@ fn seam_code_actions_keep_navigation_when_related_test_is_unresolved() -> Result
 
     let mut seam = sample_side_effect_seam_without_related_tests();
     seam.evidence.related_tests = vec![std::sync::Arc::new(RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "publish_event_emits_bus_message".to_string(),
         file: PathBuf::from("tests/service.rs"),
         line: 21,
@@ -11165,6 +11538,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -12216,6 +12590,575 @@ fn pull_mode_is_pending_until_the_first_pull_resolves() -> Result<(), String> {
         // discloses `pending` instead of presenting defaults as accepted
         // requested settings.
         assert_eq!(authority["configuration_pull"]["state"], "pending");
+        Ok(())
+    })
+}
+
+/// #15312 through the framed server and real Git inputs: a push client that
+/// holds findings gets the withdrawal marker when the base stops resolving,
+/// and gets the findings back when the base resolves again. The marker and
+/// its retraction are delivered, not only computable.
+#[test]
+#[serial]
+fn framed_lsp_push_client_gets_withdrawal_marker_for_unresolvable_base_and_findings_back()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = untested_rust_edit_fixture("framed-base-withdrawal")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let lib_path = root.path().join("src/lib.rs");
+        let lib_uri = file_uri_for_path(&lib_path)?;
+        let lib_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read lib.rs failed: {err}"))?;
+        let (client_io, server_io) = tokio::io::duplex(1024 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let outcome = async {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": root_uri.as_str(),
+                        "capabilities": {},
+                        "initializationOptions": {"baseRef": "HEAD", "checkMode": "instant"}
+                    }
+                }),
+            )
+            .await?;
+            read_lsp_response(&mut client_read, 1).await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "textDocument/didOpen",
+                    "params": {"textDocument": {
+                        "uri": lib_uri.as_str(),
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": lib_text
+                    }}
+                }),
+            )
+            .await?;
+            // The next publish for lib.rs whose payload matches `wanted`.
+            async fn publish_matching(
+                client_read: &mut (impl tokio::io::AsyncRead + Unpin),
+                lib_uri: &str,
+                what: &str,
+                wanted: impl Fn(&serde_json::Value) -> bool,
+            ) -> Result<serde_json::Value, String> {
+                let mut last = serde_json::Value::Null;
+                loop {
+                    let message = tokio::time::timeout(
+                        std::time::Duration::from_mins(1),
+                        read_lsp_message(client_read),
+                    )
+                    .await
+                    .map_err(|elapsed| {
+                        format!("no publish with {what} arrived ({elapsed}); last: {last}")
+                    })??;
+                    if message["method"] != "textDocument/publishDiagnostics"
+                        || message["params"]["uri"] != lib_uri
+                    {
+                        continue;
+                    }
+                    let items = message["params"]["diagnostics"].clone();
+                    if wanted(&items) {
+                        return Ok(items);
+                    }
+                    last = items;
+                }
+            }
+            // Committed rows: a non-empty payload with no pending, withdrawal
+            // or other delivery-limitation marker in it.
+            let has_finding = |items: &serde_json::Value| {
+                items.as_array().is_some_and(|items| {
+                    !items.is_empty()
+                        && items
+                            .iter()
+                            .all(|item| item["data"]["kind"] != "delivery_limitation")
+                })
+            };
+            let is_withdrawal = |items: &serde_json::Value| {
+                items.as_array().is_some_and(|items| {
+                    items.len() == 1
+                        && items[0]["data"]["state"] == "withdrawn_analysis_failure"
+                        && items[0]["data"]["failure_kind"] == "base_unresolvable"
+                })
+            };
+            let findings =
+                publish_matching(&mut client_read, lib_uri.as_str(), "a finding", has_finding)
+                    .await?;
+
+            let set_base = |base: &str| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeConfiguration",
+                    "params": {"settings": {"ripr": {"baseRef": base}}}
+                })
+            };
+            write_lsp_message(&mut client_write, set_base("no-such-ref")).await?;
+            let marker = publish_matching(
+                &mut client_read,
+                lib_uri.as_str(),
+                "the withdrawal marker",
+                is_withdrawal,
+            )
+            .await?;
+            let message = marker[0]["message"].as_str().unwrap_or_default();
+            if !message.contains("previously reported findings are withdrawn")
+                || !message.contains("no-such-ref")
+            {
+                return Err(format!(
+                    "the marker must name the withdrawal and the base: {message}"
+                ));
+            }
+
+            write_lsp_message(&mut client_write, set_base("HEAD")).await?;
+            let restored = publish_matching(
+                &mut client_read,
+                lib_uri.as_str(),
+                "the restored finding",
+                has_finding,
+            )
+            .await?;
+            if restored != findings {
+                return Err(format!(
+                    "the restored payload must equal the original: {restored} vs {findings}"
+                ));
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        server_task.abort();
+        outcome
+    })
+}
+
+/// #15312: a pulled `ripr` section with rejected values was disclosed only
+/// in `ripr/analysisStatus`, which a generic editor does not render, so the
+/// settings looked accepted. The rejection must reach the log and the screen,
+/// naming every rejected setting with its accepted values.
+#[test]
+#[serial]
+fn framed_lsp_rejected_pulled_settings_warn_naming_each_key_and_accepted_values()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("framed-config-pull-rejected")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let outcome = async {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": root_uri.as_str(),
+                        "capabilities": {"workspace": {"configuration": true}}
+                    }
+                }),
+            )
+            .await?;
+            read_lsp_response(&mut client_read, 1).await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            let pull_request =
+                read_lsp_request(&mut client_read, "workspace/configuration").await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": pull_request["id"].clone(),
+                    "result": [{
+                        "diagnosticProfile": "loud",
+                        "seamDiagnostics": "yes",
+                        "baseRef": 5,
+                        "unrelatedKey": "ignored"
+                    }]
+                }),
+            )
+            .await?;
+            let mut logged = None;
+            let mut shown = None;
+            while logged.is_none() || shown.is_none() {
+                let message = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    read_lsp_message(&mut client_read),
+                )
+                .await
+                .map_err(|elapsed| {
+                    format!(
+                        "no rejection warning arrived ({elapsed}): logged={logged:?} shown={shown:?}"
+                    )
+                })??;
+                let text = message["params"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                if !text.contains("ignored the editor's ripr settings") {
+                    continue;
+                }
+                match message["method"].as_str() {
+                    Some("window/logMessage") => logged = Some(text),
+                    Some("window/showMessage") => shown = Some(text),
+                    _ => {}
+                }
+            }
+            for text in [logged, shown].into_iter().flatten() {
+                for needle in [
+                    "`diagnosticProfile`",
+                    "\"actionable\" or \"full\"",
+                    "`seamDiagnostics`",
+                    "true or false",
+                    "`baseRef`",
+                    "a Git ref string",
+                    "The previous settings stay in effect",
+                ] {
+                    if !text.contains(needle) {
+                        return Err(format!("warning must name {needle}: {text}"));
+                    }
+                }
+                if text.contains("unrelatedKey") {
+                    return Err(format!("an unsupported key is not a rejection: {text}"));
+                }
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        server_task.abort();
+        outcome
+    })
+}
+
+/// #15312, push half: a client without `workspace/configuration` pushes its
+/// settings, and the push path ignores a malformed value. The rejection must
+/// reach the log and the screen with the key, the accepted values and the
+/// value received; a second typo in the same key warns again; a verbatim
+/// re-push does not; a payload that cannot carry a ripr section is reported
+/// instead of dropped.
+#[test]
+#[serial]
+fn framed_lsp_rejected_pushed_settings_warn_naming_key_and_accepted_values_per_mistake()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("framed-config-push-rejected")?;
+        let root_uri = file_uri_for_path(root.path())?;
+        let (client_io, server_io) = tokio::io::duplex(1024 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+        let outcome = tokio::time::timeout(std::time::Duration::from_mins(2), async {
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "processId": null,
+                        "rootUri": root_uri.as_str(),
+                        "capabilities": {}
+                    }
+                }),
+            )
+            .await?;
+            read_lsp_response(&mut client_read, 1).await?;
+            write_lsp_message(
+                &mut client_write,
+                serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            )
+            .await?;
+            // The logged and shown copies of the next pushed-settings warning.
+            async fn pushed_warning(
+                client_read: &mut (impl tokio::io::AsyncRead + Unpin),
+            ) -> Result<[String; 2], String> {
+                let mut logged = None;
+                let mut shown = None;
+                loop {
+                    if let (Some(logged), Some(shown)) = (&logged, &shown) {
+                        return Ok([String::clone(logged), String::clone(shown)]);
+                    }
+                    let message = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        read_lsp_message(client_read),
+                    )
+                    .await
+                    .map_err(|elapsed| {
+                        format!(
+                            "no pushed-settings warning arrived ({elapsed}): logged={logged:?} shown={shown:?}"
+                        )
+                    })??;
+                    let text = message["params"]["message"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    if !text.contains("ignored pushed ripr settings") {
+                        continue;
+                    }
+                    match message["method"].as_str() {
+                        Some("window/logMessage") => logged = Some(text),
+                        Some("window/showMessage") => shown = Some(text),
+                        _ => {}
+                    }
+                }
+            }
+            let push = |settings: serde_json::Value| {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "workspace/didChangeConfiguration",
+                    "params": {"settings": settings}
+                })
+            };
+            let require_texts = |texts: &[String; 2], needles: &[&str]| {
+                for text in texts {
+                    for needle in needles {
+                        if !text.contains(needle) {
+                            return Err(format!("warning must contain {needle}: {text}"));
+                        }
+                    }
+                }
+                Ok::<(), String>(())
+            };
+
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "depe", "unrelatedKey": 1}})),
+            )
+            .await?;
+            let first = pushed_warning(&mut client_read).await?;
+            require_texts(
+                &first,
+                &[
+                    "`checkMode`",
+                    "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+                    "got \"depe\"",
+                    "keeps its repository or default value",
+                ],
+            )?;
+            if first.iter().any(|text| {
+                text.contains("unrelatedKey") || text.contains("initializationOption")
+            }) {
+                return Err(format!("wrong subject in the pushed warning: {first:?}"));
+            }
+
+            // A second typo in the same key is a new mistake and warns again.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            let second = pushed_warning(&mut client_read).await?;
+            require_texts(&second, &["`checkMode`", "got \"deeep\""])?;
+
+            // A verbatim re-push of the unrepaired mistake is not shown again:
+            // the next warning the client reads is the shape one below. A
+            // payload that cannot carry a ripr section is reported.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            write_lsp_message(&mut client_write, push(serde_json::json!("instant"))).await?;
+            let shape = pushed_warning(&mut client_read).await?;
+            require_texts(
+                &shape,
+                &["must be an object of ripr settings", "got \"instant\""],
+            )?;
+            if shape.iter().any(|text| text.contains("deeep")) {
+                return Err(format!("the verbatim re-push must not warn again: {shape:?}"));
+            }
+
+            // The unrepaired mistake stays in force through a push of
+            // another server's settings, so re-pushing it verbatim afterwards
+            // is still not shown: the next warning is the array shape.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"editor": {"formatOnSave": true}})),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            write_lsp_message(&mut client_write, push(serde_json::json!(["a"]))).await?;
+            let still_retained = pushed_warning(&mut client_read).await?;
+            require_texts(&still_retained, &["must be an object of ripr settings"])?;
+            if still_retained.iter().any(|text| text.contains("deeep")) {
+                return Err(format!(
+                    "a retained mistake must not warn again after an unrelated push: {still_retained:?}"
+                ));
+            }
+
+            // A repair clears the mistake from the retained layer, so making
+            // it again warns again.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "fast"}})),
+            )
+            .await?;
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
+            )
+            .await?;
+            let again = pushed_warning(&mut client_read).await?;
+            require_texts(&again, &["`checkMode`", "got \"deeep\""])?;
+            Ok::<(), String>(())
+        })
+        .await
+        .map_err(|elapsed| format!("pushed-settings sequence did not finish ({elapsed})"))
+        .and_then(|outcome| outcome);
+        server_task.abort();
+        outcome
+    })
+}
+
+#[test]
+#[serial]
+fn pushed_settings_commit_before_their_warning_waits_on_a_wedged_client() -> Result<(), String> {
+    // #15312 review: a push commits its settings before it awaits warning
+    // egress. If the warning went first, an older invalid push suspended on
+    // a slow client could resume after a newer repair of the same key and
+    // overwrite it. Hold the capacity-1 client channel full with the peer
+    // socket undriven, then require each blocked push to have already
+    // committed its value.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        use tower::Service as _;
+        let root = unique_lsp_test_root("pushed-settings-wedged-egress")?;
+        let (mut service, _socket) = build_service(
+            PathBuf::from("."),
+            super::transport_bounds::CLIENT_REQUEST_TIMEOUT,
+        );
+        // Initialize through the service so client deliveries are no longer
+        // suppressed and reach the real capacity-1 channel.
+        let initialized = tower::ServiceExt::ready(&mut service)
+            .await
+            .map_err(|err| format!("service never became ready: {err:?}"))?
+            .call(
+                tower_lsp_server::jsonrpc::Request::build("initialize")
+                    .params(
+                        serde_json::to_value(initialize_params(
+                            None,
+                            Some(file_uri_for_path(root.path())?),
+                        ))
+                        .map_err(|err| format!("initialize params serialize failed: {err}"))?,
+                    )
+                    .id(1)
+                    .finish(),
+            )
+            .await
+            .map_err(|err| format!("initialize failed: {err:?}"))?;
+        if initialized
+            .as_ref()
+            .and_then(|response| response.error())
+            .is_some()
+        {
+            return Err("initialize must succeed".to_string());
+        }
+        let backend = service.inner();
+        let held = |backend: &Backend| {
+            backend
+                .analysis_config()
+                .and_then(|config| config.session_options)
+                .and_then(|options| options.get("checkMode").cloned())
+        };
+        // Each invalid push warns; push distinct invalid values until one
+        // blocks on egress. Every push, blocked or not, must already hold
+        // its own value.
+        let mut blocked = false;
+        for attempt in 0..16 {
+            let value = format!("wedged-{attempt}");
+            let finished = tokio::time::timeout(
+                Duration::from_secs(5),
+                backend.apply_session_configuration_change_for_test(
+                    &serde_json::json!({"ripr": {"checkMode": value}}),
+                ),
+            )
+            .await
+            .is_ok();
+            if held(backend) != Some(serde_json::json!(value)) {
+                return Err(format!(
+                    "push {attempt} must commit `{value}` before awaiting client egress; held {:?}",
+                    held(backend)
+                ));
+            }
+            if !finished {
+                blocked = true;
+                break;
+            }
+        }
+        if !blocked {
+            return Err("the undriven client channel never filled".to_string());
+        }
+        // A newer valid push of the same key also commits while the client
+        // stays wedged.
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            backend.apply_session_configuration_change_for_test(
+                &serde_json::json!({"ripr": {"checkMode": "fast"}}),
+            ),
+        )
+        .await;
+        if held(backend) != Some(serde_json::json!("fast")) {
+            return Err(format!(
+                "the repair must be committed: held {:?}",
+                held(backend)
+            ));
+        }
         Ok(())
     })
 }
@@ -16527,6 +17470,7 @@ fn sample_analysis_snapshot(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -17404,6 +18348,7 @@ pub(super) fn sample_finding() -> Finding {
         id: "probe:pricing:88:predicate".to_string(),
         canonical_gap: None,
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:pricing:88:predicate".to_string()),
             location: SourceLocation {
                 file: PathBuf::from("src/pricing.rs"),
@@ -17524,6 +18469,7 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
         evidence: TestGripEvidence {
             seam_id,
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -20305,6 +21251,167 @@ fn retained_code_actions_preserve_client_root_and_item_gates() -> Result<(), Str
         }
         Ok(())
     })
+}
+
+/// #13636: a saved test that turns a gap `exposed` stops its diagnostic;
+/// the analysis status names the finding as now exposed for exactly the
+/// commit where it moved, and never for a finding that merely disappeared.
+#[test]
+fn analysis_status_names_a_gap_that_became_exposed_since_the_previous_commit() -> Result<(), String>
+{
+    let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+    let backend = service.inner();
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let gap = sample_finding();
+    assert!(gap.is_candidate_actionable());
+    assert_eq!(gap.class, ExposureClass::WeaklyExposed);
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &gap)],
+            vec![gap.clone()],
+        ))
+        .ok_or("gap snapshot commits")?;
+    assert_eq!(
+        backend.analysis_status_payload()["resolved_findings"]["count"],
+        0,
+        "the first commit has nothing to compare against"
+    );
+
+    let mut exposed = gap.clone();
+    exposed.class = ExposureClass::Exposed;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &exposed)],
+            vec![exposed.clone()],
+        ))
+        .ok_or("exposed snapshot commits")?;
+    let status = backend.analysis_status_payload();
+    let resolved = &status["resolved_findings"];
+    assert_eq!(resolved["count"], 1, "{resolved}");
+    assert_eq!(resolved["omitted"], 0);
+    assert_eq!(resolved["evidence"], "static");
+    let row = &resolved["rows"][0];
+    assert_eq!(row["path"], "src/pricing.rs");
+    assert_eq!(row["line"], 88);
+    assert_eq!(row["previous_class"], "weakly_exposed");
+    assert_eq!(row["class"], "exposed");
+    let text = row["text"].as_str().ok_or("row text")?;
+    assert!(
+        text.starts_with(
+            "src/pricing.rs:88: now exposed: a test appears to observe the changed behavior"
+        ),
+        "{text}"
+    );
+    assert!(
+        crate::lsp::lens::lens_title_is_static_language_clean(text),
+        "static vocabulary only: {text}"
+    );
+
+    // The same exposed state again: nothing moved since the previous commit.
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &exposed)],
+            vec![exposed],
+        ))
+        .ok_or("repeat snapshot commits")?;
+    assert_eq!(
+        backend.analysis_status_payload()["resolved_findings"]["count"],
+        0
+    );
+
+    // A gap that disappears (deleted code, changed scope) is not "exposed".
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri.clone(),
+            vec![diagnostic_for_finding(Path::new("/workspace"), &gap)],
+            vec![gap.clone()],
+        ))
+        .ok_or("gap snapshot commits again")?;
+    backend
+        .refresh_plan(sample_workspace_diagnostics(
+            PathBuf::from("/workspace"),
+            uri,
+            Vec::new(),
+            Vec::new(),
+        ))
+        .ok_or("empty snapshot commits")?;
+    assert_eq!(
+        backend.analysis_status_payload()["resolved_findings"]["count"],
+        0
+    );
+    Ok(())
+}
+
+/// #13636: the transition owner compares like with like: another root, a
+/// non-current finding, or a class that was never a gap yields no row.
+#[test]
+fn resolved_findings_require_the_same_root_and_a_current_gap_before() -> Result<(), String> {
+    let uri = test_uri("file:///workspace/src/pricing.rs")?;
+    let gap = sample_finding();
+    let mut exposed = gap.clone();
+    exposed.class = ExposureClass::Exposed;
+    let before = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        vec![gap.clone()],
+    );
+    let after = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        vec![exposed.clone()],
+    );
+    assert_eq!(
+        super::resolved_findings::resolved_since(&before, &after).len(),
+        1
+    );
+    let other_root = sample_analysis_snapshot(
+        PathBuf::from("/elsewhere"),
+        uri.clone(),
+        Vec::new(),
+        vec![exposed.clone()],
+    );
+    assert!(super::resolved_findings::resolved_since(&before, &other_root).is_empty());
+    let mut unknown = gap.clone();
+    unknown.class = ExposureClass::StaticUnknown;
+    let unknown_before = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        vec![unknown],
+    );
+    assert!(super::resolved_findings::resolved_since(&unknown_before, &after).is_empty());
+    // A finding that is not candidate-current on either side (for example
+    // base-side evidence) is never announced as now exposed.
+    let mut base_gap = gap.clone();
+    base_gap.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    assert!(!base_gap.is_candidate_actionable());
+    let base_before = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri.clone(),
+        Vec::new(),
+        vec![base_gap],
+    );
+    assert!(super::resolved_findings::resolved_since(&base_before, &after).is_empty());
+    let mut base_exposed = exposed.clone();
+    base_exposed.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    assert!(!base_exposed.is_candidate_actionable());
+    let base_after = sample_analysis_snapshot(
+        PathBuf::from("/workspace"),
+        uri,
+        Vec::new(),
+        vec![base_exposed],
+    );
+    assert!(super::resolved_findings::resolved_since(&before, &base_after).is_empty());
+    Ok(())
 }
 
 #[test]
@@ -24224,6 +25331,7 @@ fn quarantine_workspace_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -25158,6 +26266,7 @@ fn partition_workspace_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred,
+        seam_inventory_on_full_refresh: false,
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -25519,6 +26628,7 @@ fn disabled_language_workspace_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -25921,6 +27031,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: false,
+        seam_inventory_on_full_refresh: false,
         partial_scope: None,
         component_outcomes: Vec::new(),
         out_of_scope_test_file_findings: 0,
@@ -27511,6 +28622,179 @@ fn framed_push_diagnostics_bind_the_observed_document_version() -> Result<(), St
 
 #[test]
 #[serial]
+fn framed_push_external_revert_publishes_one_saved_content_marker_per_version() -> Result<(), String>
+{
+    // #15316: a push-only client reloads a file that `git checkout` reverted
+    // on disk. The buffer change and the save it implies are one lifecycle
+    // step, so the client receives one withdrawal marker for that version,
+    // and the marker names the saved-content state: the buffer equals the
+    // file on disk, so "save the file" is not the recovery.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-external-revert")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err("fixture no longer carries the equality boundary".to_string());
+        }
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // Analyze the boundary edit as saved content so findings are served.
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("write dirty lib.rs failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 5,
+                        "text": dirty_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        let opened = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let served_findings = opened.iter().any(|message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"].as_str() == Some(text_uri.as_str())
+                && message["params"]["diagnostics"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+        });
+        if !served_findings {
+            return Err(format!(
+                "fixture must serve diagnostics before the revert: {opened:?}"
+            ));
+        }
+
+        // `git checkout` reverts the file on disk; the client reloads it.
+        std::fs::write(&lib_path, &saved_text)
+            .map_err(|err| format!("revert lib.rs failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 6 },
+                    "contentChanges": [{ "text": saved_text }]
+                }
+            }),
+        )
+        .await?;
+        let reverted = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let markers = reverted
+            .iter()
+            .filter(|message| {
+                message["method"] == "textDocument/publishDiagnostics"
+                    && message["params"]["uri"].as_str() == Some(text_uri.as_str())
+            })
+            .flat_map(|message| {
+                let version = message["params"]["version"].clone();
+                message["params"]["diagnostics"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|diagnostic| {
+                        diagnostic["code"] == "ripr-diagnostic-quarantine-withdrawn"
+                    })
+                    .map(move |diagnostic| (version.clone(), diagnostic))
+            })
+            .collect::<Vec<_>>();
+        let [(version, marker)] = markers.as_slice() else {
+            return Err(format!(
+                "one withdrawal marker per version expected, got {}: {markers:?}",
+                markers.len()
+            ));
+        };
+        if version.as_i64() != Some(6)
+            || marker["data"]["reason"] != "saved_content_not_yet_analyzed"
+            || marker["data"]["recovery"] != "await_analysis_or_refresh"
+        {
+            return Err(format!(
+                "marker must name the saved-content state: {marker}"
+            ));
+        }
+        let message = marker["message"].as_str().unwrap_or_default();
+        if message.contains("diverges") || message.contains("Save the file") {
+            return Err(format!(
+                "a saved buffer must not be told to save: {message}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
 fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -> Result<(), String>
 {
     // #8732: a push-only client used to see permanent silence before the
@@ -27806,11 +29090,12 @@ fn framed_push_client_pending_marker_names_the_running_first_analysis() -> Resul
 
 #[test]
 #[serial]
-fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_first_analysis()
+fn framed_push_client_pending_marker_names_the_failure_after_a_failed_first_analysis()
 -> Result<(), String> {
     // #14447 review: "in progress" must not outlive the attempt. When the
     // first analysis fails without a snapshot and nothing follows it, the
-    // push marker returns to the save/refresh route that starts analysis.
+    // push marker names that failure and its fix: the cold-start
+    // save/refresh route would fail the same way.
     work_done_progress_runtime()?.block_on(async {
         let root = unique_lsp_test_root("push-pending-reverts-after-failure")?;
         let file = root.path().join("lib.rs");
@@ -27864,7 +29149,7 @@ fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_f
             }),
         )
         .await?;
-        let recoveries = tokio::time::timeout(Duration::from_mins(1), async {
+        let (recoveries, failed_message) = tokio::time::timeout(Duration::from_mins(1), async {
             let mut recoveries = Vec::new();
             loop {
                 let message = read_lsp_message(&mut client_read).await?;
@@ -27879,25 +29164,40 @@ fn framed_push_client_pending_marker_reverts_to_the_start_route_after_a_failed_f
                     .and_then(|marker| marker["data"]["recovery"].as_str())
                     .unwrap_or_default()
                     .to_string();
-                let done = recovery == "save_or_refresh";
+                let done = recovery == "fix_failure_then_refresh";
                 recoveries.push(recovery);
                 if done {
-                    return Ok::<_, String>(recoveries);
+                    let message = message["params"]["diagnostics"][0]["message"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    return Ok::<_, String>((recoveries, message));
                 }
             }
         })
         .await
         .map_err(|elapsed| {
-            format!("no save_or_refresh marker after the failed attempt: {elapsed}")
+            format!("no failed-attempt marker after the failed attempt: {elapsed}")
         })??;
         if recoveries.first().map(String::as_str) != Some("analysis_running") {
             return Err(format!(
                 "the didOpen marker must name the running analysis first: {recoveries:?}"
             ));
         }
-        if recoveries.last().map(String::as_str) != Some("save_or_refresh") {
+        if recoveries
+            .iter()
+            .any(|recovery| recovery == "save_or_refresh")
+        {
             return Err(format!(
-                "a failed attempt must restore the start route: {recoveries:?}"
+                "a failed attempt must not fall back to the start route: {recoveries:?}"
+            ));
+        }
+        if !failed_message.contains("The last analysis attempt failed:")
+            || !failed_message.contains("Fix that cause")
+            || failed_message.contains("has not analyzed this workspace yet")
+        {
+            return Err(format!(
+                "the marker must name the recorded failure and its fix: {failed_message}"
             ));
         }
 
@@ -34567,34 +35867,31 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .iter()
         .flat_map(|batch| batch.diagnostics.iter())
         .collect::<Vec<_>>();
-    let [first, second] = diagnostics.as_slice() else {
+    // The only changed line is the marker's anchor, so its row folds into
+    // the marker: one Hint for the range (#15315).
+    let [marker] = diagnostics.as_slice() else {
         return Err(format!(
-            "actionable: one marker and one line row expected: {diagnostics:?}"
+            "actionable: one marker with its line row folded in expected: {diagnostics:?}"
         ));
     };
-    let kind_of = |diagnostic: &Diagnostic| {
-        diagnostic
+    let kind = marker
+        .data
+        .as_ref()
+        .and_then(|data| data.get("kind"))
+        .and_then(|kind| kind.as_str());
+    if !is_marker(marker)
+        || kind != Some("preview_findings_withheld")
+        || marker.severity != Some(DiagnosticSeverity::HINT)
+        || !marker.message.contains("This line: ")
+        || !marker.message.ends_with("not an actionable gap")
+        || marker
             .data
             .as_ref()
-            .and_then(|data| data.get("kind"))
-            .and_then(|kind| kind.as_str())
-            .map(str::to_string)
-    };
-    let (marker, row) = if kind_of(first).as_deref() == Some("preview_finding_withheld") {
-        (second, first)
-    } else {
-        (first, second)
-    };
-    if !is_marker(row)
-        || kind_of(row).as_deref() != Some("preview_finding_withheld")
-        || row.severity != Some(DiagnosticSeverity::HINT)
-        || !row.message.ends_with("not an actionable gap")
+            .and_then(|data| data.get("line"))
+            .is_none()
     {
-        return Err(format!("actionable: line row must be passive: {row:?}"));
-    }
-    if !is_marker(marker) || marker.severity != Some(DiagnosticSeverity::HINT) {
         return Err(format!(
-            "actionable: the lone diagnostic must be the Hint marker: {marker:?}"
+            "actionable: the lone diagnostic must be the passive folded Hint marker: {marker:?}"
         ));
     }
     if !actionable.snapshot.is_consistent() {
@@ -35327,6 +36624,79 @@ fn untested_rust_edit_discloses_withheld_findings_and_reconciles_status() -> Res
     }
     if !full.snapshot.is_consistent() {
         return Err("full: snapshot must be consistent".to_string());
+    }
+    Ok(())
+}
+
+/// #15951: the empty-scope marker names the base the user requested, not the
+/// branch the run resolved. With no base requested the default base resolves
+/// to a branch name; the marker must say no base was passed, as hover and
+/// status do, instead of calling that branch the requested base.
+#[test]
+fn empty_scope_marker_names_the_requested_base_not_the_resolved_default() -> Result<(), String> {
+    let root = untested_rust_edit_fixture("empty-scope-marker-base")?;
+    run_lsp_scope_git(root.path(), &["branch", "-M", "main"])?;
+    run_lsp_scope_git(root.path(), &["checkout", "--", "src/lib.rs"])?;
+    let uri = file_uri_for_path(&root.path().join("src/lib.rs"))
+        .map_err(|err| format!("uri for lib.rs failed: {err}"))?;
+    let marker_for = |base_ref: Option<&str>| -> Result<(Option<String>, String), String> {
+        let config = LspAnalysisConfig {
+            base_ref: base_ref.map(str::to_string),
+            mode: Mode::Instant,
+            ..LspAnalysisConfig::default()
+        };
+        let mut result = workspace_diagnostics_with_config(root.path(), &config, true)?;
+        if !result
+            .snapshot
+            .analysis_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.kind.is_empty_scope())
+        {
+            return Err(format!(
+                "fixture must be an empty scope for base {base_ref:?}: {:?}",
+                result.snapshot.analysis_outcome
+            ));
+        }
+        // The production refresh binds the input identity before commit; the
+        // analysis entry point leaves it unset.
+        result.snapshot.input_identity = Some(LspAnalysisInputIdentity::from_refresh_inputs(
+            result.snapshot.root.clone(),
+            1,
+            &config,
+        ));
+        let items = super::diagnostics::delivered_diagnostics_for_uri(
+            &result.snapshot,
+            &uri,
+            &std::collections::BTreeMap::new(),
+        );
+        let [marker] = items.as_slice() else {
+            return Err(format!("exactly one marker expected: {items:?}"));
+        };
+        Ok((result.snapshot.base.clone(), marker.message.clone()))
+    };
+
+    // No base requested: the run still resolves one, and the marker must not
+    // present it as requested.
+    let (resolved, message) = marker_for(None)?;
+    if resolved.as_deref() != Some("main") {
+        return Err(format!(
+            "fixture must resolve the default base to a branch name: {resolved:?}"
+        ));
+    }
+    if !message.contains("no base was passed, so the default base was used")
+        || message.contains("requested base")
+    {
+        return Err(format!(
+            "an unrequested base must not be named as requested: {message}"
+        ));
+    }
+
+    // A requested base is named verbatim.
+    let (_, message) = marker_for(Some("HEAD"))?;
+    if !message.contains("the saved diff against requested base `HEAD`")
+        || message.contains("no base was passed")
+    {
+        return Err(format!("a requested base must be named: {message}"));
     }
     Ok(())
 }

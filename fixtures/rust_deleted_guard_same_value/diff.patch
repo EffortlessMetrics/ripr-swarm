@@ -1,0 +1,15 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,11 +1,9 @@
+ //! #14936: a deleted early-return guard against the value the remaining tail returns.
+ 
+ pub fn pick(x: u32) -> Vec<u32> {
+-    if x == 0 { return Vec::new(); }
+     vec![]
+ }
+ 
+ pub fn pick_nine(x: u32) -> Vec<u32> {
+-    if x == 0 { return Vec::new(); }
+     vec![9]
+ }

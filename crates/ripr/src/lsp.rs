@@ -26,6 +26,7 @@ mod progress;
 mod progress_stages;
 mod refresh_scheduler;
 mod repair_card;
+mod resolved_findings;
 #[cfg(test)]
 mod saved_edit_measurement;
 #[cfg(test)]
