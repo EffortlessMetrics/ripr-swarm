@@ -14835,7 +14835,8 @@ return Err(\"typed pin\".into());
             assert!(!compares_value_with_its_own_copy(distinct), "{distinct}");
         }
         // A self-comparison beside an independent pin in the same test does
-        // not cost that pin its credit.
+        // not cost that pin its credit: the discriminator stage reads the
+        // strongest row. (The helper's `strength` is the first row's.)
         let test = test_with_assertions(
             "rate_is_itself_and_pinned",
             vec![
@@ -14843,8 +14844,9 @@ return Err(\"typed pin\".into());
                 exact("assert_eq!(RATE, 8);"),
             ],
         );
-        let (discriminate, strength) = tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
-        assert_eq!(strength, OracleStrength::Strong);
+        let (discriminate, first_row) =
+            tax_reveal("subtotal * RATE", &test, &params, &|_, _| false);
+        assert_eq!(first_row, OracleStrength::Weak);
         assert_eq!(
             discriminate.state,
             StageState::Yes,
