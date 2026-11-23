@@ -235,6 +235,7 @@ fn an_owner_call_only_an_untrusted_macro_holds_gives_no_exact_credit() -> Result
 #[test]
 fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() -> Result<(), String>
 {
+    let field_macros = format!("{CHECK_OK}\n    struct Holder {{ r: u32 }}");
     // (label, test-local macros, test body, expected grip class, oracle kind)
     let cases: &[(&str, &str, &str, &str, &str)] = &[
         (
@@ -257,6 +258,27 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "let r = pick(0);\n        assert_eq!(check_ok!(r), Ok(Mode::A));\n        assert_eq!(r, Ok(Mode::A));",
             "strongly_gripped",
             "exact_value",
+        ),
+        (
+            "a field of another value that shares the local's name is not a use",
+            &field_macros,
+            "let r = pick(0);\n        let holder = Holder { r: 1 };\n        let _ = holder.r;\n        assert_eq!(check_ok!(r), Ok(Mode::A));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "a local borrowed elsewhere does not undo a held owner call",
+            CHECK_OK,
+            "let r = pick(0);\n        let _ = &r;\n        assert_eq!(check_ok!((pick(0), r)), Ok(Mode::A));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "a format capture of the local is read outside the local macro",
+            CHECK_OK,
+            "let r = pick(0);\n        assert_eq!(format!(\"{r:?}{:?}\", check_ok!(r)), \"Ok(A)Ok(A)\");",
+            "strongly_gripped",
+            "whole_object_equality",
         ),
         (
             "the standard vec! evaluates the bound result",

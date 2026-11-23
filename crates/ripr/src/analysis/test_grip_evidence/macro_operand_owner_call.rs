@@ -140,11 +140,14 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
         if declarations != 1 {
             continue;
         }
-        let mentions = function
+        let tokens: Vec<SyntaxToken> = function
             .syntax()
             .descendants_with_tokens()
             .filter_map(|element| element.into_token())
-            .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == name)
+            .filter(|token| !token.kind().is_trivia())
+            .collect();
+        let mentions = (0..tokens.len())
+            .filter(|&at| reads_local(&tokens, at, &name))
             .count();
         locals.push(OwnerResultLocal {
             name,
@@ -152,6 +155,46 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
         });
     }
     locals
+}
+
+/// Whether `tokens[at]` may read the local `name`: the identifier itself,
+/// not a member (`x.name`), a path segment (`m::name`) or a struct field
+/// label (`name: ..`), or a string whose format template captures it
+/// (`"{name}"`, `"{name:?}"`). Over-counting a read only withholds the
+/// demotion.
+fn reads_local(tokens: &[SyntaxToken], at: usize, name: &str) -> bool {
+    let token = &tokens[at];
+    let kind_at = |index: Option<usize>| {
+        index
+            .and_then(|index| tokens.get(index))
+            .map(|token| token.kind())
+    };
+    match token.kind() {
+        SyntaxKind::IDENT if token.text() == name => {
+            let member = matches!(
+                kind_at(at.checked_sub(1)),
+                Some(SyntaxKind::DOT | SyntaxKind::COLON2)
+            ) || (kind_at(at.checked_sub(1)) == Some(SyntaxKind::COLON)
+                && kind_at(at.checked_sub(2)) == Some(SyntaxKind::COLON));
+            let label = kind_at(at.checked_add(1)) == Some(SyntaxKind::COLON)
+                && kind_at(at.checked_add(2)) != Some(SyntaxKind::COLON);
+            !member && !label
+        }
+        SyntaxKind::STRING => captures_local(token.text(), name),
+        _ => false,
+    }
+}
+
+/// Whether a string literal's text holds an implicit format capture of
+/// `name` (`{name}`, `{name:..}`), outside `{{` escapes.
+fn captures_local(text: &str, name: &str) -> bool {
+    text.match_indices('{').any(|(at, _)| {
+        let escaped = text[..at].ends_with('{') || text[at + 1..].starts_with('{');
+        !escaped
+            && text[at + 1..]
+                .strip_prefix(name)
+                .is_some_and(|after| after.starts_with('}') || after.starts_with(':'))
+    })
 }
 
 /// Whether `expression` is exactly one call of the owner: `owner(..)`,
@@ -264,13 +307,14 @@ fn owner_use_only_inside_untrusted_macro(
         local_held: vec![0; locals.len()],
     };
     walk(tree.syntax(), owner, locals, false, &trusted, &mut counts);
-    let local_held: usize = counts.local_held.iter().sum();
-    counts.free == 0
-        && counts.held + local_held > 0
-        && locals
-            .iter()
-            .zip(&counts.local_held)
-            .all(|(local, held)| *held == 0 || *held == local.uses)
+    // A local is evidence only when every read of it in the test sits in
+    // this assertion's untrusted macros; a local read elsewhere adds nothing,
+    // but does not undo a held owner call.
+    let local_evidence = locals
+        .iter()
+        .zip(&counts.local_held)
+        .any(|(local, held)| *held > 0 && *held == local.uses);
+    counts.free == 0 && (counts.held > 0 || local_evidence)
 }
 
 /// Owner uses in one assertion: held calls, free uses (calls or locals), and
@@ -347,6 +391,20 @@ fn walk(
                         counts.local_held[at] += 1;
                     } else {
                         counts.free += 1;
+                    }
+                }
+            }
+            NodeOrToken::Token(token) if token.kind() == SyntaxKind::STRING => {
+                // An implicit format capture reads the local where the
+                // string is evaluated; inside an untrusted macro it counts
+                // as held, like any other use there.
+                for (at, local) in locals.iter().enumerate() {
+                    if captures_local(token.text(), &local.name) {
+                        if inside_untrusted {
+                            counts.local_held[at] += 1;
+                        } else {
+                            counts.free += 1;
+                        }
                     }
                 }
             }
@@ -601,6 +659,41 @@ mod tests {
                 "let r = pick(0);",
                 "assert_eq!(check_ok!(r.0), Mode::A)",
                 true,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{r:?}{}\", check_ok!(r)), \"Ok(A)\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{{r}}{}\", check_ok!(r)), \"Ok(A)\")",
+                true,
+            ),
+            (
+                "let r = pick(0); let _ = &r;",
+                "assert_eq!(check_ok!((pick(0), r)), Mode::A)",
+                true,
+            ),
+            (
+                "let r = pick(0); let _ = &r;",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0); let _ = fixture.r; let _ = m::r; let _ = S { r: 1 };",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let r = pick(0); let _ = S { r };",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0); println!(\"{r}\");",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
             ),
         ];
         for (setup, assertion, expected) in cases {
