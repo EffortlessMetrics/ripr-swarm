@@ -481,7 +481,9 @@ mod tests {
     #[test]
     fn withheld_packet_differs_from_the_ordinary_one_only_by_its_stop() -> Result<(), String> {
         use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason, OwnerOptOutScope};
-        let finding = sample_finding();
+        let mut finding = sample_finding();
+        // The ordinary packet must offer a step for the withheld one to drop.
+        finding.recommended_next_step = Some("Add an equality-boundary assertion.".to_string());
         let opt_out = OwnerOptOut {
             finding_id: finding.id.clone(),
             owner: "sample".to_string(),
