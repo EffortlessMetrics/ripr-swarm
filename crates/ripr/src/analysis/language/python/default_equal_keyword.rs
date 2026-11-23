@@ -152,18 +152,20 @@ fn removal_gives(new: &[Token], start: usize, end: usize, old: &[Token]) -> bool
 }
 
 /// A number, `True`, `False`, `None` or one plain (non f-) string, or a
-/// signed number.
+/// signed number. An f-string default is evaluated when the function is
+/// defined and the keyword when the call runs, so equal spellings can bind
+/// different values.
 fn is_plain_literal(value: &[Token]) -> bool {
-    matches!(
-        value,
+    match value {
+        [(Tok::String { kind, .. }, _)] => !kind.is_any_fstring(),
         [(Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }, _)]
-            | [(Tok::True | Tok::False | Tok::None, _)]
-            | [(Tok::String { .. }, _)]
-            | [
-                (Tok::Minus | Tok::Plus, _),
-                (Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }, _),
-            ]
-    )
+        | [(Tok::True | Tok::False | Tok::None, _)]
+        | [
+            (Tok::Minus | Tok::Plus, _),
+            (Tok::Int { .. } | Tok::Float { .. } | Tok::Complex { .. }, _),
+        ] => true,
+        _ => false,
+    }
 }
 
 struct Call<'a> {

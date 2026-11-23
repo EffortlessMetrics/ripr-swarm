@@ -176,6 +176,18 @@ fn review_controls_keep_their_reading() {
         ),
         None
     );
+    // An f-string default is evaluated at definition time, the keyword at
+    // call time, so the same spelling can bind another value.
+    let stamped = "def label(x, sep=f\"{x}\"):\n    return x + sep\n\n\ndef shown():\n    return label(\"x\")\n";
+    assert_eq!(
+        default_equal_keyword(
+            "    return label(\"x\")",
+            "    return label(\"x\", sep=f\"{x}\")",
+            file,
+            &clock_owners(stamped),
+        ),
+        None
+    );
     // A call spelled inside a string is text, not a call.
     assert_eq!(
         default_equal_keyword(
