@@ -299,9 +299,13 @@ pub(crate) fn names_subject(stdout: &[u8], subject: &ExpectedSubject) -> bool {
 /// Create `directory`, failing if it exists, readable only by this user
 /// where the platform supports modes: a draft release's assets are private.
 fn private_dir(directory: &std::path::Path) -> std::io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
+    let builder = fs::DirBuilder::new();
     #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    let builder = {
+        let mut builder = builder;
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder
+    };
     builder.create(directory)
 }
 
