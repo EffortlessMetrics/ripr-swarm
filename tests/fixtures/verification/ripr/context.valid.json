@@ -49,7 +49,7 @@
     }
   ],
   "observed_values": [{"value":"50","context":"assertion_argument","line":5}, {"value":"amount = 50","context":"function_argument","line":5}, {"value":"discount_threshold = 100","context":"function_argument","line":5}, {"value":"9_990","context":"assertion_argument","line":10}, {"value":"amount = 10_000","context":"function_argument","line":10}, {"value":"discount_threshold = 100","context":"function_argument","line":10}],
-  "missing_discriminators": [{"value":"amount == discount_threshold","reason":"No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100"}],
+  "missing_discriminators": [{"value":"amount == discount_threshold","reason":"No related test call uses amount equal to discount_threshold; observed amount values: 10_000, 50; observed discount_threshold values: 100","flow_sink":{"kind":"return_value","text":"amount - 10","line":3}}],
   "witness": {
     "kind": "static_discriminator_gap",
     "probe_family": "predicate",

@@ -163,7 +163,23 @@
       "required": ["value", "reason"],
       "properties": {
         "value": {"type": "string", "minLength": 1},
-        "reason": {"type": "string", "minLength": 1}
+        "reason": {"type": "string", "minLength": 1},
+        "flow_sink": {
+          "description": "Where the changed value appears to flow, in the shape a `ripr check --json` finding's `missing_discriminators[].flow_sink` carries; `null` when the producer named no sink. Optional because packets written before #10516 omit it; current producers always write it.",
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "text", "line"],
+              "properties": {
+                "kind": {"type": "string", "minLength": 1},
+                "text": {"type": "string"},
+                "line": {"type": "integer", "minimum": 0}
+              }
+            }
+          ]
+        }
       }
     },
     "witness": {

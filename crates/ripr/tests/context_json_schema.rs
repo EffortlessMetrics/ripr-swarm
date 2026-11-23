@@ -113,45 +113,49 @@ fn minified(json: &[u8]) -> Vec<u8> {
 }
 
 /// The ids of every finding `ripr check --json` reports for `scope`.
-fn finding_ids(scope: &[&str]) -> Result<Vec<String>, String> {
+/// The `ripr check --json` findings of `scope`.
+fn check_findings(scope: &[&str]) -> Result<Vec<Value>, String> {
     let mut args = vec!["check", "--json"];
     args.extend_from_slice(scope);
     let report = ripr_json(&args)?;
-    let findings = report["findings"]
+    report["findings"]
         .as_array()
-        .ok_or_else(|| format!("ripr {args:?} wrote no findings array"))?;
-    findings
-        .iter()
-        .map(|finding| {
-            finding["id"]
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| format!("ripr {args:?}: a finding has no id"))
-        })
-        .collect()
+        .cloned()
+        .ok_or_else(|| format!("ripr {args:?} wrote no findings array"))
 }
 
 /// The context packet of every finding in `scope`, labelled by fixture and
 /// id. Each `--format json-compact` run must write the `--json` bytes with
-/// every whitespace byte outside a string removed.
+/// every whitespace byte outside a string removed, and each packet's
+/// `missing_discriminators` must be the check finding's, field for field
+/// (#10516), so the two commands cannot drift apart on that array.
 fn packets_for(label: &str, scope: &[&str]) -> Result<Vec<(String, Value)>, String> {
-    let ids = finding_ids(scope)?;
-    if ids.is_empty() {
+    let findings = check_findings(scope)?;
+    if findings.is_empty() {
         return Err(format!("{label}: the check run reported no finding"));
     }
     let mut packets = Vec::new();
-    for id in ids {
-        let mut args = vec!["context", "--json", "--at", id.as_str()];
+    for finding in &findings {
+        let id = finding["id"]
+            .as_str()
+            .ok_or_else(|| format!("{label}: a check finding has no id"))?;
+        let mut args = vec!["context", "--json", "--at", id];
         args.extend_from_slice(scope);
         let packet = ripr_json(&args)?;
         let pretty = ripr_stdout(&args)?;
-        let mut compact_args = vec!["context", "--format", "json-compact", "--at", id.as_str()];
+        let mut compact_args = vec!["context", "--format", "json-compact", "--at", id];
         compact_args.extend_from_slice(scope);
         let compact = ripr_stdout(&compact_args)?;
         if compact.trim_ascii_end() != minified(&pretty).as_slice() {
             return Err(format!(
                 "{label} {id}: --format json-compact must write the --json packet without whitespace:\n{}",
                 String::from_utf8_lossy(&compact)
+            ));
+        }
+        if packet["missing_discriminators"] != finding["missing_discriminators"] {
+            return Err(format!(
+                "{label} {id}: context missing_discriminators {} differ from the check finding's {}",
+                packet["missing_discriminators"], finding["missing_discriminators"]
             ));
         }
         packets.push((format!("{label} {id}"), packet));
@@ -249,6 +253,18 @@ fn variants(packet: &Value) -> BTreeSet<String> {
     if packet["probe"].get("owner_signature").is_some() {
         found.insert("owner_signature".to_string());
     }
+    for discriminator in packet["missing_discriminators"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let sink = if discriminator["flow_sink"].is_null() {
+            "null"
+        } else {
+            "object"
+        };
+        found.insert(format!("missing_discriminators.flow_sink={sink}"));
+    }
     let witness = &packet["witness"];
     if witness.is_null() {
         found.insert("witness=null".to_string());
@@ -326,6 +342,8 @@ fn context_json_conforms_for_every_finding_of_the_covering_fixtures() -> Result<
         "witness.fix_site",
         "witness.limitations",
         "no fix_site",
+        "missing_discriminators.flow_sink=null",
+        "missing_discriminators.flow_sink=object",
         "shape=Boundary",
         "shape=GuardDomain",
         "shape=Other",
@@ -411,7 +429,7 @@ fn published_context_schema_rejects_documents_it_forbids() -> Result<(), String>
         .map(|(_, packet)| packet.clone())
         .ok_or("no packet carries a witness discriminator and a related test")?;
     conforms(&with_witness, &schema, "base packet")?;
-    let mutations: [(&str, Mutation); 16] = [
+    let mutations: [(&str, Mutation); 17] = [
         ("an undeclared field", |doc| doc["status"] = json!("ok")),
         ("the check report's schema_version key", |doc| {
             doc["schema_version"] = json!("1.1")
@@ -450,12 +468,22 @@ fn published_context_schema_rejects_documents_it_forbids() -> Result<(), String>
             doc["related_tests"][0]["relation_confidence"] = json!("certain")
         }),
         (
-            "a top-level discriminator with the witness's flow sink",
+            "a top-level discriminator flow sink in the witness's owner-bearing shape",
             |doc| {
-                doc["missing_discriminators"] =
-                    json!([{"value": "a == b", "reason": "r", "flow_sink": null}])
+                doc["missing_discriminators"] = json!([{
+                    "value": "a == b",
+                    "reason": "r",
+                    "flow_sink": {"kind": "return", "text": "a", "line": 2, "owner": null}
+                }])
             },
         ),
+        ("a top-level discriminator flow sink with no kind", |doc| {
+            doc["missing_discriminators"] = json!([{
+                "value": "a == b",
+                "reason": "r",
+                "flow_sink": {"text": "a", "line": 2}
+            }])
+        }),
         ("an unknown discriminator shape", |doc| {
             doc["witness"]["missing_discriminators"][0]["shape"] = json!("boundary")
         }),
