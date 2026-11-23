@@ -37042,6 +37042,16 @@ fn policy_report_commands_accept_a_valid_root() -> Result<(), std::io::Error> {
     let root = unique_temp_workspace("policy-reports-valid-root");
     std::fs::create_dir_all(&root)?;
     let root_text = root.display().to_string();
+    // The cases name the same inputs as the refusal matrix. An input a flag
+    // names must exist and hold valid JSON (#15254), or its command writes the
+    // report and then exits 2 for that reason, not for the root.
+    std::fs::create_dir_all(root.join("target/ripr/reports"))?;
+    for input in [
+        "target/ripr/reports/policy-readiness.json",
+        "target/ripr/reports/policy-operations.json",
+    ] {
+        std::fs::write(root.join(input), "{}")?;
+    }
     let cases: [(&[&str], &str); 3] = [
         (
             &[
