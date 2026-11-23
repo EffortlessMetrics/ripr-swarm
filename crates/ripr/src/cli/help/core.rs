@@ -68,7 +68,9 @@ Options:
 The command uses the same ancestor-aware loader as analysis and fails with the
 path-qualified parser or policy error. A missing ripr.toml follows the normal
 built-in-defaults path; use `ripr init` when you want to materialize those
-defaults into a file.
+defaults into a file. It also checks the suppressions manifest the config
+selects: a configured [suppressions] path that does not exist fails, and a
+present manifest (default .ripr/suppressions.toml) must parse.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
@@ -393,7 +395,7 @@ Options:
                            inventory refuses drift, nonregular files and external
                            module reads. See docs/OUTPUT_SCHEMA.md.
   --write-artifact PATH    Write a full-fidelity check artifact (schema
-                           ripr-check-artifact-v1) for later
+                           ripr-check-artifact-v2) for later
                            `ripr explain --from PATH` /
                            `ripr context --from PATH` reuse. The artifact
                            records the complete finding set plus the input

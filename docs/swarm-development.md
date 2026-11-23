@@ -416,7 +416,7 @@ Source proof to run:
   cargo xtask check-pr
   cargo xtask release-readiness --version <current-version>
   cargo package -p ripr --list
-  cargo publish -p ripr --dry-run
+  cargo xtask publish-dry-run   # from the publish stage; a plain cargo publish dry-run is not release evidence
   npm --prefix editors/vscode ci
   npm --prefix editors/vscode run compile
   npm --prefix editors/vscode run package

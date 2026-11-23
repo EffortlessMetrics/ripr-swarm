@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests and closed consumers (for example the renderer
     /// category set in #14965, which must not shadow a typed token) can walk
     /// the vocabulary. The ordinal test keeps this list in step with the enum.
-    pub const ALL: [StaticLimitKind; 36] = [
+    pub const ALL: [StaticLimitKind; 37] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -54,6 +54,7 @@ impl StaticLimitKind {
         StaticLimitKind::TypescriptWorkspaceReadLimited,
         StaticLimitKind::RustFutureNeverPolled,
         StaticLimitKind::ActivationBoundaryInputUnresolved,
+        StaticLimitKind::RustGatedDoctestUnread,
     ];
 
     /// What to do so ripr can settle this limitation. One imperative
@@ -61,8 +62,8 @@ impl StaticLimitKind {
     pub fn next_step(&self) -> &'static str {
         match self {
             StaticLimitKind::DynamicDispatch => {
-                "Add a test that calls the changed owner on the concrete type, not through a \
-                 trait object or `dyn` value, and assert on its result."
+                "Add a test that calls the changed owner directly by its own name, not through a \
+                 call whose target is chosen at runtime, and assert on its result."
             }
             StaticLimitKind::Metaprogramming => {
                 "Call the changed owner directly from a test instead of through the macro or \
@@ -216,6 +217,11 @@ impl StaticLimitKind {
                  boundary and asserts on its exact result; ripr cannot map the computed operand \
                  to test inputs, so it does not name those inputs for you."
             }
+            StaticLimitKind::RustGatedDoctestUnread => {
+                "Check the doc examples and tests that run under the owner's cfg (for example a \
+                 nightly-only example) for an assertion on the changed behavior; ripr does not \
+                 read examples behind that gate. Add a test only if none asserts on it."
+            }
         }
     }
 }
@@ -258,8 +264,8 @@ impl StopReason {
                  its result there."
             }
             StopReason::DynamicDispatchUnresolved => {
-                "Call the changed owner on the concrete type in a test, not through a trait \
-                 object, and assert on its result."
+                "Call the changed owner directly by its own name in a test, not through a \
+                 dynamically dispatched call, and assert on its result."
             }
             StopReason::ProcMacroOpaque => {
                 "Call the changed owner directly from a test, outside the macro, and assert on \
@@ -384,9 +390,10 @@ mod tests {
                 StaticLimitKind::TypescriptWorkspaceReadLimited => 33,
                 StaticLimitKind::RustFutureNeverPolled => 34,
                 StaticLimitKind::ActivationBoundaryInputUnresolved => 35,
+                StaticLimitKind::RustGatedDoctestUnread => 36,
             }
         }
-        const COUNT: usize = 36;
+        const COUNT: usize = 37;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
@@ -433,6 +440,32 @@ mod tests {
             assert!(!step.contains("  "), "{}: {step}", kind.as_str());
             assert_ne!(step, kind.describe(), "{}", kind.as_str());
         }
+    }
+
+    /// `dynamic_dispatch` is produced by the Python, TypeScript and Perl
+    /// adapters and by no Rust producer, so its reader-facing text must not
+    /// describe the limit in Rust-only terms (#15617).
+    #[test]
+    fn dynamic_dispatch_text_uses_no_rust_only_vocabulary() {
+        const RUST_ONLY: [&str; 6] = ["trait", "traits", "dyn", "impl", "crate", "crates"];
+        let texts = [
+            StaticLimitKind::DynamicDispatch.describe(),
+            StaticLimitKind::DynamicDispatch.next_step(),
+            StopReason::DynamicDispatchUnresolved.describe(),
+            StopReason::DynamicDispatchUnresolved.next_step(),
+        ];
+        for text in texts {
+            let lower = text.to_lowercase();
+            for word in lower.split(|ch: char| !ch.is_ascii_alphanumeric()) {
+                assert!(!RUST_ONLY.contains(&word), "`{word}` in: {text}");
+            }
+        }
+        // The description still says what makes the dispatch unresolvable.
+        assert!(
+            StaticLimitKind::DynamicDispatch
+                .describe()
+                .contains("chosen at runtime")
+        );
     }
 
     #[test]

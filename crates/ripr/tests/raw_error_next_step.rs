@@ -53,8 +53,22 @@ fn run(dir: &Path, args: &[&str]) -> Result<Output, String> {
         .map_err(|error| format!("run ripr {args:?}: {error}"))
 }
 
+/// Mirrors the product's human path rule on Windows: one `/` separator and
+/// no verbatim `\\?\` prefix. On Unix `\` is a filename character and the
+/// text is unchanged.
 fn slash(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
+    let text = path.display().to_string();
+    if !cfg!(windows) {
+        return text;
+    }
+    let unified = text.replace('\\', "/");
+    if let Some(rest) = unified.strip_prefix("//?/UNC/") {
+        format!("//{rest}")
+    } else if let Some(rest) = unified.strip_prefix("//?/") {
+        rest.to_string()
+    } else {
+        unified
+    }
 }
 
 /// Exact stderr, exit 2, and the shared floor: no errno tail, no serde type.
@@ -321,4 +335,52 @@ fn cache_export_missing_root_names_the_flag() -> Result<(), String> {
     );
     let _ = fs::remove_dir_all(&dir);
     result
+}
+
+#[test]
+fn outcome_snapshot_shape_refusals_name_the_snapshot_to_pass() -> Result<(), String> {
+    let dir = workspace("outcome-shape")?;
+    let seamless = assert_refusal(
+        &dir,
+        &[
+            "outcome",
+            "--before",
+            "art/file.json",
+            "--after",
+            "art/file.json",
+        ],
+        "static snapshot JSON is missing repo-exposure `seams` array or check-output `findings` array; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format",
+    );
+    let partial_seam = fs::write(dir.join("art/seam.json"), "{\"seams\":[{\"seam_id\":\"x\"}]}\n")
+        .map_err(|error| format!("write seam: {error}"))
+        .and_then(|()| {
+            assert_refusal(
+                &dir,
+                &[
+                    "outcome",
+                    "--before",
+                    "art/seam.json",
+                    "--after",
+                    "art/seam.json",
+                ],
+                "repo exposure seam is missing string field `kind`; regenerate the snapshot with `ripr check --format repo-exposure-json`",
+            )
+        });
+    let malformed = fs::write(dir.join("art/broken.json"), "{\n")
+        .map_err(|error| format!("write broken: {error}"))
+        .and_then(|()| {
+            assert_refusal(
+                &dir,
+                &[
+                    "outcome",
+                    "--before",
+                    "art/broken.json",
+                    "--after",
+                    "art/broken.json",
+                ],
+                "failed to parse repo exposure JSON: EOF while parsing an object at line 2 column 0; regenerate it with the same command as the other snapshot, either `ripr check --format repo-exposure-json` or `ripr check --json`, so both sides use one format",
+            )
+        });
+    let _ = fs::remove_dir_all(&dir);
+    seamless.and(partial_seam).and(malformed)
 }

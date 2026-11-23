@@ -7,7 +7,9 @@ mod terse;
 
 pub(crate) use context_packet::CONTEXT_PACKET_VERSION_CONTRACT;
 pub use context_packet::render_context_packet;
-pub(crate) use context_packet::render_context_packet_with_explain_command;
+pub(crate) use context_packet::{
+    render_context_packet_with_explain_command, render_selected_context_packet,
+};
 // Test-only since #5994: production surfaces render through
 // `render_context_packet_with_explain_command`; the raw-DTO render is the
 // parity oracle for the LSP packet tests.
@@ -526,9 +528,13 @@ mod tests {
             scope["continuation"].as_str(),
             Some(
                 "partial result: raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 110, then re-run; \
-                 named partition continuation is not available"
+                 named partition continuation is not available. The whole diff exceeds the \
+                 current analysis-cost limits, so each raise selects only one more part of it: \
+                 to analyze every changed file, narrow the diff with a PATH argument (`ripr \
+                 check <path>...`) or a nearer `--base`"
             ),
-            "continuation must lead with the budget that stopped selection: {scope}"
+            "continuation must lead with the budget that stopped selection and, with no \
+             whole-diff budget (#15484), name the narrowing route: {scope}"
         );
         Ok(())
     }
@@ -2347,6 +2353,7 @@ mod tests {
             normalized_discriminator: "return_value".to_string(),
         });
         finding.probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:lib_My_App_pm:8:perl_return".to_string()),
             location: SourceLocation::new("lib/My/App.pm", 8, 5),
             owner: Some(SymbolId(
@@ -2425,6 +2432,7 @@ mod tests {
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:1:static_unknown".to_string()),
                 location: SourceLocation::new("src/lib.rs", 1, 1),
                 owner: None,

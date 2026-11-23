@@ -1402,11 +1402,12 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
         // Only value, status, source and samples moved, except that #12766 moved
         // the total abstention bar (and its title) when the avoidable rate took
         // the 0.2 bar, and again when `[abstain]`-marked spec examples grew the
-        // spec-required share to 0.0452 (0.2 + 0.0452, rounded down);
-        // scoreboards.toml is the source of both.
+        // spec-required share to 0.0452 (0.2 + 0.0452, rounded down), and
+        // again when the avoidable bar moved to 0.28 (0.28 + 39/871, rounded
+        // down to 0.32); scoreboards.toml is the source of both.
         let config_moved = id == "trust.verdict_corpus_abstention";
         if config_moved {
-            assert_eq!(metric["target"].as_f64(), Some(0.24), "{id} target");
+            assert_eq!(metric["target"].as_f64(), Some(0.32), "{id} target");
             assert_eq!(
                 metric["title"],
                 "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
@@ -1427,9 +1428,10 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             assert_eq!(metric[key], original[key], "{id} {key}");
         }
     }
-    // #8035, with the four Perl rate rows re-recorded by #10809 on the grown
-    // corpus: (id, rate, numerator, denominator, status, corpus_blob, rows_tree,
-    // revision, approved)
+    // #8035, with the five Perl rate rows re-recorded by #10809 over the
+    // re-pinned producer corpus (the producer pin is scoring identity, so no
+    // Perl case stayed unchanged): (id, rate, numerator, denominator, status,
+    // corpus_blob, rows_tree, revision, approved)
     let recorded_8035 = [
         (
             "trust.verdict_corpus_typescript_false_actionable",
@@ -1500,57 +1502,57 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
         (
             "trust.perl_verdict_corpus_false_verdict",
             "by_packet_provenance.producer.false_verdict_rate",
-            1,
-            54,
+            0,
+            60,
             "meets_target",
-            "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
-            "5b1718f4c61eb369f055d938d26421102ba79c50",
-            "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "bf8a9e2fee691f026fd3d2cc66e971df39c2939d",
+            "890907d2442c1c2484d9a676540200aa1d9bec93",
+            "d94c7e285341bb6eeb247c57539c86e85f2ca49d",
             "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.perl_verdict_corpus_false_actionable",
             "by_packet_provenance.producer.false_actionable_rate",
             0,
-            28,
+            30,
             "meets_target",
-            "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
-            "5b1718f4c61eb369f055d938d26421102ba79c50",
-            "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "bf8a9e2fee691f026fd3d2cc66e971df39c2939d",
+            "890907d2442c1c2484d9a676540200aa1d9bec93",
+            "d94c7e285341bb6eeb247c57539c86e85f2ca49d",
             "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.perl_verdict_corpus_false_exposed",
             "by_packet_provenance.producer.false_exposed_rate",
-            1,
-            26,
-            "below_target",
-            "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
-            "5b1718f4c61eb369f055d938d26421102ba79c50",
-            "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            0,
+            30,
+            "meets_target",
+            "bf8a9e2fee691f026fd3d2cc66e971df39c2939d",
+            "890907d2442c1c2484d9a676540200aa1d9bec93",
+            "d94c7e285341bb6eeb247c57539c86e85f2ca49d",
             "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.perl_verdict_corpus_false_silent",
             "by_packet_provenance.producer.false_silent_rate",
             0,
-            26,
+            30,
             "meets_target",
-            "6b0da537f6aa117f126cb732c7e19acee7c24f8f",
-            "5b1718f4c61eb369f055d938d26421102ba79c50",
-            "ea5229fba660d284841b3954f73ca7948a88d0ea",
+            "bf8a9e2fee691f026fd3d2cc66e971df39c2939d",
+            "890907d2442c1c2484d9a676540200aa1d9bec93",
+            "d94c7e285341bb6eeb247c57539c86e85f2ca49d",
             "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.perl_verdict_corpus_abstention",
             "by_packet_provenance.producer.abstention_rate",
-            8,
-            27,
+            43,
+            60,
             "below_target",
-            "186c7d8c3ce2e1766603cd030a37ba273c0a194c",
-            "46a0dc499fe0a9e43ac672ad34d1305b68bad33b",
-            "76651d1cdf9242b301c9ddf28c442838ccf73c59",
-            "EffortlessMetrics/ripr-swarm#8035",
+            "bf8a9e2fee691f026fd3d2cc66e971df39c2939d",
+            "890907d2442c1c2484d9a676540200aa1d9bec93",
+            "d94c7e285341bb6eeb247c57539c86e85f2ca49d",
+            "EffortlessMetrics/ripr-swarm#10809",
         ),
         (
             "trust.verdict_corpus_oracle_accuracy",
@@ -1660,6 +1662,17 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate"
         );
         assert_eq!(avoidable["runner_dependent"], false);
+        // The avoidable bar moved from 0.20 to 0.28 on measured evidence
+        // (RIPR-SPEC-0219, #12766) and only ratchets down from here: it is
+        // lowered when landed slices pass it, never raised to absorb a
+        // regression; see [`AVOIDABLE_ABSTENTION_BAR`].
+        let target = avoidable["target"]
+            .as_f64()
+            .ok_or("avoidable target missing")?;
+        assert!(
+            (target - AVOIDABLE_ABSTENTION_BAR).abs() < 1e-9,
+            "avoidable abstention target {target} differs from the pinned bar {AVOIDABLE_ABSTENTION_BAR}"
+        );
         let samples = avoidable["samples"].as_array().ok_or("samples missing")?;
         assert_eq!(samples.len(), 1);
         let population: Population = serde_json::from_value(samples[0]["population"].clone())
@@ -1697,5 +1710,31 @@ fn avoidable_abstention_population_sums_to_the_report_and_stays_under_the_total(
     assert_eq!(avoidable.1, total.1);
     // The committed corpus has rows a spec example asks to abstain.
     assert!(avoidable.0 < total.0, "{avoidable:?} vs {total:?}");
+    Ok(())
+}
+
+/// The avoidable-abstention bar (RIPR-SPEC-0219, #12766): 0.20 until
+/// 2026-11-22, then 0.28 on measured evidence. It only ratchets down: lowering
+/// it lowers this constant in the same change, and raising it means raising
+/// this constant with a dated reason in this comment, so every move, in either
+/// direction, is a reviewed edit here. Both `scoreboards.toml` and the baseline
+/// copy must equal it.
+const AVOIDABLE_ABSTENTION_BAR: f64 = 0.28;
+
+#[test]
+fn avoidable_abstention_bar_only_ratchets_down() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let metric = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "trust.verdict_corpus_avoidable_abstention")
+        .ok_or("trust.verdict_corpus_avoidable_abstention missing from scoreboards.toml")?;
+    assert!(
+        (metric.target - AVOIDABLE_ABSTENTION_BAR).abs() < 1e-9,
+        "avoidable abstention target {} differs from the pinned bar {AVOIDABLE_ABSTENTION_BAR}",
+        metric.target
+    );
     Ok(())
 }

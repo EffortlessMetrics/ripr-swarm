@@ -1,0 +1,301 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_membership_removed_member/input",
+  "config_path": "<cwd>/fixtures/python_membership_removed_member/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:b4016f36d69c7c5e62e585effe88db86f31fc0c3e51c9ec4ba82dc0403241181","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:truthy_convert.py:python_preview:9c9a08b5",
+      "canonical_gap_id": "gap:python:truthy/convert.py:to_bool:predicate_boundary:predicate:val_in_true_true_t_yes_on_1_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:truthy/convert.py:to_bool:predicate_boundary:predicate:val_in_true_true_t_yes_on_1_1",
+        "language": "python",
+        "file": "truthy/convert.py",
+        "owner": "to_bool",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "val_in_true_true_t_yes_on_1_1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:truthy_convert.py:python_preview:9c9a08b5",
+        "family": "predicate",
+        "delta": "control",
+        "file": "truthy/convert.py",
+        "line": 9,
+        "expression": "    if val in (True, \"true\", \"t\", \"yes\", \"on\", \"1\", 1):",
+        "owner": "python:truthy/convert.py::to_bool"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"2 related Python test(s) found for owner `to_bool`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary."},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 2 related Python test(s) found for owner `to_bool`", "infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if val in (True, \"true\", \"t\", \"yes\", \"on\", \"1\", 1): (line 9)", "related test tests/test_convert.py:12 test_falsy uses strong exact value oracle: assert to_bool(val) == False", "related test tests/test_convert.py:7 test_truthy uses strong exact value oracle: assert to_bool(val) == True", "source function argument value val = \"1\" at line 8", "source function argument value val = \"on\" at line 8", "source function argument value val = \"t\" at line 8", "source function argument value val = \"true\" at line 8", "source function argument value val = \"yes\" at line 8", "source function argument value val = \"0\" at line 13", "source function argument value val = \"f\" at line 13", "source function argument value val = \"false\" at line 13", "missing discriminator val == \"y\": The edit changes `val in` for \"y\" only, and no strong related test call passes `val` such a value; observed val values: \"1\", \"on\", \"t\", \"true\", \"yes\", \"0\", \"f\", \"false\", \"n\", \"no\", \"off\". Add a test case that passes \"y\""],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if val in (True, \"true\", \"t\", \"yes\", \"on\", \"1\", 1):","line":9}
+      ],
+      "evidence": ["owner: to_bool", "owner_kind: function", "missing_discriminator: val == \"y\"", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_convert.py", "suggested_test_name: test_falsy", "suggested_test_node_id: tests/test_convert.py::test_falsy", "suggested_verify_command: python -m pytest tests/test_convert.py::test_falsy", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_falsy)", "test_fixtures: val (test_falsy)", "test_parametrized: pytest (test_falsy)", "test_verify_command: python -m pytest tests/test_convert.py::test_falsy (test_falsy)", "related_test_relation: syntactic_call (test_falsy)", "test_oracle: exact_value strong (test_falsy)", "test_framework: pytest (test_truthy)", "test_fixtures: val (test_truthy)", "test_parametrized: pytest (test_truthy)", "test_verify_command: python -m pytest tests/test_convert.py::test_truthy (test_truthy)", "related_test_relation: syntactic_call (test_truthy)", "test_oracle: exact_value strong (test_truthy)"],
+      "missing": ["A strong Python oracle reaches `to_bool`, but static evidence does not place a related test input at the changed predicate boundary `val == \"y\"`. The edit changes `val in` for \"y\" only, and no strong related test call passes `val` such a value; observed val values: \"1\", \"on\", \"t\", \"true\", \"yes\", \"0\", \"f\", \"false\", \"n\", \"no\", \"off\". Add a test case that passes \"y\"."],
+      "assertion_texts": {
+        "8": "assert to_bool(val) == True [parametrize val=\"1\"]",
+        "13": "assert to_bool(val) == False [parametrize val=\"0\"]"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 8,
+            "value": "val = \"1\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 8,
+            "value": "val = \"on\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == True [parametrize val=\"on\"]"
+          },
+          {
+            "line": 8,
+            "value": "val = \"t\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == True [parametrize val=\"t\"]"
+          },
+          {
+            "line": 8,
+            "value": "val = \"true\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == True [parametrize val=\"true\"]"
+          },
+          {
+            "line": 8,
+            "value": "val = \"yes\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == True [parametrize val=\"yes\"]"
+          },
+          {
+            "line": 13,
+            "value": "val = \"0\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 13,
+            "value": "val = \"f\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == False [parametrize val=\"f\"]"
+          },
+          {
+            "line": 13,
+            "value": "val = \"false\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == False [parametrize val=\"false\"]"
+          },
+          {
+            "line": 13,
+            "value": "val = \"n\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == False [parametrize val=\"n\"]"
+          },
+          {
+            "line": 13,
+            "value": "val = \"no\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == False [parametrize val=\"no\"]"
+          },
+          {
+            "line": 13,
+            "value": "val = \"off\"",
+            "context": "function_argument",
+            "provenance": "assert to_bool(val) == False [parametrize val=\"off\"]"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "val == \"y\"",
+            "reason": "The edit changes `val in` for \"y\" only, and no strong related test call passes `val` such a value; observed val values: \"1\", \"on\", \"t\", \"true\", \"yes\", \"0\", \"f\", \"false\", \"n\", \"no\", \"off\". Add a test case that passes \"y\"",
+            "flow_sink": {"kind":"unknown","text":"if val in (True, \"true\", \"t\", \"yes\", \"on\", \"1\", 1):","line":9}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 8,
+          "value": "val = \"1\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 8,
+          "value": "val = \"on\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == True [parametrize val=\"on\"]"
+        },
+        {
+          "line": 8,
+          "value": "val = \"t\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == True [parametrize val=\"t\"]"
+        },
+        {
+          "line": 8,
+          "value": "val = \"true\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == True [parametrize val=\"true\"]"
+        },
+        {
+          "line": 8,
+          "value": "val = \"yes\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == True [parametrize val=\"yes\"]"
+        },
+        {
+          "line": 13,
+          "value": "val = \"0\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 13,
+          "value": "val = \"f\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == False [parametrize val=\"f\"]"
+        },
+        {
+          "line": 13,
+          "value": "val = \"false\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == False [parametrize val=\"false\"]"
+        },
+        {
+          "line": 13,
+          "value": "val = \"n\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == False [parametrize val=\"n\"]"
+        },
+        {
+          "line": 13,
+          "value": "val = \"no\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == False [parametrize val=\"no\"]"
+        },
+        {
+          "line": 13,
+          "value": "val = \"off\"",
+          "context": "function_argument",
+          "provenance": "assert to_bool(val) == False [parametrize val=\"off\"]"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "val == \"y\"",
+          "reason": "The edit changes `val in` for \"y\" only, and no strong related test call passes `val` such a value; observed val values: \"1\", \"on\", \"t\", \"true\", \"yes\", \"0\", \"f\", \"false\", \"n\", \"no\", \"off\". Add a test case that passes \"y\"",
+          "flow_sink": {"kind":"unknown","text":"if val in (True, \"true\", \"t\", \"yes\", \"on\", \"1\", 1):","line":9}
+        }
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "test_falsy",
+          "file": "tests/test_convert.py",
+          "line": 12,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert to_bool(val) == False"
+        },
+        {
+          "name": "test_truthy",
+          "file": "tests/test_convert.py",
+          "line": 7,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert to_bool(val) == True"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_convert.py",
+        "suggested_test_name": "test_falsy",
+        "suggested_test_node_id": "tests/test_convert.py::test_falsy",
+        "verify_command": "python -m pytest tests/test_convert.py::test_falsy",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:truthy/convert.py:to_bool:predicate_boundary:predicate:val_in_true_true_t_yes_on_1_1",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "to_bool",
+        "changed_behavior": "predicate_boundary changed at truthy/convert.py:9: `if val in (True, \"true\", \"t\", \"yes\", \"on\", \"1\", 1):`",
+        "current_test_evidence": "tests/test_convert.py:12 test_falsy currently has oracle_strength=strong, oracle_kind=exact_value: assert to_bool(val) == False",
+        "missing_discriminator": "val == \"y\"",
+        "recommended_test_shape": "Strengthen the existing pytest boundary assertion for `val == \"y\"`.",
+        "suggested_assertion": "Assert the owner result or effect at the boundary `val == \"y\"`.",
+        "suggested_location": {
+          "test_file": "tests/test_convert.py",
+          "test_name": "test_falsy",
+          "pytest_node_id": "tests/test_convert.py::test_falsy"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_convert.py::test_falsy",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `val == \"y\"`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `val == \"y\"`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "val, yes, true, on",
+      "observed_sink": "assert to_bool(val) == False",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["truthy/convert.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"tests/test_convert.py","digest":"sha256:4dabf523443be1089bc6e5aa620f27612e86cb116dda55313492c59295942554"},{"path":"truthy/convert.py","digest":"sha256:dcc1b5d1bb5ce7a359ac284348e40cf1679183f07b2875241f50b4f749fe31b7"}]}
+}

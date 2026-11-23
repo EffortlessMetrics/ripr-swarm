@@ -260,7 +260,10 @@ pub(crate) fn evaluate_gap_record_source_currentness(
             source_path_owned,
         );
     }
-    let raw = match std::fs::read_to_string(&canonical_source_path) {
+    // The ledger producer read this snapshot through the shared artifact
+    // decoder, so a PowerShell 5.1 spelling must verify here too (#15936).
+    // The content commitment below still checks the decoded text.
+    let raw = match crate::bounded_input::read_artifact_text(&canonical_source_path) {
         Ok(raw) => raw,
         Err(error) => {
             return GapRecordSourceCurrentness::not_evaluated(

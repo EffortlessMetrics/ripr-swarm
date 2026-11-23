@@ -54,9 +54,28 @@ pub(super) fn take_test_reference_clones() -> usize {
     TEST_REFERENCE_CLONES.with(std::cell::Cell::take)
 }
 
+// Owner attribution is private cache metadata. Public evidence rows feed
+// portable repair-card identities and retain their original representation.
+#[derive(Serialize, Deserialize)]
+struct CachedGrip<T> {
+    #[serde(flatten)]
+    row: T,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    assertion_targets_non_function: Option<bool>,
+}
+
+impl<'a> From<&'a RelatedTestGrip> for CachedGrip<&'a RelatedTestGrip> {
+    fn from(row: &'a RelatedTestGrip) -> Self {
+        Self {
+            row,
+            assertion_targets_non_function: row.assertion_targets_non_function,
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct TableRef<'a> {
-    related_tests: Vec<&'a RelatedTestGrip>,
+    related_tests: Vec<CachedGrip<&'a RelatedTestGrip>>,
     seams: Vec<SeamRef<'a>>,
 }
 
@@ -86,7 +105,7 @@ struct EvidenceRef<'a> {
 
 #[derive(Deserialize)]
 struct TableOwned {
-    related_tests: Vec<Arc<RelatedTestGrip>>,
+    related_tests: Vec<CachedGrip<RelatedTestGrip>>,
     seams: Vec<SeamOwned>,
 }
 
@@ -238,7 +257,7 @@ pub(super) fn serialize<S: Serializer>(
     seams: &[ClassifiedSeam],
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
-    let mut related_tests: Vec<&RelatedTestGrip> = Vec::new();
+    let mut related_tests = Vec::new();
     let mut index_of: HashMap<Vec<u8>, u32> = HashMap::new();
     // Decoded table references share an Arc. Reuse their index before
     // serializing a key, so validation work follows distinct rows rather than
@@ -256,10 +275,11 @@ pub(super) fn serialize<S: Serializer>(
             }
             #[cfg(test)]
             ROW_KEY_SERIALIZATIONS.with(|count| count.set(count.get() + 1));
-            let key = serde_json::to_vec(test).map_err(S::Error::custom)?;
+            let cached = CachedGrip::from(test.as_ref());
+            let key = serde_json::to_vec(&cached).map_err(S::Error::custom)?;
             let next = u32::try_from(related_tests.len()).map_err(S::Error::custom)?;
             let index = *index_of.entry(key).or_insert_with(|| {
-                related_tests.push(test);
+                related_tests.push(cached);
                 next
             });
             index_by_row.insert(row, index);
@@ -367,7 +387,8 @@ impl PrettyTableSizer {
         let mut new_test_bytes = 0usize;
         let mut indices = Vec::with_capacity(seam_tests.len());
         for test in seam_tests {
-            let key = serde_json::to_vec(test).map_err(|err| err.to_string())?;
+            let cached = CachedGrip::from(test.as_ref());
+            let key = serde_json::to_vec(&cached).map_err(|err| err.to_string())?;
             let index = match self.index_of.get(&key) {
                 Some(index) => *index,
                 None => {
@@ -375,7 +396,7 @@ impl PrettyTableSizer {
                         Some(offset) => *offset,
                         None => {
                             new_test_bytes =
-                                new_test_bytes.saturating_add(pretty_item_bytes(test)?);
+                                new_test_bytes.saturating_add(pretty_item_bytes(&cached)?);
                             let offset = new_tests.len();
                             pending.insert(key.clone(), offset);
                             new_tests.push(key);
@@ -499,6 +520,23 @@ fn expand_table<E: serde::de::Error>(table: TableOwned) -> Result<Vec<Classified
         related_tests: table,
         seams,
     } = table;
+    // Older affinity rows cannot distinguish function owners from module-level
+    // assertion targets. Recompute only entries whose old rows lack that fact.
+    let table = table
+        .into_iter()
+        .map(|cached| {
+            let mut row = cached.row;
+            if row.relation_reason == crate::domain::RelationReason::AssertionTargetAffinity
+                && cached.assertion_targets_non_function.is_none()
+            {
+                return Err(E::custom(
+                    "cached assertion-target relation lacks owner evidence",
+                ));
+            }
+            row.assertion_targets_non_function = cached.assertion_targets_non_function;
+            Ok(Arc::new(row))
+        })
+        .collect::<Result<Vec<_>, E>>()?;
     let mut classified = Vec::with_capacity(seams.len());
     for SeamOwned {
         seam,
@@ -575,6 +613,7 @@ pub(super) mod tests {
         reason: RelationReason,
     ) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_owned(),
             file: PathBuf::from("tests/it.rs"),
             line: 7,
@@ -636,16 +675,28 @@ pub(super) mod tests {
         let b = related("b", RelationReason::SameModule);
         // Same test under another relation is a distinct record, not a repeat.
         let a_direct = related("a", RelationReason::DirectOwnerCall);
-        let seams = vec![
+        let mut seams = vec![
             seam(1, vec![a.clone(), b.clone()]),
             seam(2, vec![b.clone(), a.clone(), a_direct]),
             seam(3, Vec::new()),
             seam(4, vec![a]),
         ];
+        seams[0].evidence.activate.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::ActivationBoundaryInputUnresolved);
         let encoded = serde_json::to_value(Body {
             seams: seams.clone(),
         })
         .map_err(|err| err.to_string())?;
+        let encoded_seams = &encoded["seams"]["seams"];
+        assert_eq!(
+            encoded_seams[0]["evidence"]["activate"]["static_limit_kind"],
+            "activation_boundary_input_unresolved"
+        );
+        assert!(
+            encoded_seams[1]["evidence"]["activate"]
+                .get("static_limit_kind")
+                .is_none()
+        );
         let table = encoded["seams"]["related_tests"]
             .as_array()
             .ok_or("missing related test table")?;
@@ -655,6 +706,11 @@ pub(super) mod tests {
             serde_json::json!([1, 0, 2])
         );
         let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
+        assert_eq!(
+            decoded.seams[0].evidence.activate.static_limit_kind,
+            seams[0].evidence.activate.static_limit_kind
+        );
+        assert_eq!(decoded.seams[1].evidence.activate.static_limit_kind, None);
         assert_eq!(
             serde_json::to_value(&decoded.seams).map_err(|err| err.to_string())?,
             serde_json::to_value(&seams).map_err(|err| err.to_string())?
@@ -867,6 +923,57 @@ pub(super) mod tests {
         evidence.remove("statically_contradicted_related_tests");
         assert!(serde_json::from_value::<Body>(stale).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn affinity_owner_survives_cache_and_only_legacy_affinity_requires_rebuild()
+    -> Result<(), String> {
+        let mut function = related("candidate", RelationReason::AssertionTargetAffinity);
+        function.assertion_targets_non_function = Some(false);
+        let mut module = function.clone();
+        module.assertion_targets_non_function = Some(true);
+        // The same record with different private attribution has identical
+        // public bytes, therefore identical repair-card detail and identity inputs.
+        if serde_json::to_vec(&module).map_err(|e| e.to_string())?
+            != serde_json::to_vec(&function).map_err(|e| e.to_string())?
+            || serde_json::to_value(&module)
+                .map_err(|e| e.to_string())?
+                .get("assertion_targets_non_function")
+                .is_some()
+        {
+            return Err("cache-only owner authority leaked into public evidence".into());
+        }
+        let direct = related("direct", RelationReason::DirectOwnerCall);
+        let mut encoded = serde_json::to_value(Body {
+            seams: vec![seam(1, vec![direct, module, function])],
+        })
+        .map_err(|err| err.to_string())?;
+        let decoded: Body =
+            serde_json::from_value(encoded.clone()).map_err(|err| err.to_string())?;
+        let flags: Vec<_> = decoded
+            .seams
+            .iter()
+            .flat_map(|s| &s.evidence.related_tests)
+            .map(|row| row.assertion_targets_non_function)
+            .collect();
+        if flags != [None, Some(true), Some(false)] {
+            return Err(format!("warm owner facts differ: {flags:?}"));
+        }
+        if encoded
+            .pointer("/seams/related_tests/0/assertion_targets_non_function")
+            .is_some()
+        {
+            return Err("direct row unexpectedly changed wire shape".into());
+        }
+        encoded
+            .pointer_mut("/seams/related_tests/1")
+            .and_then(|row| row.as_object_mut())
+            .ok_or("missing module affinity row")?
+            .remove("assertion_targets_non_function");
+        match serde_json::from_value::<Body>(encoded) {
+            Err(err) if err.to_string().contains("lacks owner evidence") => Ok(()),
+            _ => Err("legacy affinity row must invalidate the cached entry".into()),
+        }
     }
 
     #[test]

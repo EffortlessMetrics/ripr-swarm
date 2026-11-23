@@ -47,7 +47,13 @@ spot check's (`xtask/src/reports/mutation_spot_check/pilot.rs`), in order:
 
 Any missed mutant confirms the pick; all caught refutes it; no mutant at any
 tier leaves it unscored. The receipt counts each tier separately because
-`line` and `owner` are coarser than `seam`.
+`line` and `owner` are coarser than `seam`. Three whole-body limits apply at
+the `owner` tier: a pick whose line only timed out stays unscored rather
+than being judged by the whole-body tier, a whole-body mutant cannot refute
+an `error_variant` pick, and it cannot refute a pick whose innermost
+function also has a missed mutant. Timeout labels keep their location for
+this gate; label files written before that preservation need a relabel for
+the timeout gate to see them.
 
 ## What is reported
 

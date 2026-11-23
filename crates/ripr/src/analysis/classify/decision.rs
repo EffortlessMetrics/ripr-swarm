@@ -141,6 +141,7 @@ pub(in crate::analysis) fn missing_evidence(
     // generic line; the typed shape, not a `==` string match, decides.
     if matches!(probe.family, ProbeFamily::Predicate)
         && infect.state != StageState::Yes
+        && !super::infection::is_opaque_boundary_input(infect)
         && !activation.missing_discriminators.iter().any(|fact| {
             matches!(
                 fact.shape,
@@ -534,12 +535,35 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
     ) {
         return None;
     }
+    // #13037 review: `assert_eq!(b.0, b.0.clone())` compares a value with
+    // a copy of itself, so it passes whatever the change does. Saying the
+    // gap "is not the assertion shape" would be wrong advice; the family
+    // template ("Strengthen the related assertion") is the honest step.
+    if strongest
+        .oracle
+        .as_deref()
+        .is_some_and(compares_value_with_its_own_copy)
+    {
+        return None;
+    }
     let family_gap = match probe.family {
         ProbeFamily::ErrorPath => {
             "Add a test input that executes the changed error arm and assert the exact variant or payload it produces"
         }
         ProbeFamily::ReturnValue => {
             "Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns"
+        }
+        // #13037: these families fall to "Strengthen the related assertion",
+        // which nobody can follow once the assertion is already exact. What
+        // is unestablished is the link from that assertion to this change.
+        ProbeFamily::CallDeletion => {
+            "Check whether the value that test asserts depends on the changed call. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If it does not, assert the effect the call produces"
+        }
+        ProbeFamily::MatchArm => {
+            "Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If an input selects the arm but its result is replaced before the assertion, assert that result where it is still observable or test the arm separately. If no related input selects the arm, add one and assert the exact value the arm produces"
+        }
+        ProbeFamily::FieldConstruction => {
+            "Check whether the value that test asserts includes the changed field. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If it does not, assert that field's exact value"
         }
         _ => return None,
     };
@@ -556,6 +580,32 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
         "The related test `{}` {oracle_context}. {family_gap}.{missing_value}",
         strongest.name,
     ))
+}
+
+/// True when an equality assertion's two operands are the same expression up
+/// to a trailing copy (`.clone()`, `.to_owned()`, `.to_vec()`) or a leading
+/// borrow. Such an assertion cannot tell the changed behavior from a wrong
+/// one, whatever oracle strength the row carries.
+fn compares_value_with_its_own_copy(assertion: &str) -> bool {
+    fn base(operand: &str) -> String {
+        let mut text: String = operand.chars().filter(|c| !c.is_whitespace()).collect();
+        loop {
+            let before = text.len();
+            for suffix in [".clone()", ".to_owned()", ".to_vec()"] {
+                if let Some(stripped) = text.strip_suffix(suffix) {
+                    text = stripped.to_string();
+                }
+            }
+            if let Some(stripped) = text.strip_prefix('&') {
+                text = stripped.to_string();
+            }
+            if text.len() == before {
+                return text;
+            }
+        }
+    }
+    super::reveal::equality_operands(assertion)
+        .is_some_and(|[left, right]| !left.trim().is_empty() && base(&left) == base(&right))
 }
 
 /// Guidance for an assertion-shaped owner, phrased for oracles rather than for
@@ -706,6 +756,35 @@ mod kani_proofs;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    proptest::proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+        #[test]
+        fn rust_gating_projection_and_modeled_oracle_upgrade(
+            states in proptest::collection::vec(0usize..6, 5),
+            static_unknown in proptest::bool::ANY,
+        ) {
+            use crate::analysis::classification_properties::{exposure_matches, oracle_upgrade};
+            let result: Result<(), String> = (|| {
+                let vocabulary = [StageState::Yes, StageState::No, StageState::Weak,
+                    StageState::Unknown, StageState::Opaque, StageState::NotApplicable,
+                ];
+                let stages: Vec<_> = states.iter().map(|i| stage(vocabulary[*i].clone())).collect();
+                let p = probe(if static_unknown { ProbeFamily::StaticUnknown } else { ProbeFamily::ReturnValue }, "value + 1");
+                let class = classify(&stages[0], &stages[1], &stages[2], &stages[3], &stages[4], &p);
+                exposure_matches(&class, !static_unknown
+                    && [0, 1, 2, 4].iter().all(|i| stages[*i].state == StageState::Yes)
+                    && stages[3].state != StageState::No)?;
+                let yes = stage(StageState::Yes);
+                let p = probe(ProbeFamily::ReturnValue, "value + 1");
+                let before = classify(&yes, &yes, &yes, &stages[3], &stages[4], &p);
+                let after = classify(&yes, &yes, &yes, &yes, &yes, &p);
+                exposure_matches(&after, true)?;
+                oracle_upgrade(&before, &after)
+            })();
+            proptest::prop_assert!(result.is_ok(), "{:?}", result);
+        }
+    }
 
     #[test]
     fn classify_maps_reachable_but_unobserved_probe_to_reachable_unrevealed() {
@@ -1333,6 +1412,7 @@ mod tests {
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 1, 1),
             owner: None,
@@ -1443,6 +1523,98 @@ mod tests {
         assert!(step.contains("If it can"), "{step}");
         assert!(step.contains("If it cannot"), "{step}");
         assert!(!step.contains("gap is not the assertion shape"), "{step}");
+    }
+
+    // #13037: "Strengthen the related assertion" cannot be followed when the
+    // strongest related assertion is already exact, so these families name
+    // the unestablished link instead. The control keeps the template when
+    // the related oracle is not an admitted exact one.
+    #[test]
+    fn exact_related_oracle_replaces_the_strengthen_template() {
+        for (family, expression, names) in [
+            (
+                ProbeFamily::CallDeletion,
+                "out.sort()",
+                "depends on the changed call",
+            ),
+            (
+                ProbeFamily::MatchArm,
+                "None => 0",
+                "comes from the changed arm",
+            ),
+            (
+                ProbeFamily::FieldConstruction,
+                "total: sum",
+                "includes the changed field",
+            ),
+        ] {
+            let exact = exact_oracle_gap_next_step(
+                &probe(family.clone(), expression),
+                &ExposureClass::WeaklyExposed,
+                &[related_test(
+                    "lists_sorted",
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                )],
+                &[],
+                true,
+            );
+            let step = exact.as_deref().unwrap_or("");
+            assert!(
+                step.starts_with("The related test `lists_sorted` already asserts an exact value"),
+                "{step}"
+            );
+            assert!(step.contains(names), "{step}");
+            assert!(!step.contains("Strengthen"), "{step}");
+            assert_eq!(
+                exact_oracle_gap_next_step(
+                    &probe(family, expression),
+                    &ExposureClass::WeaklyExposed,
+                    &[related_test(
+                        "smoke",
+                        OracleKind::ExactValue,
+                        OracleStrength::Weak,
+                    )],
+                    &[],
+                    true,
+                ),
+                None
+            );
+        }
+    }
+
+    // #13037 review: a self-comparison admitted as strong keeps the family
+    // template, while an independent literal expectation gets the exact step.
+    #[test]
+    fn self_comparison_keeps_the_strengthen_template() {
+        let with_oracle = |oracle: &str| {
+            let mut row = related_test(
+                "records_into_the_bag",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            );
+            row.oracle = Some(oracle.to_string());
+            exact_oracle_gap_next_step(
+                &probe(ProbeFamily::CallDeletion, "v.push(x * 1)"),
+                &ExposureClass::WeaklyExposed,
+                &[row],
+                &[],
+                true,
+            )
+        };
+        assert_eq!(with_oracle("assert_eq!(b.0, b.0.clone());"), None);
+        assert_eq!(with_oracle("assert_eq!(&b.0, &b.0.to_vec());"), None);
+        let independent = with_oracle("assert_eq!(b.0, vec![11]);");
+        assert!(
+            independent
+                .as_deref()
+                .is_some_and(|step| step.contains("depends on the changed call")),
+            "{independent:?}"
+        );
+        assert!(compares_value_with_its_own_copy("assert_eq!(x.clone(), x)"));
+        assert!(!compares_value_with_its_own_copy(
+            "assert_eq!(x, y.clone())"
+        ));
     }
 
     // Controls: a broad related oracle, a stronger broad oracle outranking

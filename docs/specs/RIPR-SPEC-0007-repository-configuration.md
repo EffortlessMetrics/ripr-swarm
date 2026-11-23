@@ -56,6 +56,13 @@ The configuration layer should:
   `ripr doctor`;
 - provide `ripr config validate [--root PATH]` for isolated ancestor-aware TOML
   validation without workspace tool probes;
+- have `ripr config validate` check the suppressions manifest the config
+  selects (#15308): a configured `[suppressions] path` that names no file, or
+  a manifest path that is a dangling link, fails; a present manifest at the
+  default or configured path is parsed with the same parser `check` uses and
+  its violations fail validation; an absent default
+  `.ripr/suppressions.toml` stays silent; a valid manifest is named on its
+  own line with its entry count;
 - keep output schemas stable unless a later scoped PR explicitly adds config
   metadata.
 
@@ -219,6 +226,20 @@ invalid. Duplicate path-glob selectors are outside that exact-selector check.
 Supported bare keys, double-quoted entry string values, and the integer schema
 header retain their existing syntax. Single-quoted string values and quoted
 keys remain unsupported. This repair adds no broader TOML or calendar support.
+
+### Repository-controlled suppression path stays inside the repository (#14310)
+
+The implicit loader for the repository-controlled `suppressions.path` resolves
+every path component before reading. `..`, absolute and prefixed paths, a link
+or link chain whose target leaves the analyzed root, a dangling or looping link,
+and a final entry that is not a regular file all stop with one fixed refusal
+that names the entry and the repair, before any target bytes are read and
+without printing the resolved path. A link whose target stays inside the root
+still loads. A missing ordinary path, or an analyzed root that no longer exists,
+means no accepted debt. The explicit `--suppression-policy` path is an operator
+choice and is not confined. The check is not atomic against a concurrent
+writer replacing checkout entries during the run; ripr does not execute
+repository code, so that requires a separate local process.
 
 ### Unused default suppression disclosure (#7759)
 
@@ -471,6 +492,17 @@ values; an unrelated value such as `mode = "slow"` gets no suggestion, a
 keeps the same span, rejected value and accepted-value list.
 ```
 
+A rejected value that equals an accepted one once `_` or a space is read as
+`-` names that accepted value before edit distance is consulted (#15481):
+
+```text
+Given ripr.toml sets [perl] producer = "perl_lsp", one edit from both
+`perllsp` and `perl-lsp`,
+when ripr loads the config,
+then the error ends with `(did you mean `perl-lsp`?)`; `producer = "perlsp"`,
+with no separator typed, still ends with `(did you mean `perllsp`?)`.
+```
+
 ### Per-crate overrides (#2671)
 
 ```text
@@ -664,6 +696,15 @@ keeps exit 0 when the other checks pass, and recommends
 `ripr check --base REF` bound to the diagnosed root instead of a bare
 `ripr check`. The probe runs only after `HEAD` resolved, so an unanswered Git
 never produces the advisory, and a failed prerequisite still outranks it.
+
+When the repository is mid-merge, mid-rebase or mid-cherry-pick (Git's
+operation marker exists), doctor records an advisory `git_operation` check
+naming the operation and its finish and abort commands, and keeps exit 0 when
+the other checks pass. While conflict markers remain, `ripr check` quarantines
+their regions, including regions a zero-context diff splits across hunks,
+records the `unresolved_conflict_markers` limitation and exits 2 instead of
+listing findings from rival source states. An unanswered Git probe never
+produces the advisory.
 
 ### Doctor separates analysis readiness from source-build prerequisites
 

@@ -1,5 +1,76 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.194 for non-empty array loops (#14116)
+
+An assertion inside a `for` loop over any non-empty array now counts as run,
+not only one over a constant-row table, which bumps the analyzer cache schema
+to 1.194. Move the portable unchanged-attempt snapshots to 1.194, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.193 for macro-held owner calls (#16188)
+
+An assertion whose every call of the owner sits inside an inner macro the
+analyzer does not trust (a name outside the evaluating standard macros, or one
+the test file defines with `macro_rules!`) now reads as an unknown oracle for
+that owner, which bumps the analyzer cache schema to 1.193. Move the portable
+unchanged-attempt snapshots to 1.193, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
+## Pending — corpus cache generation 1.192 for manifest-rebound assertion roots (#10150)
+
+A `std::` or `core::` assertion whose root the test's own manifest binds to a
+Cargo package (`std = { package = .. }`) now reads as an unknown oracle, which
+bumps the analyzer cache schema to 1.192 (1.190 is left for #13041). Move the
+portable unchanged-attempt snapshots to 1.192, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.191 for env!-reading helper wrappers (#10357)
+
+A helper wrapper that reads `env!` or `option_env!` before calling its helper
+now forwards the helper's result, which bumps the analyzer cache schema to
+1.191 (1.190 is left for #13041). Move the portable unchanged-attempt snapshots
+to 1.191, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.189 for std-rooted imports beside generated tests (#12876)
+
+A macro-generated test beside an import of std's own item under an exempt
+macro name (`use std::panic;`) keeps its invocation scopes, which bumps the
+analyzer cache schema to 1.189 (1.188 is left for #13041). Move the portable
+unchanged-attempt snapshots to 1.189, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
+## Pending — corpus cache generation 1.187 for attribute-macro generated tests (#12857)
+
+A macro-generated test that carries an unrecognised attribute macro takes no
+invocation scopes, which bumps the analyzer cache schema to 1.187. Move the
+portable unchanged-attempt snapshots to 1.187, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
+## Pending — explicit Cargo harness path identity (#15846)
+
+Classified cache generation 1.185 binds a harness flag to the selected Cargo
+target. The portable unchanged-attempt pair and its verification and receipt
+commitments were refreshed. The pair retains its original seam classifications.
+
 ## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
 
 A macro-generated test that sits beside a rebound std macro name takes no

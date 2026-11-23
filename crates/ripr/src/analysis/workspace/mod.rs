@@ -27,15 +27,20 @@ pub(crate) use assertion_dependency::{
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
     CargoHarnessVerdict, ManifestInventory, context_for_files,
-    declared_crate_root_paths_from_manifest,
+    declared_crate_root_paths_from_manifest, explicit_target_roots_are_covered,
+    linked_production_roots,
 };
-pub(crate) use module_graph::{apply_module_graph_evidence, target_manifest_directories};
+pub(crate) use module_graph::{
+    apply_module_graph_evidence, covered_rust_source_manifest_dirs, discovers_targets,
+    standalone_packages_have_no_source_aliases, target_manifest_directories,
+};
 pub(crate) use path_dependencies::{
     PathDependencyAdjacency, PathDependencyGraphStatus, reverse_dependent_scope_expansion,
 };
 pub(crate) use source_role::{
     DiffOnlySource, SourceRole, SourceRoleContext, classify_with, diff_only_source,
-    is_test_surface_path, may_be_diff_only_source, seeds_diff_probes,
+    is_declared_cargo_test_surface, is_declared_cargo_test_surface_in, is_test_surface,
+    is_test_surface_path, may_be_diff_only_source, seeds_diff_probes, seeds_repo_seams,
 };
 
 pub(crate) use classify::{normalize_path, package_root};

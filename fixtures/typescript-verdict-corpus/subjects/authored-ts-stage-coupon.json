@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-ts-stage-coupon",
+  "origin": "authored",
+  "version_label": "authored@12922",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "a3127935623c2fad496ff42d1439f6ad25776f140381fec8b641eb53e881e527"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "fd4bef0be0af8666a5f559a03d235c19c6ab225d5eb26a1c6ea5cf022bf00043"
+    },
+    {
+      "path": "src/price.ts",
+      "sha256": "8a2f2bf0ce65254628396efaee38ffe29eed6fe0f4718572b32ab24827703f84"
+    },
+    {
+      "path": "test/price.test.ts",
+      "sha256": "6c4a0e629a478efde1d0cddfd215e97cf07e6dc08b738145310ddc97e3e7b25c"
+    }
+  ]
+}

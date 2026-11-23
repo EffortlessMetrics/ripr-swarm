@@ -159,7 +159,11 @@ pub(in crate::analysis) fn build_finding_with_origins(
             &evidence.implicit_dispatch_tests,
         );
         if swaps_one_error_variant_for_another(context.probe) {
-            mark_ok_only_pins_not_observing(&mut related_tests);
+            mark_ok_only_pins_not_observing(
+                &mut related_tests,
+                &context.related_tests,
+                context.owner_fn.map(|owner| owner.name.as_str()),
+            );
         }
     }
     let fallback_pin_syntax = OwnerPinSyntax::default();
@@ -577,29 +581,66 @@ fn swaps_one_error_variant_for_another(probe: &Probe) -> bool {
 }
 
 /// #14454: on an `Err`-to-`Err` variant swap, a row the annotation pass
-/// marked `missing_exact_assertion` whose oracle pins only the `Ok` arm
+/// marked `missing_exact_assertion` with an equality pin, or `weak_assertion`
+/// with a direct owner pattern, whose oracle pins only the `Ok` arm
 /// cannot observe the change. If its input reaches the changed branch the
 /// pin fails on old and new code alike, and if not the change is never
 /// seen. Such a row is `assertion_not_observing`; its role and oracle stay,
 /// so no class or gate moves.
-fn mark_ok_only_pins_not_observing(related_tests: &mut [RelatedTest]) {
+fn mark_ok_only_pins_not_observing(
+    related_tests: &mut [RelatedTest],
+    summaries: &[(&TestSummary, RelationReason)],
+    owner: Option<&str>,
+) {
+    // A panic expectation can inspect the variant printed by unwrap/expect.
+    // Keep that test's original annotation without claiming its message matches.
+    let panic_tests: BTreeSet<_> = summaries
+        .iter()
+        .filter(|(test, _)| {
+            test.attrs
+                .iter()
+                .filter(|attr| attr.contains("should_panic"))
+                .any(|attr| {
+                    let compact: String = attr.split_whitespace().collect();
+                    compact == "#[should_panic]"
+                        || compact.starts_with("#[should_panic(")
+                        || crate::analysis::facts::cfg_predicates::attribute_introduces_bare(
+                            attr,
+                            "should_panic",
+                        )
+                })
+        })
+        .map(|(test, _)| (&test.file, test.start_line, &test.name))
+        .collect();
     for test in related_tests.iter_mut() {
-        if test.miss == Some(RelatedTestMiss::MissingExactAssertion)
-            && test.oracle.as_deref().is_some_and(pins_only_the_ok_arm)
-        {
+        let Some(oracle) = test.oracle.as_deref() else {
+            continue;
+        };
+        let only_ok = match test.miss {
+            Some(RelatedTestMiss::MissingExactAssertion) => pins_only_the_ok_arm(oracle),
+            Some(RelatedTestMiss::WeakAssertion)
+                if test.relation_reason == Some(RelationReason::DirectOwnerCall) =>
+            {
+                owner
+                    .is_some_and(|owner| crate::analysis::classify::matches_owner_ok(oracle, owner))
+            }
+            _ => false,
+        };
+        if only_ok && !panic_tests.contains(&(&test.file, test.line, &test.name)) {
             test.miss = Some(RelatedTestMiss::AssertionNotObserving);
             test.miss_support = None;
         }
     }
 }
 
-/// Whether an oracle is a plain `assert_eq!` whose one side is an `Ok(..)`
+/// Whether an oracle is an `assert_eq!` or `debug_assert_eq!` with an `Ok(..)`
 /// value or a direct `.unwrap()` / `.expect(..)` of the call, so it only
 /// ever passes on the success arm (#14454). `assert_ne!`, any text naming
 /// `Err`, and error accessors (`.err()`, `.unwrap_err()`, `.expect_err(..)`,
 /// `.map_err(..)`) are excluded: those can observe an error.
 fn pins_only_the_ok_arm(oracle: &str) -> bool {
     let oracle = oracle.trim_start();
+    let oracle = oracle.strip_prefix("debug_").unwrap_or(oracle);
     if !oracle.starts_with("assert_eq!")
         || oracle.contains("Err")
         || [".err()", "_err(", "_err::<"]
@@ -858,6 +899,41 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
         }
         text
     }
+    /// End of a wildcard declaration's pattern and optional type, before its
+    /// initializer or terminating semicolon. Generic commas and associated
+    /// type equalities belong to the type, not to value-binding syntax.
+    fn wildcard_pattern_end(text: &str) -> Option<usize> {
+        let bytes = text.as_bytes();
+        let mut brackets = Vec::new();
+        for (index, &byte) in bytes.iter().enumerate() {
+            match byte {
+                b'(' | b'[' | b'{' => brackets.push(byte),
+                b')' | b']' | b'}' => {
+                    let open = match byte {
+                        b')' => b'(',
+                        b']' => b'[',
+                        _ => b'{',
+                    };
+                    if brackets.pop() != Some(open) {
+                        return None;
+                    }
+                }
+                // Nested non-angle groups already protect their contents;
+                // `<`/`>` inside a const expression need not balance.
+                b'<' if brackets.last().is_none_or(|open| *open == b'<') => {
+                    brackets.push(byte);
+                }
+                b'>' if brackets.last() == Some(&b'<')
+                    && index.checked_sub(1).and_then(|at| bytes.get(at)) != Some(&b'-') =>
+                {
+                    brackets.pop();
+                }
+                b'=' | b';' if brackets.is_empty() => return Some(index),
+                _ => {}
+            }
+        }
+        None
+    }
     /// Whether an initializer's value is the owner's result. A block whose
     /// statements precede its tail (`{ tax(2); 0 }`, or one cut at its first
     /// `;`) cannot be read as the owner's value, so it fails closed.
@@ -872,11 +948,27 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
     let bytes = body.as_bytes();
     // Every binding event: (name, initializer calls the owner).
     let mut events: Vec<(String, bool)> = Vec::new();
+    let mut wildcard_patterns = Vec::new();
     let mut cursor = 0;
     while let Some(offset) = body[cursor..].find("let ") {
         let start = cursor + offset;
         cursor = start + "let ".len();
         if start > 0 && is_ident_byte(bytes[start - 1]) {
+            continue;
+        }
+        // A wildcard binds no value name. Skip it before scanning the type:
+        // `let _: amount = ...` must not shadow a local named `amount`, even
+        // when an array type's semicolon precedes the initializer delimiter.
+        if body[cursor..]
+            .trim_start()
+            .strip_prefix('_')
+            .is_some_and(|tail| tail.trim_start().starts_with(['=', ':', ';']))
+        {
+            // The later reassignment scan must also ignore type names here,
+            // without ignoring writes inside the discarded initializer.
+            if let Some(pattern_end) = wildcard_pattern_end(&body[cursor..]) {
+                wildcard_patterns.push(cursor..cursor + pattern_end);
+            }
             continue;
         }
         let Some(assign) = body[cursor..].find('=') else {
@@ -944,6 +1036,12 @@ fn bound_identifiers_from_owner_calls(body: &str, owner_name: &str) -> Vec<Strin
             let before_ok = at == 0 || !is_ident_byte(bytes[at - 1]);
             let after_ok = from >= bytes.len() || !is_ident_byte(bytes[from]);
             if !(before_ok && after_ok) {
+                continue;
+            }
+            if wildcard_patterns
+                .iter()
+                .any(|pattern| pattern.contains(&at))
+            {
                 continue;
             }
             let tail = body[from..].trim_start();
@@ -1477,6 +1575,57 @@ mod tests {
                     "assert_eq!(result.unwrap(), \"ada\".to_string());",
                 ),
                 row(
+                    "unwrapped_error",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(input).unwrap_err(), Problem::Empty);",
+                ),
+                row(
+                    "expected_error",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(input).expect_err(\"invalid\"), Problem::Empty);",
+                ),
+                row(
+                    "mapped_error",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(input).map_err(classify), Ok(name));",
+                ),
+                row(
+                    "reversed_ok",
+                    OracleStrength::Strong,
+                    "assert_eq!(Ok(name), parse_name());",
+                ),
+                row(
+                    "multiline_ok",
+                    OracleStrength::Strong,
+                    "assert_eq!(\n    parse_name(input),\n    Ok(name),\n);",
+                ),
+                RelatedTest {
+                    relation_reason: Some(RelationReason::DirectOwnerCall),
+                    ..row(
+                        "matches_ok",
+                        OracleStrength::Weak,
+                        "assert!(matches!(parse_name(), Ok(_)));",
+                    )
+                },
+                RelatedTest {
+                    relation_reason: Some(RelationReason::DirectOwnerCall),
+                    ..row(
+                        "matches_other",
+                        OracleStrength::Weak,
+                        "assert!(matches!(other(parse_name()), Ok(_)));",
+                    )
+                },
+                row(
+                    "debug_ok",
+                    OracleStrength::Strong,
+                    "debug_assert_eq!(parse_name(input), Ok(name));",
+                ),
+                row(
+                    "panic_checks_variant",
+                    OracleStrength::Strong,
+                    "assert_eq!(parse_name(input).unwrap(), name);",
+                ),
+                row(
                     "pins_unit",
                     OracleStrength::Strong,
                     "assert_eq!(result, Ok(()));",
@@ -1496,7 +1645,18 @@ mod tests {
                 &Default::default(),
             );
             if swaps_one_error_variant_for_another(changed) {
-                mark_ok_only_pins_not_observing(&mut rows);
+                let mut panic = test_summary(
+                    "panic_checks_variant",
+                    "assert_eq!(parse_name(input).unwrap(), name);",
+                );
+                panic.attrs = vec![r#"#[should_panic(expected = "Empty")]"#.to_string()].into();
+                panic.file = PathBuf::from("tests/effects.rs");
+                panic.start_line = 4;
+                mark_ok_only_pins_not_observing(
+                    &mut rows,
+                    &[(&panic, RelationReason::DirectOwnerCall)],
+                    Some("parse_name"),
+                );
             }
             rows.into_iter()
                 .map(|row| (row.name, row.miss))
@@ -1527,6 +1687,15 @@ mod tests {
             ("pins_a_bound_result".to_string(), exact),
             ("pins_a_bound_string".to_string(), exact),
             ("unwraps_a_bound_result".to_string(), exact),
+            ("unwrapped_error".to_string(), exact),
+            ("expected_error".to_string(), exact),
+            ("mapped_error".to_string(), exact),
+            ("reversed_ok".to_string(), exact),
+            ("multiline_ok".to_string(), exact),
+            ("matches_ok".to_string(), weak),
+            ("matches_other".to_string(), weak),
+            ("debug_ok".to_string(), exact),
+            ("panic_checks_variant".to_string(), exact),
             ("pins_unit".to_string(), exact),
         ];
         let mut swapped = unchanged.clone();
@@ -1537,6 +1706,10 @@ mod tests {
         // in either operand order and with a no-argument or unit inner value.
         for row in &mut swapped {
             if [
+                "matches_ok",
+                "debug_ok",
+                "reversed_ok",
+                "multiline_ok",
                 "pins_a_bound_result",
                 "pins_a_bound_string",
                 "unwraps_a_bound_result",
@@ -1598,6 +1771,13 @@ mod tests {
             "Kind::A => Err(NameError::TooLong),",
         );
         assert_eq!(run(FlowSinkKind::ErrorVariant, &arm), unchanged);
+        // The explicit-Err comparison does not infer a swap from propagation.
+        let ok_or = changed(
+            ProbeFamily::ErrorPath,
+            Some("let name = input.ok_or(NameError::Empty)?;"),
+            "let name = input.ok_or(NameError::TooLong)?;",
+        );
+        assert_eq!(run(FlowSinkKind::ErrorVariant, &ok_or), unchanged);
         // Unknown base text fails closed.
         let no_base = changed(
             ProbeFamily::ErrorPath,
@@ -1714,6 +1894,7 @@ mod tests {
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("src/lib.rs", 12, 2),
             owner: Some(SymbolId("owner:calculate".to_string())),
@@ -2147,6 +2328,73 @@ mod tests {
             "let other = recalculate(5);",
             Some("calculate")
         ));
+    }
+
+    #[test]
+    fn owner_binding_scan_never_treats_a_wildcard_as_a_bound_name() {
+        for body in ["let _ = tax(100);", "let _: i64 = tax(100);"] {
+            assert!(bound_identifiers_from_owner_calls(body, "tax").is_empty());
+            assert!(!oracle_binds_sink_identity(
+                "assert!(matches!(Some(100), Some(_)))",
+                body,
+                Some("tax")
+            ));
+        }
+        // Leading underscores are legal bindings, not wildcard patterns.
+        for name in ["_amount", "__"] {
+            let body = format!("let {name} = tax(100);");
+            assert_eq!(
+                bound_identifiers_from_owner_calls(&body, "tax"),
+                vec![name.to_string()]
+            );
+            assert!(oracle_binds_sink_identity(
+                &format!("assert_eq!({name}, 8)"),
+                &body,
+                Some("tax")
+            ));
+        }
+        // Discarding a separate call must not invalidate a real binding.
+        assert_eq!(
+            bound_identifiers_from_owner_calls("let amount = tax(100); let _ = tax(200);", "tax"),
+            vec!["amount".to_string()]
+        );
+        assert!(oracle_binds_sink_identity(
+            "assert_eq!(tax(100), 8)",
+            "let _ = tax(200);",
+            Some("tax")
+        ));
+        // An outer-scope type alias can share the local's name. Its use in a
+        // wildcard annotation must not create a false shadowing event.
+        for discarded in [
+            "let _: amount = tax(200);",
+            "let _: amount = 0;",
+            "let _: Option<amount> = Some(tax(200));",
+            "let _: [amount; 2] = [tax(200), tax(300)];",
+            "let _: Result<(), &mut amount> = Ok(());",
+            "let _: Option<Box<dyn Iterator<Item = &mut amount>>> = None;",
+            "let _: Result<fn() -> (), &mut amount> = Ok(|| ());",
+            "let _: Result<[(); { 1 > 0 } as usize], &mut amount> = Ok([(); 1]);",
+        ] {
+            let body = format!("let amount = tax(100); {discarded}");
+            assert_eq!(
+                bound_identifiers_from_owner_calls(&body, "tax"),
+                vec!["amount".to_string()],
+                "{discarded}"
+            );
+            assert!(oracle_binds_sink_identity(
+                "assert_eq!(amount, 8)",
+                &body,
+                Some("tax")
+            ));
+        }
+        // A real binding or an initializer-side write still changes the value.
+        for body in [
+            "let amount = tax(100); let amount: amount = 0;",
+            "let mut amount = tax(100); let _: amount = { amount = 0; tax(200) };",
+            "let mut amount = tax(100); let _: Option<Box<dyn Iterator<Item = &mut amount>>> = { amount = 0; None };",
+        ] {
+            assert!(bound_identifiers_from_owner_calls(body, "tax").is_empty());
+        }
     }
 
     #[test]

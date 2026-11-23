@@ -395,9 +395,112 @@ fn stale_pins(
     Some(pins)
 }
 
+/// Whether an assertion expecting exactly `new` fails against the OLD raise
+/// (#15356): the old class is neither `new` nor one of its subclasses, so
+/// `pytest.raises(new)` passes after the edit but not before. A resolvable
+/// `new` (builtin or defined once in the module) needs the old class provably
+/// outside its subtree. An imported `new` cannot be read here; an untouched
+/// builtin old class cannot derive from a user class, which leaves only an
+/// alias of that builtin in the class's own module (`New = ValueError`) as a
+/// documented residual.
+pub(super) fn old_class_outside(
+    source: Option<&str>,
+    old: &str,
+    new: &str,
+    new_imported: bool,
+    owner_imports: &[super::PythonImport],
+) -> bool {
+    if old == new {
+        return false;
+    }
+    let Some(source) = source else {
+        // No module text: only two builtins have a fixed hierarchy.
+        return !new_imported
+            && builtin_chain(old).is_some_and(|chain| !chain.contains(&new))
+            && builtin_chain(new).is_some();
+    };
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("<module>"), source) else {
+        return false;
+    };
+    let facts = ModuleBindingFacts::of(source, &module.body);
+    if new_imported {
+        // A builtin name imported from elsewhere (`from compat import KeyError`)
+        // is not the builtin class.
+        return builtin_exception_parent(new).is_none()
+            && builtin_exception_parent(old).is_some()
+            && owner_imports.iter().all(|import| import.alias != old)
+            && facts.unbound(old);
+    }
+    // Both names must read as the one class they spell: an untouched builtin
+    // or a class defined once in the module.
+    let reads = |name: &str| facts.unbound(name) || facts.bound_once(name);
+    reads(old)
+        && reads(new)
+        && exception_ancestry(&module.body, &facts, new, 0).is_some()
+        && exception_ancestry(&module.body, &facts, old, 0)
+            .is_some_and(|ancestry| !ancestry.iter().any(|name| name == new))
+}
+
+/// Whether no name in `names` is bound in the owner function's own scope (a
+/// parameter, a local assignment, an `except .. as` target), so each raised
+/// name reads as the module-level class it spells (#15356 review: a local
+/// `ValueError = InvalidVersion` makes both raises construct one class). An
+/// owner whose `def` cannot be found at module or class level, or whose scope
+/// is unreadable (a nested scope or a `lambda`), refuses. With no module text
+/// nothing local is known, and the caller's own hierarchy rule decides.
+pub(super) fn owner_scope_leaves_unbound(
+    source: Option<&str>,
+    owner: &PythonOwner,
+    names: &[&str],
+) -> bool {
+    let Some(source) = source else {
+        return true;
+    };
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("<module>"), source) else {
+        return false;
+    };
+    let text = SourceText::new(source);
+    let is_owner = |function: &ast::StmtFunctionDef| {
+        function.name.as_str() == owner.name
+            && line_for_range_start(&text, function.range) == owner.start_line
+    };
+    let function = module.body.iter().find_map(|stmt| match stmt {
+        Stmt::FunctionDef(function) if is_owner(function) => Some(function),
+        Stmt::ClassDef(class) => class.body.iter().find_map(|inner| match inner {
+            Stmt::FunctionDef(function) if is_owner(function) => Some(function),
+            _ => None,
+        }),
+        _ => None,
+    });
+    // The owner's own text: a `lambda` elsewhere in the module does not hide
+    // this scope's bindings.
+    function
+        .and_then(|function| {
+            let text = source
+                .get(usize::from(function.range.start())..usize::from(function.range.end()))?;
+            function_bound_names(&function.args, &function.body, text)
+        })
+        .is_some_and(|locals| {
+            names
+                .iter()
+                .all(|name| !locals.iter().any(|local| local.as_str() == *name))
+        })
+}
+
+/// The builtin class and its ancestors up to `BaseException`.
+fn builtin_chain(name: &str) -> Option<Vec<&str>> {
+    let mut chain = vec![name];
+    let mut current = name;
+    while current != "BaseException" {
+        current = builtin_exception_parent(current)?;
+        chain.push(current);
+    }
+    Some(chain)
+}
+
 /// `Some(true)` only when `new` is statically known not to be `old` or a
 /// subclass of it; `None` when either hierarchy cannot be read exactly.
-fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {
+pub(super) fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {
     let Mod::Module(module) = parse_module_result(Path::new("<module>"), source).ok()? else {
         return None;
     };
@@ -423,6 +526,34 @@ fn known_not_subclass(source: &str, new: &str, old: &str) -> Option<bool> {
         return None;
     }
     Some(!ancestry.iter().any(|name| name == old))
+}
+
+/// `true` only when `new` is an untouched builtin exception and `old` a class
+/// the module defines once, so the builtin's fixed ancestry cannot contain it
+/// (a narrowing `raise Sub(..)` -> `raise Base(..)`; #15356 review).
+/// [`known_not_subclass`] refuses here because the builtin is spelled in the
+/// subclass's header; a `global` statement naming it refuses, and the
+/// caller checks the owner's own scope.
+pub(super) fn builtin_new_outside_local_old(source: &str, new: &str, old: &str) -> bool {
+    let Ok(Mod::Module(module)) = parse_module_result(Path::new("<module>"), source) else {
+        return false;
+    };
+    let facts = ModuleBindingFacts::of(source, &module.body);
+    let global_names_new = source.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix("global ")
+            .is_some_and(|names| mentions_identifier(names, new))
+    });
+    !global_names_new
+        && facts.unbound(new)
+        && facts.bound_once(old)
+        && exception_ancestry(&module.body, &facts, old, 0).is_some()
+        && builtin_chain(new).is_some_and(|chain| {
+            !chain.contains(&old)
+                && !chain
+                    .iter()
+                    .any(|name| CONSTRUCTOR_CHECKED_EXCEPTIONS.contains(name))
+        })
 }
 
 /// Builtin exceptions whose constructor maps or validates its arguments, so a
@@ -537,7 +668,7 @@ fn overrides_construction(class_body: &[Stmt]) -> bool {
 /// The single base of a builtin exception class (CPython 3 hierarchy). Names
 /// with several bases (`ExceptionGroup`) and aliases (`IOError`,
 /// `EnvironmentError`) are absent, so they never resolve.
-fn builtin_exception_parent(name: &str) -> Option<&'static str> {
+pub(super) fn builtin_exception_parent(name: &str) -> Option<&'static str> {
     Some(match name {
         "SystemExit" | "KeyboardInterrupt" | "GeneratorExit" | "Exception"
         | "BaseExceptionGroup" => "BaseException",
@@ -580,7 +711,7 @@ fn builtin_exception_parent(name: &str) -> Option<&'static str> {
 /// first positional argument or the `expected_exception=` keyword (never both),
 /// each a plain name or a non-empty tuple of plain names. A dotted name, a
 /// starred or computed element, or a duplicated keyword is unreadable.
-fn expected_classes(assertion_text: &str) -> Option<Vec<String>> {
+pub(super) fn expected_classes(assertion_text: &str) -> Option<Vec<String>> {
     let Ok(Mod::Module(module)) =
         parse_module_result(Path::new("<expected-class>"), assertion_text.trim())
     else {
@@ -623,12 +754,67 @@ fn expected_classes(assertion_text: &str) -> Option<Vec<String>> {
     }
 }
 
+/// The imported class a sole-line raised-type replacement now constructs
+/// (#15356): `raise Old(args)` -> `raise New(args)` where `New` is bound by
+/// a plain `from M import New` of the owner module, and the arguments are the
+/// same inert text. The call of `New` is the exception constructor the edit
+/// swaps, not an imported implementation the adapter must follow, so the
+/// imported-symbol abstention does not apply. Nothing here resolves `New`'s
+/// hierarchy, so it grants no exposure credit.
+pub(super) fn imported_raised_class_swap(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    imports: &[super::PythonImport],
+) -> bool {
+    let (Some(old_line), Some(new_type), true) = (
+        old_line_text,
+        raised_type_name(line_text),
+        line_text.trim_start().starts_with("raise "),
+    ) else {
+        return false;
+    };
+    let Some(old_type) = raised_type_name(old_line) else {
+        return false;
+    };
+    let arguments = |line: &str, name: &str| {
+        line.trim()
+            .strip_prefix("raise ")
+            .and_then(|rest| rest.trim_start().strip_prefix(name))
+            .map(|rest| rest.trim().to_string())
+    };
+    let (Some(old_arguments), Some(new_arguments)) = (
+        arguments(old_line, &old_type),
+        arguments(line_text, &new_type),
+    ) else {
+        return false;
+    };
+    // A class by PEP 8 naming; a `snake_case` factory may build anything.
+    old_type != new_type
+        && new_type.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && old_arguments == new_arguments
+        && old_arguments.starts_with('(')
+        // Only the class is exempt: an imported call in the arguments still
+        // needs the import graph (a `from cause` never reaches this check).
+        && !super::static_limits::line_uses_imported_symbol(&new_arguments, imports)
+        && imports
+            .iter()
+            .filter(|import| import.alias == new_type)
+            .count()
+            == 1
+        && imports.iter().any(|import| {
+            import.alias == new_type
+                && import.imported == new_type
+                && !import.source_module.is_empty()
+        })
+        && imports.iter().all(|import| import.alias != old_type)
+}
+
 /// The class a one-line `raise Name(...)` or bare `raise Name` constructs. A
 /// dotted `mod.Exc` is not read: its hierarchy is not resolvable here, so it
 /// could alias an ancestor of the other class. The arguments, keywords
 /// and cause do not change which class is raised, so a message built with an
 /// f-string or a variable still names its type (#13622 review).
-fn raised_type_name(line: &str) -> Option<String> {
+pub(super) fn raised_type_name(line: &str) -> Option<String> {
     let Mod::Module(module) = parse_module_result(Path::new("raise.py"), line.trim()).ok()? else {
         return None;
     };

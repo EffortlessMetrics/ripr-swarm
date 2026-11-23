@@ -32,6 +32,8 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// Run-scoped per-(test, owner) value facts, attached by the
     /// classifier; `None` (unit-test contexts) computes them per probe.
     pub test_value_facts: Option<&'a TestValueFacts>,
+    /// Run-scoped per-(test, owner) refusal and cfg-gate computations.
+    pub refusal_memo: super::RefusalMemo,
     /// Workspace expansion facts shared across probes against this immutable index.
     pub implicit_expansion: Option<&'a super::ImplicitExpansionMemo>,
     /// Run-scoped private assertion context, shared across all probes.
@@ -81,6 +83,17 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// establishes. Gives the change a return-value sink and decides its
     /// infection; `None` keeps the ordinary reading.
     pub unary_tail: Option<super::UnaryTailChange>,
+    /// #14816: one `if` condition replaced by a literal `true`/`false`,
+    /// with the base-side owner the diff establishes. Decides the
+    /// predicate's infection by folding both versions; `None` keeps the
+    /// ordinary reading.
+    pub literal_condition: Option<super::LiteralConditionChange>,
+    /// #15272: the base-side text of an owner whose only changed line is the
+    /// probe's, as the diff establishes it, when the related tests assert
+    /// the owner only where both versions return the same value. Lets the
+    /// infection stage withhold their credit; `None` keeps the ordinary
+    /// reading.
+    pub owner_baseline: Option<String>,
     #[cfg(feature = "lang-rust")]
     pub tier_flow: Option<super::TierFlow>,
     /// #14387: the diff's old text of the probe's line when that line is the
@@ -110,6 +123,7 @@ impl<'a> ProbeContext<'a> {
             workspace_complete,
             file_use_statements: None,
             test_value_facts: None,
+            refusal_memo: super::RefusalMemo::default(),
             owner_pin_syntax: None,
             implicit_expansion: None,
             unseen_reach_names: None,
@@ -124,6 +138,8 @@ impl<'a> ProbeContext<'a> {
             owner_may_be_swapped: false,
             compile_time_guarded: false,
             unary_tail: None,
+            literal_condition: None,
+            owner_baseline: None,
             #[cfg(feature = "lang-rust")]
             tier_flow: None,
             owner_sole_change: None,
@@ -284,6 +300,7 @@ mod tests {
     #[test]
     fn probe_context_carries_probe_owner_and_related_tests() {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new(PathBuf::from("src/lib.rs"), 1, 1),
             owner: None,

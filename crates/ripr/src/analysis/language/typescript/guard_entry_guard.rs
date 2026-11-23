@@ -64,6 +64,49 @@ impl Lit {
     }
 }
 
+/// The final throw of a function that first returns its nonzero argument.
+/// The throw runs only when the early return is *not* taken. Its caller
+/// checks that the isolated diff changed just the thrown Error message.
+pub(crate) fn isolated_throw_after_return(
+    source: &str,
+    start_line: usize,
+    line: usize,
+    changed: &str,
+    name: &str,
+    params: &[String],
+) -> Option<GuardCondition> {
+    let [param] = params else { return None };
+    // The evaluator reads `undefined` as a literal before looking up bindings.
+    if param == "undefined" || line.checked_sub(start_line) != Some(2) {
+        return None;
+    }
+    let mut lines = source.lines().map(str::trim);
+    let header = lines.next()?;
+    let header = header.strip_prefix("export ").unwrap_or(header);
+    let signature = format!("function {name}({param}: number)");
+    let tail = header.strip_prefix(&signature)?.trim();
+    if !matches!(tail, "{" | ": number {") {
+        return None;
+    }
+    let guard = lines.next()?.strip_prefix("if")?.trim_start();
+    let (condition, statement) = guard.strip_prefix('(')?.split_once(')')?;
+    let (left, right) = condition.split_once("!==")?;
+    if left.trim() != param
+        || right.trim() != "0"
+        || statement.trim() != format!("return {param};")
+        || lines.next()? != changed.trim()
+        || !changed.trim_start().starts_with("throw new Error(")
+        || lines.next()? != "}"
+        || lines.next().is_some()
+    {
+        return None;
+    }
+    Some(GuardCondition {
+        text: condition.trim().to_owned(),
+        want: false,
+    })
+}
+
 /// The `if` / `else if` / `else` conditions enclosing the changed line, from
 /// the owner's own source, or `None` when the line is not exactly located or
 /// sits under no readable conditional arm.
