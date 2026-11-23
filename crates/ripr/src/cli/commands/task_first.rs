@@ -1186,7 +1186,7 @@ fn no_eligible_seam_message(
         if reasons_total > reasons.len() {
             let more = reasons_total - reasons.len();
             // #15615: the rows past the cap are spots on the change, which
-            // the same-base check lists; pilot tours the whole repository.
+            // the same-base check shows; pilot tours the whole repository.
             if change == NoEligibleChange::OpenOnChange {
                 message.push_str(&format!(
                     "\n  (and {more} more on your changed lines; `{check}` shows the change's findings)"
@@ -1470,7 +1470,7 @@ mod tests {
             ));
         }
         // #15615: an open change's remainder is more changed spots, which the
-        // same-base check lists; the lead scopes "none is ready" to the change.
+        // same-base check shows; the lead scopes "none is ready" to the change.
         let open = no_eligible_seam_message(
             Path::new("."),
             Some("main"),

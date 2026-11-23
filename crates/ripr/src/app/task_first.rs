@@ -1392,11 +1392,14 @@ pub(crate) fn resolve_repair_start(
             change = change_after_closure(change, !candidates.is_empty(), left_open, before > 0);
         }
     }
-    if change == NoEligibleChange::AlreadyChecked && !all_changed_checked {
+    if change == NoEligibleChange::AlreadyChecked && !all_changed_checked && gripped_on_change > 0 {
         // Check's closure found every changed candidate already noticed, so
-        // nothing on the change is open: name the gripped spots themselves,
-        // not as "a different check than the one still open".
+        // this is the already-checked shape after all: name the gripped spots
+        // themselves (not "a different check than the one still open") and
+        // leave out the spots outside the change, as the shortcut does.
         changed_caveats = gripped_on_change_reasons;
+        outside_reasons.clear();
+        outside = OutsideCounts::default();
     }
     changed_reasons.append(&mut changed_caveats);
     let (reasons, reasons_total) =

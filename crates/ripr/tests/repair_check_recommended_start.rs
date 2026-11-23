@@ -469,6 +469,46 @@ fn a_gripped_spot_beside_an_unknown_candidate_is_not_called_checked() -> Result<
     Ok(())
 }
 
+/// A changed flip a test pins (check reads it as noticed) beside a changed
+/// doubling a test already grips, with spots outside the change.
+const NOTICED_BASE: &str = "pub fn open(blocked: bool) -> bool {\n    !blocked\n}\n\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n\npub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n\npub fn halved(x: i32) -> i32 {\n    x / 2\n}\n";
+const NOTICED_TEST: &str = "use fx::*;\n\n#[test]\nfn open_when_not_blocked() {\n    assert!(open(false));\n}\n\n#[test]\nfn doubles() {\n    assert_eq!(doubled(2), 6);\n}\n\n#[test]\nfn adult() {\n    assert!(is_adult(40));\n}\n\n#[test]\nfn halves() {\n    assert_eq!(halved(4), 2);\n}\n";
+
+/// #16216 review, the mirror of the unknown case: when check closes every
+/// changed candidate as noticed beside an already-gripped changed spot, the
+/// change is already checked. The refusal says nothing to do, names the
+/// gripped spot directly, and lists no spot outside the change.
+#[test]
+fn a_gripped_spot_beside_a_noticed_candidate_is_already_checked() -> Result<(), String> {
+    let changed = NOTICED_BASE
+        .replace("    !blocked\n", "    blocked\n")
+        .replace("x * 2", "x * 3");
+    let repo = repo("mixed-noticed", NOTICED_BASE, &changed, NOTICED_TEST, true)?;
+    let repair = ripr(&repo.root, &["repair"])?;
+    let err = text(&repair.stderr);
+    if repair.status.code() != Some(3) || !err.contains("code=no_eligible_seam") {
+        return Err(format!("the change must refuse:\n{err}"));
+    }
+    for expected in [
+        "Nothing to do for this change",
+        "`blocked`: `ripr check` reads this changed code as already noticed by a test",
+        "the code at src/lib.rs:6 `x * 3`: existing tests already check it",
+    ] {
+        if !err.contains(expected) {
+            return Err(format!("the refusal must carry {expected:?}:\n{err}"));
+        }
+    }
+    if err.contains("outside your changed lines") || err.contains("different check") {
+        return Err(format!(
+            "an already-checked change lists no outside spot and no open check:\n{err}"
+        ));
+    }
+    if attempts(&repo.root) != 0 {
+        return Err("no attempt may start".to_string());
+    }
+    Ok(())
+}
+
 /// #12867 / #13203 A0: a seam whose repair target is only a producer-owned
 /// proposed new test file now starts (bare and by id) when the producer names
 /// the workspace, while a seam the producer admits no proposal for (here a
