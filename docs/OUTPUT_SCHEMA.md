@@ -18463,7 +18463,11 @@ Field contract:
   `focused_result_requirement` is an additive string present only for an
   attempt that follows a new-test proposal (#16164): it states that the after
   phase finishes only with a focused `--test-result FILE` and how to produce
-  FILE, in the finish gate's own words.
+  FILE, in the finish gate's own words. Where the proposed Rust integration
+  file's package manifest and cargo target resolve, it names that exact
+  command (`cargo +nightly test --manifest-path M -p P --test T -- -Z
+  unstable-options --format json`) in place of the generic placeholders
+  (#16186).
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
   baseline, the ambiguity warning and the clean-state restart route, with

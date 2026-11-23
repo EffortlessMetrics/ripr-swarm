@@ -863,10 +863,20 @@ fn persist_before_repair_attempt(
         typescript_test_cache_guidance,
         focused_test_command: focused_test_command(root, &packet_text),
         declared_cargo_test_target: policy.declared_cargo_test_target,
-        focused_result_requirement: policy
-            .new_test_proposal
-            .as_ref()
-            .map(|_| crate::app::focused_run::proposal_focused_result_requirement("This attempt")),
+        // #16186: name the command resolved for the proposed file's own
+        // package and target when it can be established.
+        focused_result_requirement: policy.new_test_proposal.as_ref().map(|proposal| {
+            let resolved = (proposal.kind
+                == crate::analysis::new_test_target::NewTestKind::Integration)
+                .then(|| crate::app::test_stub::focused_result_run_command(root, &proposal.file))
+                .flatten();
+            crate::app::focused_run::proposal_focused_result_requirement(
+                "This attempt",
+                resolved
+                    .as_deref()
+                    .map(|command| (command, proposal.file.as_str())),
+            )
+        }),
     };
     if let Some(binding) = &binding {
         eprintln!(
