@@ -1151,6 +1151,15 @@ fn classify_change_for_owner_inner<'a>(
         &focus,
     );
     let changed_default_exercised_ok = changed_default_override.is_none();
+    // An added `name=<literal>` that restates the declared default of every
+    // workspace definition the call can reach (#16011) binds the same value as
+    // before, so an oracle on an ordinary call cannot tell the two apart. A
+    // mock assertion that pins the call's keywords still sees the edit.
+    let default_keyword = old_line_text
+        .filter(|_| !mock_pins_changed_call)
+        .and_then(|old| {
+            super::default_equal_keyword::default_equal_keyword(old, line_text, file, owners)
+        });
     // A header edit that only moves the positional-only `/` marker (#16011)
     // changes behavior only for a call that passes a moved parameter by
     // keyword. With no strong related call doing so, the edit is unconfirmed.
@@ -1713,6 +1722,7 @@ fn classify_change_for_owner_inner<'a>(
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
         && changed_default_exercised_ok
+        && default_keyword.is_none()
         && positional_only_gap.is_none()
         && boundary_gap.is_none()
         && inactive_term.is_none()
@@ -1766,6 +1776,22 @@ fn classify_change_for_owner_inner<'a>(
                 format_param_name_list(params),
                 owner.name,
                 format_param_name_list(params),
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(keyword) = &default_keyword
+    {
+        // The added keyword restates the callee's default (#16011): the call
+        // binds the same value, so the strong oracle has nothing to tell apart.
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the added argument `{}` equals the declared default of every workspace `{}` the call can reach, so the call binds the same value as before; static evidence does not credit an assertion for an edit with no value change. The calls differ only when unpacked keywords already hold that name.",
+                owner.name, keyword.argument, keyword.callee,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -2246,6 +2272,9 @@ fn classify_change_for_owner_inner<'a>(
                 })
                 .into_iter()
                 .collect()
+        } else if default_keyword.is_some() && changed_default_override.is_none() {
+            // A restated default has no value for a test input to discriminate.
+            Vec::new()
         } else if let Some(params) = positional_only_gap
             .as_ref()
             .filter(|_| changed_default_override.is_none())

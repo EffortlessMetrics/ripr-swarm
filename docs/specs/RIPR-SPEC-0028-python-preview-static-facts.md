@@ -2144,6 +2144,25 @@ the line's own reading.
 
 Tests: `deleted_lines_tests.rs::literal_keyword_argument_line_takes_the_call_shape`.
 
+A changed line that only adds one keyword argument with a plain literal value
+to a call (#16011), compared token by token as spelled, can bind the same value
+as before. That holds when the call can reach at least one workspace
+definition and every definition it can reach declares the parameter, past the
+call's positional arguments, with a default spelled the same way. An attribute
+call reaches methods and never a built-in string or container method name; a
+bare call reaches functions, one of them in the changed file; a class of the
+callee's name, a `*` unpack and a mock assertion that pins the call's
+keywords keep the line's reading. A strong oracle on such a call reads
+`weakly_exposed`, with the reason that the argument restates the default, and
+the finding carries no missing discriminator. Another value, a name value, an
+unknown callee or any other edit on the line, including whitespace inside a
+string, keeps the line's reading.
+
+Tests: `default_equal_keyword_tests.rs::a_restated_default_reads_weakly_exposed`,
+`default_equal_keyword_tests.rs::a_different_value_keeps_its_reading`,
+`default_equal_keyword_tests.rs::only_a_restated_default_of_every_definition_matches`,
+`default_equal_keyword_tests.rs::review_controls_keep_their_reading`.
+
 A one-line `def` header edit whose only runtime difference is the position of
 the positional-only `/` marker (#16011) changes behavior only for a call that
 passes a moved parameter by keyword. Unless a related test with a strong
