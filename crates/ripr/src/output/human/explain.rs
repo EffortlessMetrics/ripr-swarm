@@ -358,6 +358,17 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
             RelatedTestMiss::ObservationUnconfirmed => {
                 "assert on the changed value itself, by name".to_string()
             }
+            // #13037 review: the assertion is already exact-shaped; what it
+            // lacks is an expected value independent of the asserted one.
+            RelatedTestMiss::WeakAssertion
+                if test
+                    .oracle
+                    .as_deref()
+                    .is_some_and(crate::analysis::compares_value_with_its_own_copy) =>
+            {
+                "compare against an independent expected value, not a copy of the asserted value"
+                    .to_string()
+            }
             RelatedTestMiss::WeakAssertion => {
                 "assert the exact value, not only success or presence".to_string()
             }

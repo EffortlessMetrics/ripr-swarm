@@ -4000,7 +4000,7 @@ mod kani_proofs;
 /// operator. An exact self-comparison (`assert_eq!(x, x)`) is already a weak
 /// relation at extraction (RIPR-SPEC-0231 step 3); this reads the copy forms
 /// relative to a probe, so the #6692 clone-field pin can still admit them.
-pub(in crate::analysis::classify) fn compares_value_with_its_own_copy(assertion: &str) -> bool {
+pub(crate) fn compares_value_with_its_own_copy(assertion: &str) -> bool {
     fn place(operand: &str) -> Option<String> {
         let mut text = operand.trim();
         loop {

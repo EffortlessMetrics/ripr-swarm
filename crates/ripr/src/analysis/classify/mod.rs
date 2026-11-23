@@ -127,9 +127,11 @@ pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     WRAPPER_ERROR_BINDING_NEXT_STEP, classify, confidence_score, ensure_unknown_stop_reason,
     exact_oracle_gap_next_step, missing_evidence, recommended_next_step,
-    recommended_next_step_with_boundary, stop_reasons,
+    recommended_next_step_with_boundary, self_comparison_next_step, stop_reasons,
 };
 pub(in crate::analysis) use diff_touched::DiffTouchedTests;
+// #13037: the row-miss wording reads the same self-comparison rule that caps
+// the strength, so the two cannot disagree.
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::{
     drop_is_plain, drop_is_plain_in_closed_sources, observes_returned_element_field,
@@ -259,6 +261,7 @@ pub(in crate::analysis) use related_tests::{
 #[cfg(feature = "lang-rust")]
 pub(in crate::analysis) use reveal::RELATED_TESTS_RENDER_CAP;
 pub(in crate::analysis) use reveal::assertion_comparison_operands;
+pub(crate) use reveal::compares_value_with_its_own_copy;
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;

@@ -11,6 +11,7 @@ mod diff;
 mod diff_scope_filter;
 mod extract;
 mod facts;
+pub(crate) use classify::compares_value_with_its_own_copy;
 #[cfg(all(test, feature = "lang-rust"))]
 pub(crate) use facts::index_build_probe;
 mod generated_rust_corpus;

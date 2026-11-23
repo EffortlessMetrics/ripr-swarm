@@ -582,6 +582,55 @@ pub(in crate::analysis) fn exact_oracle_gap_next_step(
     ))
 }
 
+/// #13037 review: guidance for a `weakly_exposed` finding whose strongest
+/// contributing rows all compare a value with its own copy
+/// (`assert_eq!(b.0, b.0.clone())`). The family template ("strengthen the
+/// related assertion") presumes a shape gap the assertion does not have, and a
+/// NaN payload can make such an assertion fail (#16227), so name what static
+/// analysis did not establish and the two ways to settle it. Wording only: the
+/// class and the row's strength are unchanged. `None` when any equally strong
+/// contributing row is something else, so a mixed set keeps the template.
+pub(in crate::analysis) fn self_comparison_next_step(
+    class: &ExposureClass,
+    related: &[RelatedTest],
+    owner_is_function: bool,
+) -> Option<String> {
+    if *class != ExposureClass::WeaklyExposed {
+        return None;
+    }
+    let candidates: Vec<&RelatedTest> = related
+        .iter()
+        .filter(|test| {
+            test.is_contributing()
+                && test.oracle.is_some()
+                && test
+                    .relation_reason
+                    .is_none_or(|reason| reason.establishes_reach(owner_is_function))
+        })
+        .collect();
+    let top = candidates
+        .iter()
+        .map(|test| test.oracle_strength.rank())
+        .max()?;
+    let strongest: Vec<&&RelatedTest> = candidates
+        .iter()
+        .filter(|test| test.oracle_strength.rank() == top)
+        .collect();
+    let all_self = strongest.iter().all(|test| {
+        test.oracle
+            .as_deref()
+            .is_some_and(super::reveal::compares_value_with_its_own_copy)
+    });
+    if !all_self {
+        return None;
+    }
+    let first = strongest.first()?;
+    Some(format!(
+        "The related test `{}` compares a value with its own copy; static analysis did not establish that this discriminates the changed behavior. Verify the changed behavior with the project's configured test runner (`cargo test` for ordinary Cargo tests), or assert against an independent expected value.",
+        first.name
+    ))
+}
+
 /// Guidance for an assertion-shaped owner, phrased for oracles rather than for
 /// code under test. Unknowns name an inspection, not an established test gap.
 fn assertion_shaped_next_step(
@@ -1443,6 +1492,64 @@ mod tests {
             shape: DiscriminatorShape::Boundary,
             drafted_boundary: None,
         }]
+    }
+
+    // #13037 review: a weak row that compares a value with its own copy is
+    // not shown to be too weak; ripr did not establish that it discriminates.
+    // The step says that, while a mixed set or another class keeps the
+    // family template.
+    #[test]
+    fn self_comparison_rows_name_what_was_not_established() {
+        let with_oracle = |name: &str, oracle: &str, strength: OracleStrength| RelatedTest {
+            oracle: Some(oracle.to_string()),
+            ..related_test(name, OracleKind::ExactValue, strength)
+        };
+        let copy = with_oracle(
+            "records_into_the_bag",
+            "assert_eq!(b.0, b.0.clone());",
+            OracleStrength::Weak,
+        );
+        let step = self_comparison_next_step(
+            &ExposureClass::WeaklyExposed,
+            std::slice::from_ref(&copy),
+            true,
+        );
+        let step = step.as_deref().unwrap_or("");
+        assert!(
+            step.contains("`records_into_the_bag` compares a value with its own copy"),
+            "{step}"
+        );
+        assert!(
+            step.contains("did not establish that this discriminates"),
+            "{step}"
+        );
+        assert!(step.contains("independent expected value"), "{step}");
+        assert!(!step.contains("Strengthen"), "{step}");
+
+        // Negative controls: an equally weak row of another shape, a
+        // stronger independent row, and a class other than weakly_exposed.
+        let is_ok = with_oracle(
+            "is_ok_only",
+            "assert!(add(&mut v, 1).is_ok());",
+            OracleStrength::Weak,
+        );
+        assert_eq!(
+            self_comparison_next_step(&ExposureClass::WeaklyExposed, &[copy.clone(), is_ok], true),
+            None
+        );
+        let exact = with_oracle(
+            "pins_eight",
+            "assert_eq!(b.0, vec![8]);",
+            OracleStrength::Strong,
+        );
+        assert_eq!(
+            self_comparison_next_step(&ExposureClass::WeaklyExposed, &[copy.clone(), exact], true),
+            None
+        );
+        assert_eq!(
+            self_comparison_next_step(&ExposureClass::ReachableUnrevealed, &[copy], true),
+            None
+        );
     }
 
     // #7393: the error_path family template presumes an `is_err()`-only

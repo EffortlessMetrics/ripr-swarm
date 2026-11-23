@@ -3,7 +3,8 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, OwnerPinSyntax, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
     is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
-    recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
+    recommended_next_step_with_boundary, self_comparison_next_step, stop_reasons,
+    wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -288,6 +289,12 @@ pub(in crate::analysis) fn build_finding_with_origins(
         // #7393: the family template presumes an assertion shape the
         // related test does not have; the strongest related oracle is
         // already exact, so name the input that is actually missing.
+        Some(step)
+    } else if let Some(step) =
+        self_comparison_next_step(&class, &related_tests, context.owner_fn.is_some())
+    {
+        // #13037 review: the strongest related assertions compare a value
+        // with its own copy; "strengthen the assertion" would misstate why.
         Some(step)
     } else if class == ExposureClass::NoStaticPath && context.unmounted_build_script {
         Some(crate::domain::BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP.to_string())
