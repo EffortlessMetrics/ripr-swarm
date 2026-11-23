@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 32] = [
+    let cases: [(&str, bool); 39] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -732,15 +732,12 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\nno blockers found.", true),
         ("SOURCE_REVIEW_READY\nNo source blockers remain.", true),
         ("SOURCE_REVIEW_READY\nNO   SOURCE   BLOCKERS   REMAIN", true),
-        // Closed-vocabulary boundary, deliberate: the strip removes only the
-        // negated phrase, and the remainder ("The fixture is still wrong.") hits
-        // no NEGATION vocabulary, so it admits. The same sentence without the
-        // negation prefix already admits today, so this is the vocabulary, not
-        // the strip. If this form should refuse, extend NEGATION's vocabulary
-        // (wrong/broken/stale/missing style words), not the strip.
+        // #15980 review: the remainder scan now covers "still wrong", so a
+        // stripped phrase followed by a live defect refuses. This row used to
+        // admit because NEGATION's vocabulary did not cover the form.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
-            true,
+            false,
         ),
         // Un-negated control: a genuine blocker refuses.
         ("SOURCE_REVIEW_READY\nBlocker found.", false),
@@ -836,6 +833,31 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         // Same-line state token after a stripped phrase: the PR head admits this, main refuses.
         ("SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.", false),
         ("SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.", false),
+        // The widened filler must not strip a phrase whose remainder reports a
+        // live defect in a form NEGATION did not cover before.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build still fails.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The test is still failing.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The fixture is still wrong.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The owner is still misattributed.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The golden still disagrees.",
+            false,
+        ),
+        // STATE_TOKEN now covers the bare BLOCK and INCOMPLETE tokens.
+        ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", false),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);

@@ -85,7 +85,7 @@ TAIL_LITERALS = (
 # such a line is only allowed when it is itself an exact positive line.
 STATE_TOKEN = re.compile(
     r"(?:SOURCE_)?REVIEW_(?:READY|INCOMPLETE|BLOCKED)|REPAIR_REQUIRED"
-    r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED",
+    r"|NOT_READY|WITHDRAWN|SUPERSEDED|CHANGES_REQUESTED|\bBLOCK\b|\bINCOMPLETE\b",
     re.IGNORECASE,
 )
 STATE_MENTION = re.compile(r"disposition|" + STATE_TOKEN.pattern, re.IGNORECASE)
@@ -189,6 +189,13 @@ NEGATION = re.compile(
     r"|\bblockers?[ \t]+(?:found|remains?|remaining|open|still|exists?)\b"
     r"|\btests?[ \t]+(?:fail|fails|failed|failing)\b|\bci[ \t]+(?:is[ \t]+)?red\b"
     r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:red|broken|failing|fails?)(?![-\w])"
+    # #15980 review: the widened negated-blocker filler set makes the phrase
+    # strippable, so the remainder scan must cover the "still"/"remains"/
+    # "continues to" forms that report a live defect. Without these, "No new
+    # blocker found. The build still fails." would admit.
+    r"|\bstill[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?)\b"
+    r"|\bremains?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?)\b"
+    r"|\bcontinues?[ \t]+to(?:[ \t]+be)?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?)\b"
     r"|\b(?:a[ \t]+)?fix(?:es)?[ \t]+(?:is|are)?[ \t]*(?:needed|required)\b"
     r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
     r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
@@ -1815,6 +1822,31 @@ def self_test() -> None:
         # #15980: a same-line state token after a stripped phrase still refuses.
         ("SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.", False),
         ("SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.", False),
+        # #15980: the widened filler must not strip a phrase whose remainder
+        # reports a live defect in a form NEGATION did not cover before.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build still fails.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The test is still failing.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The fixture is still wrong.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The owner is still misattributed.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The golden still disagrees.",
+            False,
+        ),
+        # #15980: STATE_TOKEN now covers the bare BLOCK and INCOMPLETE tokens.
+        ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", False),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
