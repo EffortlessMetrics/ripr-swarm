@@ -126,6 +126,10 @@ pub(super) fn inherent_twin_takes_every_call(
     let FunctionContainer::TraitImpl {
         trait_path,
         self_ty,
+        // The matcher never reads impl generics: a generic self type is
+        // already refused below, and a generic impl on a non-generic self
+        // type keeps the same receiver/type/cfg/trait guards.
+        impl_generics: _,
     } = &owner.item.container
     else {
         return false;

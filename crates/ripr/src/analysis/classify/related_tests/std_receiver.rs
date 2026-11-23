@@ -444,7 +444,7 @@ fn file_binds_std_name(index: &RustIndex, file: &Path, head: &str) -> bool {
 fn trait_implemented_for(index: &RustIndex, trait_name: &str, head: &str) -> bool {
     let indexed = index.functions().iter().any(|function| {
         matches!(&function.item.container,
-            FunctionContainer::TraitImpl { trait_path, self_ty }
+            FunctionContainer::TraitImpl { trait_path, self_ty, .. }
                 if impl_trait_name_matches(index, &function.file, trait_path, trait_name)
                     && (last_segment_name(strip_reference_prefix(self_ty)) == head
                         || impl_self_reaches_std(self_ty)))

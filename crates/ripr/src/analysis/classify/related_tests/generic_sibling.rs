@@ -40,6 +40,7 @@ pub(super) fn every_call_selects_generic_sibling(
     let FunctionContainer::TraitImpl {
         trait_path,
         self_ty,
+        ..
     } = &owner.item.container
     else {
         return false;
@@ -157,6 +158,7 @@ fn sibling_argument_heads(
         let FunctionContainer::TraitImpl {
             trait_path,
             self_ty,
+            ..
         } = &function.item.container
         else {
             continue;

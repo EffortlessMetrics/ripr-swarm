@@ -184,6 +184,9 @@ pub struct RustIndex {
     /// `assert_*snapshot` macros any workspace file defines, read on first
     /// use (#12720). Not serialized, like the listing.
     pub(crate) local_snapshot_macros: crate::analysis::rust_snapshot_files::LocalSnapshotMacrosCell,
+    /// Run-scoped blanket-impl proxy map, built once per index and reused by
+    /// every withheld finding (#13041 review). A cloned index starts empty.
+    pub(crate) blanket_proxy_call_names: std::sync::OnceLock<BTreeMap<String, Vec<String>>>,
     /// The display name and synthetic source of each registered doc
     /// example test, keyed by (file, start line) (#6648). A doctest is its
     /// own crate: its scopes come from this text, not from the file that

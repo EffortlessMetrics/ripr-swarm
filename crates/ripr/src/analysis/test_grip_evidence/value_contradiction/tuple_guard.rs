@@ -143,6 +143,7 @@ fn signature(
         FunctionContainer::TraitImpl {
             trait_path,
             self_ty,
+            ..
         } if direct_operator
             && matches!(
                 trait_path.as_str(),

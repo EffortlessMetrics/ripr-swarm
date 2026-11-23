@@ -777,19 +777,22 @@ pub(crate) struct CachedSeamLimitInfo {
 /// key under an aliased workspace root (#15846).
 /// `1.187`: a macro-generated test carrying an unrecognised attribute macro takes
 /// no invocation scopes (#12857).
+/// `1.188`: a test reaching a trait-impl owner only through a one-hop blanket
+/// impl (`impl<T: Render> ToText for T`) withholds the gap as unresolved reach
+/// instead of reporting it (#6732).
 /// `1.189`: a std- or core-rooted import of an exempt macro name lets a
 /// generated test keep its invocation scopes when the root is not shadowed (#12876).
+/// `1.190`: the merge of the blanket-impl reach withholding (#6732) and the
+/// std-rooted import exemption (#12876).
 /// `1.191`: a helper wrapper that reads `env!` or `option_env!` forwards
 /// the helper result when neither name is rebound (#10357).
 /// `1.192`: a `std::`/`core::` assertion whose root the manifest binds to a
 /// package reads as an unknown oracle (#10150).
-/// `1.193`: an assertion whose every owner call sits inside an untrusted inner
-/// macro reads as an unknown oracle for that owner (#16188).
-/// `1.194`: a `for` over any non-empty array runs its assertion, not only a
-/// constant-row table (#14116).
-/// `1.195`: an owner result bound to a local that only an untrusted inner macro
-/// uses reads as an unknown oracle for that owner (#16192).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.195";
+/// `1.193`: main claimed `1.192`; the same merge, re-pinned above it.
+/// `1.194`: #16195 claimed `1.193`; the same merge, re-pinned above it.
+/// `1.195`: a sibling claimed `1.194`; the same merge, re-pinned above it.
+/// `1.196`: main claimed `1.195`; the same merge, re-pinned above it.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.196";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1016,13 +1019,16 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.195";
 /// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
 /// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
 /// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.190`: same blanket-impl reach withholding as full `1.188` (#6732).
 /// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.192`: same merge as full `1.190`.
 /// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
 /// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
-/// `0.195`: same macro-held owner call as full `1.193` (#16188).
-/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
-/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
+/// `0.195`: main claimed `0.194`; the same merge, re-pinned above it.
+/// `0.196`: #16195 claimed `0.195`; the same merge, re-pinned above it.
+/// `0.197`: a sibling claimed `0.196`; the same merge, re-pinned above it.
+/// `0.198`: main claimed `0.197`; the same merge, re-pinned above it.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.198";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1251,13 +1257,16 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
 /// `0.186`: same invocation-scope refusal as full `1.184` (#12852).
 /// `0.187`: same explicit Cargo harness target identity as full `1.185` (#15846).
 /// `0.189`: same attribute-macro scope refusal as full `1.187` (#12857).
+/// `0.190`: same blanket-impl reach withholding as full `1.188` (#6732).
 /// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
+/// `0.192`: same merge as full `1.190`.
 /// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
 /// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
-/// `0.195`: same macro-held owner call as full `1.193` (#16188).
-/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
-/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
+/// `0.195`: main claimed `0.194`; the same merge, re-pinned above it.
+/// `0.196`: #16195 claimed `0.195`; the same merge, re-pinned above it.
+/// `0.197`: a sibling claimed `0.196`; the same merge, re-pinned above it.
+/// `0.198`: main claimed `0.197`; the same merge, re-pinned above it.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.198";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1479,9 +1488,6 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// and need a re-serialization of every entry to verify, so they are not read.
 /// `1.62`: probe shapes strictly inside a `#[test]` body (and no production
 /// `fn`) are not stored (#13703); `1.61` entries still carry them.
-/// `1.64`: `env` and `option_env` join the trusted macro names, so the
-/// stored binding candidates may name them (#14116); `1.63` candidates
-/// cannot, and would hide a `macro_rules! env` from the binding scan.
 /// `1.63`: a unit owner's tail block of `;`-terminated statements is not
 /// probed as `return_value` (#15459); `1.62` facts still carry that shape.
 /// `1.65`: `include_bytes` and `include_str` join the trusted macro names
@@ -1489,7 +1495,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `macro_rules! include_str` from the binding scan.
 /// `1.66`: an item-position `include!` makes a file's binding candidates
 /// `Any` (#16060); earlier candidates let the binding scan skip such a file.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.66";
+/// `1.67`: main claimed 1.66 after this branch's base, so the branch pins the
+/// next free value; the judged file-fact shape is unchanged.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.67";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5639,7 +5647,8 @@ mod tests {
         // 1.63 -> 1.64: `env`/`option_env` binding candidates (#14116).
         // 1.64 -> 1.65: `include_bytes`/`include_str` binding candidates (#14116).
         // 1.65 -> 1.66: item-position `include!` binds any name (#16060).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.66");
+        // 1.66 -> 1.67: main claimed 1.66 after this branch's base.
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.67");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5856,11 +5865,12 @@ mod tests {
         // 1.188 / 0.190 is left for #13041.
         // 1.189 -> 1.191: env!-reading wrappers forward helper results (#10357).
         // 1.190 / 0.192 is left for #13041.
-        // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150); 1.190 is left for #13041.
-        // 1.192 -> 1.193: owner calls only an untrusted inner macro holds read unknown (#16188).
-        // 1.193 -> 1.194: a for over any non-empty array runs its assertion (#14116).
-        // 1.194 -> 1.195: owner-result locals only an untrusted inner macro uses read unknown (#16192).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.195");
+        // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150).
+        // 1.192 -> 1.193: the merge of #6732 and #12876, re-pinned above #10150.
+        // 1.193 -> 1.194: #16195 claimed 1.193; the same merge, re-pinned above it.
+        // 1.194 -> 1.195: a sibling claimed 1.194; the same merge, re-pinned above it.
+        // 1.195 -> 1.196: main claimed 1.195; the same merge, re-pinned above it.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.196");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6030,11 +6040,12 @@ mod tests {
         // 0.189 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
         // 0.191 -> 0.193: same env!-reading wrapper forwarding as full 1.191 (#10357).
         // 0.193 -> 0.194: same manifest-rebound assertion root as full 1.192 (#10150).
-        // 0.194 -> 0.195: same macro-held owner call as full 1.193 (#16188).
-        // 0.195 -> 0.196: same non-empty array loop execution as full 1.194 (#14116).
-        // 0.196 -> 0.197: same macro-held owner-result local as full 1.195 (#16192).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.197");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.197");
+        // 0.194 -> 0.195: the merge of #6732 and #12876, re-pinned above #10150.
+        // 0.195 -> 0.196: #16195 claimed 0.195; the same merge, re-pinned above it.
+        // 0.196 -> 0.197: a sibling claimed 0.196; the same merge, re-pinned above it.
+        // 0.197 -> 0.198: main claimed 0.197; the same merge, re-pinned above it.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.198");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.198");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

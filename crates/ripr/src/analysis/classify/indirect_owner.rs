@@ -1,7 +1,7 @@
 //! RIPR-SPEC-0240: an owner a test reaches without a call ripr can place is
 //! not a gap.
 //!
-//! Three source forms leave a test whose oracle is real and whose reading is
+//! Four source forms leave a test whose oracle is real and whose reading is
 //! `weakly_exposed`, a certain "assertion too weak" claim, because ripr sees no
 //! `owner(..)` call it can pair with the assertion:
 //!
@@ -15,7 +15,12 @@
 //!   expansion is not source ripr reads;
 //! - **executor-wrapped call**: the owner call is the only argument of
 //!   `block_on(..)`, a local helper polling a `Future` or a known executor,
-//!   and the assertion reads the helper's result.
+//!   and the assertion reads the helper's result;
+//! - **blanket impl hop** (#6732): the owner is a trait-impl method and the test
+//!   calls it only through a blanket `impl<T: Trait> Other for T` entry whose
+//!   body calls the owner on `self`. Reach is established, but the owner pin
+//!   does not read a trait-impl owner behind such an entry, so whether the
+//!   assertion's value comes from the owner's changed behavior is not.
 //!
 //! None of these is credited; the gap is withheld under
 //! `rust_indirect_owner_call_unresolved`. Like every RIPR-SPEC-0240 rule this
@@ -41,6 +46,7 @@ enum Form {
     FunctionValue,
     Generated,
     ExecutorWrapped,
+    BlanketImpl,
 }
 
 impl Form {
@@ -51,6 +57,9 @@ impl Form {
             }
             Form::Generated => {
                 "reaches an owner a macro generates, and ripr does not expand the macro"
+            }
+            Form::BlanketImpl => {
+                "reaches the owner only through a blanket trait impl method that calls it on `self`, and ripr does not pair the assertion on that method's result with the owner's value"
             }
             Form::ExecutorWrapped => {
                 "calls the owner inside an executor helper such as `block_on`, and ripr does not pair the assertion on the helper's result with the owner's call"
@@ -64,6 +73,7 @@ impl Form {
 pub(in crate::analysis) fn withhold_indirect_owner_gap(
     finding: &mut Finding,
     index: &RustIndex,
+    workspace_complete: bool,
 ) -> bool {
     if finding.static_limit_kind.is_some()
         || !matches!(
@@ -82,7 +92,7 @@ pub(in crate::analysis) fn withhold_indirect_owner_gap(
         })
     });
     let judged: Vec<(String, Form)> = match owner {
-        Some(owner) => judged_for_owner(finding, owner, index),
+        Some(owner) => judged_for_owner(finding, owner, index, workspace_complete),
         None => generated_owner(finding, index).into_iter().collect(),
     };
     if judged.is_empty() {
@@ -145,6 +155,7 @@ pub(in crate::analysis) fn related_tests_reach_owner_indirectly(
         let code = mask_comments_and_strings(&test.body);
         names_owner_as_value(&code, owner, test, index)
             || (is_async && executor_wraps_owner_call(&code, &owner.name, test, index))
+            || reaches_owner_only_through_blanket_impl(&code, owner, test, index)
     })
 }
 
@@ -161,6 +172,7 @@ fn judged_for_owner(
     finding: &Finding,
     owner: &FunctionFact,
     index: &RustIndex,
+    workspace_complete: bool,
 ) -> Vec<(String, Form)> {
     let mut judged = Vec::new();
     let is_related = |test: &TestFact, direct_only: bool| {
@@ -184,12 +196,42 @@ fn judged_for_owner(
             Some(RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall)
         )
     });
+    // The blanket hop is judged from the uncapped test set: the reveal cap can
+    // drop a blanket-only test from `finding.related_tests`, and the hop itself
+    // is the reach authority (#13041 review). The entry-name prefilter keeps
+    // the per-test function scan off owners with no blanket entry.
+    let blanket_entry_names: Vec<String> =
+        if super::related_tests::impl_trait_name(&owner.id.0).is_some() {
+            super::transitive_reach::blanket_proxy_call_names_by_owner(index)
+                .remove(&owner.name)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+    let calls_blanket_entry = |test: &TestFact| {
+        test.calls
+            .iter()
+            .any(|call| blanket_entry_names.iter().any(|name| name == &call.name))
+    };
     for test in index.tests() {
-        // Both forms below need a masked mention of the owner's name, and
-        // masking only blanks bytes, so a body whose raw text never spells
-        // the name cannot qualify. This pass runs over every test for each
-        // withheld finding; skipping the mask there is #13754's saving.
-        if is_ignored(test) || test.assertions.is_empty() || !test.body.contains(&*owner.name) {
+        if is_ignored(test) || test.assertions.is_empty() {
+            continue;
+        }
+        // The function-value and executor forms below need a masked mention of
+        // the owner's name, and masking only blanks bytes, so a body whose raw
+        // text never spells the name cannot qualify for them. This pass runs
+        // over every test for each withheld finding; skipping the mask there
+        // is #13754's saving. Only the blanket hop (#6732) is defined by the
+        // test NOT spelling the name, so it is judged here without the mask.
+        if !test.body.contains(&*owner.name) {
+            if workspace_complete
+                && calls_blanket_entry(test)
+                && super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
+                    test, owner, index,
+                )
+            {
+                judged.push((label(test), Form::BlanketImpl));
+            }
             continue;
         }
         let code = mask_comments_and_strings(&test.body);
@@ -211,9 +253,62 @@ fn judged_for_owner(
             && executor_wraps_owner_call(&code, &owner.name, test, index)
         {
             judged.push((label(test), Form::ExecutorWrapped));
+            continue;
+        }
+        // A related test that only reaches the owner through the blanket hop
+        // is judged even beside one that calls the owner by name: that direct
+        // call can be weak while the blanket test discriminates, so the
+        // direct assertion cannot establish a gap for the combined test set.
+        if workspace_complete
+            && calls_blanket_entry(test)
+            && reaches_owner_only_through_blanket_impl(&code, owner, test, index)
+        {
+            judged.push((label(test), Form::BlanketImpl));
         }
     }
     judged
+}
+
+/// #6732: the test reaches the trait-impl `owner` through a blanket impl entry
+/// and never calls the owner directly, so no `owner(..)` call exists for the
+/// owner pin to pair with the assertion. `code` is the masked test body.
+fn reaches_owner_only_through_blanket_impl(
+    code: &str,
+    owner: &FunctionFact,
+    test: &TestFact,
+    index: &RustIndex,
+) -> bool {
+    // A direct call to the owner is a call site that resolves to the owner's
+    // impl type and trait. A same-named call on another receiver or through
+    // another module (`other::render()`) is not the owner and must not block
+    // the blanket judgment (#13041 review).
+    let (Some(owner_impl_type), Some(owner_trait)) = (
+        super::related_tests::impl_self_type_name(&owner.id.0),
+        super::related_tests::impl_trait_name(&owner.id.0),
+    ) else {
+        return false;
+    };
+    let calls_owner = identifier_offsets(code, &owner.name).any(|at| {
+        let after = code[at + owner.name.len()..].trim_start();
+        let turbofish = after
+            .strip_prefix("::")
+            .and_then(|rest| rest.trim_start().strip_prefix('<'))
+            .and_then(after_generic_arguments)
+            .is_some_and(|rest| rest.trim_start().starts_with('('));
+        (after.starts_with(['(', '!']) || turbofish)
+            && super::related_tests::method_call_site_resolves_to_impl_type_and_trait_in(
+                test,
+                code,
+                at,
+                &owner.name,
+                &owner_impl_type,
+                &owner_trait,
+            )
+    });
+    !calls_owner
+        && super::transitive_reach::test_reaches_trait_owner_through_blanket_impl(
+            test, owner, index,
+        )
 }
 
 /// The changed line is an item-position macro invocation: no function in its
@@ -591,6 +686,7 @@ fn owner_path_names(owner: &FunctionFact) -> Vec<String> {
         FunctionContainer::TraitImpl {
             trait_path,
             self_ty,
+            ..
         } => {
             add_path(trait_path);
             add_path(self_ty);

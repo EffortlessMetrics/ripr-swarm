@@ -1,38 +1,16 @@
 # Golden Output Changes
 
-## Pending — corpus cache generation 1.195 for macro-held owner-result locals (#16192)
+## Pending - corpus cache generation 1.196 for the #6732 and #12876 merge
 
-A plain local bound to an owner call whose only uses sit inside an inner
-macro the analyzer does not trust (`let r = pick(0); assert_eq!(check_ok!(r),
-..)`) now makes that assertion read as an unknown oracle for the owner, which
-bumps the analyzer cache schema to 1.195. Move the
-portable unchanged-attempt snapshots to 1.195, recompute the
-`raw_json_placeholder_v1` artifact content commitment, then the dependent
-verify commitments and receipt byte hashes. Weak grip, unchanged movement,
-historical currentness, incomplete receipt status and fail-closed first-action
-routing remain unchanged. No other fixture output is regenerated.
-
-## Pending — corpus cache generation 1.194 for non-empty array loops (#14116)
-
-An assertion inside a `for` loop over any non-empty array now counts as run,
-not only one over a constant-row table, which bumps the analyzer cache schema
-to 1.194. Move the portable unchanged-attempt snapshots to 1.194, recompute the
-`raw_json_placeholder_v1` artifact content commitment, then the dependent
-verify commitments and receipt byte hashes. Weak grip, unchanged movement,
-historical currentness, incomplete receipt status and fail-closed first-action
-routing remain unchanged. No other fixture output is regenerated.
-
-## Pending — corpus cache generation 1.193 for macro-held owner calls (#16188)
-
-An assertion whose every call of the owner sits inside an inner macro the
-analyzer does not trust (a name outside the evaluating standard macros, or one
-the test file defines with `macro_rules!`) now reads as an unknown oracle for
-that owner, which bumps the analyzer cache schema to 1.193. Move the portable
-unchanged-attempt snapshots to 1.193, recompute the `raw_json_placeholder_v1`
-artifact content commitment, then the dependent verify commitments and receipt
-byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
-receipt status and fail-closed first-action routing remain unchanged. No other
-fixture output is regenerated.
+The one-hop blanket-impl reach withholding (#6732) and the std-rooted import
+exemption (#12876) both land, which bumps the analyzer cache schema to 1.196 (main claimed 1.195).
+Move the portable unchanged-attempt snapshots to 1.196, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes, and recapture the honesty reports whose
+header carried an older generation (artifact, source_subject and
+analysis_inputs only). Weak grip, unchanged movement, historical currentness,
+incomplete receipt status and fail-closed first-action routing remain unchanged.
+No other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.192 for manifest-rebound assertion roots (#10150)
 
@@ -60,12 +38,24 @@ regenerated.
 
 A macro-generated test beside an import of std's own item under an exempt
 macro name (`use std::panic;`) keeps its invocation scopes, which bumps the
-analyzer cache schema to 1.189 (1.188 is left for #13041). Move the portable
-unchanged-attempt snapshots to 1.189, recompute the `raw_json_placeholder_v1`
-artifact content commitment, then the dependent verify commitments and receipt
-byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
-receipt status and fail-closed first-action routing remain unchanged. No other
-fixture output is regenerated.
+analyzer cache schema to 1.189. Move the portable unchanged-attempt snapshots
+to 1.189, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
+
+## Pending - corpus cache generation 1.188 for one-hop blanket-impl reach (#6732)
+
+A test reaching a trait-impl owner only through a one-hop blanket impl now
+withholds the gap as unresolved reach, which bumps the analyzer cache schema to
+1.188. Move the portable unchanged-attempt snapshots to 1.188, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes, and recapture the honesty reports whose
+header carried an older generation (artifact, source_subject and
+analysis_inputs only). Weak grip, unchanged movement, historical currentness,
+incomplete receipt status and fail-closed first-action routing remain unchanged.
+No other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.187 for attribute-macro generated tests (#12857)
 
