@@ -15,8 +15,8 @@ use super::capabilities::{
 };
 use super::client_features::ClientFeatureProfile;
 use super::config::{
-    LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary,
-    pushed_setting_rejection_parts,
+    LspAnalysisConfig, PushedSettingRejection, pulled_options_or_rejections,
+    pulled_rejection_summary, unannounced_pushed_rejections,
 };
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
@@ -263,9 +263,10 @@ pub(super) struct Backend {
     /// input context resets. An attempt in flight leaves it latched, so pull
     /// and push agree while a retry runs.
     base_withdrawal: Mutex<Option<AnalysisFailure>>,
-    /// Fingerprint of the rejected keys and raw values behind the last
-    /// pushed-settings warning disclosed (#15312), so a verbatim re-push of
-    /// the same unrepaired mistake is not shown twice.
+    /// Fingerprint of the malformed payload or section in the last pushed
+    /// notification (#15312), so a client re-pushing the same malformed
+    /// shape is not warned twice. Rejected values need no memory here: the
+    /// retained session layer holds them until they are repaired.
     last_pushed_settings_warning: Mutex<Option<u64>>,
     /// Languages whose "adapter not enabled" notice a generic client has
     /// already been shown (#8585). A language is shown once while it stays
@@ -3643,47 +3644,48 @@ impl Backend {
 
     async fn apply_session_configuration_change(&self, settings: &LSPAny) {
         // #15312: the push path is lenient, so an ignored pushed value falls
-        // back silently. Name every ignored part of this notification.
-        let rejections = pushed_setting_rejection_parts(settings);
-        let warning = (!rejections.is_empty()).then(|| {
+        // back silently. Name every ignored part of this notification that
+        // has not been named already. A rejected value stays in the retained
+        // session layer until a push repairs or clears it, so the owner skips
+        // values that layer already holds (`unannounced_pushed_rejections`).
+        let current = self.analysis_config();
+        let mut rejections = unannounced_pushed_rejections(settings, current.as_ref());
+        // A malformed payload or section is not retained, so a client that
+        // re-pushes it verbatim on every settings change is recognized only
+        // by consecutive notifications. Compare the exact malformed subjects,
+        // not the clipped display text.
+        let shape_fingerprint = rejections
+            .iter()
+            .any(PushedSettingRejection::is_shape)
+            .then(|| {
+                let mut hasher = std::hash::DefaultHasher::new();
+                for rejection in rejections.iter().filter(|part| part.is_shape()) {
+                    rejection.subject.to_string().hash(&mut hasher);
+                }
+                hasher.finish()
+            });
+        let shape_repeated = self
+            .last_pushed_settings_warning
+            .lock()
+            .map(|mut last| std::mem::replace(&mut *last, shape_fingerprint) == shape_fingerprint)
+            .unwrap_or(false);
+        if shape_repeated {
+            rejections.retain(|part| !part.is_shape());
+        }
+        if !rejections.is_empty() {
             let listed = rejections
                 .iter()
                 .map(|rejection| bounded_failure_message(&rejection.line))
                 .collect::<Vec<_>>()
                 .join(" | ");
-            format!(
-                "ripr ignored pushed ripr settings: {listed}. Each ignored setting keeps its repository or default value."
-            )
-        });
-        // A client that re-pushes its whole section on every settings change
-        // repeats an unrepaired mistake verbatim; that repeat is not shown
-        // again. Repeats compare the exact rejected keys and raw values, not
-        // the display text, which is clipped and normalized: a value that
-        // changes but stays invalid is a new mistake and warns again. A clean
-        // push forgets it, so the same mistake made again after a repair
-        // warns again.
-        let fingerprint = warning.as_ref().map(|_| {
-            let mut hasher = std::hash::DefaultHasher::new();
-            for rejection in &rejections {
-                rejection.subject.to_string().hash(&mut hasher);
-            }
-            hasher.finish()
-        });
-        let repeated = self
-            .last_pushed_settings_warning
-            .lock()
-            .map(|mut last| std::mem::replace(&mut *last, fingerprint) == fingerprint)
-            .unwrap_or(false);
-        if let Some(warning) = warning
-            && !repeated
-        {
+            let warning = format!("ripr ignored pushed ripr settings: {listed}.");
             self.disclose_configuration_reload_failure(warning.clone(), warning)
                 .await;
         }
         if !LspAnalysisConfig::has_session_option_changes(settings) {
             return;
         }
-        let Some(current) = self.analysis_config() else {
+        let Some(current) = current else {
             return;
         };
         let Some(next) = current.with_changed_session_options(settings) else {

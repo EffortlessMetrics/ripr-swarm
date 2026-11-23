@@ -167,9 +167,13 @@ all (a bare string, an array), or a non-object `ripr` key, produces one
 the value received. A non-object `ripr` key is reported as an ignored
 section; the flat settings beside it still apply and are still checked.
 Clients without the `riprEditor` integration also get the warning as
-`window/showMessage`. A verbatim repeat of the last warning's rejected keys
-and raw values is not shown again until a push without an ignored value
-arrives.
+`window/showMessage`. The push path retains a rejected value in its session
+layer until a push repairs it or clears it with `null`, so an invalid value
+that layer already holds is not named again, whatever else arrives in
+between; a changed but still invalid value is a new mistake and is named. A
+malformed payload or section is not retained: it leaves the settings already
+in effect unchanged, and a verbatim repeat is suppressed only while
+consecutive notifications carry the same malformed shape.
 
 ### Cooperative git invocation deadline (#2303 amendment)
 

@@ -754,7 +754,9 @@ Fallback, negotiated from capabilities only (never the client name):
   `ripr` section, or a payload that is not an object of ripr settings) is
   reported in the log with the key, its accepted values and the value
   received, and also on screen for clients without the `riprEditor`
-  integration; the key keeps its repository or default value.
+  integration. A rejected value falls back to its repository or default
+  value and is named once until a push repairs or clears it; a malformed
+  payload or section leaves the settings already in effect unchanged.
 - `initialization_only` — neither transport; only `initializationOptions`
   apply.
 

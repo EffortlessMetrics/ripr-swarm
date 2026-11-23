@@ -12785,15 +12785,30 @@ fn framed_lsp_rejected_pushed_settings_warn_naming_key_and_accepted_values_per_m
                 return Err(format!("the verbatim re-push must not warn again: {shape:?}"));
             }
 
-            // Make the mistake the last warning again, then repair it: a clean
-            // push forgets the mistake, so making it again warns again.
+            // The unrepaired mistake stays in force through a push of
+            // another server's settings, so re-pushing it verbatim afterwards
+            // is still not shown: the next warning is the array shape.
+            write_lsp_message(
+                &mut client_write,
+                push(serde_json::json!({"editor": {"formatOnSave": true}})),
+            )
+            .await?;
             write_lsp_message(
                 &mut client_write,
                 push(serde_json::json!({"ripr": {"checkMode": "deeep"}})),
             )
             .await?;
-            let before_repair = pushed_warning(&mut client_read).await?;
-            require_texts(&before_repair, &["`checkMode`", "got \"deeep\""])?;
+            write_lsp_message(&mut client_write, push(serde_json::json!(["a"]))).await?;
+            let still_retained = pushed_warning(&mut client_read).await?;
+            require_texts(&still_retained, &["must be an object of ripr settings"])?;
+            if still_retained.iter().any(|text| text.contains("deeep")) {
+                return Err(format!(
+                    "a retained mistake must not warn again after an unrelated push: {still_retained:?}"
+                ));
+            }
+
+            // A repair clears the mistake from the retained layer, so making
+            // it again warns again.
             write_lsp_message(
                 &mut client_write,
                 push(serde_json::json!({"ripr": {"checkMode": "fast"}})),

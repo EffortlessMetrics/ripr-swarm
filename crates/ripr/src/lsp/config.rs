@@ -674,12 +674,53 @@ pub(super) fn pushed_setting_rejections(settings: &Value) -> Vec<String> {
 }
 
 /// One ignored part of a pushed payload: the display line, and the exact
-/// rejected subject (key and raw value, or the malformed payload) it came
-/// from. Display lines are clipped and normalized for the client, so repeat
-/// detection compares subjects, not lines.
+/// rejected subject (key and raw value, or the malformed payload or section)
+/// it came from. Display lines are clipped and normalized for the client, so
+/// repeat detection compares subjects, not lines.
 pub(super) struct PushedSettingRejection {
     pub(super) subject: Value,
     pub(super) line: String,
+    /// The governed key for a rejected value. The push path retains the raw
+    /// value in the session layer; a malformed payload or section is not
+    /// retained and has no key.
+    retained_key: Option<String>,
+}
+
+impl PushedSettingRejection {
+    /// A malformed payload or section: nothing of it is retained, so only
+    /// consecutive notifications can identify a repeat.
+    pub(super) fn is_shape(&self) -> bool {
+        self.retained_key.is_none()
+    }
+}
+
+/// The rejected values of this push that are not already held, unrepaired,
+/// in the retained session layer of `current` (#15312). The push path
+/// merges partial pushes into that layer, so an invalid value stays in force
+/// through pushes of other keys, unrelated settings or `null`; it was named
+/// when it entered the layer and is not named again until a push repairs or
+/// clears it. A changed but still invalid value is a new mistake. Malformed
+/// payloads and sections are always returned; the caller decides repeats for
+/// them.
+pub(super) fn unannounced_pushed_rejections(
+    settings: &Value,
+    current: Option<&LspAnalysisConfig>,
+) -> Vec<PushedSettingRejection> {
+    let retained = current
+        .and_then(|config| config.session_options.as_ref())
+        .and_then(Value::as_object);
+    pushed_setting_rejection_parts(settings)
+        .into_iter()
+        .filter(|part| {
+            let Some(key) = part.retained_key.as_deref() else {
+                return true;
+            };
+            let pushed = session_options_object(settings).and_then(|options| options.get(key));
+            retained
+                .and_then(|layer| layer.get(key))
+                .is_none_or(|held| Some(held) != pushed)
+        })
+        .collect()
 }
 
 pub(super) fn pushed_setting_rejection_parts(settings: &Value) -> Vec<PushedSettingRejection> {
@@ -690,9 +731,10 @@ pub(super) fn pushed_setting_rejection_parts(settings: &Value) -> Vec<PushedSett
         return vec![PushedSettingRejection {
             subject: serde_json::json!(["payload", settings]),
             line: format!(
-                "workspace/didChangeConfiguration settings must be an object of ripr settings (optionally under a `ripr` key), got {}; nothing was applied",
+                "workspace/didChangeConfiguration settings must be an object of ripr settings (optionally under a `ripr` key), got {}; that notification was ignored and the settings already in effect are unchanged",
                 clipped_value_echo(settings)
             ),
+            retained_key: None,
         }];
     };
     let mut parts = Vec::new();
@@ -706,9 +748,10 @@ pub(super) fn pushed_setting_rejection_parts(settings: &Value) -> Vec<PushedSett
         parts.push(PushedSettingRejection {
             subject: serde_json::json!(["ripr", section]),
             line: format!(
-                "the pushed `ripr` section must be an object of ripr settings, got {}; that section was ignored",
+                "the pushed `ripr` section must be an object of ripr settings, got {}; that section was ignored and the settings already in effect are unchanged",
                 clipped_value_echo(section)
             ),
+            retained_key: None,
         });
     }
     let Some(options) = session_options_object(settings) else {
@@ -721,7 +764,8 @@ pub(super) fn pushed_setting_rejection_parts(settings: &Value) -> Vec<PushedSett
             .filter_map(|(key, value)| {
                 pushed_value_rejection(key, value).map(|line| PushedSettingRejection {
                     subject: serde_json::json!([key, value]),
-                    line,
+                    line: format!("{line}; `{key}` keeps its repository or default value"),
+                    retained_key: Some(key.clone()),
                 })
             }),
     );
@@ -1116,7 +1160,7 @@ include_unchanged_tests = false
             || !mixed[1].contains("`seamDiagnostics`")
             || mixed
                 .iter()
-                .any(|line| line.contains("nothing was applied") || line.contains("checkMode"))
+                .any(|line| line.contains("notification was ignored") || line.contains("checkMode"))
         {
             return Err(format!(
                 "malformed section must not hide flat siblings: {mixed:?}"
@@ -1128,9 +1172,9 @@ include_unchanged_tests = false
         let also_small = pushed_setting_rejections(&json!({"refreshDeadlineMs": 50}));
         if too_small.len() != 1
             || !too_small[0].starts_with(REFRESH_DEADLINE_MS_TOO_SMALL)
-            || !too_small[0].ends_with("got 5")
+            || !too_small[0].contains("; got 5;")
             || also_small.len() != 1
-            || !also_small[0].ends_with("got 50")
+            || !also_small[0].contains("; got 50;")
         {
             return Err(format!(
                 "deadline floor must be named with the value: {too_small:?} {also_small:?}"
@@ -1149,6 +1193,75 @@ include_unchanged_tests = false
                     "long values must clip to one line but keep distinct subjects".to_string(),
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// #15312: an invalid pushed value retained in the session layer is not
+    /// named again through pushes of other keys, unrelated settings or
+    /// `null`; a repair, a removal or a different invalid value makes the
+    /// same key warn again. Malformed shapes are never retained.
+    #[test]
+    fn unannounced_pushed_rejections_follow_the_retained_session_layer() -> Result<(), String> {
+        let push = |config: &LspAnalysisConfig, settings: Value| {
+            let named = unannounced_pushed_rejections(&settings, Some(config))
+                .into_iter()
+                .map(|part| part.line)
+                .collect::<Vec<_>>();
+            let next = config
+                .with_changed_session_options(&settings)
+                .unwrap_or_else(|| config.clone());
+            (named, next)
+        };
+        let names = |named: &[String], needle: &str| named.iter().any(|line| line.contains(needle));
+        let config = LspAnalysisConfig::default();
+        let (named, config) = push(&config, json!({"ripr": {"checkMode": "depe"}}));
+        if !names(&named, "got \"depe\"") {
+            return Err(format!("first mistake must be named: {named:?}"));
+        }
+        // Other keys, unrelated settings and null leave the mistake in force.
+        let (named, config) = push(&config, json!({"ripr": {"seamDiagnostics": true}}));
+        let (named_editor, config) = push(&config, json!({"editor": {"formatOnSave": true}}));
+        let (named_null, config) = push(&config, json!(null));
+        if !named.is_empty() || !named_editor.is_empty() || !named_null.is_empty() {
+            return Err(format!(
+                "clean pushes must be silent: {named:?} {named_editor:?} {named_null:?}"
+            ));
+        }
+        // The retained mistake re-pushed verbatim is not named again; a
+        // new invalid key beside it is.
+        let (named, config) = push(
+            &config,
+            json!({"ripr": {"checkMode": "depe", "diagnosticProfile": "loud"}}),
+        );
+        if named.len() != 1 || !names(&named, "`diagnosticProfile`") {
+            return Err(format!("only the new mistake must be named: {named:?}"));
+        }
+        // A different invalid value is a new mistake.
+        let (named, config) = push(&config, json!({"checkMode": "deeep"}));
+        if !names(&named, "got \"deeep\"") {
+            return Err(format!("a changed invalid value must be named: {named:?}"));
+        }
+        // A repair, then the same mistake again, names it again.
+        let (_, config) = push(&config, json!({"checkMode": "fast"}));
+        let (named, config) = push(&config, json!({"checkMode": "deeep"}));
+        if !names(&named, "got \"deeep\"") {
+            return Err(format!(
+                "a repaired mistake made again must be named: {named:?}"
+            ));
+        }
+        // Removing the key with null, then the same mistake, names it again.
+        let (_, config) = push(&config, json!({"checkMode": null}));
+        let (named, config) = push(&config, json!({"checkMode": "deeep"}));
+        if !names(&named, "got \"deeep\"") {
+            return Err(format!(
+                "a cleared mistake made again must be named: {named:?}"
+            ));
+        }
+        // Shapes are not retained: each one is returned for the caller.
+        let (named, _) = push(&config, json!("instant"));
+        if named.len() != 1 || !names(&named, "settings already in effect are unchanged") {
+            return Err(format!("a shape is always returned: {named:?}"));
         }
         Ok(())
     }
