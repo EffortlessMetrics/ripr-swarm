@@ -292,6 +292,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut failed = 0usize;
     let mut analyzed = 0usize;
     let mut all_tests: Vec<PythonTest> = Vec::new();
+    let mut bare_bool_sources = BTreeMap::new();
     // Conftests with implicit setup, and every conftest actually read
     // (#6657): a chain conftest that was not read cannot be ruled out.
     let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
@@ -316,8 +317,16 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         (PythonFileRole::InlineHelper, &input.helper_files),
     ] {
         for relative in selected {
-            match load_facts(root, relative) {
-                Ok(facts) => {
+            match load_facts_with_source(root, relative) {
+                Ok((facts, source)) => {
+                    if facts
+                        .tests
+                        .iter()
+                        .flat_map(|test| &test.assertions)
+                        .any(|assertion| assertion.bare_bool_call.is_some())
+                    {
+                        bare_bool_sources.insert(relative.as_path(), source);
+                    }
                     analyzed += 1;
                     if relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py") {
                         read_conftests.insert(relative.clone());
@@ -472,12 +481,17 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     // workspace, built once here so a per-file read records the same facts:
     // src short names another source file also produces (#13745), and
     // same-named free functions in the modules tests import from (#8759).
-    let src_module_index =
-        SrcModuleIndex::build(input.production_files.iter().chain(&input.ambiguous_files));
+    let src_module_index = SrcModuleIndex::build(
+        input
+            .production_files
+            .iter()
+            .chain(&input.ambiguous_files)
+            .chain(&input.capped_source_paths),
+    );
     let rival_index = rival_definition_index(root, &input.production_files, &all_tests);
 
-    for relative in &input.production_files {
-        match load_facts_with_source(root, relative).and_then(|(facts, source)| {
+    let mut production = input.production_files.iter().map(|relative| {
+        let prepared = load_facts_with_source(root, relative).and_then(|(mut facts, source)| {
             let context = super::super::PythonIdentityContext::new(&source)
                 .ok_or_else(|| {
                     "Python source identity context could not be lexed; fix its syntax and re-run `ripr check`"
@@ -491,43 +505,78 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                     "Python source identity context did not match a behavior fact".to_string(),
                 );
             }
-            Ok((facts, source))
-        }) {
-            Ok((mut facts, source)) => {
-                apply_package_reexports_from(
-                    &mut facts.owners,
-                    &init_owners,
-                    &star_source_owners,
-                    |file| {
-                        if file == relative.as_path() {
-                            return Some(source.as_str());
-                        }
-                        package_inits
-                            .iter()
-                            .find(|(owner, _)| owner.file == file)
-                            .map(|(_, init_source)| init_source.as_str())
-                    },
-                );
-                src_module_index.apply(&mut facts.owners);
-                // Project-relative names follow the re-export pass, as in diff
-                // mode, so a nested project's package gets its own name too.
-                if let Some(index) = project_names.as_mut() {
-                    apply_project_module_names_with(&mut facts.owners, index, |path| {
-                        root.join(path).exists()
-                    });
-                }
-                shadow_index.apply(&mut facts.owners);
-                rival_index.apply(&mut facts.owners);
-                // Class facts are file-local, so the single shared owner of
-                // them runs here, before the owner inventory and finding
-                // projection read them, exactly as diff mode orders it
-                // (#13880).
-                apply_class_facts(&mut facts.owners);
+            apply_package_reexports_from(
+                &mut facts.owners,
+                &init_owners,
+                &star_source_owners,
+                |file| {
+                    if file == relative.as_path() {
+                        return Some(source.as_str());
+                    }
+                    package_inits
+                        .iter()
+                        .find(|(owner, _)| owner.file == file)
+                        .map(|(_, init_source)| init_source.as_str())
+                },
+            );
+            src_module_index.apply(&mut facts.owners);
+            // Project-relative names follow the re-export pass, as in diff
+            // mode, so a nested project's package gets its own name too.
+            if let Some(index) = project_names.as_mut() {
+                apply_project_module_names_with(&mut facts.owners, index, |path| {
+                    root.join(path).exists()
+                });
+            }
+            shadow_index.apply(&mut facts.owners);
+            rival_index.apply(&mut facts.owners);
+            // Class facts are file-local, so the single shared owner of
+            // them runs here, before the owner inventory and finding
+            // projection read them, exactly as diff mode orders it
+            // (#13880).
+            apply_class_facts(&mut facts.owners);
+            Ok(ProductionFile { owners: facts.owners, behavior: facts.facts, source })
+        });
+        (relative, prepared)
+    });
+
+    // A call can have competing owners in different files. Settle it once against
+    // the complete inventory and the same source bytes used to project the findings.
+    // Without a candidate or with a known discovery gap, keep streaming per file.
+    let mut staged = Vec::new();
+    if !bare_bool_sources.is_empty()
+        && discovery_complete
+        && failed == 0
+        && input.ambiguous_files.is_empty()
+    {
+        staged.extend(production.by_ref());
+        if staged.iter().all(|(_, file)| file.is_ok()) {
+            let files = staged
+                .iter()
+                .filter_map(|(path, file)| Some((path.as_path(), file.as_ref().ok()?)));
+            let sources: BTreeMap<_, _> = files
+                .clone()
+                .map(|(path, file)| (path, file.source.as_str()))
+                .collect();
+            super::super::bool_oracle::credit_bare_bool_asserts(
+                &mut all_tests,
+                files.flat_map(|(_, file)| &file.owners),
+                |path| {
+                    bare_bool_sources
+                        .get(path)
+                        .map(String::as_str)
+                        .or_else(|| sources.get(path).copied())
+                },
+            );
+        }
+    }
+
+    for (relative, prepared) in staged.into_iter().chain(production) {
+        match prepared {
+            Ok(file) => {
                 analyzed += 1;
                 let owner_evidence = build_production_file_evidence(
                     relative,
-                    &facts,
-                    &source,
+                    &file,
                     &all_tests,
                     &mut limitations,
                     &mut findings,
@@ -724,10 +773,6 @@ fn rival_definition_index(
 
 /// Read a selected file once and parse it once via the shared facts
 /// producer. A read or parse failure becomes the typed limitation reason.
-fn load_facts(root: &Path, relative: &Path) -> Result<PythonSourceFacts, String> {
-    load_facts_with_source(root, relative).map(|(facts, _)| facts)
-}
-
 fn load_facts_with_source(
     root: &Path,
     relative: &Path,
@@ -742,6 +787,13 @@ fn load_facts_with_source(
     }
 }
 
+/// The source snapshot and extracted facts used by both the oracle and the finding projection.
+struct ProductionFile {
+    owners: Vec<PythonOwner>,
+    behavior: Vec<PythonSourceFact>,
+    source: String,
+}
+
 /// Build owner evidence for one successfully parsed production file:
 /// behavior items grouped per owner via the shared line-to-owner mapping,
 /// with relations matched once per owner against the evidence pool.
@@ -754,15 +806,15 @@ fn load_facts_with_source(
 /// `CandidateCurrent`, matching repo mode's live-tree seeding (#3280).
 fn build_production_file_evidence(
     relative: &Path,
-    facts: &PythonSourceFacts,
-    source: &str,
+    file: &ProductionFile,
     all_tests: &[PythonTest],
     limitations: &mut Vec<PythonRepoLimitation>,
     findings: &mut Vec<Finding>,
     value_origins: &mut crate::value_origins::ValueOrigins,
 ) -> Vec<PythonRepoOwnerEvidence> {
+    let file_owners = &file.owners;
+    let source = file.source.as_str();
     let identity_context = super::super::PythonIdentityContext::new(source);
-    let file_owners = &facts.owners;
     let mut items_per_owner: Vec<Vec<PythonRepoBehaviorItem>> = vec![Vec::new(); file_owners.len()];
     // Relations are matched once per owner (facts built once), then reused
     // by every behavior item of that owner.
@@ -784,7 +836,7 @@ fn build_production_file_evidence(
         .collect();
 
     let file_start = findings.len();
-    for (line, text) in representative_behavior_lines(&facts.facts) {
+    for (line, text) in representative_behavior_lines(&file.behavior) {
         let Some(owner) = owner_for_changed_line(relative, line, file_owners) else {
             continue;
         };
@@ -1312,6 +1364,7 @@ mod tests {
             production_files: vec![PathBuf::from("missing.py")],
             test_files: Vec::new(),
             helper_files: Vec::new(),
+            capped_source_paths: Vec::new(),
             ambiguous_files: Vec::new(),
             counts: DiscoveryCounts {
                 discovered: 1,
@@ -1424,6 +1477,7 @@ mod tests {
             production_files: vec![PathBuf::from("app.py")],
             test_files: Vec::new(),
             helper_files: Vec::new(),
+            capped_source_paths: Vec::new(),
             ambiguous_files: vec![PathBuf::from("mystery.py")],
             counts: DiscoveryCounts {
                 discovered: 2,

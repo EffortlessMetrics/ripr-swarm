@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- An assertion inside `for x in [a, b, ..]` now counts as run when the array is non-empty, not only when every row is a literal. Before, a table such as `for (input, before) in [(POW2, "..")]` was reported as "may run zero times". A row that calls a process exit (`std::process::exit`, `abort`) still refuses, since the test would end before the loop starts. An expected value taken from rows that are not all literals is never credited, because a call or `const` there may hold the function's own output (#14116).

@@ -587,6 +587,27 @@ fn resolve_module_constant(
     tokens: &[Tok],
     name: &str,
 ) -> Option<i64> {
+    resolve_module_constant_folding(body, source, tokens, name, None)
+}
+
+/// Longest chain of module constants one fold follows (`const h = m * 60`,
+/// `const m = s * 60`, ...). A longer or cyclic chain fails closed.
+const FOLD_DEPTH: u8 = 8;
+
+/// [`resolve_module_constant`] that, when `fold` is `Some(depth)`, also
+/// accepts an initializer built only from decimal integer literals, other
+/// module constants that resolve under these same rules, parentheses and the
+/// `*`, `+`, `-` operators (#15358). Every intermediate and the final value
+/// must be a non-negative safe integer, so an overflow, a negative result or
+/// any other operator, call, member read, cast or non-integer literal
+/// refuses.
+fn resolve_module_constant_folding(
+    body: &[Statement<'_>],
+    source: &str,
+    tokens: &[Tok],
+    name: &str,
+    fold: Option<u8>,
+) -> Option<i64> {
     if module_is_opaque(source, tokens) {
         return None;
     }
@@ -603,13 +624,10 @@ fn resolve_module_constant(
             if decl.kind != oxc_ast::ast::VariableDeclarationKind::Const || decl.declare {
                 return Some(None);
             }
-            let value = match &declarator.init {
-                Some(Expression::NumericLiteral(literal)) => literal
-                    .raw
-                    .as_ref()
-                    .and_then(|raw| integer_literal(raw.as_str())),
-                _ => None,
-            };
+            let value = declarator
+                .init
+                .as_ref()
+                .and_then(|init| fold_initializer(init, body, source, tokens, fold));
             Some(value.map(|value| (id.span.start as usize, value)))
         };
         let found = match statement {
@@ -664,6 +682,85 @@ fn resolve_module_constant(
         }
     }
     Some(value)
+}
+
+/// The value of a constant initializer: a decimal integer literal, or (only
+/// when `fold` is `Some`) literals, module constants and `*`/`+`/`-` joined by
+/// parentheses, every step a non-negative safe integer.
+fn fold_initializer(
+    expression: &Expression<'_>,
+    body: &[Statement<'_>],
+    source: &str,
+    tokens: &[Tok],
+    fold: Option<u8>,
+) -> Option<i64> {
+    if let Expression::NumericLiteral(literal) = expression {
+        let value = literal
+            .raw
+            .as_ref()
+            .and_then(|raw| integer_literal(raw.as_str()))?;
+        return (fold.is_none() || is_safe_number_integer(value)).then_some(value);
+    }
+    let depth = fold?;
+    let value = match expression {
+        Expression::ParenthesizedExpression(inner) => {
+            fold_initializer(&inner.expression, body, source, tokens, fold)?
+        }
+        Expression::Identifier(reference) => {
+            let remaining = depth.checked_sub(1)?;
+            resolve_module_constant_folding(
+                body,
+                source,
+                tokens,
+                reference.name.as_str(),
+                Some(remaining),
+            )?
+        }
+        Expression::BinaryExpression(binary) => {
+            let left = fold_initializer(&binary.left, body, source, tokens, fold)?;
+            let right = fold_initializer(&binary.right, body, source, tokens, fold)?;
+            match binary.operator {
+                oxc_ast::ast::BinaryOperator::Multiplication => left.checked_mul(right)?,
+                oxc_ast::ast::BinaryOperator::Addition => left.checked_add(right)?,
+                oxc_ast::ast::BinaryOperator::Subtraction => left.checked_sub(right)?,
+                _ => return None,
+            }
+        }
+        _ => return None,
+    };
+    (value >= 0 && is_safe_number_integer(value)).then_some(value)
+}
+
+/// The value of `name` in the module text `source` of `file` when it is a
+/// single immutable module `const` whose initializer folds from literals and
+/// other such constants (#15358): the [`ts_module_integer_constant`] rules
+/// plus `*`, `+`, `-` and parentheses. `None` for anything else.
+pub(super) fn ts_module_folded_integer_constant(
+    file: &Path,
+    source: &str,
+    name: &str,
+) -> Option<i64> {
+    let name = name.to_string();
+    parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file))
+            .with_config(TokensParserConfig)
+            .parse();
+        if ret.panicked || !ret.errors.is_empty() {
+            return None;
+        }
+        let tokens: Vec<Tok> = ret
+            .tokens
+            .iter()
+            .map(|token| Tok {
+                kind: token.kind(),
+                start: token.start() as usize,
+                end: token.end() as usize,
+                escaped: token.escaped(),
+            })
+            .collect();
+        resolve_module_constant_folding(&ret.program.body, source, &tokens, &name, Some(FOLD_DEPTH))
+    })
+    .ok()?
 }
 
 /// `eval`, `with`, or an escaped identifier anywhere in the module can bind

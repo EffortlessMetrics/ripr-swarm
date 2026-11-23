@@ -284,3 +284,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — macro_site_scoped_rest_limit (22)
+
+Reason:
+RIPR-SPEC-0369: a foreign glob cannot rebind a core prelude macro (rustc E0659, #16060); glob-dependent fixtures now call vec!
+
+Command:
+`cargo xtask goldens bless macro_site_scoped_rest_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

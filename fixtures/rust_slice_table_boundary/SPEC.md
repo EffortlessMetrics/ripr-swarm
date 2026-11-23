@@ -18,6 +18,10 @@ The finding is `weakly_exposed`, names the missing `samples.len() == 0`
 discriminator, and lists observed lengths 1, 2 and 3. Its returned-value sink
 comes from the existing propagation authority.
 
+The assertion-free direct caller `mean_latency_smoke` has miss `no_assertion`.
+The neighboring `ratio_smoke` calls only `ratio` and has miss `no_call_path`
+because the analysis established no path to `mean_latency` (#14808).
+
 ## Must Not
 
 Borrow unrelated neighboring tests' literal zero as an empty input. Evaluate

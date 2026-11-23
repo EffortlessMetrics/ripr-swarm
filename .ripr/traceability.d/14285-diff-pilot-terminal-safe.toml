@@ -1,0 +1,10 @@
+# Registers the terminal-safety escape on the human `ripr diff` report and the
+# `ripr pilot` terminal summary (#14285) under RIPR-SPEC-0122.
+[[extend]]
+id = "RIPR-SPEC-0122"
+tests = [
+  "crates/ripr/src/output/diff_report.rs::tests::human_report_escapes_terminal_controls_from_a_hostile_file_name",
+  "crates/ripr/src/output/diff_report.rs::tests::human_report_for_a_plain_file_name_is_unchanged_by_the_escape",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_terminal_escapes_terminal_controls_from_a_hostile_file_name",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_terminal_for_a_plain_file_name_is_unchanged_by_the_escape",
+]

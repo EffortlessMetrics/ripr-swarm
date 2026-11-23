@@ -126,6 +126,12 @@ the three characters `%FF` renders as `%25FF`.
    `src/odd/receipt.rs` stays `src/odd/receipt.rs`; the two identities differ.
 6. On Windows, `tests\receipt.rs` encodes as `tests/receipt.rs` through
    `stable_source_path_text`.
+7. A consumer that opens a file named by stable path text decodes it first: a
+   Rust source file `src/100%.rs` (gap file `src/100%25.rs`) gets the same
+   repair start and edit-cage rules as `src/lib.rs`. A seam packet path that
+   decodes to a literal backslash refuses instead of naming another file. A
+   TypeScript or Python gap-ledger packet carries native spellings and is read
+   as written; a Rust gap-ledger packet carries stable path text and decodes.
 
 ## Test Mapping
 
@@ -146,6 +152,8 @@ the three characters `%FF` renders as `%25FF`.
 - `crates/ripr/tests/cli_smoke/portable_diff_paths.rs::plain_patch_json_keeps_portable_locations_and_exact_crlf_provenance`
 - `crates/ripr/tests/cli_smoke/diff_selection.rs::git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory`
 - `crates/ripr/tests/native_path_roots.rs::equivalent_root_spellings_preserve_analysis_identity_and_repeated_json`
+- `crates/ripr/tests/user_journeys.rs::rust_repair_closes_when_the_source_file_name_has_a_percent`
+- `crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_decodes_a_percent_escaped_packet_path`
 
 ## Implementation Mapping
 
@@ -162,6 +170,10 @@ the three characters `%FF` renders as `%25FF`.
   symbol identity so distinct raw-byte files keep distinct owners.
 - `crates/ripr/src/app/check_artifact.rs` renders non-UTF-8 finding paths
   through the projection at the artifact boundary.
+- `crates/ripr/src/app/task_first.rs` (check-screen repair route) and
+  `crates/ripr/src/app/repair_attempt/mod.rs::edit_cage_policy_from_packet`
+  decode gap and seam-packet path text with `decode_stable_path_text` before
+  opening a file or building edit-cage rules.
 - `crates/ripr/src/analysis/language/rust/mod.rs`,
   `crates/ripr/src/analysis/probes/ids.rs`, and
   `crates/ripr/src/output/path.rs` consume that projection for their existing

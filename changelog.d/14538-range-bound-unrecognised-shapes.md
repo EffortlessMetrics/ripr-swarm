@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- More range-bound edits stop reading `exposed` at a test input where both ranges agree: several ranges changed on one line (`(0..=a).sum::<u32>() + (0..=b).sum::<u32>()`), and endpoints moved inside `matches!(n, 1..=5)`, including negative and char endpoints. An assertion that may not run no longer supplies the separating input. That covers an assertion inside a nested `fn`, a closure, an `async` block, an `if` or `match`, a loop body, or a `#[cfg]`-gated statement (#14538).

@@ -197,6 +197,7 @@ fn same_named_call_kinds_keep_diff_owner_observation_scoped() -> Result<(), Stri
             })
             .ok_or_else(|| format!("missing parsed match arm for {owner}"))?;
         let probe = Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:12234:{owner}")),
             location: SourceLocation::new("src/lib.rs", arm.display_line(), 1),
             owner: Some(SymbolId(owner.to_string())),

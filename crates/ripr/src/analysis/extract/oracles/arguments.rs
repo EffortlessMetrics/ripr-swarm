@@ -21,6 +21,10 @@ pub(crate) fn equality_assertion_arguments(line: &str) -> Option<Vec<String>> {
 /// (or the two comparison/pattern operands) is diagnostic formatting, including
 /// non-string expressions. Unknown helpers keep their existing fallback path.
 pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
+    assertion_oracle_text_at(line).map(|(_, text)| text)
+}
+
+pub(super) fn assertion_oracle_text_at(line: &str) -> Option<(usize, String)> {
     let masked = mask_comments_and_strings(line);
     [
         ("assert!", 1),
@@ -44,7 +48,27 @@ pub(crate) fn assertion_oracle_text(line: &str) -> Option<String> {
     // `assert!(matches!(...))` must use the outer assertion's condition;
     // a nested assertion in its diagnostic never becomes the observer.
     .min_by_key(|(offset, _)| *offset)
-    .map(|(_, text)| text)
+}
+
+/// A line-scanned helper can follow a closure introducer on the same row.
+pub(super) fn custom_assertion_call_offset(text: &str) -> Option<usize> {
+    if !super::patterns::is_custom_assertion_helper(text) {
+        return None;
+    }
+    let masked = mask_comments_and_strings(text);
+    masked.match_indices("assert_").find_map(|(offset, _)| {
+        let prefix = &masked[..offset];
+        if prefix
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch == '_' || ch.is_alphanumeric())
+        {
+            return None;
+        }
+        let tail =
+            masked[offset..].trim_start_matches(|ch: char| ch == '_' || ch.is_alphanumeric());
+        tail.trim_start().starts_with('(').then_some(offset)
+    })
 }
 
 pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {
@@ -134,6 +158,16 @@ pub(crate) fn assertion_compares_only_literals(line: &str) -> bool {
     operands
         .iter()
         .all(|operand| operand_is_literal_only(operand))
+}
+
+/// #15476: the compared operands of the outermost equality or boolean
+/// assertion macro (`assert_eq!(a, b)` gives `[a, b]`, `assert!(c)` gives
+/// `[c]`), without its diagnostic arguments. `None` for any other macro.
+pub(crate) fn assertion_compared_operands(line: &str) -> Option<Vec<String>> {
+    match assertion_comparison(line)? {
+        AssertionComparison::Operands { left, right, .. } => Some(vec![left, right]),
+        AssertionComparison::Condition(condition) => Some(vec![condition]),
+    }
 }
 
 /// Every word of the masked operand is a numeric literal (its suffix

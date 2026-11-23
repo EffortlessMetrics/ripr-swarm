@@ -1,0 +1,15 @@
+# A Python raised-class swap is credited only by an assertion that runs the
+# owner and expects exactly the class the edit tells apart (#15356).
+[[extend]]
+id = "RIPR-SPEC-0238"
+tests = [
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::imported_subclass_swap_reads_as_a_gap_not_an_import_limit",
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::match_pattern_on_a_base_class_does_not_credit_the_class_swap",
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::match_pattern_naming_the_new_imported_class_stays_exposed",
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::an_exact_context_that_does_not_run_the_owner_credits_nothing",
+  "crates/ripr/src/analysis/language/python/imported_raise_class_tests.rs::a_local_alias_of_a_raised_name_credits_nothing",
+]
+code = [
+  "crates/ripr/src/analysis/language/python/message_pin.rs",
+  "crates/ripr/src/analysis/language/python/exception_variant.rs",
+]

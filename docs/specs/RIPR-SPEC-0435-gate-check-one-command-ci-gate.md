@@ -33,6 +33,15 @@ guidance document behind, and the second step then evaluates stale evidence.
    `--mode acknowledgeable` unless `--mode` is given, writing the usual
    `gate-decision.json` and `.md` reports.
 
+Default destinations follow `--root` (#15378): with `--root <dir>` and no
+`--guidance-out` / `--out`, the guidance lands at
+`<dir>/target/ripr/review/comments.json` and the decision at
+`<dir>/target/ripr/reports/gate-decision.{json,md}`, where
+`ripr reports ci-summary --root <dir>` and the report's own hints read them.
+`review-comments --root <dir>` and `gate evaluate --root <dir>` default the same
+way. Explicit relative destinations keep resolving against the invoking
+directory, and the implicit `.` root keeps the bare `target/ripr/...` spelling.
+
 The decision and exit come only from the shared gate evaluator and its exit
 mapping: `0` for pass, advisory or acknowledged, `3` for blocked, `2` for
 config_error. When review-comments fails, ripr prints the producer error to
