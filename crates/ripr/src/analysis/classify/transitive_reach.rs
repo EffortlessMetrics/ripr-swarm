@@ -4287,8 +4287,9 @@ fn blanket_impl_type_param(header: &str) -> Option<String> {
     names_generic_param.then(|| param.to_string())
 }
 
-/// Whether a block head opens a nested item body. The keyword must be followed
-/// by the item's name (or `<` for a generic `impl`), so a `fn()` type in an
+/// Whether a block head opens a nested item body. The keyword must be a whole
+/// word and be followed by the item's name (or `<` for a generic `impl`), so
+/// `module`, `implemented` and `fn_name` are not items, and a `fn()` type in an
 /// `if` condition is not a nested item (#13041 review).
 fn head_opens_nested_item(head: &str) -> bool {
     for keyword in ["fn", "impl", "trait", "mod"] {
@@ -4300,10 +4301,16 @@ fn head_opens_nested_item(head: &str) -> bool {
                 .chars()
                 .next_back()
                 .is_none_or(|ch| !(ch == '_' || ch.is_ascii_alphanumeric()));
+            // The keyword must end at a word boundary: `module` and `fn_name`
+            // continue the identifier, so they are not the `mod`/`fn` keyword.
+            let boundary_after = head[after..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !(ch == '_' || ch.is_ascii_alphanumeric()));
             let rest = head[after..].trim_start();
-            let boundary_after = rest.starts_with('<')
+            let opens_item = rest.starts_with('<')
                 || rest.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_');
-            if boundary_before && boundary_after {
+            if boundary_before && boundary_after && opens_item {
                 return true;
             }
             search = after;
@@ -8073,6 +8080,17 @@ fn real() {}
         // call still counts.
         entry.body = "fn to_text(&self) -> String {\n    if std::mem::size_of::<fn()>() > 0 { return self.render(); }\n    String::new()\n}".into();
         assert!(blanket_impl_body_calls_self_method(&entry, "render"));
+        // A keyword that only prefixes a longer identifier does not open a
+        // nested item, so the outer call still counts (#13041 review).
+        entry.body = "fn to_text(&self) -> String {\n    for module in modules { self.render(); }\n    String::new()\n}".into();
+        assert!(blanket_impl_body_calls_self_method(&entry, "render"));
+        entry.body = "fn to_text(&self) -> String {\n    if implemented { self.render(); }\n    String::new()\n}".into();
+        assert!(blanket_impl_body_calls_self_method(&entry, "render"));
+        entry.body = "fn to_text(&self) -> String {\n    if fn_name > 0 { self.render(); }\n    String::new()\n}".into();
+        assert!(blanket_impl_body_calls_self_method(&entry, "render"));
+        // A real nested item still masks its own `self` call.
+        entry.body = "fn to_text(&self) -> String {\n    mod inner { fn go() { self.render(); } }\n    String::new()\n}".into();
+        assert!(!blanket_impl_body_calls_self_method(&entry, "render"));
     }
 
     #[test]
