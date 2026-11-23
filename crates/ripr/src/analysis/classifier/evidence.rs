@@ -2269,8 +2269,11 @@ impl ClassifiedProbeEvidence {
         // that runs the owner observes nothing after the call, no reaching
         // test holds a discriminator, however a file neighbour asserts on
         // other fields. Observe and discriminate read `no`, so the class is
-        // `reachable_unrevealed`, not a weak discriminator.
+        // `reachable_unrevealed`, not a weak discriminator. "Every test" needs
+        // the complete workspace index: a changed-files-only index can omit an
+        // untouched test that runs the owner and checks the field.
         let assigned_field_unread = !reach_ruled_out
+            && context.workspace_complete
             && !assigned_field_weakly_read
             && assigned_path.as_ref().is_some_and(|(owner, path)| {
                 crate::analysis::classify::assigned_field_is_unread(
