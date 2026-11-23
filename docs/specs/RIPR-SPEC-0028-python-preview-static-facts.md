@@ -2179,8 +2179,9 @@ Tests: `positional_only_marker_tests.rs::positional_calls_do_not_expose_a_marker
 
 A one-line `return`, `if` or `elif` condition whose only edit swaps its one
 top-level `and` for `or`, or back (#16203), changes the result only for inputs
-where the two operands disagree. Each operand must be a parameter, `not` a
-parameter, or one comparison between parameters, scalar literals and unrebound
+where the two operands disagree. Each operand must be a parameter (in an
+`if` or `elif` only, since `return a or b` returns an operand rather than its
+truth value), `not` a parameter, or one comparison between parameters, scalar literals and unrebound
 module constants, and each parameter must be one the body never rebinds. When
 every strong related call resolves both operands and gives them the same truth
 value, the edit reads `weakly_exposed` and the missing discriminator names a

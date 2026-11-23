@@ -4722,6 +4722,7 @@ fixtures = [
   "fixtures/python_bool_owner_mock_inspection_override",
   "fixtures/python_bool_owner_fake_environment",
   "fixtures/python_truthiness_swap_no_exposed_credit",
+  "fixtures/python_connective_swap_no_exposed_credit",
   "fixtures/python_truthiness_swap_falsy_input_control",
   "fixtures/python_truthiness_swap_inline_rebind_control",
   "fixtures/python_truthiness_swap_indirect_call_control",
