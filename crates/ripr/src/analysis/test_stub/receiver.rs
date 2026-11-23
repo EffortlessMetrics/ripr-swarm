@@ -25,6 +25,7 @@
 //! developer changes it when the case needs another state.
 
 use super::StubScope;
+use super::match_inputs::unraw;
 use crate::analysis::syntax::fn_signature::local_type_derives;
 use crate::analysis::syntax::{has_test_attribute, parse_clean_source_file};
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName};
@@ -323,14 +324,16 @@ pub(super) fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
         })
         .any(|node| {
             if let Some(rename) = ast::Rename::cast(node.clone()) {
-                return rename.name().is_some_and(|name| name.text() == base_name);
+                return rename
+                    .name()
+                    .is_some_and(|name| unraw(name.text()) == unraw(base_name));
             }
             if let Some(tree) = ast::UseTree::cast(node.clone()) {
                 let names_base = tree
                     .path()
                     .and_then(|path| path.segment())
                     .and_then(|segment| segment.name_ref())
-                    .is_some_and(|name| name.text() == base_name);
+                    .is_some_and(|name| unraw(name.text()) == unraw(base_name));
                 let glob = tree.star_token().is_some();
                 if tree.use_tree_list().is_some() || !(names_base || glob) {
                     return false;
@@ -388,7 +391,7 @@ pub(super) fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
                     ast::Item::Trait(it) => it.name().map(|name| name.text().to_string()),
                     _ => None,
                 };
-                name.is_some_and(|name| name == base_name)
+                name.is_some_and(|name| unraw(&name) == unraw(base_name))
             })
         })
 }
@@ -397,7 +400,9 @@ pub(super) fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
 fn mentions_ident(node: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
     node.descendants_with_tokens()
         .filter_map(|element| element.into_token())
-        .any(|token| token.kind() == ra_ap_syntax::SyntaxKind::IDENT && token.text() == name)
+        .any(|token| {
+            token.kind() == ra_ap_syntax::SyntaxKind::IDENT && unraw(token.text()) == unraw(name)
+        })
 }
 
 /// A function ripr wrote: its body still holds a `ripr:` fill-in or the

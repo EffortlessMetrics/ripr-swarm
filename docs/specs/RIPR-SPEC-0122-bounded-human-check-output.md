@@ -660,19 +660,35 @@ the expected value stays a `todo!()`. The values are copied only when:
 
 - the owner is a free function and the stub goes into an existing inline test
   module;
-- the call is the first one in that module, in source order, through the
-  owner's bare name with one literal argument per parameter, either in a
-  test's own statements or as a direct argument of `assert!`, `assert_eq!` or
-  `assert_ne!` (with no file-local macro of that name);
-- it sits in a `#[test]` function that is not `should_panic` and not a ripr
-  stub, outside closures, `async` blocks and `cfg`;
+- the call is the first one in that module, in source order, that meets
+  every condition here: it goes through the owner's bare name with one
+  literal argument per parameter, and it always runs when its test does, as
+  a statement or `let` initializer of the test's own body or as an asserted
+  operand (not a message argument) of a statement `assert!`, `assert_eq!` or
+  `assert_ne!`;
+- it sits in a `#[test]` function that is not `should_panic`, `ignore` or a
+  ripr stub, outside closures, `async` blocks and `cfg`;
+- each copied literal fits its parameter's declared type as written: an
+  integer, float, `bool` or char literal for that primitive, a string literal
+  for `&str`, a byte string for `&[u8]` (an alias or any other type takes no
+  copy);
+- with the written and copied inputs, the owner reaches the statement
+  holding the changed comparison: each earlier statement that names a copied
+  parameter, or a local bound from one, is an `if` without `else` whose
+  condition evaluates to false, and nothing in the comparison's own statement
+  before it names one;
 - nothing in the module declares, binds, imports or renames another item of
   the owner's name;
 - the module calls only standard macros (`assert_eq!`, `vec!`, `println!` and
   the like), since another macro or `include!` may emit a function of the
   owner's name, and the file defines, imports or `#[macro_use]`s no macro of
   a standard macro's name;
-- each copied parameter's type is not `impl Trait` or `&mut`.
+- macros defined in another file (a crate-root `#[macro_use]` or
+  `macro_rules!`) and attribute or derive macros are not seen; the type check
+  above still keeps the stub compiling.
+
+The JSON document changes only in the stub `text` and `fill_ins`; the copied
+values appear on the human `Other inputs:` line.
 
 A match-arm stub writes the input the changed arm's own pattern names instead
 of a labelled `todo!()` for that parameter (#8361), for example `ev =

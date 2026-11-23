@@ -3064,9 +3064,10 @@ fn length_boundary_writes_a_string_of_the_boundary_length() -> Result<(), String
 #[test]
 fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), String> {
     let owner = "pub fn tax(amount: i64, rate: u32) -> Result<i64, u8> {\n    if amount < 0 {\n        return Err(1);\n    }\n    if rate >= 10_000 {\n        return Err(2);\n    }\n    Ok(amount)\n}\n";
-    let module = |body: &str| {
+    let module_for = |owner: &str, body: &str| {
         format!("{owner}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n{body}\n}}\n")
     };
+    let module = |body: &str| module_for(owner, body);
     // (source, the copied `amount` and the test it came from; None = stays a fill-in)
     let cases: Vec<(String, Option<(&str, &str)>)> = vec![
         // An assertion's direct argument.
@@ -3076,12 +3077,88 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             Some(("10_000", "computes")),
         ),
-        // A statement call, negative literal; the first call in source order wins.
+        // A statement call with a negative literal is the first in source
+        // order, but `amount = -5` returns `Err(1)` before the changed
+        // comparison, so the next call's value is copied instead.
         (
             module(
                 "    #[test]\n    fn rejects() {\n        let r = tax(-5, 100);\n        assert!(r.is_err());\n    }\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
             ),
-            Some(("-5", "rejects")),
+            Some(("7", "computes")),
+        ),
+        // A negative literal that passes the guard is copied from a `let`.
+        (
+            module_for(
+                &owner.replace("amount < 0", "amount < -10"),
+                "    #[test]\n    fn small() {\n        let r = tax(-5, 100);\n        assert!(r.is_ok());\n    }\n",
+            ),
+            Some(("-5", "small")),
+        ),
+        // Calls that may never run are skipped: an assertion's message
+        // argument, a call under `if`, one behind `&&`, an ignored test and
+        // one under an attribute macro that may rewrite it.
+        // `assert_eq!` with square brackets reads like parentheses.
+        (
+            module(
+                "    #[test]\n    fn message() {\n        assert!(true, \"{:?}\", tax(1, 825));\n    }\n    #[test]\n    fn branch() {\n        if false {\n            let _ = tax(2, 825);\n        }\n    }\n    #[test]\n    fn short() {\n        let ok = false && tax(3, 825).is_ok();\n        assert!(!ok);\n    }\n    #[test]\n    #[ignore]\n    fn ignored() {\n        let _ = tax(4, 825);\n    }\n    #[test]\n    #[traced]\n    fn wrapped() {\n        let _ = tax(5, 825);\n    }\n    #[test]\n    fn computes() {\n        assert_eq![tax(9, 825), Ok(9)];\n    }\n",
+            ),
+            Some(("9", "computes")),
+        ),
+        // A local bound from the copied value steers a guard the evaluator
+        // cannot decide.
+        (
+            module_for(
+                &owner.replace(
+                    "    if amount < 0 {",
+                    "    let doubled = amount * 2;\n    if doubled < 0 {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // The copied value is read inside the changed statement before the
+        // comparison.
+        (
+            module_for(
+                &owner.replace(
+                    "    if rate >= 10_000 {",
+                    "    if amount > 5 && rate >= 10_000 {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A parameter whose declared type is an alias takes no copied value.
+        (
+            module_for(
+                &format!(
+                    "pub type Cents = i64;\n{}",
+                    owner.replace("amount: i64", "amount: Cents")
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // `#[macro_use]`, a rename to a standard macro's name, and a
+        // `macro` item may each replace `assert_eq!`.
+        (
+            module(
+                "    #[macro_use]\n    mod helpers {}\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        (
+            module(
+                "    use crate::checks::equal as assert_eq;\n    #[test]\n    fn computes() {\n        let _ = tax(7, 825);\n    }\n",
+            ),
+            None,
+        ),
+        (
+            format!(
+                "macro assert_eq($a:expr, $b:expr) {{}}\n{}",
+                module("    #[test]\n    fn computes() {\n        let _ = tax(7, 825);\n    }\n")
+            ),
+            None,
         ),
         // A `should_panic` test, a closure, a cfg-gated statement, a helper
         // that is not a test, and a ripr stub are skipped for a later call.
@@ -3109,6 +3186,13 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
         (
             module(
                 "    #[test]\n    fn computes() {\n        let tax = |a: i64, _r: u32| -> Result<i64, u8> { Ok(a) };\n        assert_eq!(tax(1, 825), Ok(1));\n    }\n",
+            ),
+            None,
+        ),
+        // A raw identifier binds the same name.
+        (
+            module(
+                "    #[test]\n    fn computes() {\n        let r#tax = |a: i64, _r: u32| -> Result<i64, u8> { Ok(a) };\n        assert_eq!(tax(1, 825), Ok(1));\n    }\n",
             ),
             None,
         ),
@@ -3214,8 +3298,7 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             }
             None => {
                 assert!(
-                    stub.text
-                        .contains("let amount: i64 = todo!(\"ripr: choose `amount`\");"),
+                    stub.text.contains(" = todo!(\"ripr: choose `amount`\");"),
                     "{}",
                     stub.text
                 );
@@ -3224,4 +3307,45 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
         }
     }
     Ok(())
+}
+
+#[test]
+fn copied_literal_must_fit_the_parameter_type() {
+    use super::reused_inputs::literal_fits;
+    let fits = [
+        ("i64", "10_000"),
+        ("i64", "-3"),
+        ("u8", "0x1e"),
+        ("u32", "5u32"),
+        ("f64", "1.5"),
+        ("f64", "2"),
+        ("f32", "1e3"),
+        ("bool", "true"),
+        ("char", "'c'"),
+        ("&str", "\"w\""),
+        ("&'_ str", "\"w\""),
+        ("&'static str", "r\"w\""),
+        ("&[u8]", "b\"ab\""),
+    ];
+    for (ty, literal) in fits {
+        assert!(literal_fits(ty, literal), "{ty} takes {literal}");
+    }
+    let misfits = [
+        ("u32", "-3"),
+        ("u32", "5u8"),
+        ("i64", "1.5"),
+        ("i64", "\"w\""),
+        ("f32", "1f64"),
+        ("f64", "3i32"),
+        ("bool", "1"),
+        ("&str", "'c'"),
+        ("&[u8]", "\"ab\""),
+        ("Cents", "5"),
+        ("impl Into<i64>", "5"),
+        ("&mut i64", "5"),
+        ("Option<i64>", "5"),
+    ];
+    for (ty, literal) in misfits {
+        assert!(!literal_fits(ty, literal), "{ty} refuses {literal}");
+    }
 }

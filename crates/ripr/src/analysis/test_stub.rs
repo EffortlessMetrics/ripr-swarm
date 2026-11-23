@@ -961,7 +961,14 @@ fn stub_body(
             })
             .cloned()
             .collect();
-        reused_inputs::reused_inputs(signature, &bindings, &open, scope)
+        reused_inputs::reused_inputs(
+            signature,
+            &bindings,
+            &open,
+            &boundary,
+            seam.byte_offset(),
+            scope,
+        )
     })
     .flatten();
     let input_setup = reused.as_ref().map(|reused| {
