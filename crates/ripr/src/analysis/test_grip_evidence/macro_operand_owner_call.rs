@@ -19,6 +19,14 @@
 //! `impl Widget::new`), or a `.` method or field on a receiver when the owner
 //! is a free function (`other.pick(0)` for `pick`), is not a use of the owner
 //! and is not counted.
+//!
+//! #16192: the owner's result can also reach the macro through a local
+//! binding, `let r = pick(0); assert_eq!(check_ok!(r), Mode::A);`. A plain
+//! `let` binding initialized directly from an owner call counts like the
+//! call itself, but only when every use of the binding in the test sits
+//! inside this assertion's untrusted macros: a use anywhere else (another
+//! assertion, a clone, a helper argument) may observe the result, so the
+//! assertion keeps its parsed reading.
 
 use std::collections::BTreeSet;
 
@@ -85,15 +93,187 @@ impl<'a> OwnerName<'a> {
     }
 }
 
+/// A plain local bound directly to an owner call in the test body, with the
+/// number of times the body names it after its declaration.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct OwnerResultLocal {
+    name: String,
+    uses: usize,
+}
+
+/// Locals of the test `body` declared once as `let name = <owner call>;`
+/// (a plain or `mut` identifier pattern, the initializer exactly one call of
+/// the owner). A body that does not parse cleanly yields none, which keeps
+/// the parsed reading.
+fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLocal> {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(body) else {
+        return Vec::new();
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return Vec::new();
+    };
+    let mut locals = Vec::new();
+    for statement in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::LetStmt::cast)
+    {
+        let Some(ast::Pat::IdentPat(pattern)) = statement.pat() else {
+            continue;
+        };
+        if pattern.ref_token().is_some() || pattern.pat().is_some() {
+            continue;
+        }
+        let (Some(name), Some(initializer)) = (pattern.name(), statement.initializer()) else {
+            continue;
+        };
+        if statement.let_else().is_some() || !is_owner_call(&initializer, owner) {
+            continue;
+        }
+        let declared_at = name.syntax().text_range();
+        let initialized_by = initializer.syntax().text_range();
+        let name = name.text().to_string();
+        let declarations = function
+            .syntax()
+            .descendants()
+            .filter_map(ast::IdentPat::cast)
+            .filter(|other| other.name().is_some_and(|other| other.text() == name))
+            .count();
+        if declarations != 1 {
+            continue;
+        }
+        let tokens: Vec<SyntaxToken> = function
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+            .collect();
+        // The declaring name token is excluded by its range, so a typed
+        // `let r: T = ..` (whose name a `:` follows) is not miscounted, and
+        // so is the initializer, whose callee may share the local's name
+        // (`let pick = pick(0)`).
+        let uses = (0..tokens.len())
+            .filter(|&at| {
+                let range = tokens[at].text_range();
+                !declared_at.contains_range(range)
+                    && !initialized_by.contains_range(range)
+                    && reads_local(&tokens, at, &name)
+            })
+            .count();
+        locals.push(OwnerResultLocal { name, uses });
+    }
+    locals
+}
+
+/// Whether `tokens[at]` may read the local `name`: the identifier itself,
+/// not a member (`x.name`), a path segment (`m::name`) or a struct field
+/// label (`name: ..`), or a string whose format template captures it
+/// (`"{name}"`, `"{name:?}"`). Over-counting a read only withholds the
+/// demotion.
+fn reads_local(tokens: &[SyntaxToken], at: usize, name: &str) -> bool {
+    let token = &tokens[at];
+    let kind_at = |index: Option<usize>| {
+        index
+            .and_then(|index| tokens.get(index))
+            .map(|token| token.kind())
+    };
+    match token.kind() {
+        SyntaxKind::IDENT if token.text() == name => {
+            let member = matches!(
+                kind_at(at.checked_sub(1)),
+                Some(SyntaxKind::DOT | SyntaxKind::COLON2)
+            ) || (kind_at(at.checked_sub(1)) == Some(SyntaxKind::COLON)
+                && kind_at(at.checked_sub(2)) == Some(SyntaxKind::COLON));
+            let label = kind_at(at.checked_add(1)) == Some(SyntaxKind::COLON)
+                && kind_at(at.checked_add(2)) != Some(SyntaxKind::COLON);
+            !member && !label
+        }
+        SyntaxKind::STRING => captures_local(token.text(), name),
+        _ => false,
+    }
+}
+
+/// Whether a string literal's text holds an implicit format capture of
+/// `name`: as the argument (`{name}`, `{name:..}`) or as a width or
+/// precision parameter (`{:name$}`, `{:.name$}`). `{{` escapes are consumed
+/// in order, so the third brace of `{{{name}}}` still opens a capture.
+fn captures_local(text: &str, name: &str) -> bool {
+    let mut at = 0;
+    while let Some(offset) = text[at..].find('{') {
+        let open = at + offset + 1;
+        if text[open..].starts_with('{') {
+            at = open + 1;
+            continue;
+        }
+        let Some(length) = text[open..].find('}') else {
+            return false;
+        };
+        if placeholder_reads(&text[open..open + length], name) {
+            return true;
+        }
+        at = open + length + 1;
+    }
+    false
+}
+
+/// Whether one placeholder's contents (between its braces) read `name`.
+fn placeholder_reads(placeholder: &str, name: &str) -> bool {
+    let (argument, spec) = placeholder.split_once(':').unwrap_or((placeholder, ""));
+    argument == name
+        || spec.match_indices(name).any(|(at, _)| {
+            // A zero-pad flag may precede the width name (`{:0name$}`);
+            // other identifier characters before it make a longer name.
+            spec[at + name.len()..].starts_with('$')
+                && !spec[..at]
+                    .trim_end_matches(|c: char| c.is_ascii_digit())
+                    .ends_with(|c: char| c.is_alphanumeric() || c == '_')
+        })
+}
+
+/// Whether `expression` is exactly one call of the owner: `owner(..)`,
+/// `Q::owner(..)` with an admitted qualifier, or `x.owner(..)` for an
+/// associated-function owner.
+fn is_owner_call(expression: &ast::Expr, owner: &OwnerName<'_>) -> bool {
+    match expression {
+        ast::Expr::CallExpr(call) => {
+            let Some(ast::Expr::PathExpr(callee)) = call.expr() else {
+                return false;
+            };
+            let Some(path) = callee.path() else {
+                return false;
+            };
+            let named = path
+                .segment()
+                .and_then(|segment| segment.name_ref())
+                .is_some_and(|name| name.text() == owner.name);
+            named
+                && path.qualifier().is_none_or(|qualifier| {
+                    qualifier
+                        .segment()
+                        .and_then(|segment| segment.name_ref())
+                        .is_some_and(|name| owner.admits_qualifier(name.text()))
+                })
+        }
+        ast::Expr::MethodCallExpr(call) => {
+            owner.is_method()
+                && call
+                    .name_ref()
+                    .is_some_and(|name| name.text() == owner.name)
+        }
+        _ => false,
+    }
+}
+
 /// Marks `oracle` unknown when `owner` is called in it only inside untrusted
 /// inner macros. `file_source` is the test file's text, read for local
 /// `macro_rules!` definitions that shadow a standard name.
-pub(super) fn demote_macro_held_owner_call(
+fn demote_macro_held_owner_call(
     oracle: &mut OracleFact,
     owner: &OwnerName<'_>,
+    locals: &[OwnerResultLocal],
     file_source: Option<&str>,
 ) -> bool {
-    if !owner_call_only_inside_untrusted_macro(&oracle.text, owner, file_source) {
+    if !owner_use_only_inside_untrusted_macro(&oracle.text, owner, locals, file_source) {
         return false;
     }
     oracle.kind = OracleKind::Unknown;
@@ -104,12 +284,28 @@ pub(super) fn demote_macro_held_owner_call(
 
 /// Whether the assertion `text` calls `owner` at least once and every such
 /// call sits inside an untrusted inner macro's token tree.
-pub(super) fn owner_call_only_inside_untrusted_macro(
+#[cfg(test)]
+fn owner_call_only_inside_untrusted_macro(
     text: &str,
     owner: &OwnerName<'_>,
     file_source: Option<&str>,
 ) -> bool {
-    if owner.name.is_empty() || !text.contains(owner.name) || text.matches('!').count() < 2 {
+    owner_use_only_inside_untrusted_macro(text, owner, &[], file_source)
+}
+
+/// Whether the assertion `text` uses the owner's result at least once, by a
+/// call or through one of `locals`, and every such use sits inside an
+/// untrusted inner macro's token tree. A local counts only when all of its
+/// uses in the test are held here.
+fn owner_use_only_inside_untrusted_macro(
+    text: &str,
+    owner: &OwnerName<'_>,
+    locals: &[OwnerResultLocal],
+    file_source: Option<&str>,
+) -> bool {
+    let named = !owner.name.is_empty() && text.contains(owner.name)
+        || locals.iter().any(|local| text.contains(&local.name));
+    if !named || text.matches('!').count() < 2 {
         return false;
     }
     let wrapped = format!(
@@ -138,10 +334,28 @@ pub(super) fn owner_call_only_inside_untrusted_macro(
                 .get_or_init(|| file_source.map(local_macro_rules_names).unwrap_or_default())
                 .contains(name)
     };
-    let mut held = 0usize;
-    let mut free = 0usize;
-    walk(tree.syntax(), owner, false, &trusted, &mut held, &mut free);
-    held > 0 && free == 0
+    let mut counts = UseCounts {
+        held: 0,
+        free: 0,
+        local_held: vec![0; locals.len()],
+    };
+    walk(tree.syntax(), owner, locals, false, &trusted, &mut counts);
+    // A local is evidence only when every read of it in the test sits in
+    // this assertion's untrusted macros; a local read elsewhere adds nothing,
+    // but does not undo a held owner call.
+    let local_evidence = locals
+        .iter()
+        .zip(&counts.local_held)
+        .any(|(local, held)| *held > 0 && *held == local.uses);
+    counts.free == 0 && (counts.held > 0 || local_evidence)
+}
+
+/// Owner uses in one assertion: held calls, free uses (calls or locals), and
+/// held uses of each owner-result local.
+struct UseCounts {
+    held: usize,
+    free: usize,
+    local_held: Vec<usize>,
 }
 
 /// Counts owner calls in `tree`, split by whether an untrusted inner macro
@@ -154,10 +368,10 @@ pub(super) fn owner_call_only_inside_untrusted_macro(
 fn walk(
     tree: &SyntaxNode,
     owner: &OwnerName<'_>,
+    locals: &[OwnerResultLocal],
     inside_untrusted: bool,
     trusted: &dyn Fn(&str) -> bool,
-    held: &mut usize,
-    free: &mut usize,
+    counts: &mut UseCounts,
 ) {
     let children: Vec<NodeOrToken<SyntaxNode, _>> = tree
         .children_with_tokens()
@@ -176,7 +390,7 @@ fn walk(
                     && group.kind() == SyntaxKind::TOKEN_TREE
                 {
                     let untrusted = inside_untrusted || !trusted(token.text());
-                    walk(group, owner, untrusted, trusted, held, free);
+                    walk(group, owner, locals, untrusted, trusted, counts);
                     position += 3;
                     continue;
                 }
@@ -184,7 +398,21 @@ fn walk(
                     .checked_sub(1)
                     .and_then(|at| children.get(at))
                     .is_some_and(|before| before.kind() == SyntaxKind::DOT);
-                if token.text() == owner.name
+                let unqualified = !after_dot && qualifier(&children, position).is_none();
+                let label = next.is_some_and(|next| next.kind() == SyntaxKind::COLON)
+                    && after.is_none_or(|after| after.kind() != SyntaxKind::COLON);
+                // A local shadows a same-named owner function (`let pick =
+                // pick(0)`), so an unqualified name it binds reads the local.
+                let local = locals.iter().position(|local| local.name == token.text());
+                if unqualified && label {
+                    // A struct field label (`Holder { r: .. }`) reads nothing.
+                } else if let (true, Some(at)) = (unqualified, local) {
+                    if inside_untrusted {
+                        counts.local_held[at] += 1;
+                    } else {
+                        counts.free += 1;
+                    }
+                } else if token.text() == owner.name
                     && (!after_dot || owner.is_method())
                     && qualifier(&children, position)
                         .is_none_or(|qualifier| owner.admits_qualifier(&qualifier))
@@ -198,14 +426,28 @@ fn walk(
                                     .is_some_and(|open| open.kind() == SyntaxKind::L_PAREN)
                     );
                     if !inside_untrusted {
-                        *free += 1;
+                        counts.free += 1;
                     } else if paren_call {
-                        *held += 1;
+                        counts.held += 1;
+                    }
+                }
+            }
+            NodeOrToken::Token(token) if token.kind() == SyntaxKind::STRING => {
+                // An implicit format capture reads the local where the
+                // string is evaluated; inside an untrusted macro it counts
+                // as held, like any other use there.
+                for (at, local) in locals.iter().enumerate() {
+                    if captures_local(token.text(), &local.name) {
+                        if inside_untrusted {
+                            counts.local_held[at] += 1;
+                        } else {
+                            counts.free += 1;
+                        }
                     }
                 }
             }
             NodeOrToken::Node(group) if group.kind() == SyntaxKind::TOKEN_TREE => {
-                walk(group, owner, inside_untrusted, trusted, held, free);
+                walk(group, owner, locals, inside_untrusted, trusted, counts);
             }
             _ => {}
         }
@@ -266,9 +508,23 @@ pub(super) fn test_has_macro_held_owner_call(
         .files()
         .get(&test.file)
         .map(|facts| facts.data().source.as_ref());
+    let locals = test_locals(test, owner);
     test.assertions
         .iter()
-        .any(|oracle| owner_call_only_inside_untrusted_macro(&oracle.text, owner, source))
+        .any(|oracle| owner_use_only_inside_untrusted_macro(&oracle.text, owner, &locals, source))
+}
+
+/// The owner-result locals of `test`, read only when an assertion holds an
+/// inner macro and the body names the owner at all.
+fn test_locals(test: &TestSummary, owner: &OwnerName<'_>) -> Vec<OwnerResultLocal> {
+    let nested = test
+        .assertions
+        .iter()
+        .any(|oracle| oracle.text.matches('!').count() >= 2);
+    if !nested || owner.name.is_empty() || !test.body.as_str().contains(owner.name) {
+        return Vec::new();
+    }
+    owner_result_locals(test.body.as_str(), owner)
 }
 
 /// The test's view with every assertion an untrusted inner macro holds the
@@ -278,12 +534,13 @@ pub(super) fn demoted_view(
     owner: &OwnerName<'_>,
     file_source: Option<&str>,
 ) -> Option<Vec<OracleFact>> {
+    let locals = test_locals(test, owner);
     let first = test.assertions.iter().position(|oracle| {
-        owner_call_only_inside_untrusted_macro(&oracle.text, owner, file_source)
+        owner_use_only_inside_untrusted_macro(&oracle.text, owner, &locals, file_source)
     })?;
     let mut assertions = test.assertions.clone();
     for oracle in &mut assertions[first..] {
-        demote_macro_held_owner_call(oracle, owner, file_source);
+        demote_macro_held_owner_call(oracle, owner, &locals, file_source);
     }
     Some(assertions)
 }
@@ -382,6 +639,173 @@ mod tests {
                 owner_call_only_inside_untrusted_macro(text, &new, None),
                 *expected,
                 "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_bound_to_the_owner_counts_only_when_every_use_is_held() {
+        let pick = OwnerName {
+            name: "pick",
+            types: Vec::new(),
+        };
+        let local = "macro_rules! check_ok { ($e:expr) => { 1 }; }";
+        let cases: &[(&str, &str, bool)] = &[
+            (
+                "let r = pick(0);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let mut r = pick(0);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            ("let r = pick(0);", "assert_eq!(r, Mode::A)", false),
+            ("let r = pick(0);", "assert_eq!(check_ok!(r), r)", false),
+            (
+                "let r = pick(0); let s = r.clone();",
+                "assert_eq!(check_ok!(r), s)",
+                false,
+            ),
+            (
+                "let r = other(0);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0).unwrap();",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = x.pick(0);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0); let r = 1;",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(vec![r], vec![Mode::A])",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(check_ok!(r.0), Mode::A)",
+                true,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{r:?}{}\", check_ok!(r)), \"Ok(A)\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{{r}}{}\", check_ok!(r)), \"Ok(A)\")",
+                true,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{{{r}}}{}\", check_ok!(r)), \"{Ok(A)}\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:r$}{}\", \"x\", check_ok!(r)), \"x\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:.r$}{}\", 1.0, check_ok!(r)), \"1\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:0r$}{}\", \"x\", check_ok!(r)), \"x\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:pr$}{}\", \"x\", check_ok!(r)), \"x\")",
+                true,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:p1r$}{}\", \"x\", check_ok!(r)), \"x\")",
+                true,
+            ),
+            (
+                "",
+                "assert_eq!(check_ok!(pick(0)), Holder { pick: 1 })",
+                true,
+            ),
+            (
+                "let pick = pick(0);",
+                "assert_eq!(check_ok!(pick), Mode::A)",
+                true,
+            ),
+            (
+                "let pick = pick(0);",
+                "assert_eq!(check_ok!(pick), pick)",
+                false,
+            ),
+            (
+                "let r = pick(0); let s = &r;",
+                "assert_eq!(check_ok!(Holder { r: r }), *s)",
+                false,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(check_ok!(Holder { r: r }), Mode::A)",
+                true,
+            ),
+            (
+                "let r = pick(0); let _ = &r;",
+                "assert_eq!(check_ok!((pick(0), r)), Mode::A)",
+                true,
+            ),
+            (
+                "let r = pick(0); let _ = &r;",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0); let _ = fixture.r; let _ = m::r; let _ = S { r: 1 };",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let r: Result<Mode, ()> = pick(0); let s = r.clone();",
+                "assert_eq!(check_ok!(r), s)",
+                false,
+            ),
+            (
+                "let r: Result<Mode, ()> = pick(0);",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let r = pick(0); let _ = S { r };",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = pick(0); println!(\"{r}\");",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+        ];
+        for (setup, assertion, expected) in cases {
+            let body = format!("fn t() {{ {setup} {assertion}; }}");
+            let locals = owner_result_locals(&body, &pick);
+            assert_eq!(
+                owner_use_only_inside_untrusted_macro(assertion, &pick, &locals, Some(local)),
+                *expected,
+                "{setup} {assertion}"
             );
         }
     }

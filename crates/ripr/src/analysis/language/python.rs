@@ -404,6 +404,7 @@ use classify::{
     classify_change, classify_change_with_context, classify_change_with_old,
     classify_change_with_source,
 };
+mod connective_swap;
 mod default_equal_keyword;
 mod discriminators;
 mod effect_alignment;
@@ -2684,6 +2685,8 @@ mod conftest_admission_tests;
 #[cfg(test)]
 mod source_facts_tests;
 
+#[cfg(test)]
+mod connective_swap_tests;
 #[cfg(test)]
 mod default_equal_keyword_tests;
 #[cfg(test)]

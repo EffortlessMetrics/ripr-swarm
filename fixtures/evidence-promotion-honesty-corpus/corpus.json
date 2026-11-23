@@ -287,6 +287,7 @@
   ],
   "report_digest_exemptions": [],
   "report_digest_required": [
+    "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-macro-held-owner-result-local.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-macro-held-owner-call.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-manifest-rebound-assertion-root.json",
     "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-lib-test-false-skipped.json",
@@ -22170,6 +22171,32 @@
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-macro-held-owner-call.json",
       "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/macro-held-owner-call",
       "vector": "repo_exposure_owner_call_held_only_by_an_untrusted_local_macro_is_not_credited",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::pick",
+          "expression": "Ok(Mode::A)",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_related_test",
+          "owner": "src/lib.rs::pick",
+          "expression": "Ok(Mode::A)",
+          "test": "picks_a",
+          "file": "src/lib.rs",
+          "oracle_strength": "unknown",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_macro_held_owner_result_local",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-macro-held-owner-result-local.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/macro-held-owner-result-local",
+      "vector": "repo_exposure_owner_result_local_used_only_by_an_untrusted_local_macro_is_not_credited",
       "assertions": [
         {
           "type": "expected_repo_seam_grip",
