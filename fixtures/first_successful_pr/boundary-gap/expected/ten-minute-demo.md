@@ -31,7 +31,7 @@ find an equality-boundary assertion for `amount == threshold`.
 ## 2. Run The Front Door
 
 ```bash
-ripr first-pr --root . --base origin/main --head HEAD --gap-ledger fixtures/first_successful_pr/boundary-gap/inputs/reports/gap-decision-ledger.json --out-dir target/ripr/demo/boundary-gap
+ripr first-pr --root . --base origin/main --head HEAD --gap-ledger fixtures/first_successful_pr/boundary-gap/inputs/reports/gap-decision-ledger.json --output-dir target/ripr/demo/boundary-gap
 ```
 
 Open:

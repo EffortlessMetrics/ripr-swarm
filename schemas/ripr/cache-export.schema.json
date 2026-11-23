@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/cache-export.schema.json",
+  "title": "RIPR Cache Export",
+  "description": "The document `ripr cache export --out NEW_DIRECTORY` writes to stdout, with exit code 0, after it copied and validated a current-input cache snapshot into the new directory. A failed export writes no JSON: it exits 2 with prose on stderr. `schema_version` versions this report, not the copied cache layers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cache_dir",
+    "classified_entries",
+    "file_fact_entries",
+    "missing_file_facts",
+    "copied_files",
+    "logical_file_bytes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "cache_dir": {
+      "description": "The export directory as an absolute path in the host's own spelling: `--out` resolved against the working directory, with its parent canonicalized.",
+      "type": "string",
+      "minLength": 1
+    },
+    "classified_entries": {
+      "description": "Classified-seam cache families copied for the current inputs: the full family, the compact family, or both. An export with none refuses instead of succeeding.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2
+    },
+    "file_fact_entries": {
+      "description": "Per-file fact entries copied for the current inputs.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "missing_file_facts": {
+      "description": "Current input files with no file fact entry to copy. File facts are optional, so a missing one is counted, not refused.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "copied_files": {
+      "description": "Files written to the export, including sharded manifests and the shards they reference; at least `classified_entries` plus `file_fact_entries`.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "logical_file_bytes": {
+      "description": "The sum of the copied files' encoded lengths. It does not describe allocated bytes, directory overhead or peak disk use.",
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

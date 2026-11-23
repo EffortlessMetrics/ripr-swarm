@@ -183,6 +183,8 @@ A non-success checkpoint is published before discovery or a child process;
 consumers must bind the expected run ID, not infer freshness from file presence.
 Terminal publication failures fail the command. Concurrent convenience aliases
 are last-published, not a guarantee of which invocation started most recently.
+The external importer writes separate `kani-import.json` and `kani-import.md`
+defaults in the same reports directory. Either producer can run first.
 
 The journal records selected source harnesses, their observed proof-file bytes,
 process arguments/status/deadlines, captured text and commitments, parsed native
@@ -314,6 +316,9 @@ It does not claim:
   `lane_never_passes_by_absence`,
   `arguments_parse_and_reject_unknown_flags`,
   `report_names_every_status_word`.
+- `xtask/tests/kani_lane_process/producer_aliases.rs`:
+  `both_kani_producers_journal_then_import`,
+  `both_kani_producers_import_then_journal`.
 - `xtask/tests/kani_lane_process.rs`:
   `kani_runner_requires_observed_complete_cover_evidence`.
 - `xtask/src/kani_lane/machine.rs`:

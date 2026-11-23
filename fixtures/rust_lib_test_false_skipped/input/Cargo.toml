@@ -1,0 +1,9 @@
+[package]
+name = "rust_lib_test_false_skipped_fixture"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[lib]
+test = false

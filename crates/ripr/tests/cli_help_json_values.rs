@@ -113,6 +113,7 @@ fn a_closed_value_set_is_exactly_what_the_parser_accepts() -> Result<(), String>
         "check --mode",
         "init --agents",
         "init --ci",
+        "outcome --format",
         "pilot --format",
     ] {
         if !compared.iter().any(|subject| subject == expected) {
@@ -140,5 +141,38 @@ fn agent_repair_phase_and_init_presets_carry_their_values() -> Result<(), String
         agents["values"],
         serde_json::json!(["claude", "codex", "cursor", "all"])
     );
+    Ok(())
+}
+
+#[test]
+fn outcome_formats_match_help_and_reach_the_next_parser_check() -> Result<(), String> {
+    let document = catalog()?;
+    let format = flag(&document, "outcome", "--format")?;
+    let values = format["values"]
+        .as_array()
+        .ok_or("outcome --format values missing")?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .ok_or("outcome --format value is not a string")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(values, ["md", "markdown", "text", "json"]);
+
+    let help = run_ripr(&["outcome", "--help"])?;
+    assert!(help.status.success());
+    let usage = format!("[--format {}]", values.join("|"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains(&usage));
+
+    for value in values {
+        let output = run_ripr(&["outcome", "--format", value])?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(2), "{value}: {stderr}");
+        assert!(
+            stderr.contains("outcome requires --before <path>"),
+            "{value} did not reach the required-input check: {stderr}"
+        );
+    }
     Ok(())
 }

@@ -354,4 +354,187 @@ mod tests {
             Err(AnalysisExecutionIdentityParseError::Empty)
         );
     }
+
+    type ParseError = AnalysisExecutionIdentityParseError;
+
+    fn wrong_class(value: &str, expected: &'static str) -> ParseError {
+        ParseError::WrongClass {
+            value: value.to_string(),
+            expected,
+        }
+    }
+
+    #[test]
+    fn each_identity_keeps_its_trimmed_wire_spelling() -> Result<(), ParseError> {
+        assert_eq!(
+            AnalysisAttemptId::from_refresh_generation(12).as_str(),
+            "snapshot:12"
+        );
+        assert_eq!(
+            AnalysisAttemptId::parse_agent_snapshot_id("  snapshot:7\n")?.as_str(),
+            "snapshot:7"
+        );
+        assert_eq!(
+            CompletedAnalysisSnapshotId::parse(" snapshot:input:abc ")?.as_str(),
+            "snapshot:input:abc"
+        );
+        assert_eq!(
+            DiagnosticResultId::from_producer_id(
+                "\tripr-workspace-diagnostics-v2:ABCDEF0123456789"
+            )?
+            .as_str(),
+            "ripr-workspace-diagnostics-v2:ABCDEF0123456789"
+        );
+        assert_eq!(
+            ContinuationId::parse_success_alias(" page:3 ")?.as_str(),
+            "page:3"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn blank_values_are_empty_for_every_identity() {
+        for blank in ["", "   ", "\n\t"] {
+            assert_eq!(
+                AnalysisAttemptId::parse_agent_snapshot_id(blank),
+                Err(ParseError::Empty)
+            );
+            assert_eq!(
+                CompletedAnalysisSnapshotId::parse(blank),
+                Err(ParseError::Empty)
+            );
+            assert_eq!(
+                DiagnosticResultId::from_producer_id(blank),
+                Err(ParseError::Empty)
+            );
+            assert_eq!(ContinuationId::parse_request(blank), Err(ParseError::Empty));
+        }
+        assert_eq!(
+            AnalysisAttemptId::parse_agent_snapshot_id("snapshot:"),
+            Err(ParseError::Empty)
+        );
+    }
+
+    #[test]
+    fn an_attempt_id_is_the_snapshot_prefix_and_a_u64_generation() {
+        let refresh = "refresh-generation AnalysisAttemptId (`snapshot:{generation}`)";
+        assert_eq!(
+            AnalysisAttemptId::parse_agent_snapshot_id("gap:9"),
+            Err(wrong_class(
+                "gap:9",
+                "refresh-generation AnalysisAttemptId (`snapshot_id` echo)"
+            ))
+        );
+        for value in [
+            "snapshot:-1",
+            "snapshot:1.5",
+            "snapshot:18446744073709551616",
+        ] {
+            assert_eq!(
+                AnalysisAttemptId::parse_agent_snapshot_id(value),
+                Err(wrong_class(value, refresh)),
+                "{value}"
+            );
+        }
+        assert_eq!(
+            AnalysisAttemptId::parse_agent_snapshot_id("snapshot:18446744073709551615")
+                .map(|id| id.as_str().to_string()),
+            Ok("snapshot:18446744073709551615".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_errors_name_the_value_and_the_expected_class() {
+        assert_eq!(
+            ParseError::Empty.to_string(),
+            "identity value must not be empty"
+        );
+        assert_eq!(
+            wrong_class("gap:1", "continuation_id").to_string(),
+            "value `gap:1` is not a continuation_id"
+        );
+    }
+
+    #[test]
+    fn a_completed_handle_has_at_least_two_colons_after_the_snapshot_prefix() {
+        let expected = "CompletedAnalysisSnapshotId (completed snapshot handle)";
+        for value in [
+            "snapshot:sha256:abc",
+            "snapshot:input:abc",
+            "snapshot:a:b",
+            "snapshot:a:b:c",
+        ] {
+            assert!(
+                CompletedAnalysisSnapshotId::parse(value).ok().is_some(),
+                "{value}"
+            );
+        }
+        for value in [
+            "snapshot:42",
+            "snapshot:abc",
+            "snapshot:sha256",
+            "gap:a:b",
+            "sha256:a:b",
+        ] {
+            assert_eq!(
+                CompletedAnalysisSnapshotId::parse(value),
+                Err(wrong_class(value, expected)),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_diagnostic_result_needs_a_producer_prefix_and_a_16_hex_digest() {
+        assert!(
+            DiagnosticResultId::from_producer_id("ripr-workspace-diagnostics-v2:0123456789abcdef")
+                .ok()
+                .is_some()
+        );
+        assert_eq!(
+            DiagnosticResultId::from_producer_id("0123456789abcdef"),
+            Err(wrong_class(
+                "0123456789abcdef",
+                "DiagnosticResultId (`<prefix>:<digest>`)"
+            ))
+        );
+        for value in [
+            "ripr-document-diagnostics-v1:0123456789abcdef",
+            "ripr-document-diagnostics-v2:0123456789abcde",
+            "ripr-document-diagnostics-v2:0123456789abcdef0",
+            "ripr-document-diagnostics-v2:0123456789abcdeg",
+            "ripr-document-diagnostics-v2:ghijklmnopqrstuv",
+        ] {
+            assert_eq!(
+                DiagnosticResultId::from_producer_id(value),
+                Err(wrong_class(value, "DiagnosticResultId")),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_continuation_refuses_every_other_identity_class_by_label() {
+        for value in [
+            "snapshot:3",
+            "gap:abc",
+            "action:repair",
+            "instruction-7",
+            "ripr-document-diagnostics-v2:0123456789abcdef",
+            "ripr-workspace-diagnostics-v2:0123456789abcdef",
+        ] {
+            assert_eq!(
+                ContinuationId::parse_request(value),
+                Err(wrong_class(value, "continuation_id")),
+                "{value}"
+            );
+            assert_eq!(
+                ContinuationId::parse_success_alias(value),
+                Err(wrong_class(value, "continuation_identity")),
+                "{value}"
+            );
+        }
+        // A prefix only counts at the start of the value.
+        assert!(ContinuationId::parse_request("page:gap:2").ok().is_some());
+    }
 }

@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- JSON refusals: under an explicit JSON request, an empty value refused by a command's own parser (`ripr agent status --json --attempt ""`, `ripr repair --json --base ""`, `ripr swarm queue --json --root ""`) now writes the `cli_refusal` document with code `missing_value` and the flag as `token`, like a missing value already did; a global `-v`/`--verbose` between command words (`ripr agent -v status ...`) no longer drops the `next` help command. Wording, exit code `2` and stderr are unchanged, and without a JSON request stdout stays empty (#14859).

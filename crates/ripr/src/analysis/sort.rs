@@ -104,6 +104,7 @@ mod tests {
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(format!("probe-{id}")),
                 location: SourceLocation::new(file, line, 1),
                 owner: None,

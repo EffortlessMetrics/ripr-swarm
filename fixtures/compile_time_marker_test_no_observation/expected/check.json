@@ -77,8 +77,8 @@
           "oracle": "",
           "relation_reason": "same_test_file",
           "relation_confidence": "medium",
-          "miss": "no_assertion",
-          "why": "has no assertion"
+          "miss": "no_call_path",
+          "why": "no established call path to the changed code; linked by file location only"
         }
       ],
       "stop_reasons": [],

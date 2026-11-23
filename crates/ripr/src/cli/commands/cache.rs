@@ -20,7 +20,8 @@ Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
 
 Copy a qualified current-input cache snapshot, excluding historical keys,
 unreferenced shards, fingerprint mappings and staging files. The live cache
-is never changed. Run repo exposure or repo badge analysis first.
+is never changed. Run `ripr check --format repo-exposure-summary-json`
+first (same --root).
 
   --root PATH   Analyzed root, preserving the spelling supplied to check.
                 Default: the same implicit workspace resolution as check.
@@ -697,7 +698,14 @@ fn run_status(args: &[String]) -> Result<(), String> {
     }
 
     let (root, is_json) = parse_status_args(args)?;
-    let cache_dir = resolve_cache_dir(root.as_deref())?;
+    // #15260: under `--json` an unusable `--root` is the shared refusal
+    // document on stdout, like its sibling commands, not prose alone.
+    let cache_dir = resolve_cache_dir(root.as_deref()).map_err(|message| {
+        let token = root
+            .as_deref()
+            .map(|root| root.to_string_lossy().into_owned());
+        crate::cli::usage_refusal::input_unusable(token.as_deref(), &message)
+    })?;
     let (inspect_dir, real_dir) = resolve_status_base(&cache_dir);
     let status = inspect_cache_root(&inspect_dir);
     // Read separately from the status, so a cache created in between could
@@ -861,7 +869,7 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
     }
     Ok((
         root,
-        output.ok_or("cache export requires --out NEW_DIRECTORY")?,
+        output.ok_or("cache export requires --out NEW_DIRECTORY; pass a directory that does not exist yet and whose parent does, for example `ripr cache export --out ripr-cache-export`")?,
     ))
 }
 

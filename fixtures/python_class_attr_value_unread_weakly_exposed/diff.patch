@@ -1,0 +1,10 @@
+diff --git a/src/clock.py b/src/clock.py
+--- a/src/clock.py
++++ b/src/clock.py
+@@ -1,5 +1,5 @@
+ class Clock:
+-    _PER_YEAR = 12
++    _PER_YEAR = 13
+     _PER_DAY = 24
+ 
+     def __init__(self, hours):

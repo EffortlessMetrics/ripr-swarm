@@ -24,6 +24,7 @@ mod tests {
 
     fn sample_grip(test_name: &str) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: test_name.to_string(),
             file: PathBuf::from("tests/pricing_tests.rs"),
             line: 12,

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: `assert is_valid(value)` or `assert not is_valid(value)` on a `bool` owner, where `value` comes from a literal `@pytest.mark.parametrize` row, is now an exact pin like `assert is_valid(value) == True`. It no longer reads as a weak gap that asks for an assertion the test already has. A fixture, a local, a rebound name or a Hypothesis input still reads as before (#15310).

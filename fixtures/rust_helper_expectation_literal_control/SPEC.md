@@ -19,7 +19,6 @@ The expected static class per finding (machine-checked against
 
 ```expected-classes
 probe:src_lib.rs:return_value:543b6d50 -> exposed
-probe:src_lib.rs:static_unknown:788c0b42 -> static_unknown
 ```
 
 ## Must Not

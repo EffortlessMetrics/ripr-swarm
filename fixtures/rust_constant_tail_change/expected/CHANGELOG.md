@@ -57,3 +57,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_constant_tail_change (6)
+
+Reason:
+RIPR-SPEC-0001: #7807 a removed line read as static_unknown only for lack of context is not reported again when its block replacement's modeled probe carries the whole removed text as before
+
+Command:
+`cargo xtask goldens bless rust_constant_tail_change --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_constant_tail_change (7)
+
+Reason:
+RIPR-SPEC-0197 (#14936): the deleted same-value guard of pick reads weakly_exposed; gate's guard discriminate stage reads weak
+
+Command:
+`cargo xtask goldens bless rust_constant_tail_change --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8ea99f9..d58d7a6 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@ pub struct Cfg {
+ impl Cfg {
+     pub fn fresh(n: u32) -> Self {
+         Cfg {
+-            retries: n + 2,
++            retries: n + 1,
+             verbose: false,
+         }
+     }

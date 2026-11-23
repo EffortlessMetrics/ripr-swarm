@@ -1,0 +1,18 @@
+# Registers the explicit input refusal tests (#15254) under RIPR-SPEC-0440.
+[[extend]]
+id = "RIPR-SPEC-0440"
+tests = [
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::ts_reports_refuse_unusable_explicit_input_after_writing_blocked_report",
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::coverage_grip_frontier_refuses_unusable_ledger",
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::suppression_health_refuses_named_missing_manifest_but_not_the_default",
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::policy_reports_refuse_unreadable_supplied_inputs",
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::annotations_refuse_explicit_missing_comments_but_skip_the_default",
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::pr_summary_refuses_unusable_baseline_before_writing",
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::required_input_commands_refuse_missing_inputs",
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::gate_warns_on_stderr_when_an_optional_input_is_unavailable",
+  "crates/ripr/tests/cli_smoke/explicit_input_refusals.rs::gate_names_an_unavailable_mutation_calibration_once",
+]
+code = [
+  "crates/ripr/src/cli/commands.rs::SuppliedInputReads",
+  "crates/ripr/src/output/gate/presentation.rs::gate_decision_unavailable_inputs",
+]
