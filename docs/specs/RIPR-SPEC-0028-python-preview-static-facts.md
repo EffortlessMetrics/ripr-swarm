@@ -2193,6 +2193,7 @@ its comparisons.
 Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap`,
 `connective_swap_tests.rs::a_call_with_disagreeing_operands_keeps_exposed`,
 `connective_swap_tests.rs::an_unresolved_call_keeps_exposed`,
+`connective_swap_tests.rs::a_float_operand_is_read_by_its_represented_value`,
 `connective_swap_tests.rs::an_if_condition_with_a_module_constant_reads_agreeing_calls`,
 `connective_swap_tests.rs::only_a_lone_connective_swap_between_simple_operands_is_read`.
 
@@ -2205,11 +2206,11 @@ version keeps, a number with more decimal places than the smaller count, or a
 collection holding two different elements. The parameter must be one the body
 never rebinds; for a sort, the changed line must also be the start of the first
 top-level body statement that names the parameter, and name it once, so the
-sort sees the collection the test passed. When every strong related call binds it to a plain literal the
-rule evaluates (a quoted string without escapes, an int or decimal float, or a
-list, tuple or set display of such scalars) and both versions give the same
-result, the edit reads `weakly_exposed` and the
-missing discriminator names the separating input. A call the reader cannot
+sort sees the collection the test passed. When every strong related call binds
+it to a plain literal the rule evaluates (a quoted string without escapes, an
+int or decimal float, or a list, tuple or set display of such scalars) and both
+versions give the same result, the edit reads `weakly_exposed` and the missing
+discriminator names the separating input. A call the reader cannot
 resolve, or no resolved call at all, leaves the reading to the other rules.
 
 Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,

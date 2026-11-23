@@ -4219,6 +4219,10 @@ the same run's `owner_opt_outs`, for example
 Agent output names the owner, scope and reason in its `stop=` record.
 `explain --from <artifact>` uses the recorded opt-out in both formats.
 Agent explanations and human artifact replay offer no repair for a withheld finding.
+`ripr context` on a withheld finding, on a fresh run or with `--from`, keeps
+the probe, stages and evidence, adds `owner_mutants_skip` to `stop_reasons`
+and returns an empty `recommended_next_step`, so an agent following the
+explanation's `next=` pointer reaches the same stop (#14133).
 
 #### Repo scope owner opt-outs (#14139)
 
@@ -4704,6 +4708,12 @@ Reserved wire values (RIPR-SPEC-0411, #5514): `max_depth_reached`,
 human glosses and next-step guidance, but no production classifier on current
 main pushes them onto a finding. A future spec slice must name the trigger
 before any emitter lands.
+
+The `ripr context` packet's `stop_reasons` may also carry
+`owner_mutants_skip`, the owner opt-out reason (RIPR-SPEC-0450, #14133),
+when the selected finding is withheld by `#[mutants::skip]`. It is not a
+`StopReason` variant and never appears on a `ripr check` finding's
+`stop_reasons`, which states the withholding as `withheld_by`.
 
 `agent_card_refusal_kind` values:
 
@@ -5340,10 +5350,14 @@ tested against every finding's packet over a set of committed fixtures that
 reaches every classification
 (`crates/ripr/tests/context_json_schema.rs`). Objects are closed: a field
 added to the packet is added to the schema in the same change. Two shapes are
-worth knowing. The top-level `missing_discriminators[]` entries carry only
-`value` and `reason`, while `witness.missing_discriminators[]` entries are the
-full fact with `flow_sink` and `shape`. And `witness` may be `null` only when
-`classification` is `exposed`.
+worth knowing. The top-level `missing_discriminators[]` entries are the
+`ripr check --json` finding's entries field for field: `value`, `reason` and
+`flow_sink` (`{kind, text, line}` or `null`; #10516). The test compares
+every packet's array with its check finding's. `witness.missing_discriminators[]`
+entries are the full fact, whose `flow_sink` also names its `owner` and which
+adds `shape`. `flow_sink` is optional in the schema only so packets written
+before #10516 still conform; this additive field kept packet version `1.1`.
+And `witness` may be `null` only when `classification` is `exposed`.
 
 The context packet contract versions through the top-level `version` key, not
 `schema_version` (#5081). Producers pin the live value in
@@ -18459,7 +18473,11 @@ Field contract:
   `focused_result_requirement` is an additive string present only for an
   attempt that follows a new-test proposal (#16164): it states that the after
   phase finishes only with a focused `--test-result FILE` and how to produce
-  FILE, in the finish gate's own words.
+  FILE, in the finish gate's own words. Where the proposed Rust integration
+  file's package manifest and cargo target resolve, it names that exact
+  command (`cargo +nightly test --manifest-path M -p P --test T -- -Z
+  unstable-options --format json`) in place of the generic placeholders
+  (#16186).
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
   baseline, the ambiguity warning and the clean-state restart route, with
@@ -21085,7 +21103,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.192",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.194",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21889,7 +21907,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.192",
+      "schema_version": "1.194",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

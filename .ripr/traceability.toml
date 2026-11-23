@@ -642,7 +642,8 @@ tests = [
   "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::composed_recovery_preserves_unstaged_analysis_and_explicit_sources",
   "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::composed_recovery_preserves_staged_analysis_and_explicit_sources",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
-  "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"
+  "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes",
+  "crates/ripr/tests/context_json_schema.rs::context_json_conforms_for_every_finding_of_the_covering_fixtures"
 ]
 code = [
   "crates/ripr/src/app.rs",
@@ -2271,6 +2272,7 @@ tests = [
   "crates/ripr/src/app/agent_status.rs::tests::trust_bound_focused_retry_is_withheld_when_the_apply_record_path_is_occupied",
   "crates/ripr/tests/focused_test_result.rs::review_fifth_focused_refusal_requires_restart",
   "crates/ripr/tests/focused_test_result.rs::a_proposal_attempt_names_the_focused_result_up_front",
+  "crates/ripr/tests/focused_test_result.rs::a_member_proposal_names_a_focused_run_that_finishes",
   "crates/ripr/tests/focused_test_result.rs::a_missing_result_never_spends_the_retry_budget",
   "crates/ripr/tests/focused_test_result.rs::a_failing_result_still_charges_between_uncharged_refusals",
   "crates/ripr/src/agent/mod.rs::tests::proposal_after_phase_follow_up_keeps_the_focused_result_flag",
@@ -16054,7 +16056,7 @@ tests = [
   "crates/ripr/tests/operand_callee_identity.rs::an_import_alias_cannot_borrow_a_method_return_type",
   "crates/ripr/tests/operand_callee_identity.rs::a_genuine_primitive_call_retains_the_operand_pin_downgrade",
   "crates/ripr/tests/owner_pin_execution/operand_callee_identity.rs::compiled_operator_removal_controls_match_observed_effects",
-  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_for_loop_over_a_constant_row_table_runs_its_assertion",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_for_loop_over_a_non_empty_array_runs_its_assertion",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_literal_matches_pattern_pins_the_owner_value",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_some_or_ok_return_is_pinned_beside_opposite_exits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_error_path_probe_is_pinned_like_a_changed_err_return",

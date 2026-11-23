@@ -42,6 +42,11 @@ Heuristic annotations and unknown-class backfills **do not** change
 Python static-limit mappings **may** withhold or move class as their owning
 specs already state.
 
+The `ripr context` packet's `stop_reasons` may additionally carry
+`owner_mutants_skip` for a finding withheld by an owner opt-out. That token is
+the RIPR-SPEC-0450 opt-out reason, not a finding stop reason, and never
+appears in a finding's own `stop_reasons`.
+
 | Wire value | Role | Changes class? | Trigger (current main) | Owning spec |
 | --- | --- | --- | --- | --- |
 | `max_depth_reached` | reserved wire | no | not emitted | RIPR-SPEC-0411 |
