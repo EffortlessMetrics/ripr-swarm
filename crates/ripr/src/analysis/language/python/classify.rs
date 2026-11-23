@@ -1170,6 +1170,18 @@ fn classify_change_for_owner_inner<'a>(
         &related_candidates,
         &focus,
     );
+    // A condition whose only edit swaps `and` for `or` (#16203) differs only
+    // for inputs where its operands disagree. Every strong related call
+    // making them agree leaves the swap unconfirmed.
+    let connective_gap = old_line_text.and_then(|old| {
+        super::connective_swap::python_connective_evidence(
+            old,
+            line_text,
+            owner,
+            &related_candidates,
+            &focus,
+        )
+    });
 
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
@@ -1218,19 +1230,27 @@ fn classify_change_for_owner_inner<'a>(
             },
         )
         .flatten();
+    // An `and`/`or` swap (#16203) moves no comparison boundary, so its
+    // comparisons' boundaries do not decide whether a call discriminates it;
+    // the connective gate above reads that instead.
+    let connective_swap_only = old_line_text
+        .and_then(|old| super::connective_swap::swapped_connective(old, line_text))
+        .is_some();
     let boundary = membership_gap.or_else(|| {
-        (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
-            .then(|| {
-                python_boundary_evidence(
-                    line_text,
-                    old_line_text,
-                    owner,
-                    owner_source,
-                    &related_candidates,
-                    &focus,
-                )
-            })
-            .flatten()
+        (static_limit.is_none()
+            && !connective_swap_only
+            && matches!(family, ProbeFamily::Predicate))
+        .then(|| {
+            python_boundary_evidence(
+                line_text,
+                old_line_text,
+                owner,
+                owner_source,
+                &related_candidates,
+                &focus,
+            )
+        })
+        .flatten()
     });
     let loop_boundary_unknown = boundary.as_ref().is_some_and(|e| {
         matches!(
@@ -1724,6 +1744,7 @@ fn classify_change_for_owner_inner<'a>(
         && changed_default_exercised_ok
         && default_keyword.is_none()
         && positional_only_gap.is_none()
+        && connective_gap.is_none()
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none()
@@ -1811,6 +1832,28 @@ fn classify_change_for_owner_inner<'a>(
                 format_param_name_list(params),
                 owner.name,
                 format_param_name_list(params),
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank()
+        && alignment.observes()
+        && let Some(swap) = &connective_gap
+    {
+        // Every strong related call gives both operands the same truth
+        // value, where `and` and `or` agree (#16203).
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "A strong Python oracle reaches `{}`, but the edit only swaps `and`/`or` between `{}` and `{}`, and every strong related call makes both operands {}; the two connectives agree on those inputs, so static evidence cannot confirm the swap is discriminated. Add a test that calls `{}` with inputs where `{}` and `{}` differ.",
+                owner.name,
+                swap.left,
+                swap.right,
+                agreed_phrase(&swap.agreed),
+                owner.name,
+                swap.left,
+                swap.right,
             )],
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
@@ -2288,6 +2331,23 @@ fn classify_change_for_owner_inner<'a>(
                 reason: format!(
                     "the change at line {line} only moves the positional-only marker, and no related call passes {} by keyword",
                     format_param_name_list(params)
+                ),
+                flow_sink: flow_sink.clone(),
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
+            }]
+        } else if let Some(swap) = connective_gap
+            .as_ref()
+            .filter(|_| changed_default_override.is_none())
+        {
+            vec![MissingDiscriminatorFact {
+                value: format!(
+                    "call `{}` with inputs where `{}` and `{}` differ",
+                    owner.name, swap.left, swap.right
+                ),
+                reason: format!(
+                    "the change at line {line} only swaps `and`/`or`, and every related call makes both operands {}",
+                    agreed_phrase(&swap.agreed)
                 ),
                 flow_sink: flow_sink.clone(),
                 shape: DiscriminatorShape::Other,
@@ -2908,5 +2968,15 @@ pub(super) fn number_colliding_candidates(
         finding.probe.id.0 = format!("{}.{ordinal}", finding.probe.id.0);
         finding.id = finding.probe.id.0.clone();
         value_origins.rebind_probe(&original, &finding.probe);
+    }
+}
+
+/// "true", "false", or "true or false" for the values both operands of a
+/// swapped connective share across the related calls (#16203).
+fn agreed_phrase(agreed: &[bool]) -> &'static str {
+    match (agreed.contains(&true), agreed.contains(&false)) {
+        (true, false) => "true",
+        (false, true) => "false",
+        _ => "true or both false",
     }
 }
