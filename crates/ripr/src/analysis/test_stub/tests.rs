@@ -3095,12 +3095,11 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             Some(("-5", "small")),
         ),
         // Calls that may never run are skipped: an assertion's message
-        // argument, a call under `if`, one behind `&&`, an ignored test and
-        // one under an attribute macro that may rewrite it.
+        // argument, a call under `if`, one behind `&&`, and an ignored test.
         // `assert_eq!` with square brackets reads like parentheses.
         (
             module(
-                "    #[test]\n    fn message() {\n        assert!(true, \"{:?}\", tax(1, 825));\n    }\n    #[test]\n    fn branch() {\n        if false {\n            let _ = tax(2, 825);\n        }\n    }\n    #[test]\n    fn short() {\n        let ok = false && tax(3, 825).is_ok();\n        assert!(!ok);\n    }\n    #[test]\n    #[ignore]\n    fn ignored() {\n        let _ = tax(4, 825);\n    }\n    #[test]\n    #[traced]\n    fn wrapped() {\n        let _ = tax(5, 825);\n    }\n    #[test]\n    fn computes() {\n        assert_eq![tax(9, 825), Ok(9)];\n    }\n",
+                "    #[test]\n    fn message() {\n        assert!(true, \"{:?}\", tax(1, 825));\n    }\n    #[test]\n    fn branch() {\n        if false {\n            let _ = tax(2, 825);\n        }\n    }\n    #[test]\n    fn short() {\n        let ok = false && tax(3, 825).is_ok();\n        assert!(!ok);\n    }\n    #[test]\n    #[ignore]\n    fn ignored() {\n        let _ = tax(4, 825);\n    }\n    #[test]\n    fn computes() {\n        assert_eq![tax(9, 825), Ok(9)];\n    }\n",
             ),
             Some(("9", "computes")),
         ),
@@ -3115,6 +3114,71 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
                 "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
             ),
             None,
+        ),
+        // A `let` rebinding the copied name, a `let ... else` that may
+        // return, and a format capture are refused before the comparison.
+        (
+            module_for(
+                &owner.replace("    if amount < 0 {", "    let amount = amount * 100;\n    if amount > 50 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        (
+            module_for(
+                &owner.replace(
+                    "    if amount < 0 {",
+                    "    let Some(_left) = amount.checked_sub(10) else {\n        return Err(3);\n    };\n    if amount < 0 {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        (
+            module_for(
+                &owner.replace(
+                    "    if amount < 0 {",
+                    "    if format!(\"{amount}\").len() < 2 {\n        return Err(3);\n    }\n    if amount < 0 {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A `let` rebinding a written input before the guard.
+        (
+            module_for(
+                &owner.replace("    if amount < 0 {", "    let rate = rate / 2;\n    if amount < 0 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A `return` or `?` earlier in the test, and a non-standard derive in
+        // the module, block the copy.
+        (
+            module(
+                "    #[test]\n    fn early() -> Result<(), u8> {\n        tax(1, 1)?;\n        let _ = tax(2, 825);\n        Ok(())\n    }\n",
+            ),
+            None,
+        ),
+        (
+            module(
+                "    #[derive(Debug, Gen)]\n    struct S;\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // So does an attribute macro on a test, which may rewrite it.
+        (
+            module(
+                "    #[test]\n    #[traced]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A standard derive does not.
+        (
+            module(
+                "    #[derive(Debug, Clone, PartialEq)]\n    struct S;\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            Some(("7", "computes")),
         ),
         // The copied value is read inside the changed statement before the
         // comparison.
@@ -3266,7 +3330,7 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             Some((amount, test)) => {
                 assert!(
                     stub.text.contains(&format!("let amount: i64 = {amount};")),
-                    "{}",
+                    "{source}\n{}",
                     stub.text
                 );
                 assert!(
@@ -3318,7 +3382,12 @@ fn copied_literal_must_fit_the_parameter_type() {
         ("u8", "0x1e"),
         ("u32", "5u32"),
         ("f64", "1.5"),
-        ("f64", "2"),
+        ("f64", "2.0"),
+        ("f64", "2f64"),
+        ("u8", "255"),
+        ("usize", "5usize"),
+        ("isize", "-1_000isize"),
+        ("i8", "-128"),
         ("f32", "1e3"),
         ("bool", "true"),
         ("char", "'c'"),
@@ -3332,6 +3401,10 @@ fn copied_literal_must_fit_the_parameter_type() {
     }
     let misfits = [
         ("u32", "-3"),
+        ("f64", "2"),
+        ("u8", "300"),
+        ("i8", "-129"),
+        ("u32", "4294967296"),
         ("u32", "5u8"),
         ("i64", "1.5"),
         ("i64", "\"w\""),

@@ -662,30 +662,36 @@ the expected value stays a `todo!()`. The values are copied only when:
   module;
 - the call is the first one in that module, in source order, that meets
   every condition here: it goes through the owner's bare name with one
-  literal argument per parameter, and it always runs when its test does, as
-  a statement or `let` initializer of the test's own body or as an asserted
+  literal argument per parameter, and it is authored at the top level of the
+  test's own body, as a statement or `let` initializer or as an asserted
   operand (not a message argument) of a statement `assert!`, `assert_eq!` or
   `assert_ne!`;
 - it sits in a `#[test]` function that is not `should_panic`, `ignore` or a
-  ripr stub, outside closures, `async` blocks and `cfg`;
+  ripr stub and carries only plain attributes (`test`, lint levels, `doc`),
+  outside closures, `async` blocks and `cfg`, with no `return` or `?` before
+  it in the test;
 - each copied literal fits its parameter's declared type as written: an
-  integer, float, `bool` or char literal for that primitive, a string literal
-  for `&str`, a byte string for `&[u8]` (an alias or any other type takes no
-  copy);
-- with the written and copied inputs, the owner reaches the statement
-  holding the changed comparison: each earlier statement that names a copied
-  parameter, or a local bound from one, is an `if` without `else` whose
-  condition evaluates to false, and nothing in the comparison's own statement
-  before it names one;
+  in-range integer literal for an integer type, a float literal for `f32` or
+  `f64`, `true`/`false`, a char literal, a string literal for `&str`, a byte
+  string for `&[u8]` (an alias or any other type takes no copy);
+- the copied values do not steer the owner away from the statement holding
+  the changed comparison (an earlier guard on the written inputs alone is
+  outside this check, as it is for any boundary stub): each earlier statement that names a copied
+  parameter (including a `{name}` format capture) is an `if` without `else`
+  whose condition evaluates to false, no earlier statement binds the name of
+  a written or copied input, and the comparison's own statement is not a
+  `let` or an assignment and names a copied value only after the comparison;
 - nothing in the module declares, binds, imports or renames another item of
   the owner's name;
 - the module calls only standard macros (`assert_eq!`, `vec!`, `println!` and
   the like), since another macro or `include!` may emit a function of the
   owner's name, and the file defines, imports or `#[macro_use]`s no macro of
   a standard macro's name;
-- macros defined in another file (a crate-root `#[macro_use]` or
-  `macro_rules!`) and attribute or derive macros are not seen; the type check
-  above still keeps the stub compiling.
+- the test module carries no attribute other than the plain ones, `cfg`,
+  `should_panic`, `ignore` and standard `derive`s, since an attribute or
+  derive macro may emit a function of the owner's name; macros defined in
+  another file (a crate-root `#[macro_use]` or `macro_rules!`) are not seen,
+  and the type check above still keeps the stub compiling.
 
 The JSON document changes only in the stub `text` and `fill_ins`; the copied
 values appear on the human `Other inputs:` line.

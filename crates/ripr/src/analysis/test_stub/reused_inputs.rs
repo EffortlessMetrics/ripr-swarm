@@ -11,12 +11,13 @@
 //!   test has already compiled the same call;
 //! - the call is the first one in that module, in source order, through the
 //!   owner's bare name with exactly one literal argument per parameter
-//!   (`5`, `-3`, `"w"`, `true`, `1.5`) that always runs with its test: a
-//!   statement or `let` initializer of the test's own body, or an asserted
+//!   (`5`, `-3`, `"w"`, `true`, `1.5`), authored at the top level of the
+//!   test's own body: a statement or `let` initializer, or an asserted
 //!   operand (not a message argument) of a statement `assert!`, `assert_eq!`
-//!   or `assert_ne!`;
+//!   or `assert_ne!`, with no `return` or `?` before it;
 //! - it sits in a `#[test]` function that is not `should_panic`, `ignore` or
-//!   a ripr stub, outside closures, `async` blocks and `cfg`;
+//!   a ripr stub and has only plain attributes, outside closures, `async`
+//!   blocks and `cfg`, and the module carries no attribute or derive macro;
 //! - nothing in the module declares, imports or renames another item or
 //!   binding of the owner's name;
 //! - the module calls only standard macros (`assert_eq!`, `vec!`,
@@ -34,18 +35,37 @@
 
 use super::StubScope;
 use super::expected_value::condition_value;
-use super::match_inputs::unraw;
+use super::match_inputs::{parse_integer, unraw};
 use super::receiver::{literal_argument, proven_test_call, scope_shadows};
 use crate::analysis::syntax::fn_signature::OwnerSignature;
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName};
 use ra_ap_syntax::{AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize};
 
-/// The assertion macros whose asserted operands always run with the test.
+/// The assertion macros whose asserted operands are evaluated on every pass.
 const ASSERTIONS: [&str; 3] = ["assert", "assert_eq", "assert_ne"];
 
 /// Attributes a copied-from test may carry: none rewrites or skips its body.
 const PLAIN_TEST_ATTRIBUTES: [&str; 6] = ["test", "allow", "expect", "warn", "deny", "doc"];
+
+/// Attributes any item in the test module may carry without blocking the
+/// copy: the plain test attributes, `cfg`, `should_panic`, `ignore`, and
+/// `derive` of standard traits. An attribute or derive macro of any other
+/// name may emit a function of the owner's name.
+const MODULE_ATTRIBUTES: [&str; 4] = ["cfg", "should_panic", "ignore", "derive"];
+
+/// The standard derives, which emit only trait impls.
+const STANDARD_DERIVES: [&str; 9] = [
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Eq",
+    "Hash",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+];
 
 /// Standard macros a test module may call without blocking the copy; none
 /// can emit an item.
@@ -134,6 +154,14 @@ pub(super) fn reused_inputs(
             }
             let test = proven_test_call(&node, start, end)?;
             let function = node.ancestors().find_map(ast::Fn::cast)?;
+            // A `return` or `?` earlier in the test may leave it first.
+            let leaves_first = function.syntax().descendants().any(|inner| {
+                matches!(inner.kind(), SyntaxKind::RETURN_EXPR | SyntaxKind::TRY_EXPR)
+                    && inner.text_range().end() <= node.text_range().start()
+            });
+            if leaves_first {
+                return None;
+            }
             // An ignored test never ran the call, and an attribute macro may
             // rewrite or drop the body, so only plain test attributes count.
             if !function.attrs().all(|attr| {
@@ -216,7 +244,32 @@ fn standard_macros_only(file: &SourceFile, in_scope: &impl Fn(&SyntaxNode) -> bo
                 .is_some_and(|attr_name| attr_name == "macro_use")
         })
     });
-    calls_standard && !replaced
+    let plain_attributes = file
+        .syntax()
+        .descendants()
+        .filter(|node| in_scope(node))
+        .filter_map(ast::Attr::cast)
+        .all(|attr| {
+            let Some(meta) = attr.meta() else {
+                return false;
+            };
+            let Some(attr_name) = meta.simple_name() else {
+                return false;
+            };
+            if attr_name == "derive" {
+                // Every derived name after `derive` itself.
+                return meta
+                    .syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| token.kind() == SyntaxKind::IDENT)
+                    .skip(1)
+                    .all(|token| STANDARD_DERIVES.contains(&token.text()));
+            }
+            PLAIN_TEST_ATTRIBUTES.contains(&attr_name.as_str())
+                || MODULE_ATTRIBUTES.contains(&attr_name.as_str())
+        });
+    calls_standard && !replaced && plain_attributes
 }
 
 /// The literal arguments of `name(..)`, a call through the bare name.
@@ -296,10 +349,10 @@ fn owner_fn(file: &SourceFile, seam_offset: usize, name: &str) -> Option<ast::Fn
     (unraw(owner.name()?.text()) == unraw(name)).then_some(owner)
 }
 
-/// Whether `node` runs whenever its test does: a statement of the test's own
-/// body, the initializer of one of its `let`s, or (for a macro) a statement
-/// macro there. A call under `if`, `&&`, a loop or a nested block may never
-/// run.
+/// Whether `node` is authored at the top level of its test's own body: a
+/// statement there, the initializer of one of its `let`s, or (for a macro) a
+/// statement macro there. A call under `if`, `&&`, a loop or a nested block
+/// may never run.
 fn runs_in_test_body(node: &SyntaxNode) -> bool {
     let Some(parent) = node.parent() else {
         return false;
@@ -375,17 +428,42 @@ pub(super) fn literal_fits(ty_text: &str, literal: &str) -> bool {
         if !numeric || (negative && ty.starts_with('u')) {
             return false;
         }
+        // `usize` and `isize` contain an `e`; look for an exponent only
+        // before the suffix.
+        let digits = INTEGERS
+            .iter()
+            .find_map(|suffix| body.strip_suffix(*suffix))
+            .unwrap_or(body);
         let float_like = !body.starts_with("0x")
-            && (body.contains('.')
-                || body.contains(['e', 'E'])
+            && (digits.contains('.')
+                || digits.contains(['e', 'E'])
                 || body.ends_with("f32")
                 || body.ends_with("f64"));
         let suffix = INTEGERS.iter().find(|suffix| body.ends_with(*suffix));
-        return !float_like && suffix.is_none_or(|suffix| *suffix == ty);
+        // In range for the type, so `overflowing_literals` (deny by
+        // default) cannot reject the stub's `let`. `isize`/`usize` use the
+        // 32-bit range, which holds on every target.
+        let (low, high): (i128, i128) = match ty.as_str() {
+            "i8" => (i8::MIN.into(), i8::MAX.into()),
+            "i16" => (i16::MIN.into(), i16::MAX.into()),
+            "i32" | "isize" => (i32::MIN.into(), i32::MAX.into()),
+            "i64" => (i64::MIN.into(), i64::MAX.into()),
+            "i128" => (i128::MIN, i128::MAX),
+            "u8" => (0, u8::MAX.into()),
+            "u16" => (0, u16::MAX.into()),
+            "u32" | "usize" => (0, u32::MAX.into()),
+            "u64" => (0, u64::MAX.into()),
+            _ => (0, i128::MAX),
+        };
+        let in_range = parse_integer(literal).is_some_and(|value| low <= value && value <= high);
+        return !float_like && in_range && suffix.is_none_or(|suffix| *suffix == ty);
     }
     if ty == "f32" || ty == "f64" {
         let other = if ty == "f32" { "f64" } else { "f32" };
+        let float_like =
+            body.contains('.') || body.contains(['e', 'E']) || body.ends_with(ty.as_str());
         return numeric
+            && float_like
             && !body.starts_with("0x")
             && !body.starts_with("0b")
             && !body.starts_with("0o")
@@ -407,12 +485,14 @@ pub(super) fn literal_fits(ty_text: &str, literal: &str) -> bool {
 }
 
 /// Whether the owner, given `inputs`, runs the statement holding the changed
-/// comparison and reads no copied value on the way into it. Each earlier
-/// statement of the owner's body that names a copied parameter (or a local
-/// bound from one) must be an `if` without `else` whose condition evaluates
-/// to false; any other statement naming one, or one the evaluator cannot
-/// decide, refuses. Inside the statement holding the comparison, nothing
-/// before the comparison may name a copied value.
+/// comparison without reading a copied value on the way into it. Every
+/// earlier statement of the owner's body that names a copied parameter (as
+/// an identifier, or as `{name` inside a string a format macro may capture)
+/// must be an `if` without `else` whose condition evaluates to false; no
+/// earlier statement may bind the name of any written or copied input. The
+/// comparison's own statement may name a copied value only after the
+/// comparison ends, and is not an assignment or a `let`, whose value side
+/// runs first.
 fn reaches_seam(
     file: &SourceFile,
     owner: &ast::Fn,
@@ -426,16 +506,30 @@ fn reaches_seam(
     let Some(list) = owner.body().and_then(|body| body.stmt_list()) else {
         return false;
     };
-    let mut tainted: Vec<String> = copied.to_vec();
-    let names_tainted = |node: &SyntaxNode, tainted: &[String], before: Option<TextSize>| {
+    let names_copied = |node: &SyntaxNode, within: Option<(TextSize, TextSize)>| {
         node.descendants_with_tokens()
             .filter_map(|element| element.into_token())
-            .filter(|token| before.is_none_or(|end| token.text_range().end() <= end))
+            .filter(|token| {
+                within.is_none_or(|(start, end)| {
+                    token.text_range().start() >= start && token.text_range().end() <= end
+                })
+            })
             .any(|token| {
-                token.kind() == SyntaxKind::IDENT
-                    && tainted
-                        .iter()
-                        .any(|name| unraw(name) == unraw(token.text()))
+                copied.iter().any(|name| match token.kind() {
+                    SyntaxKind::IDENT => unraw(name) == unraw(token.text()),
+                    SyntaxKind::STRING => token.text().contains(&format!("{{{}", unraw(name))),
+                    _ => false,
+                })
+            })
+    };
+    let binds_input = |node: &SyntaxNode| {
+        node.descendants()
+            .filter_map(ast::IdentPat::cast)
+            .filter_map(|ident| ident.name())
+            .any(|bound| {
+                inputs
+                    .iter()
+                    .any(|(name, _)| unraw(name) == unraw(bound.text()))
             })
     };
     let nodes = list
@@ -444,22 +538,43 @@ fn reaches_seam(
         .chain(list.tail_expr().map(|tail| tail.syntax().clone()));
     for node in nodes {
         if node.text_range().contains(offset) {
-            return !names_tainted(&node, &tainted, Some(offset));
-        }
-        if !names_tainted(&node, &tainted, None) {
-            continue;
-        }
-        if let Some(statement) = ast::LetStmt::cast(node.clone()) {
-            // A local bound from a copied value carries it on.
-            for ident in statement
-                .syntax()
+            // The innermost comparison at the seam bounds the region where
+            // the copied values may appear: only after it.
+            let Some(comparison) = node
                 .descendants()
-                .filter_map(ast::IdentPat::cast)
-            {
-                if let Some(bound) = ident.name() {
-                    tainted.push(bound.text().to_string());
-                }
-            }
+                .filter_map(ast::BinExpr::cast)
+                .filter(|bin| {
+                    bin.syntax().text_range().contains(offset)
+                        && matches!(bin.op_kind(), Some(ast::BinaryOp::CmpOp(_)))
+                })
+                .max_by_key(|bin| bin.syntax().text_range().start())
+            else {
+                return false;
+            };
+            let assignment = ast::ExprStmt::cast(node.clone())
+                .and_then(|stmt| stmt.expr())
+                .and_then(|expr| match expr {
+                    ast::Expr::BinExpr(bin) => bin.op_kind(),
+                    _ => None,
+                })
+                .is_some_and(|op| matches!(op, ast::BinaryOp::Assignment { .. }));
+            let start = node.text_range().start();
+            let end = comparison.syntax().text_range().end();
+            let rebinds_before = node
+                .descendants()
+                .filter(|inner| {
+                    inner.text_range().end() <= comparison.syntax().text_range().start()
+                })
+                .any(|inner| ast::IdentPat::can_cast(inner.kind()) && binds_input(&inner));
+            return !assignment
+                && !rebinds_before
+                && !ast::LetStmt::can_cast(node.kind())
+                && !names_copied(&node, Some((start, end)));
+        }
+        if binds_input(&node) {
+            return false;
+        }
+        if !names_copied(&node, None) {
             continue;
         }
         let Some(ast::Expr::IfExpr(guard)) = ast::ExprStmt::cast(node).and_then(|stmt| stmt.expr())
