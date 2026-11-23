@@ -2266,6 +2266,27 @@ fn statement_folded_into_code_beside_a_comment_has_no_base_side_record() -> Resu
     Ok(())
 }
 
+/// A comment that replaces a removed import in a run with no code holds no
+/// code either, so it pairs with nothing and is no finding (#16011 review).
+#[test]
+fn comment_replacing_a_removed_import_is_no_finding() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    # Loaded at module level now.\n    return min(total, cap)\n";
+    let findings = analyze_with_test(
+        "comment-for-import",
+        source,
+        CAP_TEST_PY,
+        &[2],
+        vec![line(2, 2, "    import textwrap")],
+    )?;
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !finding.probe.expression.trim().starts_with('#')),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
 /// A `#` line inside a multi-line string is content. It replaced the old
 /// content line, so the pair stays an edit on the candidate side.
 #[test]

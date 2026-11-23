@@ -646,7 +646,9 @@ pub(super) fn unpair_runs_without_code(
         })
         .collect();
     counterparts.retain(|added_line, removed| {
-        if replaced_nothing.contains(added_line) {
+        if replaced_nothing.contains(added_line)
+            || (codeless.contains(added_line) && comment_or_blank.contains(added_line))
+        {
             return false;
         }
         !codeless.contains(added_line)
