@@ -18786,6 +18786,11 @@ tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::a_cancelled_inventory_reports_the_cancellation_from_field_admission",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::any_other_mention_of_the_owner_name_withholds_a_private_field_seam",
   "crates/ripr/src/analysis/classify/field_reach/tests.rs::mentions_count_every_use_of_the_name_but_not_its_definition",
+  "crates/ripr/tests/field_write_loop_and_unread.rs::an_unread_write_beside_asserting_neighbours_is_a_gap",
+  "crates/ripr/tests/field_write_loop_and_unread.rs::any_other_use_of_an_unread_test_keeps_the_abstention",
+  "crates/ripr/tests/field_write_loop_and_unread.rs::a_receiver_call_in_a_for_loop_reaches_the_owner",
+  "crates/ripr/tests/field_write_loop_and_unread.rs::a_for_pattern_that_binds_the_receiver_does_not_reach_the_owner",
+  "crates/ripr/tests/field_write_loop_and_unread.rs::an_exact_read_after_a_loop_that_may_not_run_does_not_credit",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
@@ -18801,6 +18806,7 @@ code = [
   "crates/ripr/src/analysis/classify/activation.rs",
   "crates/ripr/src/analysis/classify/field_reach.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",

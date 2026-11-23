@@ -504,6 +504,11 @@ changes `self.count += 2` to `self.count += 1`.
   `any_other_mention_of_the_owner_name_withholds_a_private_field_seam`, `field_reach/tests.rs`
   `mentions_count_every_use_of_the_name_but_not_its_definition` and
   `a_cancelled_inventory_reports_the_cancellation_from_field_admission`.
+- Unread write beside neighbours and loop-held receiver calls (#6485):
+  `crates/ripr/tests/field_write_loop_and_unread.rs` (positive gap, the
+  five abstaining controls, loop reach, a loop pattern that binds the
+  receiver, and no credit for an exact read after a loop that may not run),
+  and the verdict corpus `grid-delete-*` cells.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and
@@ -850,6 +855,27 @@ changes `self.count += 2` to `self.count += 1`.
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
   its latest `let` and refused when the test holds a second `let` of that
   binding name, whose block scope the text reading cannot place.
+- Example 5 beside asserting neighbours is implemented (#6485):
+  `runs_owner_and_reads_nothing` in `activation.rs` places, for the class
+  only (`assigned_field_gap_is_placed`, not the repair start), a reaching
+  test that holds no assertion fact, invokes no macro outside the
+  transparent set, spells `.owner(` once as a bare statement on a plain
+  binding, names the written field nowhere, and uses that binding only in
+  its `let [mut]` declaration and the call. Neighbour tests related by file
+  that assert on other fields no longer turn the unread write into
+  `static_unknown`; the finding reads `weakly_exposed` (verdict corpus
+  `grid-delete-none`). A helper taking the binding, a format capture, a
+  field read, an opaque macro or a second owner call keeps the abstention.
+- A receiver call inside a `for` loop whose pattern does not bind the
+  receiver name relates as `direct_owner_call` through the binding visible
+  around the loop (`visible_receiver_binding_names_type` in
+  `related_tests.rs`, #6485). This changes reach only: observation rule 1
+  still needs an owner call that runs before the read at the test body's top
+  level, so `grid-delete-table` (the call runs `0..times` times over table
+  rows ripr does not evaluate) and `grid-delete-property` (a relational
+  read after a `let before = stats.reads` snapshot inside the loop) stay
+  abstained, and `grid-delete-helper` (the call sits in a looping
+  `check_*` helper) is not yet reached.
 
 ## Metrics
 
