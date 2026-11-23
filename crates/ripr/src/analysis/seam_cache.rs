@@ -786,8 +786,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// std-rooted import exemption (#12876).
 /// `1.191`: a helper wrapper that reads `env!` or `option_env!` forwards
 /// the helper result when neither name is rebound (#10357).
-/// `1.192`: main claimed `1.191`; the same merge, re-pinned above it.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.192";
+/// `1.192`: a `std::`/`core::` assertion whose root the manifest binds to a
+/// package reads as an unknown oracle (#10150).
+/// `1.193`: main claimed `1.192`; the same merge, re-pinned above it.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.193";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1018,8 +1020,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.192";
 /// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
 /// `0.192`: same merge as full `1.190`.
 /// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
-/// `0.194`: main claimed `0.193`; the same merge, re-pinned above it.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.194";
+/// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
+/// `0.195`: main claimed `0.194`; the same merge, re-pinned above it.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.195";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1252,8 +1255,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.194";
 /// `0.191`: same std-rooted import exemption as full `1.189` (#12876).
 /// `0.192`: same merge as full `1.190`.
 /// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
-/// `0.194`: main claimed `0.193`; the same merge, re-pinned above it.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.194";
+/// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
+/// `0.195`: main claimed `0.194`; the same merge, re-pinned above it.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.195";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5848,12 +5852,13 @@ mod tests {
         // 1.182 -> 1.183: typed boundary-input activation summary (#14951).
         // 1.183 -> 1.184: rebound std macro names refuse invocation scopes (#12852).
         // 1.185 -> 1.187: attribute-macro generated tests refuse invocation scopes (#12857).
-        // 1.187 -> 1.188: the blanket-impl reach withholding generation (#6732).
-        // 1.188 -> 1.189: std-rooted imports keep invocation scopes (#12876).
-        // 1.189 -> 1.190: the merge of #6732 and #12876.
-        // 1.190 -> 1.191: env!-reading wrappers forward helper results (#10357).
-        // 1.191 -> 1.192: the merge of #6732 and #12876, re-pinned above #10357.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.192");
+        // 1.187 -> 1.189: std-rooted imports keep invocation scopes (#12876).
+        // 1.188 / 0.190 is left for #13041.
+        // 1.189 -> 1.191: env!-reading wrappers forward helper results (#10357).
+        // 1.190 / 0.192 is left for #13041.
+        // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150).
+        // 1.192 -> 1.193: the merge of #6732 and #12876, re-pinned above #10150.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.193");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6019,13 +6024,13 @@ mod tests {
         // 0.184 -> 0.185: same typed boundary-input summary as full 1.183 (#14951).
         // 0.185 -> 0.186: same invocation-scope refusal as full 1.184 (#12852).
         // 0.187 -> 0.189: same attribute-macro scope refusal as full 1.187 (#12857).
-        // 0.189 -> 0.190: same blanket-impl reach withholding as full 1.188 (#6732).
-        // 0.190 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
-        // 0.191 -> 0.192: the merge of #6732 and #12876.
-        // 0.192 -> 0.193: same env!-reading wrapper forwarding as full 1.191 (#10357).
-        // 0.193 -> 0.194: the merge of #6732 and #12876, re-pinned above #10357.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.194");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.194");
+        // 1.186 / 0.188 is left for #13041.
+        // 0.189 -> 0.191: same std-rooted import exemption as full 1.189 (#12876).
+        // 0.191 -> 0.193: same env!-reading wrapper forwarding as full 1.191 (#10357).
+        // 0.193 -> 0.194: same manifest-rebound assertion root as full 1.192 (#10150).
+        // 0.194 -> 0.195: the merge of #6732 and #12876, re-pinned above #10150.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.195");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.195");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 

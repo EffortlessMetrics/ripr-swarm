@@ -1035,7 +1035,9 @@ refuses, before issuing anything and leaving the attempt awaiting its edit,
 when no `--test-result` is passed, when the result counted no test, or when it
 reports any failed test (`failed == 0` is required; a failed test counts as
 having ran but not as a pass). Each refusal names the command to run and the
-flag to pass, and counts against the after-phase retry budget. A proposal
+flag to pass. A refused supplied result (zero-count, failing, or not new)
+counts against the after-phase retry budget; a missing result does not (see
+the #16164 amendment below). A proposal
 whose file was never created is left to the cage verdict
 (`selected_target_not_changed`) rather than this gate. The finish authority
 re-checks this from its own evaluated cage state: a proposal attempt whose cage
@@ -1044,11 +1046,9 @@ proposed file created after the gate looked cannot finish compliant unrecorded.
 It also re-applies the passing-run check to the result it would retain, so a
 failing or zero-count run that the gate did not check is refused there (#15033).
 Attempts that follow an
-existing test target keep `--test-result` optional. `ripr continue` and the printed `--phase after` next commands do not
-pass `--test-result`; for a proposal attempt they reach this refusal, whose text
-names the explicit `ripr agent repair --phase after --attempt <id> --test-result
-FILE` command. Teaching `continue` and the printed command to carry the flag is
-left to a follow-up. Attribution of the events to
+existing test target keep `--test-result` optional. How a proposal attempt's
+printed next commands state the requirement is the #16164 amendment below.
+Attribution of the events to
 the file stays the caller's claim (see the B amendment).
 
 For an inline new-test proposal the new test goes into a file that already
@@ -1071,6 +1071,44 @@ normalized-record equality; older normalized records alone lost suite framing.
 This does not prove that the supplied raw bytes are the original events. A failed historical result is not
 promoted; status inspection and a new attempt are required. Existing-target
 attempts retain B's optional-result and visible-failure behavior.
+
+## Amendment (#16164): a proposal attempt states its focused-result requirement up front, and a missing result charges no retry
+
+A new-test proposal attempt must not have to fail once to learn that it needs
+a focused result. When the attempt begins, its committed after command (the
+manifest `next_command`, the `--json` `repair_attempt.next_command`, and the
+human `Next, after the test edit:` line) ends with `--test-result FILE`, and
+the start states, in the finish gate's own words, that the attempt follows a
+new-test proposal and how to produce FILE (run the new test on a nightly
+toolchain for its own package and target, for example
+`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json` or `--lib` for an inline test, and pass its events in a
+`focused_test_result` document saved outside the checkout). The `--json`
+continuation carries that text as the additive `focused_result_requirement`
+member, present only for a proposal attempt. `ripr agent status` (default and
+`--attempt`) offers the same flag-bearing command, because `ripr continue`
+cannot pass a result, and adds the same requirement to its reason. An attempt
+that follows an existing test target is unchanged: its command stays the plain
+`--phase after` form (rendered as `ripr continue` for people) with no new text.
+
+Running the after phase of a proposal attempt with no `--test-result` at all
+(for example through `ripr continue`, or the retained packet's
+`repair_after_command`, which is rendered before the cage policy exists and
+does not carry the flag) is a usage refusal, not a failed attempt. It stays a
+typed refusal (exit 3) with the same narration (the explicit
+`ripr agent repair --phase after --attempt <id> --test-result FILE` command and
+how to produce FILE) and leaves the attempt awaiting its edit, but it records
+no refusal: `after_refusal_count`, `last_after_refusal` and the refusal history
+do not move, so it never spends the retry budget. The finish authority's own
+missing-result refusal is the same class and is treated the same way. Status
+explains the requirement from the committed command rather than from a
+recorded refusal. A supplied result that the gate refuses still counts as a
+retry exactly as before.
+
+Limits: an attempt begun before this amendment keeps its old committed command
+without the flag, so status does not name the requirement for it (its
+missing-result refusals are still uncharged). The retained packet's
+`repair_after_command` and the repair card's next action do not carry the flag;
+following either reaches the uncharged refusal, which names it.
 
 ## Amendment (#13205): a proposed new-test target is preflighted read-only
 

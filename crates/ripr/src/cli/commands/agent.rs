@@ -3783,7 +3783,7 @@ fn run_agent_repair_phase(
                                 store_ref,
                                 &attempt,
                                 &cage_policy,
-                                prior_refusals,
+                                Some(prior_refusals),
                             );
                             for line in &recovery {
                                 refusal.narrate(line.clone());
@@ -3825,19 +3825,26 @@ fn run_agent_repair_phase(
                     inline_baseline.as_ref(),
                 )
             {
+                // #16164: no result at all is a usage refusal, not a failed
+                // attempt: it is typed and narrated like any other, but it
+                // charges no retry. A supplied result this gate refuses
+                // (zero-count, failing, not new) still counts.
+                let charged = focused_run.is_some();
                 refusal.narrate(format!("focused test result required: {error}"));
                 let recovery = focused_result_recovery_lines(
                     &caller_root,
                     store_ref,
                     &attempt,
                     &cage_policy,
-                    prior_refusals,
+                    charged.then_some(prior_refusals),
                 );
                 for line in &recovery {
                     refusal.narrate(line.clone());
                 }
                 refusal.typed = true;
-                if prior_refusals.saturating_add(1)
+                if !charged {
+                    refusal.stop_unrecorded = true;
+                } else if prior_refusals.saturating_add(1)
                     >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
                 {
                     refusal.code =
@@ -4014,19 +4021,24 @@ fn run_agent_repair_phase(
                         } else if crate::app::repair_attempt::repair_attempt_proposal_focused_required_is_refusal(&error) {
                             // #13203 slice C at the finish authority: the
                             // proposal file appeared after the gate above
-                            // looked. Narrate and type it like that gate.
+                            // looked. Narrate and type it like that gate,
+                            // including its #16164 rule: a missing result
+                            // charges no retry.
+                            let charged = focused_run.is_some();
                             refusal.narrate(format!("focused test result required: {error}"));
                             for line in focused_result_recovery_lines(
                                 &caller_root,
                                 store_ref,
                                 &attempt,
                                 &cage_policy,
-                                prior_refusals,
+                                charged.then_some(prior_refusals),
                             ) {
                                 refusal.narrate(line);
                             }
                             refusal.typed = true;
-                            if prior_refusals.saturating_add(1)
+                            if !charged {
+                                refusal.stop_unrecorded = true;
+                            } else if prior_refusals.saturating_add(1)
                                 >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
                             {
                                 refusal.code = Some(
@@ -5021,10 +5033,13 @@ fn focused_result_recovery_lines(
     store: Option<&Path>,
     attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
     policy: &crate::edit_cage::EditCagePolicy,
-    prior_refusals: u32,
+    charged_prior_refusals: Option<u32>,
 ) -> Vec<String> {
-    if prior_refusals.saturating_add(1)
-        >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+    // `None`: this refusal charges no retry (#16164), so it never reads as
+    // the one that spends the budget.
+    if let Some(prior_refusals) = charged_prior_refusals
+        && prior_refusals.saturating_add(1)
+            >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
     {
         return repair_after_no_movement_lines(root, store, attempt, policy, prior_refusals);
     }
@@ -5514,6 +5529,11 @@ pub(in crate::cli) fn before_phase_stdout(
         // the developer does not have to work out the cargo target filter.
         if let Some(command) = &continuation.focused_test_command {
             document.push_str(&format!("Run the new test: {command}\n"));
+        }
+        // #16164: a proposal attempt names its required focused result
+        // before the command that needs it.
+        if let Some(requirement) = &continuation.focused_result_requirement {
+            document.push_str(&format!("{requirement}\n"));
         }
         document.push_str(&format!("Next, after the test edit: {follow_up}\n"));
         if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
@@ -8087,6 +8107,7 @@ mod before_phase_stdout_tests {
             typescript_test_cache_guidance: false,
             focused_test_command: None,
             declared_cargo_test_target: false,
+            focused_result_requirement: None,
         }
     }
 

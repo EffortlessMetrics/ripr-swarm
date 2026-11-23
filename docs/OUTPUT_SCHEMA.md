@@ -18429,7 +18429,8 @@ Field contract:
   `--attempt` value), `manifest_path` (the durable attempt manifest the
   after phase consumes), `next_command` (the exact `ripr agent repair …
   --phase after` command to run after the focused test edit, including
-  the authorization placeholder suffix for trust-bound attempts), and
+  the authorization placeholder suffix for trust-bound attempts and
+  ` --test-result FILE` for an attempt that follows a new-test proposal), and
   `packet_path` (the root-resolved workflow packet path the document was
   rendered from, ending in `target/ripr/workflow/agent-packet.json`).
   `baseline_ambiguous` is an additive member present only when `true`
@@ -18443,6 +18444,10 @@ Field contract:
   before the after phase, while Vitest caches written after `continue` do not
   stale the receipt; it recommends recording native test results separately
   after successful continuation and does not claim a test was recorded in the receipt.
+  `focused_result_requirement` is an additive string present only for an
+  attempt that follows a new-test proposal (#16164): it states that the after
+  phase finishes only with a focused `--test-result FILE` and how to produce
+  FILE, in the finish gate's own words.
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
   baseline, the ambiguity warning and the clean-state restart route, with
@@ -21068,7 +21073,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.192",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.193",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21872,7 +21877,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.192",
+      "schema_version": "1.193",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

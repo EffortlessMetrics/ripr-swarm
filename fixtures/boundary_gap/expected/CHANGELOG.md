@@ -1,16 +1,27 @@
 # Golden Output Changes
 
-## Pending - corpus cache generation 1.192 for the #6732 and #12876 merge
+## Pending - corpus cache generation 1.193 for the #6732 and #12876 merge
 
 The one-hop blanket-impl reach withholding (#6732) and the std-rooted import
-exemption (#12876) both land, which bumps the analyzer cache schema to 1.192 (main claimed 1.191).
-Move the portable unchanged-attempt snapshots to 1.192, recompute the
+exemption (#12876) both land, which bumps the analyzer cache schema to 1.193 (main claimed 1.192).
+Move the portable unchanged-attempt snapshots to 1.193, recompute the
 `raw_json_placeholder_v1` artifact content commitment, then the dependent verify
 commitments and receipt byte hashes, and recapture the honesty reports whose
 header carried an older generation (artifact, source_subject and
 analysis_inputs only). Weak grip, unchanged movement, historical currentness,
 incomplete receipt status and fail-closed first-action routing remain unchanged.
 No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.192 for manifest-rebound assertion roots (#10150)
+
+A `std::` or `core::` assertion whose root the test's own manifest binds to a
+Cargo package (`std = { package = .. }`) now reads as an unknown oracle, which
+bumps the analyzer cache schema to 1.192 (1.190 is left for #13041). Move the
+portable unchanged-attempt snapshots to 1.192, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.191 for env!-reading helper wrappers (#10357)
 

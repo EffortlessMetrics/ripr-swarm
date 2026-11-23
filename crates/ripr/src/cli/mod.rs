@@ -596,6 +596,7 @@ fn before_phase_attempt_stderr(
     manifest_path: &Path,
     next_command: &str,
     baseline_ambiguous: bool,
+    focused_result_requirement: Option<&str>,
 ) {
     if baseline_ambiguous {
         eprintln!(
@@ -614,6 +615,10 @@ fn before_phase_attempt_stderr(
     // Human next-step lines teach `ripr continue` for ordinary attempts
     // (#7879). The persisted manifest and JSON continuation keep the
     // advanced `--phase after` spelling.
+    // #16164: a proposal attempt's requirement precedes the command naming it.
+    if let Some(requirement) = focused_result_requirement {
+        eprintln!("ripr: {requirement}");
+    }
     let follow_up = crate::agent::human_after_phase_follow_up(next_command);
     eprintln!("ripr: attempt next command: {follow_up}");
     if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
@@ -779,6 +784,22 @@ fn persist_before_repair_attempt(
             path: &binding.record_path,
         });
     }
+    // #16164: an attempt that follows a new-test proposal finishes only with a
+    // focused result, so its published after command names the flag up front
+    // instead of letting the first after phase learn it from a refusal. The
+    // cage policy derived from this packet is the one proposal authority.
+    let next_command_suffix = format!(
+        "{}{}",
+        binding
+            .as_ref()
+            .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX)
+            .unwrap_or_default(),
+        if policy.new_test_proposal.is_some() {
+            crate::app::focused_run::PROPOSAL_FOCUSED_RESULT_FLAG
+        } else {
+            ""
+        }
+    );
     let begin_options = crate::app::repair_attempt::BeginRepairAttemptOptions {
         root,
         root_argument: root,
@@ -791,9 +812,8 @@ fn persist_before_repair_attempt(
         // explicit authorization, so the published follow-up must name
         // the required flags with an explicit placeholder identity — the
         // driver never persists a granted authorization.
-        next_command_suffix: binding
-            .as_ref()
-            .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+        next_command_suffix: (!next_command_suffix.is_empty())
+            .then_some(next_command_suffix.as_str()),
         store: options.store.as_deref(),
     };
     let result = match gap_binding {
@@ -843,6 +863,10 @@ fn persist_before_repair_attempt(
         typescript_test_cache_guidance,
         focused_test_command: focused_test_command(root, &packet_text),
         declared_cargo_test_target: policy.declared_cargo_test_target,
+        focused_result_requirement: policy
+            .new_test_proposal
+            .as_ref()
+            .map(|_| crate::app::focused_run::proposal_focused_result_requirement("This attempt")),
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -929,6 +953,7 @@ fn persist_before_repair_attempt(
             &result.manifest_path,
             &result.manifest.next_command,
             baseline_ambiguous,
+            continuation.focused_result_requirement.as_deref(),
         );
     }
     // The stdout document owns its trailer: the after-edit directive, or the

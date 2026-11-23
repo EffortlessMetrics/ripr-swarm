@@ -427,6 +427,7 @@ mod package_aliases;
 mod param_fixtures;
 mod parametrize;
 mod parse_budget;
+mod positional_only_marker;
 mod probe_shape;
 mod property_read;
 mod reexports;
@@ -2684,6 +2685,8 @@ mod source_facts_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;
+#[cfg(test)]
+mod positional_only_marker_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
