@@ -387,7 +387,8 @@ pub enum OwnerKind {
     /// `static` method in TypeScript, or a method with a `classmethod` or
     /// `staticmethod` decorator in Python.
     ClassMethod,
-    /// An arrow function bound to a name.
+    /// An arrow function owner, named by its binding or, for an anonymous
+    /// default export, by the synthetic name `default`.
     ArrowFunction,
     /// A function or arrow function in a `.tsx` or `.jsx` file whose name
     /// starts with an uppercase letter and whose body looks like it returns
@@ -428,16 +429,18 @@ pub enum StaticLimitKind {
     /// Metaprogramming, such as runtime-created behavior, that the adapter does
     /// not infer.
     Metaprogramming,
-    /// Resolving the behavior needs an import graph the adapter does not build,
-    /// such as for a dynamic import.
+    /// A cross-module relationship, such as a dynamic import or a call into an
+    /// imported module, cannot be resolved because the adapter does not build
+    /// an import graph.
     MissingImportGraph,
     /// A decorator, route registration or framework wrapper stands between the
     /// tests and the changed code, or controls whether a related test runs, so
     /// reach or activation could not be established. It does not show that the
     /// changed code was reached.
     DecoratorIndirection,
-    /// A related test mocks, reloads or rebinds a module, so which object the
-    /// test reads is not resolved.
+    /// A related test mocks, reloads, rebinds or substitutes a module or
+    /// fixture, so which object the test reads is not resolved. The mocked
+    /// target need not be the changed code's module.
     MockedModule,
     /// A related test checks the result through a helper whose assertions are
     /// not analyzed.
