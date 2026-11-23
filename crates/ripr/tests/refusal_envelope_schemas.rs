@@ -309,6 +309,11 @@ fn refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated() -> Re
             for &counter in OPTIONAL_SUMMARY_COUNTS {
                 expected["properties"]["summary"]["properties"][counter] = json!({"const": 0});
             }
+            // Context always echoes its effective mode, so the schema
+            // requires it.
+            if let Some(required) = expected["required"].as_array_mut() {
+                required.push(json!("mode"));
+            }
         }
         if let Some(properties) = expected["properties"].as_object_mut() {
             if !derived.echoes_mode {
@@ -428,6 +433,13 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
                 CONTEXT_REFUSAL_SCHEMA,
                 &[("check_artifact_unusable", empty_root)],
             )?;
+            let mut modeless = document.clone();
+            if let Some(object) = modeless.as_object_mut() {
+                object.remove("mode");
+            }
+            if conforms(&modeless, &schema).is_ok() {
+                return Err(format!("{format} schema accepted a refusal with no mode"));
+            }
             check_refusals(
                 CONTEXT_REFUSAL_SCHEMA,
                 &[("check_artifact_unusable", document)],
@@ -435,7 +447,10 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
         }
         Ok(())
     })();
-    let _ = std::fs::remove_dir_all(&root);
+    // A failed run keeps the fixture for inspection.
+    if captured.is_ok() {
+        let _ = std::fs::remove_dir_all(&root);
+    }
     captured
 }
 

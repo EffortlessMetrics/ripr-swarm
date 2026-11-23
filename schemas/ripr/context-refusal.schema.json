@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.effortlessmetrics.dev/ripr/context-refusal.schema.json",
   "title": "RIPR Context Refusal",
-  "description": "The operational refusal that ripr context writes to stdout with exit code 2. Pretty and compact JSON carry the same document. The context version and diff scope identify the shared refusal envelope, which records one non-consumable limitation, its remedy and an empty result. The cli-refusal schema covers explicit JSON selector misses.",
+  "description": "The operational refusal that ripr context writes to stdout with exit code 2. Pretty and compact JSON carry the same document. The context version and diff scope identify the shared refusal envelope, which records one non-consumable limitation, its remedy and an empty result. Context always echoes its effective mode, so `mode` is required. The cli-refusal schema covers explicit JSON selector misses.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,7 +12,8 @@
     "summary",
     "findings",
     "analysis_scope",
-    "run_limitations"
+    "run_limitations",
+    "mode"
   ],
   "properties": {
     "schema_version": {
