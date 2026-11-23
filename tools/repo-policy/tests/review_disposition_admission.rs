@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 121] = [
+    let cases: [(&str, bool); 138] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -985,6 +985,26 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\nNo blocker found. No changes needed.", true),
         ("SOURCE_REVIEW_READY\nNo source blocker found.", true),
         ("SOURCE_REVIEW_READY\nNo code change needed.", true),
+        // Broader defect vocabulary: adjectives and verbs.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite crashes.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is crashing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is not working.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is not yet green.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is still not green.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is corrupt.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is invalid.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is misconfigured.", false),
+        // Homograph exceptions: these are benign in context.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is down to the last check.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is down to one job.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The queue is empty.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The backlog is empty.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The queue is empty and the lane is green.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the run log.", true),
+        // The same words stay defects for the other subjects.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.", false),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);

@@ -240,10 +240,24 @@ REMAINDER_DEFECT = re.compile(
     r"[ \t]+(?:still[ \t]+|now[ \t]+|also[ \t]+)?"
     r"(?:red|broken|failing|failed|incomplete|unreadable|reported|missing|absent|empty"
     r"|stuck|stalled|hung|dead|down|unavailable|unreachable|stale|outdated|revoked"
-    r"|rejected|nacked|flaky|unstable|blocked|wrong)\b"
-    r"|\b(?:fails?|failing|failed|breaks?|broke|hangs?|stalls?|times?[ \t]+out)\b"
-    r"|\b(?:is|are|was|were|remains?|becomes?|stays?|looks?|seems?)\b[ \t]+not[ \t]+"
-    r"(?:ready|green|passing|complete|done|finished|merged|approved|mergeable)\b",
+    r"|rejected|nacked|flaky|unstable|blocked|wrong"
+    r"|corrupt|invalid|misconfigured|buggy|faulty|defective|unusable|unreliable|problematic)\b"
+    r"|\b(?:fails?|failing|failed|breaks?|broke|hangs?|stalls?|times?[ \t]+out"
+    r"|crashes?|crashing|crashed|errors?|panics?|aborts?|segfaults?|deadlocks?|regresses?"
+    r"|leaks?|throws?|rejects?|prevents?|stops?|halts?|freezes?|corrupts?)\b"
+    r"|\b(?:is|are|was|were|remains?|becomes?|stays?|looks?|seems?)\b[ \t]+(?:still[ \t]+)?not[ \t]+(?:yet[ \t]+)?"
+    r"(?:ready|green|passing|complete|done|finished|merged|approved|mergeable"
+    r"|working|functional|operational|available|reachable|responsive)\b",
+    re.IGNORECASE,
+)
+# #15980 review: three homographs are benign in context. "down to" is a
+# remaining-count, "queue/backlog is empty" is a drained queue, and "reported in
+# the run log" is a location. They are removed before the defect scan, so a
+# second defect in the same sentence still refuses.
+BENIGN_REMAINDER = re.compile(
+    r"\bdown[ \t]+to\b"
+    r"|\b(?:queue|backlog)\b[^.;\n]*\bis[ \t]+empty\b"
+    r"|\breported[ \t]+in[ \t]+the[ \t]+run[ \t]+log\b",
     re.IGNORECASE,
 )
 # #14355: a negated change/repair phrase is not a blocker. "no code change needed"
@@ -700,12 +714,14 @@ def strip_negated_blocker(line: str) -> str:
         # the rest of the sentence carries no defect predicate at all, so a
         # live defect in any form keeps the phrase and refuses. REMAINDER_DEFECT
         # is subject-agnostic, so "The suite is incomplete." and "The lane
-        # fails." are caught as well as the build/CI forms.
+        # fails." are caught as well as the build/CI forms. The three benign
+        # homographs are removed first, so a second defect still refuses.
+        remaining = BENIGN_REMAINDER.sub(" ", after)
         if (
             NEGATED_CHANGE_TAIL.match(after)
             and not REFUTES_NEGATION.search(before_clause)
             and not REFUTATION_AFTER.search(after)
-            and not REMAINDER_DEFECT.search(after)
+            and not REMAINDER_DEFECT.search(remaining)
         ):
             return " "
         return match.group(0)
@@ -2041,6 +2057,26 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nNo blocker found. No changes needed.", True),
         ("SOURCE_REVIEW_READY\nNo source blocker found.", True),
         ("SOURCE_REVIEW_READY\nNo code change needed.", True),
+        # #15980: broader defect vocabulary, adjectives and verbs.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite crashes.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is crashing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is not working.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is not yet green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is still not green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is corrupt.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is invalid.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is misconfigured.", False),
+        # #15980: homograph exceptions, benign in context.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is down to the last check.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is down to one job.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The queue is empty.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The backlog is empty.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The queue is empty and the lane is green.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The result is reported in the run log.", True),
+        # #15980: the same words stay defects for the other subjects.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.", False),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
