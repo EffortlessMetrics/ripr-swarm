@@ -142,6 +142,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput, full: bool) -> Vec<u8> {
         out: Vec::new(),
         attention: false,
         policy_reports_read: 0,
+        headline_names_repair: false,
     };
     let compact = !full && (input.pull_request || input.event_name.is_empty());
     if summary.headline(&input.gate_mode, compact) && compact {
@@ -164,6 +165,9 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput, full: bool) -> Vec<u8> {
                     code_span(&detail)
                 ));
             }
+            // The full page shows this start in its First-run status; a first
+            // spot with no repair route leaves it to the packet to carry.
+            summary.carried_repair_start(&doc);
         }
         summary.blank();
         summary.line("### Reports in the `ripr-reports` artifact");
@@ -315,6 +319,9 @@ struct Summary {
     /// per category, OR-ed in by `note_attention`); compared against
     /// `REQUIRED_POLICY_REPORTS` to tell a complete read from a partial one.
     policy_reports_read: u8,
+    /// The headline named the first spot's repair command, so the compact
+    /// page does not repeat the packet's carried start beside it.
+    headline_names_repair: bool,
 }
 
 impl Summary {
@@ -440,6 +447,7 @@ impl Summary {
             .as_ref()
             .map(headline::headline_lines)
             .unwrap_or_default();
+        self.headline_names_repair = lines.iter().any(|line| line.starts_with("- Next step: "));
         if compact && !lines.is_empty() {
             self.compact_gate_status(gate_mode);
             self.blank();
@@ -458,6 +466,22 @@ impl Summary {
             self.blank();
         }
         !lines.is_empty()
+    }
+
+    /// The start the start-here packet carries (#3906), when the headline
+    /// named none for its first spot: a card with no repair route still
+    /// leaves the packet's selected gap to start from, and the full page
+    /// leads with that start. Shown as the full page shows it, from the
+    /// repository root, and never beside a command the headline already names.
+    fn carried_repair_start(&mut self, doc: &Doc) {
+        if self.headline_names_repair {
+            return;
+        }
+        let command = doc.optional(&["selected.repair_command"]);
+        if !command.is_empty() {
+            let relative = self.relative.clone();
+            self.repair_start("Start repair", &inline(&relative.value(&command)));
+        }
     }
 
     fn compact_gate_status(&mut self, gate_mode: &str) {

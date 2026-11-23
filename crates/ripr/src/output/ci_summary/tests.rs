@@ -2081,3 +2081,93 @@ fn a_run_without_a_pull_request_says_so() -> TestResult {
     assert!(!bare.contains("still ran"), "{bare}");
     Ok(())
 }
+
+/// The compact front page names the packet's carried repair start when its
+/// headline names none for the first spot (#14301): a card without a repair
+/// route still leaves the start-here packet's selected gap to start from,
+/// and the full page leads with that start.
+#[test]
+fn a_compact_page_carries_the_packet_repair_start_when_the_headline_has_none() -> TestResult {
+    let fixture = Fixture::new("compact-carried-start")?;
+    let mut without_route = card();
+    without_route["llm_guidance"] = json!({"note": "add a separating input first"});
+    fixture.json(
+        super::COMMENTS_JSON,
+        &json!({
+            "summary": {"comments": 1},
+            "analysis_outcome": {"analysis_complete": true},
+            "comments": [without_route],
+        }),
+    )?;
+    let packet = json!({
+        "status": "advisory",
+        "selected": {"state": "repair_packet_ready", "repair_command": REPAIR},
+    });
+    fixture.json("target/ripr/reports/start-here.json", &packet)?;
+    let compact = render_event(&fixture, "pull_request")?;
+    assert!(
+        compact.contains("### Reports in the `ripr-reports` artifact"),
+        "{compact}"
+    );
+    assert!(!compact.contains("- Next step: "), "{compact}");
+    assert_eq!(
+        compact
+            .matches(&format!("- Start repair: `{REPAIR}`"))
+            .count(),
+        1,
+        "{compact}"
+    );
+    assert!(
+        compact.contains(&format!(
+            "- {REPAIR_AFTER_PHASE_LABEL}: {REPAIR_AFTER_PHASE_STEP}"
+        )),
+        "{compact}"
+    );
+    // The headline keeps its place: the carried start follows it.
+    let headline = compact.find(HEADLINE).ok_or("headline is missing")?;
+    let start = compact
+        .find("- Start repair: ")
+        .ok_or("the carried start is missing")?;
+    assert!(headline < start, "{compact}");
+
+    // A packet that carries no start leaves the page without one.
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({"status": "advisory", "selected": {"state": "no_action"}}),
+    )?;
+    let bare = render_event(&fixture, "pull_request")?;
+    assert!(!bare.contains("- Start repair: "), "{bare}");
+    Ok(())
+}
+
+/// One repair command on the compact page: when the headline already names
+/// the first spot's, the packet's carried start is not repeated beside it.
+#[test]
+fn a_compact_page_prints_one_repair_command_when_the_headline_names_one() -> TestResult {
+    let fixture = Fixture::new("compact-one-command")?;
+    let carried = "ripr agent repair --root . --seam-id s2 --phase before";
+    fixture.json(
+        super::COMMENTS_JSON,
+        &json!({
+            "summary": {"comments": 1},
+            "analysis_outcome": {"analysis_complete": true},
+            "comments": [card()],
+        }),
+    )?;
+    fixture.json(
+        "target/ripr/reports/start-here.json",
+        &json!({
+            "status": "advisory",
+            "selected": {"state": "repair_packet_ready", "repair_command": carried},
+        }),
+    )?;
+    let compact = render_event(&fixture, "pull_request")?;
+    assert!(
+        compact.contains(&format!("- Next step: `{REPAIR}`")),
+        "{compact}"
+    );
+    assert_eq!(compact.matches(REPAIR).count(), 1, "{compact}");
+    assert!(!compact.contains(carried), "{compact}");
+    assert!(!compact.contains("- Start repair: "), "{compact}");
+    Ok(())
+}
