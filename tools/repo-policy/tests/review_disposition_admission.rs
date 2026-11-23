@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 148] = [
+    let cases: [(&str, bool); 186] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -1016,6 +1016,52 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.", false),
         ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.", false),
         ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.", false),
+        // "has not been <participle>" for the defect vocabulary.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been tested.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been verified.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been reviewed.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been qualified.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been checked.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been validated.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been confirmed.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been deployed.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been released.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been shipped.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been landed.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been completed.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been finished.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been ready.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been working.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been functional.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been operational.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been available.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been reachable.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been responsive.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been stable.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been healthy.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been correct.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been valid.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been sound.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been solid.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been clean.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been covered.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been documented.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been recorded.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been noted.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been described.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been explained.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been linked.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been attached.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been included.", false),
+        // The #15525 benign negations still admit.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result is not native composed-tree proof.",
+            true,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. I did not rerun the hosted lane.",
+            true,
+        ),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);

@@ -249,8 +249,11 @@ REMAINDER_DEFECT = re.compile(
     r"(?:ready|green|passing|complete|done|finished|merged|approved|mergeable"
     r"|working|functional|operational|available|reachable|responsive)\b"
     r"|\b(?:has|have|had|did|do|does|is|are|was|were)(?:n't| not)(?:[ \t]+(?:yet|still|fully|quite|actually))?[ \t]+"
-    r"(?:passed|pass|run|finished|completed|succeeded|been green|gone green|been passing"
-    r"|been complete|been done|been merged|been approved|been mergeable)\b",
+    r"(?:(?:been[ \t]+)?(?:passed|pass|run|finished|completed|succeeded|green|passing|complete|done|merged|approved|mergeable"
+    r"|tested|verified|reviewed|qualified|checked|validated|confirmed|deployed|released|shipped|landed"
+    r"|ready|working|functional|operational|available|reachable|responsive|stable|healthy|correct|valid"
+    r"|sound|solid|clean|covered|documented|recorded|noted|described|explained|linked|attached|included)"
+    r"|gone[ \t]+green)\b",
     re.IGNORECASE,
 )
 # #15980 review: three homographs are benign in context. "down to" is a
@@ -2095,6 +2098,52 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.", False),
         ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.", False),
         ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.", False),
+        # #15980: "has not been <participle>" for the defect vocabulary.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been tested.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been verified.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been reviewed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been qualified.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been checked.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been validated.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been confirmed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been deployed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been released.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been shipped.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been landed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been completed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been finished.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been ready.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been working.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been functional.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been operational.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been available.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been reachable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been responsive.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been stable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been healthy.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been correct.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been valid.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been sound.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been solid.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been clean.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been covered.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been documented.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been recorded.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been noted.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been described.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been explained.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been linked.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been attached.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been included.", False),
+        # #15980: the #15525 benign negations still admit.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result is not native composed-tree proof.",
+            True,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. I did not rerun the hosted lane.",
+            True,
+        ),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)
