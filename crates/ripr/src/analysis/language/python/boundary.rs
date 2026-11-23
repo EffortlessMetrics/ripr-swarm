@@ -1622,6 +1622,12 @@ type BoundArguments = (
     bool,
 );
 
+/// The element literals and dict key literals one call binds, by parameter.
+type ArgumentDisplays<'a> = (
+    &'a BTreeMap<String, Vec<String>>,
+    &'a BTreeMap<String, Vec<String>>,
+);
+
 /// A literal binding for one owner parameter in one test call.
 #[derive(Clone, Debug)]
 pub(super) struct Binding {
@@ -1819,8 +1825,7 @@ fn candidate_call_rows(
                                 line,
                                 &text,
                                 &bindings,
-                                &elements,
-                                &dict_keys,
+                                (&elements, &dict_keys),
                                 &case_arguments,
                                 case,
                             )
@@ -2113,8 +2118,7 @@ fn parametrize_case_row(
     line: usize,
     text: &str,
     bindings: &BTreeMap<String, Binding>,
-    elements: &BTreeMap<String, Vec<String>>,
-    dict_keys: &BTreeMap<String, Vec<String>>,
+    (elements, dict_keys): ArgumentDisplays<'_>,
     case_arguments: &[(String, String)],
     case: &BTreeMap<String, String>,
 ) -> CallRow {
