@@ -209,7 +209,12 @@ NEGATION = re.compile(
     # strippable, so the remainder scan must cover the "still"/"remains"/
     # "continues to" forms that report a live defect. Without these, "No new
     # blocker found. The build still fails." would admit.
-    r"|\bstill[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
+    # #15980 review: "still fails" is subject-anchored to build/test-ish
+    # subjects, so narration such as "a wrongly gated control still fails" or
+    # "a redirect still fails" admits. The other still-forms stay
+    # subject-agnostic.
+    r"|\b(?:build|test|tests|suite|ci|check|checks|job|jobs|lane|lanes|run|runs|pipeline|workflow|gate|step|steps|shard|shards|matrix)\b[^.;\n]*\bstill[ \t]+fail(?:s|ed|ing)?(?![-\w])\b"
+    r"|\bstill[ \t]+(?:wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
     r"|\bremains?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
     r"|\bcontinues?[ \t]+to(?:[ \t]+be)?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
     r"|\b(?:a[ \t]+)?fix(?:es)?[ \t]+(?:is|are)?[ \t]*(?:needed|required)\b"
@@ -2142,6 +2147,16 @@ def self_test() -> None:
         ),
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. I did not rerun the hosted lane.",
+            True,
+        ),
+        # #15980: "still fails" is subject-anchored, so narration admits.
+        ("SOURCE_REVIEW_READY\na wrongly gated control still fails", True),
+        ("SOURCE_REVIEW_READY\nA `>` redirect's CRLF therefore still fails", True),
+        ("SOURCE_REVIEW_READY\na UTF-16 redirect still fails it on CRLF", True),
+        ("SOURCE_REVIEW_READY\nscalar roles still fail (existing tests)", True),
+        ("SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed", True),
+        (
+            "SOURCE_REVIEW_READY\nIt still fails when no string value carries the missing root",
             True,
         ),
     ]

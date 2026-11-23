@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 186] = [
+    let cases: [(&str, bool); 192] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -1060,6 +1060,16 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ),
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. I did not rerun the hosted lane.",
+            true,
+        ),
+        // "still fails" is subject-anchored, so narration admits.
+        ("SOURCE_REVIEW_READY\na wrongly gated control still fails", true),
+        ("SOURCE_REVIEW_READY\nA `>` redirect's CRLF therefore still fails", true),
+        ("SOURCE_REVIEW_READY\na UTF-16 redirect still fails it on CRLF", true),
+        ("SOURCE_REVIEW_READY\nscalar roles still fail (existing tests)", true),
+        ("SOURCE_REVIEW_READY\nwhich is still an error and still fail-closed", true),
+        (
+            "SOURCE_REVIEW_READY\nIt still fails when no string value carries the missing root",
             true,
         ),
     ];
