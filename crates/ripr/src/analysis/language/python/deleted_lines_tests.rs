@@ -2287,16 +2287,19 @@ fn comment_replacing_a_removed_import_is_no_finding() -> Result<(), String> {
 /// it does not keep a comment's pair alive (#16011 review).
 #[test]
 fn lone_closer_beside_a_comment_does_not_hide_a_deleted_argument() -> Result<(), String> {
-    let source = "def capped_total(total, cap):\n    return min(\n        total,\n        # Use the default cap.\n        cap + 1,\n    )\n";
+    let source = "def capped_total(total, cap, rebate):\n    return calculate(\n        total,\n        # Use the service default.\n        discount=compute_discount(rebate),\n    )\n";
     let findings = analyze_with_test(
         "comment-with-closer",
         source,
         CAP_TEST_PY,
         &[4, 5, 6],
-        vec![line(4, 4, "        total * 2,"), line(5, 4, "        cap)")],
+        vec![
+            line(4, 4, "        priority=cap,"),
+            line(5, 4, "        discount=compute_discount(total))"),
+        ],
     )?;
     assert!(
-        base_side_texts(&findings).contains(&"total * 2,".to_string()),
+        base_side_texts(&findings).contains(&"priority=cap,".to_string()),
         "{findings:?}"
     );
     Ok(())
