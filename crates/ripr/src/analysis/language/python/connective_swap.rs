@@ -328,8 +328,8 @@ pub(super) fn compare(left: &str, operator: &str, right: &str) -> Option<bool> {
     // (`0.10000000000000001 == 0.1`); other literals by `literals_equal`.
     if let (Some(left), Some(right)) = (decimal(left), decimal(right)) {
         return Some(match operator {
-            "==" => left == right,
-            "!=" => left != right,
+            "==" => left.partial_cmp(&right) == Some(std::cmp::Ordering::Equal),
+            "!=" => left.partial_cmp(&right) != Some(std::cmp::Ordering::Equal),
             "<" => left < right,
             "<=" => left <= right,
             ">" => left > right,
