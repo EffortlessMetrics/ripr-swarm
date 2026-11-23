@@ -292,18 +292,24 @@ macro_rules! rows {
     }};
 }
 
-/// Whether `class` is `expected`. A credited `exposed` or `weakly_exposed` control may
-/// instead read `static_unknown` when the oracle stage, not this PR's
-/// propagation reading, refuses the test's assertion: main (#16160) leaves
-/// an assertion's macro binding unestablished while an `include!` with
-/// macro arguments is in reach, as these controls' `include!(concat!(..))`
-/// is. The propagation witness is still asserted by the caller.
-fn matches_class(class: &ExposureClass, expected: &ExposureClass, finding: &Finding) -> bool {
-    class == expected
-        || ((*expected == W || *expected == E)
-            && *class == ExposureClass::StaticUnknown
-            && format!("{finding:?}").contains("rust_assertion_context_unestablished"))
-}
+/// The constant-path controls whose credited reading main's oracle stage
+/// (#16155/#16160) withholds: each has an `include!` with macro arguments in
+/// reach, so main leaves the test assertion's macro binding unestablished and
+/// classifies `static_unknown` with `rust_assertion_context_unestablished`,
+/// while this PR's propagation witness still credits the returned value.
+/// Exactly these rows, on exactly the constant path, must take that reading.
+const ORACLE_LIMITED: &[&str] = &[
+    "gated include through a user macro control",
+    "bare concat shadowed by a user macro control",
+    "bare concat shadowed by an import renamed to concat control",
+    "core concat under a crate renamed to core control",
+    "core concat under an import renamed to core control",
+    "cast to a type named core elsewhere",
+    "include of another file named across split literals",
+];
+
+/// The oracle stage's refusal of the test assertion, as main reports it.
+const ASSERTION_UNESTABLISHED: &str = "rust_assertion_context_unestablished";
 
 fn check(rows: Vec<Row>) -> Result<(), String> {
     let mut wrong = Vec::new();
@@ -314,20 +320,29 @@ fn check(rows: Vec<Row>) -> Result<(), String> {
         for row in &rows {
             let (class, finding) = (row.run)(path)?;
             let credited = finding.ripr.propagate.state == StageState::Yes;
+            let refused = format!("{finding:?}").contains(ASSERTION_UNESTABLISHED);
+            let listed = index == 0 && ORACLE_LIMITED.contains(&row.name.as_str());
             let right = match &row.want {
                 Want::Is(classes) => {
-                    matches_class(&class, &classes[index], &finding) && credited != (class == PU)
+                    let expected = &classes[index];
+                    let limited = listed
+                        && credited
+                        && refused
+                        && class == ExposureClass::StaticUnknown
+                        && (*expected == W || *expected == E);
+                    (limited || (!listed && class == *expected)) && credited != (class == PU)
                 }
                 Want::Like(baseline) => {
                     let (expected, base) = baseline(path)?;
-                    class == expected
+                    !listed
+                        && class == expected
                         && credited == (base.ripr.propagate.state == StageState::Yes)
                         && (index == 1 || (class != PU && credited))
                 }
             };
             if !right {
                 wrong.push(format!(
-                    "{path:?} {}: {class:?} {:?}",
+                    "{path:?} {}: {class:?} listed={listed} assertion_unestablished={refused} {:?}",
                     row.name, finding.ripr.propagate
                 ));
             }
