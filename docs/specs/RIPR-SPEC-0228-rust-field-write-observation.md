@@ -280,7 +280,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    so no read of that binding confirms the write. Such a write stays unjudged;
    ripr cannot yet confirm it through the value the call chain returns. `fixtures/rust_copy_builder_field_write`
    pins this in the RIPR-SPEC-0108 honesty corpus. The guidance follows the receiver: for a borrowed
-   receiver the hover, the agent packet's `missing_oracle_shape` and the
+   receiver the hover, the agent packet's `missing_oracle_shape`, a related
+   test's evidence-record `upgrade_suggestion` (#11726) and the
    hand-written step say to assert the field on the value the method was called
    on; for a by-value receiver they say to assert it on the value the call
    returns (the stub refusal is `field_written_by_value`, not
@@ -380,7 +381,7 @@ changes `self.count += 2` to `self.count += 1`.
 6. `self.state = State::Done` (changed from `State::Idle`), test
    `c.finish(); assert_eq!(c.state, State::Done)`: `exposed`; a test
    asserting only `State::Idle` on another field: not `exposed`.
-7. `fn set(p: &mut u32, v: u32) { *p = v; }` (changed from `v + 1`), test
+7. [abstain] `fn set(p: &mut u32, v: u32) { *p = v; }` (changed from `v + 1`), test
    `set(&mut x, 5); assert_eq!(x, 5)`: `static_unknown`,
    `rust_mut_reference_alias_unresolved`.
 8. `self.items.push(x)` with argument changed, test
@@ -503,6 +504,14 @@ changes `self.count += 2` to `self.count += 1`.
   `any_other_mention_of_the_owner_name_withholds_a_private_field_seam`, `field_reach/tests.rs`
   `mentions_count_every_use_of_the_name_but_not_its_definition` and
   `a_cancelled_inventory_reports_the_cancellation_from_field_admission`.
+- Unread write beside neighbours and loop-held receiver calls (#6485):
+  `crates/ripr/tests/field_write_loop_and_unread.rs` (positive
+  `reachable_unrevealed`, the abstaining controls including a reference
+  alias, a moved-in binding and a consumed result, loop reach, plain and
+  tuple loop patterns that bind the receiver, and no credit for an exact read
+  after a loop that may not run), `field_write_seam.rs`
+  `no_read_beside_an_asserting_neighbour_is_not_a_repair_start`, and the
+  verdict corpus `grid-delete-*` cells.
 - Planned: probe extraction unit tests for `=` and `op=` on field paths.
 - Probe boundary (#6676, #6675): `lexical.rs`
   `let_binding_type_annotations_are_not_field_construction` and
@@ -768,11 +777,28 @@ changes `self.count += 2` to `self.count += 1`.
 - When no related test holds any assertion, the finding reads
   `reachable_unrevealed` (Decision 3). Every weaker reading (`assert!(c.f
   == ..)`, `assert_ne!`, projections, helper assertions, whole-value or
-  `Debug` comparisons of the receiver, a sibling-field read, a later read
-  through another method) reads `static_unknown` with
-  `static_probe_unknown` instead of the `weakly_exposed` that Behavior
-  describes (`ClassifiedProbeEvidence::class` in `classifier/evidence.rs`),
-  failing closed until those reads are established. Writes through `*p`, a
+  `Debug` comparisons of the receiver, a later read through another method)
+  reads `static_unknown` with `static_probe_unknown` instead of the
+  `weakly_exposed` that Behavior describes
+  (`ClassifiedProbeEvidence::class` in `classifier/evidence.rs`), failing
+  closed until those reads are established. Two reads are established and
+  keep `weakly_exposed`: a relational read under the #11870 start policy,
+  and (#12771, examples 3, 4 and 6) a test with at least one `assert_eq!`,
+  `assert_ne!` or `assert!` that reads only other declared fields of the
+  receiver that ran the owner (`assert_eq!(c.label, "x")`), or a getter
+  whose body plainly returns another field (`c.count()` returning
+  `self.other`), under the same policy's guards: every reaching test calls
+  the owner directly and exactly once on that receiver (a second run could
+  carry the first write into a sibling), the field is named nowhere else in
+  the test, the receiver is used only as `<binding>.<declared field>` or
+  such a getter call in that assertion, no other method or `&mut` use of it
+  comes between the call and the read, no assertion macro is rebound, and
+  the owner's name is mentioned nowhere else. A test with any assertion on the
+  receiver that this scan does not place (a method on a sibling, a chained
+  projection, a float or range literal beside the binding) keeps abstaining (`assigned_field_gap_is_placed` and
+  `sibling_field_read` in `classify/activation.rs`). Such a read holds no
+  weak read of the field to strengthen, so it starts no repair, like a test
+  with no assertion. Writes through `*p`, a
   local binding or a non-`self` receiver are not probed.
 - Known limits shared with other probe families (#8051, #7638): a test
   whose only oracle is a manual `if .. { panic!(..) }`, a
@@ -832,6 +858,31 @@ changes `self.count += 2` to `self.count += 1`.
   crate-qualified struct literal receiver (`krate::Ty { .. }`) is typed by
   its latest `let` and refused when the test holds a second `let` of that
   binding name, whose block scope the text reading cannot place.
+- Example 5 beside asserting neighbours is implemented (#6485):
+  `assigned_field_is_unread` and `runs_owner_and_reads_nothing` in
+  `activation.rs` place a write whose every reaching test holds no assertion
+  fact, invokes no macro outside the transparent set, names the written field
+  nowhere, and ends with one bare `binding.owner(..);` whose result nothing
+  consumes (no `.unwrap()`, `.expect(..)` or `?`) on a binding declared once
+  by an owned type-path construction that borrows nothing. The classifier
+  then reads observe and discriminate as `no`, so the class is
+  `reachable_unrevealed` (Decision 3) even when file neighbours assert on
+  other fields; those neighbours are not a weak discriminator (verdict corpus
+  `grid-delete-none`). It is never a repair start: the seam's
+  missing-discriminator fact stays with `assigned_field_weak_read_start`. A
+  later statement (a helper taking the binding or an alias's target), a
+  reference or moved-in binding, a consumed result, a format capture, a field
+  read, an opaque macro or a second owner call keeps the abstention.
+- A receiver call inside a `for` loop whose pattern does not bind the
+  receiver name relates as `direct_owner_call` through the binding visible
+  around the loop (`visible_receiver_binding_names_type` in
+  `related_tests.rs`, #6485). This changes reach only: observation rule 1
+  still needs an owner call that runs before the read at the test body's top
+  level, so `grid-delete-table` (the call runs `0..times` times over table
+  rows ripr does not evaluate) and `grid-delete-property` (a relational
+  read after a `let before = stats.reads` snapshot inside the loop) stay
+  abstained, and `grid-delete-helper` (the call sits in a looping
+  `check_*` helper) is not yet reached.
 
 ## Metrics
 

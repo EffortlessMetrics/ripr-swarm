@@ -877,6 +877,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     if let Some(before) = &witness.before {
         lines.push(format!("- before: `{before}`"));
     }
+    if let Some(condition) = &witness.before_condition {
+        lines.push(format!("- old condition: `{condition}`"));
+    }
     if let Some(after) = &witness.after {
         lines.push(format!("- after: `{after}`"));
     }
@@ -1414,7 +1417,16 @@ fn push_editor_commands(
     // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
     // start; any other seam's hover stays as it was (#3906).
     if let Some(repair) = repair_start_command_for(entry, &root) {
-        lines.push(format!("- repair (start here): `{repair}`"));
+        // #13636: the start refuses a dirty production premise; name the
+        // commit step first, as the inert "Start repair" action does.
+        if let Some(commit) = super::actions::seam_start_commit_step(&snapshot.root, &root) {
+            lines.push(format!(
+                "- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"
+            ));
+            lines.push(format!("- then repair: `{repair}`"));
+        } else {
+            lines.push(format!("- repair (start here): `{repair}`"));
+        }
     }
     lines.push(format!(
         "- packet: `{}`",
@@ -1805,6 +1817,7 @@ mod seam_hover_tests {
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -2055,6 +2068,7 @@ mod seam_hover_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

@@ -511,6 +511,7 @@ fn check_with_progress_and_origins_run(
 
     if let Some(outcome) = analysis.analysis_outcome.as_mut() {
         outcome.language_view = analysis.language_view.clone();
+        outcome.changed_lines = analysis.changed_lines.take();
         outcome.check_findings_inputs = Some(crate::analysis_outcome::CheckFindingsInputs {
             config_identity: crate::config::check_artifact_config_identity_hash(config),
             include_unchanged_tests: input.include_unchanged_tests,
@@ -662,6 +663,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             rust_consumed_sources: Default::default(),
             owner_opt_outs: Vec::new(),
             language_view: None,
+            changed_lines: None,
             preview_fact_caches: Vec::new(),
         },
     )
@@ -1580,6 +1582,7 @@ mod tests {
             rust_consumed_sources: Default::default(),
             owner_opt_outs: Vec::new(),
             language_view: None,
+            changed_lines: None,
             preview_fact_caches: Vec::new(),
         }
     }

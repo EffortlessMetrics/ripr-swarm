@@ -166,3 +166,26 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_path_remap (13)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_path_remap --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — module_reach_super_import_path_remap (14)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_path_remap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

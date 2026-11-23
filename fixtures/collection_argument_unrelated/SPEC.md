@@ -12,7 +12,10 @@ The public check path reads the exact fixture and its literal assertion.
 
 ## Then
 
-The collection effect findings read `weakly_exposed`. The runtime controls in
+The collection effect findings read `reachable_unrevealed`: the test reaches
+`add`, but `assert_eq!(11, 11)` compares only literals and reads no value, so
+it supplies no oracle (#14968; before, they read `weakly_exposed`). The
+runtime controls in
 `owner_pin_execution::field_projected_collection` compile these sources and
 run the named test against the neutral, wrong-value and deleted-push versions.
 

@@ -429,9 +429,9 @@ pub(crate) struct RepoSeam {
     /// before the fact existed, which words the read neutrally.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner_borrows_receiver: Option<bool>,
-    /// The owner function's opt-out (`#[mutants::skip]`, #14139), read once
-    /// from parser-backed attributes at extraction through
-    /// [`crate::analysis::owner_opt_out::function_owner_opt_out`]. Not part of
+    /// The owner function's opt-out (`#[mutants::skip]` on the owner or an
+    /// enclosing scope, #14139, #15000), decided once at extraction through
+    /// [`crate::analysis::owner_opt_out::FileOwnerOptOuts`]. Not part of
     /// the seam ID. The repo-scope formats withhold such seams from their
     /// counts and disclose the number; other consumers ignore it. Absent for
     /// every seam whose owner carries no opt-out, so cached and serialized
@@ -751,10 +751,14 @@ impl RepoSeam {
 }
 
 /// Repo-root-relative path normalization: Unix separators, no leading `./`.
-/// Used inside the ID hash so `src/x.rs`, `./src/x.rs`, and `src\x.rs`
-/// produce the same seam ID across platforms.
+/// Used inside the ID hash so `src/x.rs`, `./src/x.rs`, and a Windows
+/// checkout's `src\x.rs` produce the same seam ID across platforms. On Unix a
+/// backslash is a file-name byte, not a separator: `src/a\b.rs` stays one
+/// file, distinct from `src/a/b.rs`, and still opens under the root (#15908).
 fn normalize_path(p: &Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/");
+    let s = p.to_string_lossy();
+    #[cfg(not(unix))]
+    let s = s.replace('\\', "/");
     s.strip_prefix("./").unwrap_or(&s).to_string()
 }
 
@@ -1148,7 +1152,9 @@ mod tests {
             SeamKind::PredicateBoundary,
             88,
         );
-        assert_eq!(unix.id(), windows.id());
+        // A backslash is a separator on Windows only; on Unix `src\pricing.rs`
+        // is a different file and keeps its own seam ID (#15908).
+        assert_eq!(unix.id() == windows.id(), !cfg!(unix));
     }
 
     #[test]

@@ -90,5 +90,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/typescript_self_comparing_one_hop_local/input --diff <cwd>/fixtures/typescript_self_comparing_one_hop_local/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_self_comparing_one_hop_local/input --diff <cwd>/fixtures/typescript_self_comparing_one_hop_local/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

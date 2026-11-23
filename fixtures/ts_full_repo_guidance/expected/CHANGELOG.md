@@ -154,3 +154,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_full_repo_guidance (13)
+
+Reason:
+RIPR-SPEC-0082: enable snippet starts from the explicit language list (#15989)
+
+Command:
+`cargo xtask goldens bless ts_full_repo_guidance --reason "..."`
+
+Updated:
+- `expected/human.txt`

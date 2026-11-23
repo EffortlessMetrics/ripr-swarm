@@ -14,6 +14,7 @@ pub(crate) const PYTHON_OWNER_RESULT_FIELD_UNREAD_PREFIX: &str =
     "python_owner_result_field_unread: ";
 
 /// The evidence line for `binding.field` unread in `test_name`.
+#[cfg(any(test, feature = "lang-python"))]
 pub(crate) fn python_owner_result_field_unread_line(
     binding: &str,
     field: &str,

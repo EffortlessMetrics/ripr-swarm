@@ -177,3 +177,36 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (15)
+
+Reason:
+RIPR-SPEC-0068: the uncalled owner's computed boundary operand now carries the typed activation_boundary_input_unresolved limit that PR guidance already withholds the seam under; class stays no_static_path (#14951)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (16)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — owner_self_body_same_name_no_unseen_reach (17)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless owner_self_body_same_name_no_unseen_reach --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

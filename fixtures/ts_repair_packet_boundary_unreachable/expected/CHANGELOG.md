@@ -575,3 +575,37 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_unreachable (43)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_unreachable --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_unreachable (44)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_unreachable --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — ts_repair_packet_boundary_unreachable (45)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_unreachable --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`

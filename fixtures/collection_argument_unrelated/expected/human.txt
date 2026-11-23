@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/collection_argument_unrelated/input
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 2 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -11,14 +11,14 @@ Start here:
   State: a test gap to inspect or repair
   Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:3
-  Static exposure: weak (severity: warning, confidence 0.92)
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Static exposure: unrevealed (severity: warning, confidence 0.79)
+  Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
   Gap ID (for scripts): gap:rust:src/lib.rs:add:call_deletion:call_deletion:v.push_x*1
   Changed behavior: v.push(x * 1)
-  Missing check: No strong assertion was detected
-  Related test: src/lib.rs:10 records_into_the_bag (assertion too weak to tell the old behavior from the new)
-  Next step: Strengthen the related assertion so it discriminates the changed behavior
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Missing check (1 of 3): No detected assertion observes the changed value, error, field, or effect
+  Related test: src/lib.rs:10 records_into_the_bag (asserts, but not on the changed value)
+  Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
+  Evidence: reach yes · infection yes · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       assertion = a test assertion tells intended from wrong behavior
@@ -43,8 +43,8 @@ Write this test by hand: call the function, then assert the visible change the c
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (weak); kind: side_effect; reason: No strong assertion was detected
+    - ./src/lib.rs:3 (unrevealed); kind: side_effect; reason: No detected assertion observes the changed value, error, field, or effect
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

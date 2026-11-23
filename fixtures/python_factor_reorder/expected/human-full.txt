@@ -283,5 +283,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast probe:src_shop.py:python_preview:c5d74b8f
   ripr context --root <cwd>/fixtures/python_factor_reorder/input --diff <cwd>/fixtures/python_factor_reorder/diff.patch --mode fast --at probe:src_shop.py:python_preview:c5d74b8f
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

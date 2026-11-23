@@ -79,6 +79,7 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
     old_side: &OldSideRanges<'_>,
     new_source: NewSource<'_>,
     owners: &[PythonOwner],
+    compound_loop_owners: &super::range_activation::CompoundLoopOwners,
     tests: &'a [PythonTest],
     findings: &[Finding],
     value_origins: &mut crate::value_origins::ValueOrigins,
@@ -138,12 +139,20 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             old_side.source,
             &paired,
         );
-        let site = ChangeSite {
-            file: &changed.path,
-            line: removed.new_side_line,
-            owner,
-            old_guard,
-        };
+        let site =
+            ChangeSite {
+                file: &changed.path,
+                line: removed.new_side_line,
+                owner,
+                old_guard,
+                deleted_membership: old_side.source.zip(new_source).map(
+                    |(old_source, new_source)| super::classify::DeletedMembershipView {
+                        old_source,
+                        old_line: removed.line,
+                        new_source,
+                    },
+                ),
+            };
         let mut finding_origins = crate::value_origins::ValueOrigins::default();
         let Some(mut finding) = classify_change_for_owner_with_value_origins(
             site,
@@ -151,7 +160,10 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             None,
             owners,
             tests,
-            PythonNoBehaviorContext::default(),
+            PythonNoBehaviorContext {
+                compound_loop_edit: compound_loop_owners.contains(&owner.symbol_id()),
+                ..Default::default()
+            },
             // A deleted line is base-side evidence: the new-side guarded-arm
             // gate (#7392) stays off here; its old-side reading rides in
             // `site.old_guard` (#11889).

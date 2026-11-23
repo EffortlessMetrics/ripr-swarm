@@ -85,6 +85,18 @@ pub(super) fn code_action_response(
             diagnostic,
             snapshot,
         ));
+        // #13636: with no spot inventory (deferred by a quick save, or not
+        // built in this configuration) the finding has no seam-bound start.
+        // A disabled-capable client sees the start inert with the blocker
+        // and next step named; other clients keep the legacy omission. A
+        // gap record in the same request carries its own repair-packet
+        // actions, so no inert finding start is added beside them.
+        if client_features.code_action_disabled
+            && !params.context.diagnostics.iter().any(is_gap_diagnostic)
+            && let Some(action) = finding_start_blocked_action(diagnostic, snapshot)
+        {
+            actions.push(action);
+        }
     }
     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
         title: REFRESH_ANALYSIS_TITLE.to_string(),
@@ -313,6 +325,7 @@ pub(super) fn disable_retained_analysis_actions(
                         | "receipt_route_unavailable"
                         | "preview_or_static_limitation"
                         | "repair_route_not_ready"
+                        | "uncommitted_production_change"
                 )
             )
         {
@@ -406,6 +419,9 @@ pub(super) fn resolve_action(
             return Ok(action);
         }
         // Revalidation passed: the action resolves in its enabled form.
+        // An enabled repair start is not re-checked against the dirty
+        // premise here (#13636): resolve is not advertised, the action only
+        // copies the command, and the before phase it names still refuses.
         action.disabled = None;
     }
     // An action that arrives without a command (already inert when emitted)
@@ -527,6 +543,190 @@ fn cross_language_disabled_action(
         disabled.reason = CROSS_LANGUAGE_LIMITATION_REASON.to_string();
     }
     Some(action)
+}
+
+/// The commit step a seam repair start needs before it can begin (#13636):
+/// `Some(git ... commit ...)` when the shared before-phase preflight
+/// (`app::repair_attempt::seam_start_dirty_premise`) names dirty production
+/// files under `snapshot_root`, spelled with the `root_display` the start
+/// command binds. `None` on a clean premise. An unreadable premise is also
+/// `None`: the start keeps its legacy form and its own before phase stays the
+/// final authority that refuses.
+pub(super) fn seam_start_commit_step(snapshot_root: &Path, root_display: &str) -> Option<String> {
+    let files = seam_start_dirty_files(snapshot_root).ok()?;
+    crate::app::commit_prerequisite_command(root_display, &files)
+}
+
+fn seam_start_dirty_files(snapshot_root: &Path) -> Result<Vec<String>, String> {
+    #[cfg(test)]
+    if let Some(files) = test_premise::overridden() {
+        return Ok(files);
+    }
+    recent_premise::get_or_probe(snapshot_root)
+}
+
+/// A one-second, one-root memo of the dirty-premise preflight (#13636).
+/// Editors send a code-action and a hover request together on each cursor
+/// move; without it each spawns the preflight's git calls. One second keeps
+/// the check effectively live: a commit or a new edit shows on the next
+/// request after that. An error is never memoized.
+mod recent_premise {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    const TTL: Duration = Duration::from_secs(1);
+
+    type Entry = (PathBuf, Instant, Vec<String>);
+
+    static RECENT: Mutex<Option<Entry>> = Mutex::new(None);
+
+    pub(super) fn get_or_probe(root: &Path) -> Result<Vec<String>, String> {
+        if let Ok(guard) = RECENT.lock()
+            && let Some((cached_root, at, files)) = guard.as_ref()
+            && cached_root == root
+            && at.elapsed() < TTL
+        {
+            return Ok(files.clone());
+        }
+        let files = crate::app::repair_attempt::seam_start_dirty_premise(root)?;
+        if let Ok(mut guard) = RECENT.lock() {
+            *guard = Some((root.to_path_buf(), Instant::now(), files.clone()));
+        }
+        Ok(files)
+    }
+
+    /// Drops the memo so the next request probes git again (tests that
+    /// change the repository between requests).
+    #[cfg(test)]
+    pub(crate) fn forget() {
+        if let Ok(mut guard) = RECENT.lock() {
+            *guard = None;
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) use recent_premise::forget as forget_recent_premise;
+
+/// Test-only premise pin (#13636). The checked-in LSP goldens render from
+/// fixture roots inside this repository's own checkout, where the live
+/// preflight would report the developer's uncommitted edits (as `../..`
+/// paths) and drift the golden. Those harnesses pin a clean premise for the
+/// current thread; every other test, and production, reads the live
+/// preflight.
+#[cfg(test)]
+pub(super) mod test_premise {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static PINNED: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn overridden() -> Option<Vec<String>> {
+        PINNED.with(|pinned| pinned.borrow().clone())
+    }
+
+    /// Restores the previous pin on drop, so a panicking body cannot leak
+    /// its pin to a later test on a reused thread.
+    struct Restore(Option<Vec<String>>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            PINNED.with(|pinned| *pinned.borrow_mut() = previous);
+        }
+    }
+
+    /// Runs `body` with the dirty premise pinned to `files` on this thread.
+    pub(crate) fn with_pinned_premise<T>(files: Vec<String>, body: impl FnOnce() -> T) -> T {
+        let _restore = Restore(PINNED.with(|pinned| pinned.replace(Some(files))));
+        body()
+    }
+}
+
+/// The inert "Start repair" action for a gap-class finding that has no
+/// seam-bound start because the snapshot carries no spot inventory (#13636).
+/// The cited finding must be a candidate-current actionable Rust gap with no
+/// static limit: an exposed or base-side finding has no start to explain, and
+/// a preview, non-Rust or static-limited finding gets no spot start in any
+/// configuration. The reason names the real blocker:
+/// - `seam_inventory_not_enabled` when even a full refresh builds no spots
+///   under the snapshot's configuration (the default actionable profile, or
+///   spot diagnostics off), naming the setting;
+/// - `seam_evidence_deferred` when an interactive refresh deferred the
+///   inventory a full refresh would build, naming that refresh.
+///
+/// `None` for a full snapshot whose configuration builds spots: the seam
+/// diagnostics carry their own start.
+fn finding_start_blocked_action(
+    diagnostic: &Diagnostic,
+    snapshot: Option<&AnalysisSnapshot>,
+) -> Option<CodeActionOrCommand> {
+    let snapshot = snapshot?;
+    let reason = if !snapshot.seam_inventory_on_full_refresh {
+        ActionDisabledReason::SeamInventoryNotEnabled
+    } else if snapshot.seams_deferred {
+        ActionDisabledReason::SeamEvidenceDeferred
+    } else {
+        return None;
+    };
+    let finding_id = diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("finding_id"))
+        .and_then(Value::as_str)?;
+    snapshot.findings.iter().find(|finding| {
+        finding.id == finding_id
+            && super::diagnostics::finding_is_withheld_gap(finding)
+            && finding.language_status != Some(crate::domain::LanguageStatus::Preview)
+            && finding
+                .language
+                .is_none_or(|language| language == crate::domain::LanguageId::Rust)
+            && finding.static_limit_kind.is_none()
+    })?;
+    disabled_action(
+        AGENT_REPAIR_COMMAND_TITLE,
+        "quickfix.ripr.inspect",
+        "copy_agent_repair_command",
+        COPY_AGENT_REPAIR_COMMAND,
+        diagnostic,
+        Some(snapshot),
+        reason,
+    )
+}
+
+/// The inert "Start repair" action for a seam whose start the dirty-premise
+/// preflight refuses (#13636): same title, kind and command identity as the
+/// enabled start, no command, and a human reason naming the commit step.
+fn uncommitted_start_disabled_action(
+    commit: &str,
+    diagnostic: &Diagnostic,
+    snapshot: &AnalysisSnapshot,
+) -> Option<CodeActionOrCommand> {
+    let mut action = disabled_action(
+        AGENT_REPAIR_COMMAND_TITLE,
+        "quickfix.ripr.inspect",
+        "copy_agent_repair_command",
+        COPY_AGENT_REPAIR_COMMAND,
+        diagnostic,
+        Some(snapshot),
+        ActionDisabledReason::UncommittedProductionChange,
+    )?;
+    if let CodeActionOrCommand::CodeAction(code_action) = &mut action
+        && let Some(disabled) = code_action.disabled.as_mut()
+    {
+        disabled.reason = uncommitted_start_reason(commit);
+    }
+    Some(action)
+}
+
+/// Human text for the inert start (#13636), in the `ripr check` route's words.
+pub(super) fn uncommitted_start_reason(commit: &str) -> String {
+    format!(
+        "{} Commit command: {commit}",
+        ActionDisabledReason::UncommittedProductionChange.human_reason()
+    )
 }
 
 /// A gap diagnostic the current snapshot no longer carries (#1892): any
@@ -764,21 +964,37 @@ fn push_seam_actions(
     if !instruction_blocks_repair
         && let Some(command) = repair_start_command_for(context.seam, &root)
     {
-        actions.push(copy_agent_loop_command_action(
-            AGENT_REPAIR_COMMAND_TITLE,
-            COPY_AGENT_REPAIR_COMMAND,
-            "copy_agent_repair_command",
-            agent_loop_command_target(
-                context.snapshot,
+        // #13636: `ripr agent repair` refuses a dirty production premise
+        // ("commit first ... Nothing was started"). Ask its own preflight so
+        // the editor names the commit step on an inert start instead of
+        // offering one that refuses. Checked live on each request, not from
+        // the snapshot, so committing re-enables the start without a
+        // refresh. A client without disabled support keeps the legacy
+        // omission.
+        if let Some(commit) = seam_start_commit_step(&context.snapshot.root, &root) {
+            if client_features.code_action_disabled
+                && let Some(action) =
+                    uncommitted_start_disabled_action(&commit, context.diagnostic, context.snapshot)
+            {
+                actions.push(action);
+            }
+        } else {
+            actions.push(copy_agent_loop_command_action(
+                AGENT_REPAIR_COMMAND_TITLE,
+                COPY_AGENT_REPAIR_COMMAND,
+                "copy_agent_repair_command",
+                agent_loop_command_target(
+                    context.snapshot,
+                    context.diagnostic,
+                    context.seam,
+                    "agent_repair",
+                    REPAIR_ATTEMPT_DIRECTORY,
+                    command,
+                ),
                 context.diagnostic,
-                context.seam,
-                "agent_repair",
-                REPAIR_ATTEMPT_DIRECTORY,
-                command,
-            ),
-            context.diagnostic,
-            Some(context.snapshot),
-        ));
+                Some(context.snapshot),
+            ));
+        }
     }
     actions.push(copy_agent_loop_command_action(
         AGENT_PACKET_COMMAND_TITLE,
@@ -3452,6 +3668,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,

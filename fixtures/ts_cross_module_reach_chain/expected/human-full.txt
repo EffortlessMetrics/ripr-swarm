@@ -92,5 +92,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/ts_cross_module_reach_chain/input --diff <cwd>/fixtures/ts_cross_module_reach_chain/diff.patch --mode fast probe:src_a.ts:typescript_preview:0785697a
   ripr context --root <cwd>/fixtures/ts_cross_module_reach_chain/input --diff <cwd>/fixtures/ts_cross_module_reach_chain/diff.patch --mode fast --at probe:src_a.ts:typescript_preview:0785697a
 
-
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

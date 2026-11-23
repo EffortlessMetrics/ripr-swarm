@@ -42,7 +42,7 @@
   },
   "reasoning": "The exact custom path is a declared harness=false test target and has a retained libtest-mimic registration. The helper is test evidence; the real registered Trial pins its result. Existing direct registry tests retain typed provenance/refusal coverage beyond the projected verdict row.",
   "spec_examples": [
-    "RIPR-SPEC-0153#7"
+    "RIPR-SPEC-0153#11"
   ],
   "labeling_observation": {
     "ripr_commit": "5abb7591b0510f2fe563c086b42c381d8b4a2164",

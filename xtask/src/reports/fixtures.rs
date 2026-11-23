@@ -40,6 +40,17 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
         Some(value) => vec![fixture_dir_for_name(value)?],
         None => fixture_dirs,
     };
+    if let Err(refusal) = refuse_empty_fixture_selection(&selected) {
+        // Replace any earlier passing report before refusing.
+        let body = fixture_report_body(
+            name.map(String::as_str),
+            &[],
+            &[],
+            std::slice::from_ref(&refusal),
+        );
+        write_report("fixtures.md", &body)?;
+        return Err(refusal);
+    }
     let run_set = collect_fixture_runs(selected, evaluate_fixture);
     write_fixture_report(name.map(String::as_str), &run_set)?;
     if run_set.violations.is_empty() {
@@ -50,6 +61,18 @@ pub(crate) fn fixtures_impl(name: Option<&String>) -> Result<(), String> {
             run_set.violations.join("\n")
         ))
     }
+}
+
+/// A run over no fixture compared nothing, so it is not a pass (#15925). An
+/// absent or emptied `fixtures/` used to exit 0 here.
+fn refuse_empty_fixture_selection(selected: &[PathBuf]) -> Result<(), String> {
+    if selected.is_empty() {
+        return Err(
+            "fixture command selected zero fixtures; nothing was compared, so this is not a pass. Run from the repository root with `fixtures/` present."
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn evaluate_fixture(path: &Path) -> FixtureResult {
@@ -147,6 +170,31 @@ pub(crate) fn goldens_check() -> Result<(), String> {
     }
 }
 
+/// The one-line verdict `goldens check-with-fixtures` prints on a clean run.
+/// Without it a clean exit 0 is indistinguishable from a no-op (#15153).
+fn goldens_pass_line(fixtures: usize) -> String {
+    format!("goldens check-with-fixtures: pass ({fixtures} fixtures compared)")
+}
+
+/// The clean-run verdict, or `None` when this is not the joint command. The
+/// plain `goldens check` path and every failing path must stay silent.
+fn goldens_clean_verdict(fixtures_report: bool, fixtures: usize) -> Option<String> {
+    fixtures_report.then(|| goldens_pass_line(fixtures))
+}
+
+/// Write the clean-run verdict when there is one. Split from the caller so a
+/// test can prove the guard and the count without running the fixture sweep.
+fn write_goldens_clean_verdict(
+    out: &mut impl std::io::Write,
+    fixtures_report: bool,
+    fixtures: usize,
+) -> std::io::Result<()> {
+    if let Some(line) = goldens_clean_verdict(fixtures_report, fixtures) {
+        writeln!(out, "{line}")?;
+    }
+    Ok(())
+}
+
 /// What a `goldens check` run established, before the caller decides how to
 /// treat violations.
 enum GoldenCheckRun {
@@ -202,6 +250,12 @@ fn golden_check_run_with_fixture_report(fixtures_report: bool) -> Result<GoldenC
     }
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
+        write_goldens_clean_verdict(
+            &mut std::io::stdout(),
+            fixtures_report,
+            run_set.fixtures.len(),
+        )
+        .map_err(|error| format!("write goldens pass verdict: {error}"))?;
         Ok(GoldenCheckRun::Clean)
     } else {
         let message = goldens_check_failure_message(&entries, &run_set.violations, &provenance);
@@ -624,9 +678,8 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     }
 
     let expected = fixture.join("expected");
-    // #14498: only surfaces whose bytes actually differ are copied and named in
-    // the CHANGELOG. A bless over unchanged output used to append a `Pending`
-    // block claiming an update that did not happen.
+    // #14509/#14510: compare with the gate before planning writes. Equivalent
+    // output preserves canonical bytes; changed Windows output refuses safely.
     let applied = apply_bless_outputs(&expected, &run, name, reason)?;
     let body = bless_report_body(&fixture, reason, &run, &applied);
     write_report("goldens-bless.md", &body)
@@ -676,28 +729,27 @@ struct BlessSurface {
 }
 
 impl BlessSurface {
-    /// Whether blessing this surface would change a byte. A missing golden is a
-    /// change; an unreadable one is an error, not a silent overwrite.
-    ///
-    /// This is a raw-byte comparison on purpose (#14498): `goldens check`
-    /// compares normalized text, so the two can disagree. A golden that differs
-    /// only where the gate normalizes (a Windows python-verify projection, for
-    /// example) can be blessed and reported changed here while `check` still
-    /// calls it unchanged. Aligning the two is #14509; this claim does not.
-    fn differs(&self) -> Result<bool, String> {
-        let target = match fs::read(&self.target) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-            Err(err) => {
-                return Err(format!(
-                    "failed to read {}: {err}",
-                    normalize_path(&self.target)
-                ));
-            }
-        };
-        let source = fs::read(&self.source)
+    /// Share the gate's equivalence relation, retaining the canonical bytes of
+    /// an existing golden when only a platform projection or masked fact differs.
+    /// Read every source during planning, even if its target does not yet exist.
+    fn differs(&self, fixture: &str, windows: bool) -> Result<bool, String> {
+        fs::read(&self.source)
             .map_err(|err| format!("failed to read {}: {err}", normalize_path(&self.source)))?;
-        Ok(source != target)
+        match fs::read(&self.target) {
+            Ok(_) => Ok(!compare_golden_for_host(
+                fixture,
+                self.label,
+                &self.target,
+                &self.source,
+                windows,
+            )?
+            .matches),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(err) => Err(format!(
+                "failed to read {}: {err}",
+                normalize_path(&self.target)
+            )),
+        }
     }
 }
 
@@ -705,7 +757,7 @@ impl BlessSurface {
 /// can tell a no-op from a rewrite without diffing the tree.
 fn no_change_outcome(changelog: &Path) -> String {
     format!(
-        "No change: every expected file already matched the run output, so nothing was copied and `{}` was left untouched.\n",
+        "No change: every expected file already matched the gate comparison, so nothing was copied and `{}` was left untouched.\n",
         normalize_path(changelog)
     )
 }
@@ -718,14 +770,24 @@ struct BlessedOutputs {
     changelog: PathBuf,
 }
 
-/// Copies only the surfaces whose bytes changed and records exactly one pending
-/// CHANGELOG entry naming them. When every surface already matches, nothing is
-/// written at all (#14498).
+/// Copies only surfaces rejected by the gate comparison and records one pending
+/// CHANGELOG entry naming them. Equivalent output preserves the existing bytes;
+/// changed Windows output refuses before any golden or changelog write.
 fn apply_bless_outputs(
     expected: &Path,
     run: &FixtureRun,
     name: &str,
     reason: &str,
+) -> Result<BlessedOutputs, String> {
+    apply_bless_outputs_for_host(expected, run, name, reason, cfg!(windows))
+}
+
+fn apply_bless_outputs_for_host(
+    expected: &Path,
+    run: &FixtureRun,
+    name: &str,
+    reason: &str,
+    windows: bool,
 ) -> Result<BlessedOutputs, String> {
     let expected_human_full = expected.join("human-full.txt");
     let updated_human_full = expected_human_full.exists();
@@ -760,7 +822,7 @@ fn apply_bless_outputs(
     }
     let mut changed = Vec::new();
     for surface in &surfaces {
-        if surface.differs()? {
+        if surface.differs(name, windows)? {
             changed.push(surface);
         }
     }
@@ -772,6 +834,19 @@ fn apply_bless_outputs(
             changelog,
         });
     }
+    // Projection is lossy: Windows manual guidance cannot be reversed into
+    // canonical Bash actions. Refuse the complete plan before any golden or
+    // changelog write. A future canonical renderer can relax this guard.
+    if windows {
+        return Err(format!(
+            "goldens bless refused for fixture `{name}` before writing expected files or CHANGELOG: changed Windows output cannot establish canonical Linux golden bytes. Run the reviewed bless from a Linux checkout (or WSL with LF inputs)."
+        ));
+    }
+    let mut text = if changelog.exists() {
+        read_text_lossy(&changelog)?
+    } else {
+        "# Golden Output Changes\n".to_string()
+    };
     fs::create_dir_all(expected)
         .map_err(|err| format!("failed to create {}: {err}", normalize_path(expected)))?;
     for surface in &changed {
@@ -783,11 +858,6 @@ fn apply_bless_outputs(
             )
         })?;
     }
-    let mut text = if changelog.exists() {
-        read_text_lossy(&changelog)?
-    } else {
-        "# Golden Output Changes\n".to_string()
-    };
     let mut entry = format!(
         "\n{}\n\nReason:\n{reason}\n\nCommand:\n`cargo xtask goldens bless {name} --reason \"...\"`\n\nUpdated:\n",
         next_pending_heading(&text, name)
@@ -1084,6 +1154,16 @@ pub(crate) struct GoldenDriftSemantics {
     pub(crate) changed_recommendations: Vec<String>,
     pub(crate) static_language_terms: Vec<String>,
     pub(crate) changed_line_count: usize,
+    pub(crate) human_evidence: Option<HumanEvidenceDrift>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum HumanEvidenceDrift {
+    Unavailable,
+    Compared {
+        changed_stages: Vec<String>,
+        detail_window_changed: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1126,13 +1206,19 @@ pub(crate) fn run_fixture(path: &Path) -> Result<FixtureRun, String> {
     Ok(FixtureRun { comparisons, ..run })
 }
 
+/// The optional goldens compared only while their `expected/` file exists.
+/// `fixture_contracts::denominator_floor` names each present one, so deleting
+/// a golden cannot silently drop its comparison (#15925).
+pub(crate) const HUMAN_GOLDEN_SURFACES: [&str; 2] = ["human.txt", "human-full.txt"];
+pub(crate) const ANNOTATION_GOLDEN_SURFACES: [&str; 2] = ["sarif.json", "github.txt"];
+
 fn annotation_golden_comparisons(
     fixture: &str,
     expected: &Path,
     actual: &Path,
 ) -> Result<Vec<GoldenComparison>, String> {
     let mut comparisons = Vec::new();
-    for surface in ["sarif.json", "github.txt"] {
+    for surface in ANNOTATION_GOLDEN_SURFACES {
         let expected_surface = expected.join(surface);
         if expected_surface.exists() {
             comparisons.push(compare_golden(
@@ -1235,13 +1321,66 @@ pub(crate) fn fixture_cache_dir(name: &str) -> Result<PathBuf, String> {
 /// cannot distinguish "cleared" from "a lock or permission denied the clear" is
 /// the false-confidence surface #3054 is about.
 fn clear_fixture_cache(dir: &Path) -> Result<(), String> {
-    match fs::remove_dir_all(dir) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(format!(
-            "failed to clear fixture fact cache {}: {err}",
-            normalize_path(dir)
-        )),
+    clear_fixture_cache_with(
+        dir,
+        |path| fs::remove_dir_all(path),
+        is_transient_windows_removal_error,
+        &CLEAR_RETRY_BACKOFF,
+        std::thread::sleep,
+    )
+}
+
+/// Waits between attempts to clear a fixture cache that a Windows host reports
+/// as momentarily in use (about 1.6s in total). Bounded on purpose: a holder
+/// that outlives it is a real second writer and is reported, not outwaited.
+const CLEAR_RETRY_BACKOFF: [std::time::Duration; 6] = [
+    std::time::Duration::from_millis(25),
+    std::time::Duration::from_millis(50),
+    std::time::Duration::from_millis(100),
+    std::time::Duration::from_millis(200),
+    std::time::Duration::from_millis(400),
+    std::time::Duration::from_millis(800),
+];
+
+/// #15018: the removal failures Windows reports while a handle opened without
+/// delete sharing, a delete-pending entry or a directory still draining is
+/// the only thing in the way: `ERROR_ACCESS_DENIED` (5),
+/// `ERROR_SHARING_VIOLATION` (32) and `ERROR_DIR_NOT_EMPTY` (145). Every other
+/// error, and every error on a non-Windows host, is genuine and is never
+/// retried.
+fn is_transient_windows_removal_error(err: &std::io::Error) -> bool {
+    cfg!(windows) && matches!(err.raw_os_error(), Some(5 | 32 | 145))
+}
+
+/// [`clear_fixture_cache`] with its effects injected so the retry contract is
+/// testable on any host: a transient failure is retried after each `backoff`
+/// step, and the final error names the attempts and the raw OS error so a
+/// persistent holder is diagnosable instead of hidden.
+fn clear_fixture_cache_with(
+    dir: &Path,
+    mut remove: impl FnMut(&Path) -> std::io::Result<()>,
+    transient: impl Fn(&std::io::Error) -> bool,
+    backoff: &[std::time::Duration],
+    mut sleep: impl FnMut(std::time::Duration),
+) -> Result<(), String> {
+    let mut attempts = 0usize;
+    loop {
+        attempts += 1;
+        match remove(dir) {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => match backoff.get(attempts - 1) {
+                Some(wait) if transient(&err) => sleep(*wait),
+                // An OS error's Display already names its raw code, as
+                // "(os error N)", so the report carries it without repeating it.
+                _ => {
+                    return Err(format!(
+                        "failed to clear fixture fact cache {} after {attempts} attempt(s): {err}",
+                        normalize_path(dir)
+                    ));
+                }
+            },
+        }
     }
 }
 
@@ -1695,23 +1834,14 @@ fn fixture_golden_comparisons(
         check_json,
     )?);
 
-    let expected_human = expected.join("human.txt");
-    if expected_human.exists() {
-        comparisons.push(compare_golden(
-            fixture,
-            "human.txt",
-            &expected_human,
-            human_txt,
-        )?);
-    }
-    let expected_human_full = expected.join("human-full.txt");
-    if expected_human_full.exists() {
-        comparisons.push(compare_golden(
-            fixture,
-            "human-full.txt",
-            &expected_human_full,
-            human_full_txt,
-        )?);
+    for (surface, actual) in HUMAN_GOLDEN_SURFACES
+        .into_iter()
+        .zip([human_txt, human_full_txt])
+    {
+        let expected_surface = expected.join(surface);
+        if expected_surface.exists() {
+            comparisons.push(compare_golden(fixture, surface, &expected_surface, actual)?);
+        }
     }
     Ok(comparisons)
 }
@@ -1722,9 +1852,19 @@ fn compare_golden(
     expected: &Path,
     actual: &Path,
 ) -> Result<GoldenComparison, String> {
+    compare_golden_for_host(fixture, surface, expected, actual, cfg!(windows))
+}
+
+fn compare_golden_for_host(
+    fixture: &str,
+    surface: &'static str,
+    expected: &Path,
+    actual: &Path,
+    windows: bool,
+) -> Result<GoldenComparison, String> {
     let expected_text = read_text_lossy(expected)?;
     let expected_text = if surface != "check.json" {
-        project_windows_python_verify_expected(fixture, &expected_text, cfg!(windows))
+        project_windows_python_verify_expected(fixture, &expected_text, windows)
     } else {
         expected_text
     };
@@ -2577,6 +2717,24 @@ pub(crate) fn golden_drift_type(semantics: &GoldenDriftSemantics) -> String {
             semantics.static_language_terms.join(", ")
         ));
     }
+    match &semantics.human_evidence {
+        Some(HumanEvidenceDrift::Unavailable) => parts.push("stage_states_unavailable".into()),
+        Some(HumanEvidenceDrift::Compared {
+            changed_stages,
+            detail_window_changed,
+        }) => {
+            if !changed_stages.is_empty() {
+                parts.push(format!(
+                    "stage_states_changed [{}]",
+                    changed_stages.join("; ")
+                ));
+            }
+            if *detail_window_changed {
+                parts.push("detail_window_changed".into());
+            }
+        }
+        None => {}
+    }
     if parts.is_empty() {
         parts.push(format!(
             "formatting_only ({} line(s))",
@@ -2661,6 +2819,7 @@ pub(crate) fn golden_drift_semantics(
             ),
             static_language_terms,
             changed_line_count,
+            ..Default::default()
         }
     } else {
         let expected_recommendations = human_recommended_next_steps(expected);
@@ -2668,6 +2827,8 @@ pub(crate) fn golden_drift_semantics(
         let expected_stop_reasons = human_stop_reason_lines(expected);
         let actual_stop_reasons = human_stop_reason_lines(actual);
         GoldenDriftSemantics {
+            human_evidence: (surface == "human.txt")
+                .then(|| classify_human_evidence(expected, actual)),
             changed_stop_reasons: set_change_summary(&expected_stop_reasons, &actual_stop_reasons),
             changed_recommendations: set_change_summary(
                 &expected_recommendations,
@@ -2677,6 +2838,61 @@ pub(crate) fn golden_drift_semantics(
             changed_line_count,
             ..GoldenDriftSemantics::default()
         }
+    }
+}
+
+const HUMAN_STAGES: [&str; 5] = [
+    "reach",
+    "infection",
+    "propagation",
+    "observation",
+    "assertion",
+];
+
+fn human_evidence(text: &str) -> Option<([&str; 5], Vec<&str>)> {
+    let mut lines = text.lines();
+    let vector = lines
+        .find(|line| line.starts_with("  Evidence:"))?
+        .strip_prefix("  Evidence: ")?;
+    let mut fields = vector.split('·').map(str::trim);
+    let mut states = [""; 5];
+    for (index, stage) in HUMAN_STAGES.iter().enumerate() {
+        let (name, state) = fields.next()?.split_once(' ')?;
+        let valid = matches!(
+            state,
+            "yes" | "no" | "weak" | "unknown" | "opaque" | "not_applicable"
+        ) || (name == "assertion" && matches!(state, "missing" | "not established"));
+        if name != *stage || !valid {
+            return None;
+        }
+        states[index] = state;
+    }
+    if fields.next().is_some() || lines.clone().any(|line| line.starts_with("  Evidence:")) {
+        return None;
+    }
+    let details = lines
+        .take_while(|line| line.starts_with("    "))
+        .filter_map(|line| line.strip_prefix("    - "))
+        .filter(|detail| detail.contains(": "))
+        .collect();
+    Some((states, details))
+}
+
+fn classify_human_evidence(expected: &str, actual: &str) -> HumanEvidenceDrift {
+    let (Some((old, old_details)), Some((new, new_details))) =
+        (human_evidence(expected), human_evidence(actual))
+    else {
+        return HumanEvidenceDrift::Unavailable;
+    };
+    let mut changed_stages = Vec::new();
+    for ((stage, before), after) in HUMAN_STAGES.into_iter().zip(old).zip(new) {
+        if before != after {
+            changed_stages.push(format!("{stage}: {before} -> {after}"));
+        }
+    }
+    HumanEvidenceDrift::Compared {
+        changed_stages,
+        detail_window_changed: old == new && old_details != new_details,
     }
 }
 
@@ -2719,6 +2935,18 @@ fn golden_drift_markdown(
                 "- changed lines: {}\n",
                 entry.semantics.changed_line_count
             ));
+            if entry.surface == "human.txt" {
+                body.push_str(&format!(
+                    "- drift type: {}\n",
+                    golden_drift_type(&entry.semantics)
+                ));
+                if let Some(HumanEvidenceDrift::Compared { changed_stages, .. }) =
+                    &entry.semantics.human_evidence
+                {
+                    let unchanged = changed_stages.is_empty();
+                    body.push_str(&format!("- stage_states_unchanged: {unchanged}\n"));
+                }
+            }
             write_optional_list(
                 &mut body,
                 "added finding IDs",
@@ -2870,6 +3098,25 @@ fn golden_drift_json(
             "      \"blessing_reason_present\": {},\n",
             entry.blessing_reason_present
         ));
+        match &entry.semantics.human_evidence {
+            Some(HumanEvidenceDrift::Compared {
+                changed_stages,
+                detail_window_changed,
+            }) => {
+                body.push_str(&format!(
+                    "      \"stage_states_unchanged\": {},\n",
+                    changed_stages.is_empty()
+                ));
+                body.push_str(&format!(
+                    "      \"detail_window_changed\": {detail_window_changed},\n"
+                ));
+                write_json_field_array(&mut body, "changed_stages", changed_stages, true);
+            }
+            Some(HumanEvidenceDrift::Unavailable) => {
+                body.push_str("      \"stage_states_unchanged\": null,\n")
+            }
+            None => {}
+        }
         write_json_field_array(
             &mut body,
             "added_finding_ids",
@@ -3546,6 +3793,41 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// #15925: `cargo xtask fixtures` over an absent `fixtures/` exited 0.
+    #[test]
+    fn an_empty_fixture_selection_is_refused() {
+        let refused = refuse_empty_fixture_selection(&[]);
+        assert!(
+            refused.is_err_and(|error| error.contains("selected zero fixtures")),
+            "a run over no fixture must not pass"
+        );
+        assert_eq!(
+            refuse_empty_fixture_selection(&[PathBuf::from("fixtures/boundary_gap")]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn goldens_clean_verdict_writes_only_for_the_joint_command() {
+        let mut out = Vec::new();
+        assert!(matches!(
+            super::write_goldens_clean_verdict(&mut out, true, 3),
+            Ok(())
+        ));
+        assert_eq!(
+            String::from_utf8_lossy(&out),
+            "goldens check-with-fixtures: pass (3 fixtures compared)\n"
+        );
+
+        // Plain `goldens check` passes the flag as false and must stay silent.
+        let mut out = Vec::new();
+        assert!(matches!(
+            super::write_goldens_clean_verdict(&mut out, false, 3),
+            Ok(())
+        ));
+        assert!(out.is_empty());
+    }
+
     #[test]
     fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
         let shared = std::path::Path::new("/w/target/debug/ripr");
@@ -3886,6 +4168,48 @@ mod tests {
     }
 
     #[test]
+    fn golden_drift_human_evidence_reports_preserve_unknown_and_multiword_states()
+    -> Result<(), serde_json::Error> {
+        let before = "  Evidence: reach weak · infection yes · propagation opaque · observation not_applicable · assertion not established";
+        let after = before
+            .replace("reach weak", "reach no")
+            .replace("not established", "missing");
+        let provenance = GoldenDriftProvenance {
+            binary: "ripr".into(),
+            ripr_version: "test".into(),
+            revision: "test".into(),
+        };
+        let entries = [&after[..], before, "missing vector"].map(|actual| GoldenDriftEntry {
+            fixture: "human-evidence".into(),
+            surface: "human.txt".into(),
+            expected: "expected".into(),
+            actual: "actual".into(),
+            blessing_reason_required: true,
+            blessing_reason_present: false,
+            semantics: golden_drift_semantics("human.txt", before, actual),
+        });
+        let json: serde_json::Value =
+            serde_json::from_str(&golden_drift_json(&entries, &[], &provenance))?;
+        let rows = &json["entries"];
+        assert_eq!(rows[0]["stage_states_unchanged"], false);
+        assert_eq!(
+            rows[0]["changed_stages"],
+            serde_json::json!(["reach: weak -> no", "assertion: not established -> missing"])
+        );
+        assert_eq!(rows[1]["stage_states_unchanged"], true);
+        assert_eq!(rows[1]["detail_window_changed"], false);
+        assert_eq!(
+            rows[2].get("stage_states_unchanged"),
+            Some(&serde_json::Value::Null)
+        );
+        let markdown = golden_drift_markdown(&entries, &[], &provenance);
+        assert!(markdown.contains("assertion: not established -> missing"));
+        assert!(markdown.contains("stage_states_unchanged: true"));
+        assert!(markdown.contains("stage_states_unavailable"));
+        Ok(())
+    }
+
+    #[test]
     fn cwd_projection_unquotes_a_spaced_checkout_and_keeps_needed_quotes() {
         let prefix = "/tmp/my checkout/";
         // A bare tail renders quoted only because of the prefix: golden form.
@@ -4024,7 +4348,8 @@ mod tests {
 
         // Negative control: a real change still records exactly one block.
         write(actual.join("human.txt"), "# report\nchanged\n")?;
-        let applied = super::apply_bless_outputs(&expected, &run, "synthetic", "change")?;
+        let applied =
+            super::apply_bless_outputs_for_host(&expected, &run, "synthetic", "change", false)?;
         assert_eq!(applied.changed, vec![expected.join("human.txt")]);
         let after = read_text(expected.join("CHANGELOG.md"))?;
         assert_eq!(after.matches("## Pending").count(), 1, "{after}");
@@ -4040,6 +4365,294 @@ mod tests {
         assert!(body.contains("CHANGELOG.md"), "{body}");
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    // Both host branches execute on every host; this is not native Windows
+    // process qualification. The native entry point passes cfg!(windows).
+    pub(super) fn parity_bless_fixture(
+        label: &str,
+    ) -> Result<(PathBuf, PathBuf, FixtureRun), String> {
+        let dir = unique_temp_path(label);
+        let expected = dir.join("expected");
+        let actual = dir.join("actual");
+        fs::create_dir_all(&expected).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&actual).map_err(|error| error.to_string())?;
+        for surface in [
+            "check.json",
+            "human.txt",
+            "human-full.txt",
+            "sarif.json",
+            "github.txt",
+        ] {
+            let text = if surface == "check.json" {
+                "{\"findings\":[]}"
+            } else {
+                "unchanged\n"
+            };
+            fs::write(expected.join(surface), text).map_err(|error| error.to_string())?;
+            fs::write(actual.join(surface), text).map_err(|error| error.to_string())?;
+        }
+        fs::write(expected.join("CHANGELOG.md"), "# Golden Output Changes\n")
+            .map_err(|error| error.to_string())?;
+        let run = FixtureRun {
+            name: "py".to_string(),
+            actual_dir: actual.clone(),
+            check_json: actual.join("check.json"),
+            human_txt: actual.join("human.txt"),
+            human_full_txt: actual.join("human-full.txt"),
+            comparisons: Vec::new(),
+        };
+        Ok((dir, expected, run))
+    }
+
+    fn parity_expected_bytes(expected: &Path) -> Result<Vec<Vec<u8>>, String> {
+        [
+            "check.json",
+            "human.txt",
+            "human-full.txt",
+            "sarif.json",
+            "github.txt",
+            "CHANGELOG.md",
+        ]
+        .iter()
+        .map(|surface| fs::read(expected.join(surface)).map_err(|error| error.to_string()))
+        .collect()
+    }
+
+    #[test]
+    fn bless_copies_a_sarif_only_change() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("bless-sarif-only")?;
+        let unchanged = ["check.json", "human.txt", "human-full.txt", "github.txt"];
+        let read = |surface: &str| fs::read(expected.join(surface)).map_err(|err| err.to_string());
+        let before = unchanged
+            .iter()
+            .map(|name| read(name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let sarif = br#"{"version":"2.1.0","runs":[]}"#;
+        fs::write(run.actual_dir.join("sarif.json"), sarif).map_err(|err| err.to_string())?;
+
+        let applied =
+            apply_bless_outputs_for_host(&expected, &run, &run.name, "SARIF change", false)?;
+        assert_eq!(read("sarif.json")?, sarif);
+        assert_eq!(applied.changed, [expected.join("sarif.json")]);
+        for (surface, original) in unchanged.iter().zip(before) {
+            assert_eq!(read(surface)?, original, "{surface}");
+        }
+        let changelog = fs::read_to_string(&applied.changelog).map_err(|err| err.to_string())?;
+        assert_eq!(changelog.matches("## Pending").count(), 1, "{changelog}");
+        assert_eq!(
+            changelog.split_once("\nUpdated:\n").map(|(_, files)| files),
+            Some("- `expected/sarif.json`\n")
+        );
+        let report = bless_report_body(&dir, "SARIF change", &run, &applied);
+        assert!(!report.contains("No change:"), "{report}");
+        fs::remove_dir_all(dir).map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn bless_gate_equivalent_windows_output_preserves_canonical_bytes() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-windows-noop")?;
+        let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
+        let manual = "  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
+        for surface in ["human.txt", "human-full.txt", "github.txt"] {
+            let (golden, emitted) = if surface == "human-full.txt" {
+                (
+                    bash.replace("Verify command", "verify"),
+                    manual.replace("Suggested command", "suggested command"),
+                )
+            } else {
+                (bash.to_string(), manual.to_string())
+            };
+            fs::write(expected.join(surface), golden).map_err(|error| error.to_string())?;
+            fs::write(run.actual_dir.join(surface), emitted).map_err(|error| error.to_string())?;
+            assert!(
+                compare_golden_for_host(
+                    "py",
+                    surface,
+                    &expected.join(surface),
+                    &run.actual_dir.join(surface),
+                    true
+                )?
+                .matches
+            );
+        }
+        let before = parity_expected_bytes(&expected)?;
+        for _ in 0..2 {
+            let applied = apply_bless_outputs_for_host(&expected, &run, "py", "no-op", true)?;
+            assert!(
+                applied.changed.is_empty(),
+                "Windows gate-equivalent output must be a no-op"
+            );
+            assert!(bless_report_body(&dir, "no-op", &run, &applied).contains("No change:"));
+            assert_eq!(parity_expected_bytes(&expected)?, before);
+        }
+        // The canonical Bash bytes still match the subsequent Linux output.
+        fs::write(&run.human_txt, bash).map_err(|error| error.to_string())?;
+        assert!(
+            compare_golden_for_host(
+                "py",
+                "human.txt",
+                &expected.join("human.txt"),
+                &run.human_txt,
+                false
+            )?
+            .matches
+        );
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn bless_changed_windows_plan_refuses_before_any_write() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-windows-refusal")?;
+        // Core data changes before the optional human surface in write order.
+        // Refusing late would partially update check.json and lose canonical bytes.
+        fs::write(&run.check_json, "{\"findings\":[{\"new\":true}]}")
+            .map_err(|error| error.to_string())?;
+        let bash = "  verify (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
+        let manual = "  suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
+        fs::write(expected.join("human-full.txt"), bash).map_err(|error| error.to_string())?;
+        fs::write(&run.human_full_txt, manual).map_err(|error| error.to_string())?;
+        assert!(
+            compare_golden_for_host(
+                "py",
+                "human-full.txt",
+                &expected.join("human-full.txt"),
+                &run.human_full_txt,
+                true
+            )?
+            .matches
+        );
+        let before = parity_expected_bytes(&expected)?;
+        let result = apply_bless_outputs_for_host(&expected, &run, "py", "changed", true);
+        assert!(
+            matches!(result, Err(ref error) if error.contains("Linux") && error.contains("before writing"))
+        );
+        assert_eq!(parity_expected_bytes(&expected)?, before);
+        // A missing expected tree must not be created by an unsafe Windows bless.
+        let missing = dir.join("missing");
+        assert!(apply_bless_outputs_for_host(&missing, &run, "py", "new", true).is_err());
+        assert!(!missing.exists());
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn bless_normalized_surfaces_preserve_bytes_but_real_linux_changes_are_named()
+    -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-linux")?;
+        for surface in ["human.txt", "human-full.txt", "sarif.json", "github.txt"] {
+            fs::write(run.actual_dir.join(surface), "unchanged\r\n")
+                .map_err(|error| error.to_string())?;
+        }
+        let before = parity_expected_bytes(&expected)?;
+        let applied = apply_bless_outputs_for_host(&expected, &run, "py", "no-op", false)?;
+        assert!(applied.changed.is_empty());
+        assert_eq!(parity_expected_bytes(&expected)?, before);
+        fs::write(run.actual_dir.join("sarif.json"), "changed sarif\n")
+            .map_err(|error| error.to_string())?;
+        fs::write(run.actual_dir.join("github.txt"), "changed github\n")
+            .map_err(|error| error.to_string())?;
+        let applied = apply_bless_outputs_for_host(&expected, &run, "py", "real change", false)?;
+        assert_eq!(
+            applied.changed,
+            vec![expected.join("sarif.json"), expected.join("github.txt")]
+        );
+        let changelog =
+            fs::read_to_string(expected.join("CHANGELOG.md")).map_err(|error| error.to_string())?;
+        assert_eq!(changelog.matches("## Pending").count(), 1);
+        assert!(
+            changelog.contains("expected/sarif.json") && changelog.contains("expected/github.txt")
+        );
+        assert!(
+            !changelog.contains("expected/human.txt") && !changelog.contains("expected/check.json")
+        );
+        assert!(
+            apply_bless_outputs_for_host(&expected, &run, "py", "repeat", false)?
+                .changed
+                .is_empty()
+        );
+        assert_eq!(
+            fs::read_to_string(expected.join("CHANGELOG.md")).map_err(|error| error.to_string())?,
+            changelog
+        );
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn bless_windows_projection_rejects_wrong_selector_and_root() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-identity")?;
+        let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
+        let manual = "  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
+        for (golden, actual) in [
+            (bash.to_string(), manual.replace("test_one", "test_two")),
+            (
+                bash.replace("fixtures/py/", "fixtures/other/"),
+                manual.to_string(),
+            ),
+        ] {
+            fs::write(expected.join("human.txt"), golden).map_err(|error| error.to_string())?;
+            fs::write(&run.human_txt, actual).map_err(|error| error.to_string())?;
+            assert!(
+                !compare_golden_for_host(
+                    "py",
+                    "human.txt",
+                    &expected.join("human.txt"),
+                    &run.human_txt,
+                    true
+                )?
+                .matches
+            );
+            let before = parity_expected_bytes(&expected)?;
+            assert!(
+                apply_bless_outputs_for_host(&expected, &run, "py", "wrong identity", true)
+                    .is_err()
+            );
+            assert_eq!(parity_expected_bytes(&expected)?, before);
+        }
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn bless_read_errors_precede_any_writes() -> Result<(), String> {
+        let (dir, expected, run) = parity_bless_fixture("parity-read-errors")?;
+        fs::write(&run.check_json, "{\"findings\":[{\"changed\":true}]}")
+            .map_err(|error| error.to_string())?;
+        let before = parity_expected_bytes(&expected)?;
+        // The changed first surface cannot be copied before a later read fails.
+        fs::remove_file(run.actual_dir.join("github.txt")).map_err(|error| error.to_string())?;
+        assert!(
+            apply_bless_outputs_for_host(&expected, &run, "py", "missing source", false).is_err()
+        );
+        assert_eq!(parity_expected_bytes(&expected)?, before);
+        fs::write(run.actual_dir.join("github.txt"), "unchanged\n")
+            .map_err(|error| error.to_string())?;
+        // A directory is a portable unreadable-as-file target (also under root).
+        fs::remove_file(expected.join("github.txt")).map_err(|error| error.to_string())?;
+        fs::create_dir(expected.join("github.txt")).map_err(|error| error.to_string())?;
+        assert!(apply_bless_outputs_for_host(&expected, &run, "py", "bad target", false).is_err());
+        assert_eq!(
+            fs::read(expected.join("check.json")).map_err(|error| error.to_string())?,
+            before[0]
+        );
+        assert_eq!(
+            fs::read(expected.join("CHANGELOG.md")).map_err(|error| error.to_string())?,
+            before[5]
+        );
+        fs::remove_dir(expected.join("github.txt")).map_err(|error| error.to_string())?;
+        // Both target and source missing still fails during planning, not copying.
+        fs::remove_file(run.actual_dir.join("human.txt")).map_err(|error| error.to_string())?;
+        fs::remove_file(expected.join("human.txt")).map_err(|error| error.to_string())?;
+        assert!(
+            apply_bless_outputs_for_host(&expected, &run, "py", "both missing", false).is_err()
+        );
+        assert_eq!(
+            fs::read(expected.join("check.json")).map_err(|error| error.to_string())?,
+            before[0]
+        );
+        assert_eq!(
+            fs::read(expected.join("CHANGELOG.md")).map_err(|error| error.to_string())?,
+            before[5]
+        );
+        fs::remove_dir_all(dir).map_err(|error| error.to_string())
     }
 
     #[test]
@@ -4933,6 +5546,158 @@ mod tests {
         fs::remove_file(&path).map_err(|err| format!("cleanup {}: {err}", path.display()))
     }
 
+    /// #15018: a transient Windows removal failure is retried with the bounded
+    /// backoff and then succeeds; the waits are exactly the leading backoff steps.
+    #[test]
+    fn clear_fixture_cache_retries_a_transient_failure_then_succeeds() -> Result<(), String> {
+        use std::time::Duration;
+        let backoff = [
+            Duration::from_millis(1),
+            Duration::from_millis(2),
+            Duration::from_millis(3),
+        ];
+        let mut calls = 0usize;
+        let mut waits = Vec::new();
+        clear_fixture_cache_with(
+            Path::new("target/ripr/fixture-cache/x"),
+            |_| {
+                calls += 1;
+                if calls < 3 {
+                    Err(std::io::Error::from_raw_os_error(32))
+                } else {
+                    Ok(())
+                }
+            },
+            |err| err.raw_os_error() == Some(32),
+            &backoff,
+            |wait| waits.push(wait),
+        )?;
+        assert_eq!(calls, 3, "two transient failures then one success");
+        assert_eq!(
+            waits,
+            backoff[..2].to_vec(),
+            "one wait per transient failure"
+        );
+        Ok(())
+    }
+
+    /// A holder that outlives the bounded backoff is reported with the attempt
+    /// count and raw OS error, never swallowed; a non-transient failure is not
+    /// retried at all.
+    #[test]
+    fn clear_fixture_cache_reports_a_persistent_or_non_transient_failure() -> Result<(), String> {
+        use std::time::Duration;
+        let backoff = [Duration::ZERO, Duration::ZERO];
+        let mut calls = 0usize;
+        let Err(persistent) = clear_fixture_cache_with(
+            Path::new("target/ripr/fixture-cache/x"),
+            |_| {
+                calls += 1;
+                Err(std::io::Error::from_raw_os_error(32))
+            },
+            |err| err.raw_os_error() == Some(32),
+            &backoff,
+            |_| {},
+        ) else {
+            return Err("a persistent holder must be reported".to_string());
+        };
+        assert_eq!(calls, 3, "the initial attempt plus one per backoff step");
+        assert!(
+            persistent.contains("failed to clear fixture fact cache")
+                && persistent.contains("after 3 attempt(s)")
+                && persistent.contains("os error 32"),
+            "the report must keep the contract text and name attempts and raw error: {persistent}"
+        );
+
+        let mut calls = 0usize;
+        let mut waited = 0usize;
+        let Err(genuine) = clear_fixture_cache_with(
+            Path::new("target/ripr/fixture-cache/x"),
+            |_| {
+                calls += 1;
+                Err(std::io::Error::from_raw_os_error(13))
+            },
+            |err| err.raw_os_error() == Some(32),
+            &backoff,
+            |_| waited += 1,
+        ) else {
+            return Err("a genuine failure must be reported".to_string());
+        };
+        assert_eq!(calls, 1, "a non-transient failure is attempted once");
+        assert_eq!(waited, 0, "a non-transient failure must not wait");
+        assert!(genuine.contains("after 1 attempt(s)"), "{genuine}");
+        Ok(())
+    }
+
+    /// The Windows classification is platform-gated: the same raw codes are
+    /// unrelated errors on every other host and must never be retried there.
+    #[test]
+    fn transient_removal_classification_is_windows_only() {
+        for code in [5, 32, 145] {
+            assert_eq!(
+                is_transient_windows_removal_error(&std::io::Error::from_raw_os_error(code)),
+                cfg!(windows),
+                "os error {code}"
+            );
+        }
+        assert!(!is_transient_windows_removal_error(
+            &std::io::Error::from_raw_os_error(2)
+        ));
+    }
+
+    /// #15018: the batch path clears many per-fixture caches from rayon workers
+    /// at once. Every worker's first removal is refused as transiently held and
+    /// only a later attempt reaches the real filesystem, so each worker must go
+    /// through the retry path concurrently and still leave its directory
+    /// removed with no cross-talk between workers.
+    #[test]
+    fn concurrent_clears_of_distinct_fixture_caches_all_recover() -> Result<(), String> {
+        use rayon::prelude::*;
+        use std::time::Duration;
+        let root = unique_temp_path("concurrent-clear");
+        let dirs: Vec<PathBuf> = (0..32).map(|n| root.join(format!("fixture-{n}"))).collect();
+        for dir in &dirs {
+            let entry = dir.join("repo-file-facts").join("0.2").join("stale.json");
+            let parent = entry
+                .parent()
+                .ok_or_else(|| "seeded cache entry should have a parent".to_string())?;
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("create {}: {err}", parent.display()))?;
+            fs::write(&entry, b"{}").map_err(|err| format!("write {}: {err}", entry.display()))?;
+        }
+        let results: Vec<Result<usize, String>> = dirs
+            .par_iter()
+            .map(|dir| {
+                let mut calls = 0usize;
+                clear_fixture_cache_with(
+                    dir,
+                    |path| {
+                        calls += 1;
+                        if calls == 1 {
+                            Err(std::io::Error::from_raw_os_error(32))
+                        } else {
+                            fs::remove_dir_all(path)
+                        }
+                    },
+                    |err| err.raw_os_error() == Some(32),
+                    &[Duration::from_millis(1), Duration::from_millis(1)],
+                    std::thread::sleep,
+                )
+                .map(|()| calls)
+            })
+            .collect();
+        let survivors: Vec<_> = dirs.iter().filter(|dir| dir.exists()).collect();
+        let cleanup = fs::remove_dir_all(&root);
+        for result in results {
+            assert_eq!(result?, 2, "each worker retried exactly once");
+        }
+        assert!(
+            survivors.is_empty(),
+            "every cache must be cleared: {survivors:?}"
+        );
+        cleanup.map_err(|err| format!("cleanup {}: {err}", root.display()))
+    }
+
     /// The pin only works if it names the variable `ripr` resolves its cache base
     /// from (`CACHE_DIR_ENV` in `crates/ripr/src/analysis/seam_cache.rs`).
     #[test]
@@ -5109,3 +5874,7 @@ mod tests {
             .ok_or_else(|| format!("step 4 --reason quote split a character: {step4}"))
     }
 }
+
+#[cfg(test)]
+#[path = "fixtures/bless_parity_proof.rs"]
+mod bless_parity_proof;

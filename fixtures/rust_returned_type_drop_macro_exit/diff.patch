@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -16,7 +16,7 @@ macro_rules! exiting_drop {
+ exiting_drop!(Cfg);
+ 
+ pub fn make(x: u32) -> Cfg {
+-    Cfg { n: x * 2 }
++    Cfg { n: x * 3 }
+ }
+ 
+ #[cfg(test)]

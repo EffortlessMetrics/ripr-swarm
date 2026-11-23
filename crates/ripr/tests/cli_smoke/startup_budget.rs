@@ -21,23 +21,30 @@
 //! A deliberate startup cost raises a ceiling in the same change and says why.
 //! To re-measure, run this module with `--nocapture`; every command prints its
 //! `startup-budget` line.
-use super::{run_command_with_env, unique_external_workspace, workspace_root};
+// `workspace_root` and the clock types serve only the Linux-only budget test below.
+#[cfg(target_os = "linux")]
+use super::workspace_root;
+use super::{run_command_with_env, unique_external_workspace};
 use std::fs;
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+#[cfg(target_os = "linux")]
 const TRACE_ENV: &str = "RIPR_REPO_EXPOSURE_LATENCY_TRACE";
 const RECEIPT_PREFIX: &str = "ripr_resource_cost_receipt ";
 /// An inherited harness token would put `token=<value>` ahead of the receipt
 /// body. An empty value is not a valid token, so the child keeps the plain
 /// receipt shape whatever the parent environment carries.
+#[cfg(target_os = "linux")]
 const NO_RECEIPT_TOKEN: (&str, &str) = ("RIPR_REPO_EXPOSURE_LATENCY_RECEIPT_TOKEN", "");
 const MIB: u64 = 1024 * 1024;
 
 /// Runs per command. Peak memory is judged on the worst run, CPU time on the
 /// sum (a single short run usually lands between clock ticks), wall time on
 /// the best run.
+#[cfg(target_os = "linux")]
 const SAMPLES: usize = 5;
 
 /// CPU time allowed across all [`SAMPLES`] runs of one command. Measured: 0.
@@ -50,6 +57,7 @@ const PEAK_FLOOR_BYTES: u64 = MIB;
 /// Best-of-[`SAMPLES`] wall time. Measured: 5 ms. This catches only a gross
 /// regression (a child process, a network wait, a repository walk); the CPU
 /// and memory ceilings carry the finer signal.
+#[cfg(target_os = "linux")]
 const WALL_BEST_CEILING: Duration = Duration::from_secs(2);
 
 /// One no-analysis command and its peak resident memory ceiling in MiB, about

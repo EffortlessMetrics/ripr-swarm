@@ -209,19 +209,20 @@ respond() {
   [ ! -f "$MOCK_CALLS.$kind" ] || read -r count < "$MOCK_CALLS.$kind"
   printf '%s\n' "$((count + 1))" > "$MOCK_CALLS.$kind"
   response=$(printf '%s' "$sequence" | jq -ce --argjson n "$count" '.[([$n, length - 1] | min)]')
-  delay=$(printf '%s' "$response" | jq -r '.hang_seconds // 0')
+  # Scalars are compared as text; drop a CR a native jq could append.
+  delay=$(printf '%s' "$response" | jq -r '.hang_seconds // 0' | tr -d '\r')
   [ "$delay" = 0 ] || /bin/sleep "$delay"
   if printf '%s' "$response" | jq -e 'has("raw_stdout")' >/dev/null; then
     printf '%s' "$response" | jq -jr '.raw_stdout'
   else
     if [ "$kind" = pr ]; then
-      status=$(printf '%s' "$response" | jq -r '.status // 200')
+      status=$(printf '%s' "$response" | jq -r '.status // 200' | tr -d '\r')
       printf 'HTTP/2.0 %s Fixture\ncontent-type: application/json\r\n\r\n' "$status"
     fi
     printf '%s' "$response" | jq -jr '.body'
   fi
   printf '%s' "$response" | jq -r '.error // empty' >&2
-  exit "$(printf '%s' "$response" | jq -r '.exit // 0')"
+  exit "$(printf '%s' "$response" | jq -r '.exit // 0' | tr -d '\r')"
 }
 case "$2" in
   graphql)
@@ -252,6 +253,22 @@ esac
 "#,
     )
     .map_err(|e| e.to_string())?;
+    // A native Windows jq translates LF to CRLF in text mode, corrupting the
+    // scalar reads above and the byte-exact raw frames. `-b` (binary) keeps LF
+    // and is accepted on every host, so the shell under test and the mock
+    // both see the same bytes everywhere.
+    let real_jq = std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .flat_map(|dir| [dir.join("jq"), dir.join("jq.exe")])
+        .find(|candidate| candidate.is_file())
+        .ok_or("jq not found on PATH")?;
+    env.insert(
+        "MOCK_REAL_JQ".to_string(),
+        real_jq.to_string_lossy().replace('\\', "/"),
+    );
+    let jq = scratch.0.join("jq");
+    fs::write(&jq, "#!/bin/sh\nexec \"$MOCK_REAL_JQ\" -b \"$@\"\n").map_err(|e| e.to_string())?;
     let sleep = scratch.0.join("sleep");
     fs::write(
         &sleep,
@@ -281,6 +298,7 @@ esac
         fs::set_permissions(&gh, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
         fs::set_permissions(&sleep, fs::Permissions::from_mode(0o700))
             .map_err(|e| e.to_string())?;
+        fs::set_permissions(&jq, fs::Permissions::from_mode(0o700)).map_err(|e| e.to_string())?;
     }
     let paths = std::iter::once(scratch.0.clone())
         .chain(std::env::split_paths(

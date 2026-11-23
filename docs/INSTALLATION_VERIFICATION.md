@@ -163,7 +163,7 @@ Run these before publishing:
 
 ```bash
 cargo package -p ripr --list
-cargo publish -p ripr --dry-run
+cargo xtask publish-dry-run   # packages from the publish stage (docs/RELEASE.md, Crate tarball contents)
 ```
 
 The authoritative packaged-crate install proof is produced by
@@ -201,7 +201,7 @@ predate the RIPR producer envelope, so `ripr outcome` reads them (with a
 warning) but `ripr agent verify` rejects them as non-canonical. Exercise
 `agent verify` and `agent receipt` through the real loop instead: run
 `ripr agent repair --phase before` on a pilot seam, add the focused test,
-then run the `--phase after` command it prints. Both artifacts must live under
+then run the `ripr continue ... --attempt` command it prints. Both artifacts must live under
 `--root`; two identical snapshots exit 3 (no repository movement) by design.
 
 Run the generator self-pin smoke with the binary built from the release commit
@@ -240,7 +240,7 @@ cargo xtask release-readiness --version 0.11.0
 ```
 
 The readiness report must show that generated GitHub CI includes `#### First-run
-status`, `missing_start_here`, `start-here.md` in the `ripr-reports` artifact, and
+status`, `missing_start_here`, `ripr/reports/start-here.md` in the `ripr-reports` artifact, and
 the `ripr first-pr` safe next action; it must also verify that the VS Code manifest contributes `ripr: Start Current Repair`.
 
 ## Public Cargo Install Proof
@@ -280,6 +280,7 @@ ripr-server-v<VERSION>-x86_64-unknown-linux-gnu.tar.gz
 ripr-server-v<VERSION>-aarch64-unknown-linux-gnu.tar.gz
 ripr-server-v<VERSION>-x86_64-apple-darwin.tar.gz
 ripr-server-v<VERSION>-aarch64-apple-darwin.tar.gz
+ripr-server-v<VERSION>-<target>.(zip|tar.gz).sha256   (one bare-digest sidecar per archive)
 ```
 
 Then download the archive for the current platform, verify the SHA-256 from the
@@ -312,7 +313,7 @@ available. The extension resolves the server in this order:
 ripr.server.path
 bundled server binary, if present
 downloaded cached server binary
-ripr on PATH, when ripr.server.version is empty and not older than the expected version
+ripr on PATH, when ripr.server.version is empty, autoDownload is on and it is not older than the expected version
 verified first-run download from GitHub Releases
 ripr on PATH, as the fallback when the download fails or a version is pinned
 actionable error

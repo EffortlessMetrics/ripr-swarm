@@ -164,16 +164,31 @@ const UNRESOLVED_OUTCOME_PHRASES: &[&str] = &[
     "earlier stop is kept",
 ];
 
-/// The acceptance examples that require an abstention: the item opens with
-/// the word `Reject` (then `:`, a space or `(`; `Rejects` does not count) and
-/// its text, continuation lines included, pins the outcome as unresolved with
-/// one of [`UNRESOLVED_OUTCOME_PHRASES`] (RIPR-SPEC-0219 abstention-expected
-/// rows). A Reject example that only forbids one route to credit is left out.
+/// The marker that opens an acceptance example whose whole outcome is an
+/// abstention the spec requires (`3. [abstain] Accept: ...`; RIPR-SPEC-0219).
+/// It is structured rather than phrase-matched: the spec author states that
+/// every row the example describes must abstain, so an example that also
+/// describes a credited row is split before it is marked.
+const ABSTAIN_MARKER: &str = "[abstain]";
+
+/// The acceptance examples that require an abstention (RIPR-SPEC-0219
+/// abstention-expected rows): an item that opens with [`ABSTAIN_MARKER`], or
+/// one that opens with the word `Reject` (then `:`, a space or `(`; `Rejects`
+/// does not count) whose text, continuation lines included, pins the outcome
+/// as unresolved with one of [`UNRESOLVED_OUTCOME_PHRASES`]. A Reject example
+/// that only forbids one route to credit is left out, and the marker counts
+/// only as the item's first token.
 pub(crate) fn abstaining_reject_examples(markdown: &str) -> BTreeSet<ExampleKey> {
     acceptance_items_with_text(markdown)
         .into_iter()
         .filter(|(_, text)| {
             let text = text.trim_start();
+            if text
+                .strip_prefix(ABSTAIN_MARKER)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+            {
+                return true;
+            }
             let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
             text.strip_prefix("Reject")
                 .is_some_and(|rest| rest.starts_with([':', ' ', '(']))
@@ -185,7 +200,8 @@ pub(crate) fn abstaining_reject_examples(markdown: &str) -> BTreeSet<ExampleKey>
         .collect()
 }
 
-/// `RIPR-SPEC-NNNN#<key>` for every abstaining `Reject` acceptance example in the
+/// `RIPR-SPEC-NNNN#<key>` for every acceptance example that requires an
+/// abstention ([`abstaining_reject_examples`]) in the
 /// specs of the repository that owns `fixtures/<corpus>/`. A corpus with no
 /// such repository (a test tempdir) cites no specs ripr can read, so it has
 /// none.

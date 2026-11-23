@@ -49,7 +49,8 @@ pub(crate) fn unplaced_location_prefix(path: &str, line: &str) -> String {
 }
 
 /// True when stable path text carries a `%XX` marker for a non-UTF-8 byte
-/// (any uppercase `%XX` other than the literal-percent `%25`). A property
+/// (any uppercase `%XX` other than the literal-percent `%25` and the literal
+/// Unix backslash `%5C`, #15908, which a property carries raw). A property
 /// cannot carry it: GitHub's runner decodes only `%25 %0D %0A %3A %2C`, so
 /// `file=a_%FF.rs` would name a different file than the one on disk (#13961).
 pub(crate) fn stable_path_has_non_utf8_marker(stable: &str) -> bool {
@@ -59,6 +60,7 @@ pub(crate) fn stable_path_has_non_utf8_marker(stable: &str) -> bool {
             && (w[1].is_ascii_digit() || (b'A'..=b'F').contains(&w[1]))
             && (w[2].is_ascii_digit() || (b'A'..=b'F').contains(&w[2]))
             && &w[1..] != b"25"
+            && &w[1..] != b"5C"
     })
 }
 
@@ -121,10 +123,21 @@ pub(crate) fn escape_property(value: &str) -> String {
 /// Escape a workflow-command *property* value from stable path text.
 ///
 /// Use only for values produced by stable path normalization, where `%`
-/// is already encoded. Encoding `%` again double-encodes (`%2525`).
+/// is already encoded. Encoding `%` again double-encodes (`%2525`). A `%5C`
+/// marker is a literal Unix backslash (#15908); the runner does not decode it,
+/// so it is written back as the `\` that names the file on disk. Every `%` in
+/// stable text starts a marker, so `%255C` (a literal `%5C`) is never read as
+/// one.
 pub(crate) fn escape_property_pre_encoded(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
-    for c in value.chars() {
+    let mut rest = value;
+    while let Some(c) = rest.chars().next() {
+        if let Some(tail) = rest.strip_prefix("%5C") {
+            escaped.push('\\');
+            rest = tail;
+            continue;
+        }
+        rest = &rest[c.len_utf8()..];
         match c {
             '\r' => escaped.push_str("%0D"),
             '\n' => escaped.push_str("%0A"),
@@ -216,9 +229,210 @@ mod tests {
     }
 
     #[test]
+    fn pre_encoded_property_writes_a_literal_backslash_marker_back_raw() {
+        // #15908: `%5C` is a literal Unix backslash; the runner never decodes
+        // it, so the property names the file on disk. A literal `%5C` in the
+        // name is `%255C` and stays text.
+        assert_eq!(escape_property_pre_encoded("src/a%5Cb.rs"), r"src/a\b.rs");
+        assert_eq!(
+            escape_property_pre_encoded("src/a%255C.rs"),
+            "src/a%255C.rs"
+        );
+        assert!(!stable_path_has_non_utf8_marker("src/a%5Cb.rs"));
+        assert!(!stable_path_has_non_utf8_marker("src/a%255C.rs"));
+        assert!(stable_path_has_non_utf8_marker("src/a%5C%FF.rs"));
+    }
+
+    #[test]
     fn unicode_passes_through_everywhere() {
         assert_eq!(escape_data("naïve ünïcode"), "naïve ünïcode");
         assert_eq!(escape_property("src/dé.rs"), "src/dé.rs");
         assert_eq!(escape_property_pre_encoded("src/dé.rs"), "src/dé.rs");
+    }
+
+    // --- Property-based tests (#13950) ---
+    //
+    // `decode_*` model the consumer: GitHub's runner. The encoders in
+    // actions/toolkit `packages/core/src/command.ts` define the wire format
+    // (`escapeData`: `%`->`%25`, `\r`->`%0D`, `\n`->`%0A`; `escapeProperty`
+    // additionally `:`->`%3A`, `,`->`%2C`), and actions/runner
+    // `ActionCommand.cs` (`UnescapeData`/`UnescapeProperty`) reverses them
+    // with sequential whole-string replaces, `%25` last. Nothing else is
+    // decoded, so the models below decode exactly those tokens in that order.
+    //
+    // ripr escapes MORE than toolkit: after the wire escape, `terminal_safe`
+    // spells every other `needs_terminal_escape` character (controls except
+    // `\n`/`\t`, bidi and invisible formatting) as literal `\u{XX}` text.
+    // `visible` models that, so the round trip is `decode(escape(s)) ==
+    // visible(s)`, not `== s`.
+    //
+    // Case budget follows the repository convention: a small fixed default for
+    // the required test run, raised by `PROPTEST_CASES` (fuzz.yml uses 400).
+    // These are pure string functions, so the default is generous.
+
+    use crate::agent::loop_commands::needs_terminal_escape;
+    use proptest::prelude::*;
+    use proptest::test_runner::Config;
+
+    const DEFAULT_CASES: u32 = 256;
+
+    fn config() -> Config {
+        Config {
+            cases: std::env::var("PROPTEST_CASES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(DEFAULT_CASES),
+            failure_persistence: Some(Box::new(proptest::test_runner::FileFailurePersistence::Off)),
+            ..Config::default()
+        }
+    }
+
+    /// actions/runner `UnescapeData`: `%0D`, `%0A`, then `%25`.
+    fn decode_data(value: &str) -> String {
+        value
+            .replace("%0D", "\r")
+            .replace("%0A", "\n")
+            .replace("%25", "%")
+    }
+
+    /// actions/runner `UnescapeProperty`: `%0D`, `%0A`, `%3A`, `%2C`, then
+    /// `%25`.
+    fn decode_property(value: &str) -> String {
+        value
+            .replace("%0D", "\r")
+            .replace("%0A", "\n")
+            .replace("%3A", ":")
+            .replace("%2C", ",")
+            .replace("%25", "%")
+    }
+
+    /// What a reader sees after GitHub decodes ripr's output: CR and LF
+    /// survive (they travel as `%0D`/`%0A`), every other character the
+    /// terminal policy flags is spelled `\u{XX}`, the rest is unchanged.
+    fn visible(value: &str) -> String {
+        let mut out = String::new();
+        for c in value.chars() {
+            if c != '\r' && c != '\n' && needs_terminal_escape(c) {
+                out.push_str(&format!("\\u{{{:02x}}}", c as u32));
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// Hostile text: wire metacharacters, already-escaped-looking tokens,
+    /// controls, bidi, and arbitrary chars, so every branch is hit often.
+    fn hostile_text() -> impl Strategy<Value = String> {
+        let fragment = prop_oneof![
+            prop::sample::select(vec![
+                "%",
+                "%25",
+                "%2525",
+                "%0A",
+                "%0D",
+                "%0a",
+                "%3A",
+                "%2C",
+                "%250A",
+                "%%",
+                "\r",
+                "\n",
+                "\r\n",
+                ",",
+                ":",
+                "::",
+                "=",
+                "\t",
+                "\u{0}",
+                "\u{7}",
+                "\u{1b}",
+                "\u{7f}",
+                "\u{85}",
+                "\u{202e}",
+                "\u{2066}",
+                "\u{2028}",
+                "\u{feff}",
+                "\u{e0041}",
+                "\\u{1b}",
+                "é",
+                "::warning file=x::",
+                "/",
+            ])
+            .prop_map(str::to_string),
+            any::<char>().prop_map(String::from),
+            "[a-z]{1,4}",
+        ];
+        prop::collection::vec(fragment, 0..24).prop_map(|parts| parts.concat())
+    }
+
+    /// True when every `%` in `value` starts one of `tokens`.
+    fn every_percent_starts_a_token(value: &str, tokens: &[&str]) -> bool {
+        value
+            .match_indices('%')
+            .all(|(at, _)| tokens.iter().any(|token| value[at..].starts_with(token)))
+    }
+
+    fn has_raw_line_or_terminal_char(value: &str) -> bool {
+        value
+            .chars()
+            .any(|c| c == '\r' || c == '\n' || needs_terminal_escape(c))
+    }
+
+    proptest! {
+        #![proptest_config(config())]
+
+        #[test]
+        fn proptest_data_round_trips_through_github_decode(text in hostile_text()) {
+            let escaped = escape_data(&text);
+            prop_assert_eq!(decode_data(&escaped), visible(&text));
+            prop_assert!(!has_raw_line_or_terminal_char(&escaped), "raw control in {escaped:?}");
+            prop_assert!(every_percent_starts_a_token(&escaped, &["%25", "%0D", "%0A"]));
+        }
+
+        #[test]
+        fn proptest_property_round_trips_through_github_decode(text in hostile_text()) {
+            let escaped = escape_property(&text);
+            prop_assert_eq!(decode_property(&escaped), visible(&text));
+            prop_assert!(!has_raw_line_or_terminal_char(&escaped), "raw control in {escaped:?}");
+            prop_assert!(!escaped.contains([',', ':']), "raw separator in {escaped:?}");
+            prop_assert!(every_percent_starts_a_token(
+                &escaped,
+                &["%25", "%0D", "%0A", "%3A", "%2C"]
+            ));
+        }
+
+        /// Pre-encoded input is stable path text (`stable_path_text`): every
+        /// literal `%` is already `%25`. Its contract is to add the wire
+        /// escape without touching any `%`, so stable text escapes to the same
+        /// bytes as the raw text through `escape_property` (no `%2525` for a
+        /// literal `%`), and GitHub decodes it back to the real name.
+        #[test]
+        fn proptest_pre_encoded_property_never_re_encodes_percent(text in hostile_text()) {
+            // On Windows stable text turns `\` into `/`; keep the raw name
+            // backslash-free so the comparison holds on every host.
+            let raw = text.replace('\\', "");
+            let stable = crate::analysis::stable_path_text(std::path::Path::new(&raw));
+            let escaped = escape_property_pre_encoded(&stable);
+            prop_assert_eq!(&escaped, &escape_property(&raw));
+            prop_assert_eq!(decode_property(&escaped), visible(&raw));
+            prop_assert!(!escaped.contains([',', ':']), "raw separator in {escaped:?}");
+            // Every `%` of the input survives verbatim; only the wire escape
+            // adds `%`s, one per CR, LF, comma, or colon.
+            let added = stable.chars().filter(|c| matches!(c, '\r' | '\n' | ',' | ':')).count();
+            prop_assert_eq!(
+                escaped.matches('%').count(),
+                stable.matches('%').count() + added
+            );
+        }
+
+        /// A path is unplaceable exactly when a `file=` property cannot carry
+        /// it faithfully: GitHub's decode of the escaped property differs from
+        /// the path.
+        #[test]
+        fn proptest_unplaceable_iff_property_cannot_carry_the_path(text in hostile_text()) {
+            let carried = decode_property(&escape_property(&text)) == text;
+            prop_assert_eq!(path_is_unplaceable(&text), !carried);
+        }
     }
 }

@@ -17,6 +17,7 @@ use ra_ap_syntax::{
     AstNode,
     ast::{self, HasAttrs, HasName},
 };
+use std::collections::HashMap;
 
 /// The kind of scope an owner opt-out attribute was read from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -65,29 +66,27 @@ pub(crate) fn enclosing_scopes(
     };
     let tree = parse.tree();
     let lines = LineIndex::new(source);
-    let functions: Vec<(String, usize, ast::Fn)> = tree
-        .syntax()
-        .descendants()
-        .filter_map(ast::Fn::cast)
-        .filter_map(|function| {
-            let name = function.name()?.text().to_string();
-            let start = function
-                .fn_token()
-                .map(|token| token.text_range().start())
-                .unwrap_or_else(|| function.syntax().text_range().start());
-            Some((name, lines.line(start), function))
-        })
-        .collect();
+    // Keyed by (line, name) so the repo-scope inventory, which asks for every
+    // function of a file (#15000), stays linear; `None` marks a key the tree
+    // names more than once.
+    let mut functions: HashMap<(usize, String), Option<ast::Fn>> = HashMap::new();
+    for function in tree.syntax().descendants().filter_map(ast::Fn::cast) {
+        let Some(name) = function.name().map(|name| name.text().to_string()) else {
+            continue;
+        };
+        let start = function
+            .fn_token()
+            .map(|token| token.text_range().start())
+            .unwrap_or_else(|| function.syntax().text_range().start());
+        functions
+            .entry((lines.line(start), name))
+            .and_modify(|slot| *slot = None)
+            .or_insert(Some(function));
+    }
     owners
         .iter()
         .map(|(name, line)| {
-            let mut matches = functions.iter().filter(|(candidate, candidate_line, _)| {
-                candidate.as_str() == *name && candidate_line == line
-            });
-            let (_, _, function) = matches.next()?;
-            if matches.next().is_some() {
-                return None;
-            }
+            let function = functions.get(&(*line, (*name).to_string()))?.as_ref()?;
             Some(scopes_of(function))
         })
         .collect()

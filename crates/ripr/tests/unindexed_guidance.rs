@@ -70,9 +70,11 @@ fn unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim() -> R
             .iter()
             .find(|finding| finding.probe.family == ProbeFamily::ReturnValue)
             .ok_or("setup: expected a real return-value finding")?;
+        // #14968: the smoke test's `assert_eq!(2 + 2, 4)` compares only
+        // literals, so it gives no credit; the inspect-first guidance stays.
         assert_eq!(
             finding.class,
-            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
             "{fence}: {finding:?}"
         );
         assert_eq!(finding.ripr.reach.state.as_str(), "weak", "{fence}");
@@ -165,7 +167,9 @@ fn wrapper_error_retains_specific_guidance_for_proximity_reach() -> Result<(), S
     let output = check_workspace(fixture.input())?;
     assert_eq!(output.findings.len(), 2, "setup: two wrapper probes");
     for finding in &output.findings {
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        // #14968: the literal-only smoke test gives no credit, but the typed
+        // wrapper limitation and its guidance stay (RIPR-SPEC-0094).
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
         assert_eq!(finding.ripr.reach.state.as_str(), "weak");
         assert!(!finding.related_tests.is_empty());
         assert!(finding.related_tests.iter().all(|test| {

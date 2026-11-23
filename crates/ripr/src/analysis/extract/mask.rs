@@ -198,6 +198,19 @@ pub(crate) fn string_literal_spans(text: &str) -> Vec<(usize, usize, bool)> {
     scan(text).string_spans
 }
 
+/// Masked code and string delimiter spans from the same lexical pass.
+pub(crate) fn mask_with_string_spans(text: &str) -> (String, Vec<(usize, usize, bool)>) {
+    let scanned = scan(text);
+    (scanned.masked, scanned.string_spans)
+}
+
+/// Byte offset of the `//` that opens each actual line comment in `text`, in
+/// order, read by the same scan: a `//` inside a string, a character literal,
+/// a block comment or another line comment never opens one.
+pub(crate) fn line_comment_starts(text: &str) -> Vec<usize> {
+    scan(text).line_comment_starts
+}
+
 /// Source spans whose whitespace affects Rust expression identity.
 pub(crate) struct RustIdentitySpans {
     /// Inclusive quote ranges whose contents remain literal data.
@@ -238,6 +251,8 @@ struct Scanned {
     string_spans: Vec<(usize, usize, bool)>,
     /// LF offsets at which a line comment returns to code.
     line_comment_ends: Vec<usize>,
+    /// Byte offsets of the `//` opening each actual line comment.
+    line_comment_starts: Vec<usize>,
 }
 
 /// One pass over `text` producing the masked output, the byte ranges of
@@ -256,6 +271,7 @@ fn scan(text: &str) -> Scanned {
             string_quotes: 0,
             string_spans: Vec::new(),
             line_comment_ends: Vec::new(),
+            line_comment_starts: Vec::new(),
         };
     }
     scan_bytewise(text)
@@ -276,6 +292,7 @@ fn scan_bytewise(text: &str) -> Scanned {
     let mut string_quotes = 0usize;
     let mut string_spans = Vec::new();
     let mut line_comment_ends = Vec::new();
+    let mut line_comment_starts = Vec::new();
     let mut string_open = 0usize;
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len());
@@ -289,6 +306,7 @@ fn scan_bytewise(text: &str) -> Scanned {
             MaskState::Code => {
                 if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
                     state = MaskState::LineComment;
+                    line_comment_starts.push(index);
                     out.push(b' ');
                     out.push(b' ');
                     index += 2;
@@ -432,6 +450,7 @@ fn scan_bytewise(text: &str) -> Scanned {
         string_quotes,
         string_spans,
         line_comment_ends,
+        line_comment_starts,
     }
 }
 
@@ -461,6 +480,10 @@ mod tests {
                     assert_eq!(fast.string_quotes, slow.string_quotes, "{fragment}");
                     assert_eq!(fast.string_spans, slow.string_spans, "{fragment}");
                     assert_eq!(fast.line_comment_ends, slow.line_comment_ends, "{fragment}");
+                    assert_eq!(
+                        fast.line_comment_starts, slow.line_comment_starts,
+                        "{fragment}"
+                    );
                     if !fragment.contains(['/', '"', '\'']) {
                         shortcut += 1;
                     }
@@ -720,5 +743,26 @@ mod tests {
         // A fragment closing a string begun on an earlier line counts its
         // lone delimiter, so the caller's fallback still fires for it.
         assert_eq!(mask_with_string_delimiter_quotes("second\", live(2))").1, 1);
+    }
+    /// Only a `//` read in code opens a line comment: one inside a string, a
+    /// raw string, a character literal, a block comment or an open line
+    /// comment does not.
+    #[test]
+    fn line_comment_starts_name_only_actual_line_comments() {
+        let text = concat!(
+            "let url = \"http://x\"; // one\n",
+            "let raw = r#\"// no\"#;\n",
+            "/* // no */ call(); // two // still two\n",
+            "let multi = \"open\n",
+            "  // inside the string\"; // three\n",
+            "let slash = '/'; let other = '/';\n",
+        );
+        let starts = line_comment_starts(text);
+        let tails = starts
+            .iter()
+            .map(|&at| text[at..].lines().next().unwrap_or(""))
+            .collect::<Vec<_>>();
+        assert_eq!(tails, ["// one", "// two // still two", "// three"]);
+        assert!(line_comment_starts("let a = b / c;").is_empty());
     }
 }

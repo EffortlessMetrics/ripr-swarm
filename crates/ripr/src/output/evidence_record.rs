@@ -6,6 +6,7 @@
 //! baselines, or change seam grip classifications.
 
 use crate::agent::loop_commands::{
+    PILOT_AFTER_SNAPSHOT_ARTIFACT, PILOT_BEFORE_SNAPSHOT_ARTIFACT,
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
     WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command,
     shell_arg,
@@ -22,7 +23,7 @@ pub(crate) use crate::analysis::repair_route::{
     cross_language_oracle_visibility_unresolved, cross_language_test_target_unresolved,
 };
 use crate::analysis::seams::{SeamGripClass, SeamKind};
-use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for};
+use crate::analysis::test_grip_evidence::{RelationReason, oracle_semantics_for_seam};
 use crate::domain::{CommandSpec, EvidenceState, StaticLimitKind};
 use crate::domain::{OracleKind, OracleStrength, StageEvidence, StageState};
 use crate::output::agent_seam_packets::{
@@ -377,7 +378,7 @@ pub(crate) fn evidence_record_for(
 /// against the attempt's retained before snapshot rather than any path the
 /// document itself names, #4379). The command flows into every verify
 /// projection — `recommendation.verify_command`,
-/// `canonical_item.verify_command`, and the parsed
+/// `canonical_item.verify_command`, and the typed
 /// `canonical_item.command_specs.verify` — so the three cannot disagree.
 pub(crate) fn evidence_record_with_verify_command(
     entry: &ClassifiedSeam,
@@ -394,9 +395,8 @@ pub(crate) fn evidence_record_with_verify_command(
 
 /// [`evidence_record_with_verify_command`] for a verify display bound to a
 /// selected root (#3948, #3999). The display names the concrete root so it
-/// replays from any directory; typed recovery binds that same root, so the
-/// parsed `command_specs.verify` keeps the portable argv and a display whose
-/// root was substituted afterwards still fails closed.
+/// replays from any directory. The producer's `command_specs.verify` keeps
+/// portable argv and is present only for a matching snapshot route.
 pub(crate) fn evidence_record_with_bound_verify_command(
     entry: &ClassifiedSeam,
     canonical_gap: Option<&CanonicalGapIdentity>,
@@ -487,7 +487,7 @@ pub(crate) fn evidence_record_with_bound_verify_command(
             .related_tests
             .iter()
             .take(MAX_RELATED_TESTS_PER_EVIDENCE_RECORD)
-            .map(|test| related_test_record(test, entry.seam.kind()))
+            .map(|test| related_test_record(test, &entry.seam))
             .collect(),
         recommendation,
         actionability,
@@ -745,13 +745,7 @@ fn canonical_item_for(
         verify_command_spec: recommendation
             .verify_command
             .as_deref()
-            // The verify display is the portable `--root .` shape or one
-            // bound to `verify_root`; recovery binds the same root, so either
-            // yields the portable argv.
-            .and_then(|display| {
-                crate::agent::command_specs::agent_command_spec_from_display(display, verify_root)
-                    .or_else(|| bound_snapshot_verify_spec(display, verify_root))
-            }),
+            .and_then(|display| snapshot_verify_spec(display, verify_root)),
         receipt_command_spec: evidence_state.is_actionable().then(|| {
             crate::agent::command_specs::agent_receipt_command_spec(
                 ".",
@@ -764,31 +758,27 @@ fn canonical_item_for(
     }
 }
 
-/// Typed spec for the producer's own bound snapshot verify display (#3948).
-/// A root carrying shell punctuation (`&`, `$`, ...) renders quoted and
-/// pastes correctly, but display recovery refuses those characters in any
-/// word. The producer knows its inputs, so it rebuilds the display from them
-/// and grants the trusted spec only on a byte-for-byte match; any other or
-/// substituted display still recovers nothing.
-///
-/// The rebuild uses the same `root_display` builder the display itself
-/// came from, not a fresh bind (#7937): a rooted selected root such as
-/// `/tmp/repo` is absolute on POSIX but only rooted on Windows, where
-/// binding re-spelled it against the process drive and the producer's own
-/// display failed its own byte-match, losing every typed spec. `root_display`
-/// binds absolute roots, keeps the portable relative spellings verbatim, and
-/// agrees with the display on every host and input family.
-fn bound_snapshot_verify_spec(
-    display: &str,
-    verify_root: &std::path::Path,
-) -> Option<crate::domain::CommandSpec> {
+/// Construct argv from the snapshot producer's paths and require its exact
+/// display before attaching it to the record. Other displays remain copyable.
+fn snapshot_verify_spec(display: &str, verify_root: &std::path::Path) -> Option<CommandSpec> {
+    use crate::agent::command_specs::{PORTABLE_ROOT, agent_verify_command_spec};
+
     let root = crate::agent::loop_commands::root_display(&verify_root.to_string_lossy());
-    let spec = crate::agent::command_specs::agent_verify_command_spec(
-        &root,
-        WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
-        WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-        None,
-    );
+    let spec = if root == PORTABLE_ROOT && display == VERIFY_COMMAND {
+        agent_verify_command_spec(
+            PORTABLE_ROOT,
+            PILOT_BEFORE_SNAPSHOT_ARTIFACT,
+            PILOT_AFTER_SNAPSHOT_ARTIFACT,
+            None,
+        )
+    } else {
+        agent_verify_command_spec(
+            &root,
+            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
+            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            None,
+        )
+    };
     (spec.display == display && spec.validate().is_ok()).then_some(spec)
 }
 
@@ -1025,7 +1015,8 @@ fn alignment_confidence_for(
 /// test reaches the seam. Eligibility and the limitation projection share
 /// this one decision.
 fn activation_follows_absent_reach(entry: &ClassifiedSeam) -> bool {
-    matches!(entry.evidence.reach.state, StageState::No)
+    entry.evidence.activate.static_limit_kind.is_none()
+        && matches!(entry.evidence.reach.state, StageState::No)
         && matches!(entry.evidence.activate.state, StageState::Unknown)
         && (entry
             .evidence
@@ -1122,7 +1113,7 @@ fn recommendation_for(
                         )
                     })
             })
-            .map(|test| related_test_record(test, entry.seam.kind()));
+            .map(|test| related_test_record(test, &entry.seam));
 
     EvidenceRecordRecommendation {
         action: action.to_string(),
@@ -1228,9 +1219,9 @@ fn assertion_shape_record(shape: AssertionShape) -> Option<EvidenceRecordAsserti
 
 fn related_test_record(
     test: &crate::analysis::test_grip_evidence::RelatedTestGrip,
-    seam_kind: SeamKind,
+    seam: &crate::analysis::seams::RepoSeam,
 ) -> EvidenceRecordRelatedTest {
-    let semantics = oracle_semantics_record(&test.oracle_kind, &test.oracle_strength, seam_kind);
+    let semantics = oracle_semantics_record(&test.oracle_kind, &test.oracle_strength, seam);
     EvidenceRecordRelatedTest {
         name: test.test_name.clone(),
         file: display_path(&test.file),
@@ -1247,9 +1238,9 @@ fn related_test_record(
 fn oracle_semantics_record(
     kind: &OracleKind,
     strength: &OracleStrength,
-    seam_kind: SeamKind,
+    seam: &crate::analysis::seams::RepoSeam,
 ) -> EvidenceRecordOracleSemantics {
-    let semantics = oracle_semantics_for(kind, strength, seam_kind);
+    let semantics = oracle_semantics_for_seam(kind, strength, seam);
     EvidenceRecordOracleSemantics {
         observes: semantics.observes,
         missing: semantics.missing,
@@ -1306,7 +1297,8 @@ pub(crate) fn static_limitations_for(
     if matches!(entry.class, SeamGripClass::Opaque) {
         let reason =
             "seam is classified opaque; inspect static evidence before writing a focused test";
-        let category = static_limitation_category("classification", "opaque", reason);
+        let category =
+            legacy_static_limitation_category("classification", "opaque", reason).as_str();
         limitations.push(EvidenceRecordStaticLimitation {
             stage: "classification".to_string(),
             state: "opaque".to_string(),
@@ -1425,16 +1417,19 @@ fn push_stage_limitation(
         // "macro" mention as `macro_generated_value` and would otherwise
         // steal this row. Honor the producer token only on the reach stage so
         // examples 21/22 (snapshot/mock/generated name inference) stay out.
-        let category = if panic_unresolved {
-            StaticLimitKind::RustPanicOutcomeUnresolved.as_str()
+        let category = if let Some(kind) = evidence.static_limit_kind {
+            StageLimitationCategory::from_kind(stage, kind)
+        } else if panic_unresolved {
+            StageLimitationCategory::Typed(StaticLimitKind::RustPanicOutcomeUnresolved)
         } else if framework_unresolved {
-            StaticLimitKind::RustFrameworkOracleUnresolved.as_str()
+            StageLimitationCategory::Typed(StaticLimitKind::RustFrameworkOracleUnresolved)
         } else if stage == "reach" && rust_macro_reach_limitation_reason(&evidence.summary) {
-            "opaque_static_evidence"
+            StageLimitationCategory::Untyped(UntypedStageLimitation::OpaqueStaticEvidence)
         } else {
-            let base_category = static_limitation_category(stage, state, &evidence.summary);
+            let base_category = legacy_static_limitation_category(stage, state, &evidence.summary);
             static_limitation_category_for_entry(base_category, entry)
-        };
+        }
+        .as_str();
         limitations.push(EvidenceRecordStaticLimitation {
             stage: stage.to_string(),
             state: state.to_string(),
@@ -1453,64 +1448,162 @@ fn rust_macro_reach_limitation_reason(reason: &str) -> bool {
         || reason.contains(StaticLimitKind::RustMacroWrappedTestCallUnresolved.as_str())
 }
 
-fn static_limitation_category(stage: &str, state: &str, reason: &str) -> &'static str {
+/// Category of a stage static limitation (#14965).
+///
+/// The emitted set is closed by construction: a category is either a typed
+/// [`StaticLimitKind`] token or one of the [`UntypedStageLimitation`] variants, so a new
+/// category cannot appear without a variant in one of the two vocabularies.
+/// `untyped_stage_limitations_do_not_shadow_typed_kinds` keeps the untyped
+/// wire tokens disjoint from every typed token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StageLimitationCategory {
+    Typed(StaticLimitKind),
+    Untyped(UntypedStageLimitation),
+}
+
+impl StageLimitationCategory {
+    /// The stage record predates several finding tokens and retains its wire vocabulary.
+    fn from_kind(stage: &str, kind: StaticLimitKind) -> Self {
+        use UntypedStageLimitation as U;
+        match kind {
+            StaticLimitKind::MockedModule => Self::Untyped(U::UnsupportedMockShape),
+            StaticLimitKind::Metaprogramming => Self::Untyped(U::MacroGeneratedValue),
+            StaticLimitKind::OpaqueCustomAssertionHelper => Self::Untyped(U::OpaqueHelperCall),
+            StaticLimitKind::RustMacroReachUnresolved
+            | StaticLimitKind::RustMacroWrappedTestCallUnresolved
+                if stage == "reach" =>
+            {
+                Self::Untyped(U::OpaqueStaticEvidence)
+            }
+            _ => Self::Typed(kind),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Typed(kind) => kind.as_str(),
+            Self::Untyped(category) => category.as_str(),
+        }
+    }
+}
+
+/// Renderer categories that no producer names with a typed
+/// [`StaticLimitKind`] yet. Most are still read from the stage summary
+/// prose; replacing each with a typed producer is the end state #14965
+/// names. Their wire tokens are pinned by the evidence-audit maps and the
+/// fixture corpora, so a variant keeps its token even where a typed kind
+/// covers similar ground (`unsupported_mock_shape` is not `mocked_module`).
+/// Declares the enum, its `ALL` list and its wire tokens from one table, so a
+/// variant cannot exist without appearing in `ALL` and in the guard tests that
+/// walk it.
+macro_rules! untyped_stage_limitations {
+    ($($variant:ident => $token:literal,)+) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum UntypedStageLimitation {
+            $($variant,)+
+        }
+
+        impl UntypedStageLimitation {
+            #[cfg(test)]
+            const ALL: &'static [UntypedStageLimitation] = &[$(Self::$variant,)+];
+
+            fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $token,)+
+                }
+            }
+        }
+    };
+}
+
+untyped_stage_limitations! {
+    ConstructorFieldOwnerAmbiguous => "constructor_field_owner_ambiguous",
+    FieldAssignmentValueUnresolved => "field_assignment_value_unresolved",
+    CrossFileConstantUnresolved => "cross_file_constant_unresolved",
+    MacroGeneratedValue => "macro_generated_value",
+    OpaqueHelperCall => "opaque_helper_call",
+    UnsupportedMockShape => "unsupported_mock_shape",
+    SnapshotFieldUnknown => "snapshot_field_unknown",
+    SideEffectSinkUnknown => "side_effect_sink_unknown",
+    ActivationOwnerCallAbsent => "activation_owner_call_absent",
+    ActivationOwnerCallAbsentCallPresenceTargetAffinity => "activation_owner_call_absent_call_presence_target_affinity",
+    ActivationOwnerCallAbsentAssertionTargetAffinity => "activation_owner_call_absent_assertion_target_affinity",
+    ActivationOwnerCallAbsentAffinityOnly => "activation_owner_call_absent_affinity_only",
+    ActivationOwnerCallAbsentSameFileOnly => "activation_owner_call_absent_same_file_only",
+    ActivationOwnerCallUnresolved => "activation_owner_call_unresolved",
+    ActivationValueUnresolved => "activation_value_unresolved",
+    OpaqueStaticEvidence => "opaque_static_evidence",
+    ReachabilityStaticUnknown => "reachability_static_unknown",
+    ActivationStaticUnknown => "activation_static_unknown",
+    PropagationStaticUnknown => "propagation_static_unknown",
+    ObservationStaticUnknown => "observation_static_unknown",
+    DiscriminationStaticUnknown => "discrimination_static_unknown",
+    Unclassified => "static_limitation_unclassified",
+}
+
+fn legacy_static_limitation_category(
+    stage: &str,
+    state: &str,
+    reason: &str,
+) -> StageLimitationCategory {
+    use UntypedStageLimitation as U;
     let reason = reason.to_ascii_lowercase();
-    if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
+    let untyped = if reason.contains(StaticLimitKind::RustCallFactBudget.as_str()) {
         // #8600: the producer named the typed call-fact budget limit; the
         // substring classifier below must not rename it from its prose.
-        StaticLimitKind::RustCallFactBudget.as_str()
+        return StageLimitationCategory::Typed(StaticLimitKind::RustCallFactBudget);
+    } else if reason.contains(StaticLimitKind::ActivationBoundaryInputUnresolved.as_str()) {
+        // #14951: the activate-stage producer names the typed boundary-input
+        // limit; its sub-case (iterator / closure / local or computed) stays
+        // in the repair route, not in this category.
+        return StageLimitationCategory::Typed(StaticLimitKind::ActivationBoundaryInputUnresolved);
     } else if reason.contains("constructor_field_owner_ambiguous") {
-        "constructor_field_owner_ambiguous"
+        U::ConstructorFieldOwnerAmbiguous
     } else if reason.contains("field assignment value is unresolved") {
-        "field_assignment_value_unresolved"
+        U::FieldAssignmentValueUnresolved
     } else if reason.contains("cross-file")
         || reason.contains("cross file")
         || reason.contains("unresolved constant")
         || reason.contains("constant boundary")
     {
-        "cross_file_constant_unresolved"
+        U::CrossFileConstantUnresolved
     } else if reason.contains("macro") || reason.contains("generated") {
-        "macro_generated_value"
+        U::MacroGeneratedValue
     } else if reason.contains("opaque helper") || reason.contains("opaque fixture") {
-        "opaque_helper_call"
+        U::OpaqueHelperCall
     } else if reason.contains("dynamic dispatch") || reason.contains("opaque dispatch") {
-        "dynamic_dispatch"
+        // The typed kind already owns this token (#14965).
+        return StageLimitationCategory::Typed(StaticLimitKind::DynamicDispatch);
     } else if reason.contains("mock") {
-        "unsupported_mock_shape"
+        U::UnsupportedMockShape
     } else if reason.contains("snapshot") {
-        "snapshot_field_unknown"
+        U::SnapshotFieldUnknown
     } else if reason.contains("side effect")
         || reason.contains("side-effect")
         || reason.contains("effect sink")
     {
-        "side_effect_sink_unknown"
+        U::SideEffectSinkUnknown
     } else if reason.contains("no direct owner call observed for value-insensitive seam") {
-        "activation_owner_call_absent"
+        U::ActivationOwnerCallAbsent
     } else if reason.contains("owner call") {
-        "activation_owner_call_unresolved"
-    } else if reason.contains("boundary activation operand")
-        && (reason.contains("local")
-            || reason.contains("iterator")
-            || reason.contains("closure")
-            || reason.contains("computed"))
-    {
-        "activation_boundary_input_unresolved"
+        U::ActivationOwnerCallUnresolved
     } else if reason.contains("no concrete activation values observed")
         || reason.contains("no literal activation values")
     {
-        "activation_value_unresolved"
+        U::ActivationValueUnresolved
     } else if stage == "classification" || state == "opaque" {
-        "opaque_static_evidence"
+        U::OpaqueStaticEvidence
     } else {
         match stage {
-            "reach" => "reachability_static_unknown",
-            "activate" => "activation_static_unknown",
-            "propagate" => "propagation_static_unknown",
-            "observe" => "observation_static_unknown",
-            "discriminate" => "discrimination_static_unknown",
-            _ => "static_limitation_unclassified",
+            "reach" => U::ReachabilityStaticUnknown,
+            "activate" => U::ActivationStaticUnknown,
+            "propagate" => U::PropagationStaticUnknown,
+            "observe" => U::ObservationStaticUnknown,
+            "discriminate" => U::DiscriminationStaticUnknown,
+            _ => U::Unclassified,
         }
-    }
+    };
+    StageLimitationCategory::Untyped(untyped)
 }
 
 fn static_limitation_repair_route(category: &str) -> &'static str {
@@ -1557,24 +1650,26 @@ fn static_limitation_repair_route(category: &str) -> &'static str {
 }
 
 fn static_limitation_category_for_entry(
-    category: &'static str,
+    category: StageLimitationCategory,
     entry: &ClassifiedSeam,
-) -> &'static str {
-    if category == "activation_owner_call_absent" {
-        if owner_call_absence_has_call_presence_target_affinity(entry) {
-            "activation_owner_call_absent_call_presence_target_affinity"
-        } else if owner_call_absence_has_assertion_target_affinity(entry) {
-            "activation_owner_call_absent_assertion_target_affinity"
-        } else if owner_call_absence_is_same_file_primary(entry) {
-            "activation_owner_call_absent_same_file_only"
-        } else if owner_call_absence_is_affinity_only(entry) {
-            "activation_owner_call_absent_affinity_only"
-        } else {
-            category
-        }
-    } else {
-        category
+) -> StageLimitationCategory {
+    use UntypedStageLimitation as U;
+    if category != StageLimitationCategory::Untyped(U::ActivationOwnerCallAbsent) {
+        return category;
     }
+    StageLimitationCategory::Untyped(
+        if owner_call_absence_has_call_presence_target_affinity(entry) {
+            U::ActivationOwnerCallAbsentCallPresenceTargetAffinity
+        } else if owner_call_absence_has_assertion_target_affinity(entry) {
+            U::ActivationOwnerCallAbsentAssertionTargetAffinity
+        } else if owner_call_absence_is_same_file_primary(entry) {
+            U::ActivationOwnerCallAbsentSameFileOnly
+        } else if owner_call_absence_is_affinity_only(entry) {
+            U::ActivationOwnerCallAbsentAffinityOnly
+        } else {
+            U::ActivationOwnerCallAbsent
+        },
+    )
 }
 
 fn static_limitation_repair_route_for_entry(
@@ -2075,6 +2170,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "below_threshold_has_no_discount".to_string(),
                     file: PathBuf::from("tests/pricing_tests.rs"),
                     line: 12,
@@ -2198,6 +2294,7 @@ mod tests {
 
     fn external_language_related_test(file: &str, evidence_summary: &str) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: "blob copies shared buffers".to_string(),
             file: PathBuf::from(file),
             line: 41,
@@ -2227,6 +2324,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id: seam.id().clone(),
                 related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: "target_token_affinity_is_not_owner_call".to_string(),
                     file: PathBuf::from("tests/target_affinity.rs"),
                     line: 9,
@@ -3186,10 +3284,10 @@ mod tests {
     /// The default family is the editor pilot family (pinned above); a
     /// producer whose document writes its own snapshots replaces the family
     /// in every verify projection at once — `recommendation.verify_command`,
-    /// `canonical_item.verify_command`, and the parsed
+    /// `canonical_item.verify_command`, and the typed
     /// `command_specs.verify` — so the three cannot disagree (#4379).
     #[test]
-    fn verify_command_family_flows_into_every_verify_projection() -> Result<(), String> {
+    fn verify_command_family_flows_into_every_verify_projection() {
         let entry = sample_classified(StageState::Yes, SeamGripClass::WeaklyGripped);
         let workflow = workflow_snapshot_verify_command();
         let json = evidence_record_json_value(&evidence_record_with_verify_command(
@@ -3209,30 +3307,39 @@ mod tests {
         let spec = &json["canonical_item"]["command_specs"]["verify"];
         assert_eq!(
             spec["human_display"], workflow,
-            "command spec must recover from the same display"
+            "command spec must carry the same published display"
         );
-        let args: Vec<String> = spec["args"]
-            .as_array()
-            .ok_or_else(|| format!("verify spec args must be an array: {spec}"))?
-            .iter()
-            .filter_map(|arg| arg.as_str().map(str::to_string))
-            .collect();
-        for family_path in [
-            WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
-            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
-        ] {
-            if !args.contains(&family_path.to_string()) {
-                return Err(format!(
-                    "verify spec args must read {family_path}: {args:?}"
-                ));
-            }
-        }
-        if args.iter().any(|arg| arg.contains("pilot/")) {
-            return Err(format!(
-                "workflow family must not name pilot paths: {args:?}"
-            ));
-        }
-        Ok(())
+        assert_eq!(
+            spec["args"],
+            json!([
+                "agent",
+                "verify",
+                "--root",
+                ".",
+                "--before",
+                "target/ripr/workflow/before.repo-exposure.json",
+                "--after",
+                "target/ripr/workflow/after.repo-exposure.json",
+                "--json"
+            ])
+        );
+        assert_eq!(spec["role"], "verify");
+        assert_eq!(spec["execution_mode"], "direct");
+
+        // Change exactly one snapshot argument. The same public text fields
+        // still carry the supplied display, without publishing typed argv.
+        let changed = "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/other.repo-exposure.json --json";
+        let alternate = evidence_record_json_value(&evidence_record_with_verify_command(
+            &entry,
+            None,
+            Some(changed),
+        ));
+        assert_eq!(alternate["recommendation"]["verify_command"], changed);
+        assert_eq!(alternate["canonical_item"]["verify_command"], changed);
+        assert_eq!(
+            alternate["canonical_item"]["command_specs"]["verify"],
+            Value::Null
+        );
     }
 
     /// #3948: a standalone root with shell punctuation renders a quoted,
@@ -3486,6 +3593,91 @@ mod tests {
     }
 
     #[test]
+    fn typed_activation_survives_absent_reach_even_with_legacy_absence_wording() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        entry.evidence.reach.state = StageState::No;
+        entry.evidence.activate.summary =
+            "No concrete activation values observed for seam `x`".into();
+        for (kind, expected) in [
+            (None, None),
+            (
+                Some(StaticLimitKind::ActivationBoundaryInputUnresolved),
+                Some("activation_boundary_input_unresolved"),
+            ),
+        ] {
+            entry.evidence.activate.static_limit_kind = kind;
+            let rows = static_limitations_for(&entry);
+            let categories: Vec<_> = rows
+                .iter()
+                .filter(|row| row.stage == "activate")
+                .map(|row| row.category.as_str())
+                .collect();
+            assert_eq!(categories, expected.into_iter().collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn typed_stage_aliases_keep_the_stage_wire_values() {
+        use StaticLimitKind as K;
+        for (stage, kind, expected) in [
+            (
+                "reach",
+                K::RustMacroReachUnresolved,
+                "opaque_static_evidence",
+            ),
+            (
+                "reach",
+                K::RustMacroWrappedTestCallUnresolved,
+                "opaque_static_evidence",
+            ),
+            ("activate", K::MockedModule, "unsupported_mock_shape"),
+            ("activate", K::Metaprogramming, "macro_generated_value"),
+            (
+                "discriminate",
+                K::OpaqueCustomAssertionHelper,
+                "opaque_helper_call",
+            ),
+            ("reach", K::DynamicDispatch, "dynamic_dispatch"),
+        ] {
+            assert_eq!(
+                StageLimitationCategory::from_kind(stage, kind).as_str(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn typed_stage_category_survives_summary_changes_and_legacy_stages_keep_their_category() {
+        let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
+        for (kind, summary, expected) in [
+            (
+                Some(StaticLimitKind::RustCallFactBudget),
+                "unresolved",
+                "rust_call_fact_budget",
+            ),
+            (
+                Some(StaticLimitKind::RustCallFactBudget),
+                "mock snapshot",
+                "rust_call_fact_budget",
+            ),
+            (
+                Some(StaticLimitKind::ActivationBoundaryInputUnresolved),
+                "mock snapshot",
+                "activation_boundary_input_unresolved",
+            ),
+            (None, "mock snapshot", "unsupported_mock_shape"),
+        ] {
+            entry.evidence.activate.static_limit_kind = kind;
+            entry.evidence.activate.summary = summary.to_string();
+            let mut rows = Vec::new();
+            push_stage_limitation(&mut rows, "activate", &entry.evidence.activate, &entry);
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].category, expected);
+            assert_eq!(rows[0].reason, summary);
+        }
+    }
+
+    #[test]
     fn evidence_record_names_static_limitations_from_unknown_stages() {
         let record = evidence_record_for(
             &sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown),
@@ -3593,7 +3785,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3632,7 +3824,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operands are local or computed for seam `amount >= threshold`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operands are local or computed for seam `amount >= threshold`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3682,7 +3874,7 @@ mod tests {
         );
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operands are local, member-access, or computed for seam `call.name != owner_name`; add analyzer support for member boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operands are local, member-access, or computed for seam `call.name != owner_name`; add analyzer support for member boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3709,7 +3901,7 @@ mod tests {
         let mut entry = sample_classified(StageState::Unknown, SeamGripClass::ActivationUnknown);
         entry.evidence.activate = stage(
             StageState::Unknown,
-            "Boundary activation operand is closure-derived for seam `function.id == owner`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet",
+            "activation_boundary_input_unresolved: Boundary activation operand is closure-derived for seam `function.id == owner`; add analyzer support for closure boundary operand resolution before emitting an actionable repair packet",
         );
         entry.evidence.observed_values.clear();
         entry.evidence.missing_discriminators.clear();
@@ -3908,6 +4100,7 @@ mod tests {
             .evidence
             .related_tests
             .push(std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "pricing_module_smoke".to_string(),
                 file: PathBuf::from("tests/pricing/integration.rs"),
                 line: 44,
@@ -4334,6 +4527,74 @@ mod tests {
     }
 
     #[test]
+    fn untyped_stage_limitations_do_not_shadow_typed_kinds() {
+        // #14965: an untyped renderer category must not reuse a typed
+        // `StaticLimitKind` token; a token the enum owns is emitted through
+        // `StageLimitationCategory::Typed`, never as a second literal.
+        let typed: std::collections::HashSet<_> = StaticLimitKind::ALL
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect();
+        let mut untyped = std::collections::HashSet::new();
+        for category in UntypedStageLimitation::ALL.iter().copied() {
+            let token = category.as_str();
+            assert!(
+                !typed.contains(token),
+                "{category:?} shadows the typed StaticLimitKind token `{token}`"
+            );
+            assert!(untyped.insert(token), "duplicate untyped token `{token}`");
+        }
+        // Negative control: the typed arm the classifier takes for dispatch
+        // prose renders the enum's own token.
+        assert_eq!(
+            legacy_static_limitation_category(
+                "reach",
+                "unknown",
+                "dynamic dispatch hides the callee"
+            ),
+            StageLimitationCategory::Typed(StaticLimitKind::DynamicDispatch)
+        );
+        assert!(typed.contains("dynamic_dispatch"));
+    }
+
+    #[test]
+    fn untyped_stage_limitation_wire_tokens_are_pinned() {
+        // The evidence-audit maps and fixture corpora key on these strings;
+        // renaming one is a wire change, not a refactor.
+        let tokens: Vec<&str> = UntypedStageLimitation::ALL
+            .iter()
+            .map(|category| category.as_str())
+            .collect();
+        assert_eq!(
+            tokens,
+            [
+                "constructor_field_owner_ambiguous",
+                "field_assignment_value_unresolved",
+                "cross_file_constant_unresolved",
+                "macro_generated_value",
+                "opaque_helper_call",
+                "unsupported_mock_shape",
+                "snapshot_field_unknown",
+                "side_effect_sink_unknown",
+                "activation_owner_call_absent",
+                "activation_owner_call_absent_call_presence_target_affinity",
+                "activation_owner_call_absent_assertion_target_affinity",
+                "activation_owner_call_absent_affinity_only",
+                "activation_owner_call_absent_same_file_only",
+                "activation_owner_call_unresolved",
+                "activation_value_unresolved",
+                "opaque_static_evidence",
+                "reachability_static_unknown",
+                "activation_static_unknown",
+                "propagation_static_unknown",
+                "observation_static_unknown",
+                "discrimination_static_unknown",
+                "static_limitation_unclassified",
+            ]
+        );
+    }
+
+    #[test]
     fn evidence_record_normalizes_static_limitation_categories() {
         for (stage, state, reason, expected) in [
             (
@@ -4369,7 +4630,7 @@ mod tests {
             (
                 "activate",
                 "unknown",
-                "Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
+                "activation_boundary_input_unresolved: Boundary activation operand is iterator-derived for seam `idx >= offset`; add analyzer support for iterator boundary operand resolution before emitting an actionable repair packet",
                 "activation_boundary_input_unresolved",
             ),
             (
@@ -4458,7 +4719,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                static_limitation_category(stage, state, reason),
+                legacy_static_limitation_category(stage, state, reason).as_str(),
                 expected,
                 "unexpected category for {stage}/{state}: {reason}"
             );

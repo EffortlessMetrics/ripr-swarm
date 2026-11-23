@@ -348,18 +348,46 @@ fn scope_shadows(scope: &StubScope<'_>, base_name: &str) -> bool {
                     && full_use_path(&tree) == owner_path);
             }
             ast::Item::cast(node).is_some_and(|item| {
+                // An item-position macro call can emit an item of any name
+                // (its definition may sit outside the scope), and `include!`
+                // hides what it pulls in, so any one may rebind the name for
+                // existing tests. A macro in expression or statement position
+                // (`assert!`, `vec!`) is not an item here (#14982 review).
+                if let ast::Item::MacroCall(call) = &item {
+                    return call.syntax().parent().is_some_and(|parent| {
+                        matches!(
+                            parent.kind(),
+                            ra_ap_syntax::SyntaxKind::ITEM_LIST
+                                | ra_ap_syntax::SyntaxKind::SOURCE_FILE
+                        )
+                    });
+                }
+                if matches!(item, ast::Item::MacroRules(_) | ast::Item::MacroDef(_)) {
+                    return mentions_ident(item.syntax(), base_name);
+                }
                 let name = match &item {
-                    ast::Item::Module(it) => it.name(),
-                    ast::Item::Struct(it) => it.name(),
-                    ast::Item::Enum(it) => it.name(),
-                    ast::Item::Union(it) => it.name(),
-                    ast::Item::TypeAlias(it) => it.name(),
-                    ast::Item::Trait(it) => it.name(),
+                    ast::Item::ExternCrate(it) => it
+                        .name_ref()
+                        .filter(|_| it.rename().is_none())
+                        .map(|name| name.text().to_string()),
+                    ast::Item::Module(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::Struct(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::Enum(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::Union(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::TypeAlias(it) => it.name().map(|name| name.text().to_string()),
+                    ast::Item::Trait(it) => it.name().map(|name| name.text().to_string()),
                     _ => None,
                 };
-                name.is_some_and(|name| name.text() == base_name)
+                name.is_some_and(|name| name == base_name)
             })
         })
+}
+
+/// Whether any identifier token under `node` is `name`.
+fn mentions_ident(node: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    node.descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .any(|token| token.kind() == ra_ap_syntax::SyntaxKind::IDENT && token.text() == name)
 }
 
 /// A function ripr wrote: its body still holds a `ripr:` fill-in or the

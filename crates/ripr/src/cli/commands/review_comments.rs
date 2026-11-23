@@ -36,17 +36,23 @@ use super::review_guidance_index_handoff::{
 };
 use super::write_text_file;
 
-const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
+/// Default cooperative budget: `ripr check`'s 600 s analysis default (#12940).
+/// At 120 s a 87-file diff on ripr-swarm (2,646 indexed files) timed out in
+/// canonical analysis; with 600 s diffs of 3 to 238 files completed in
+/// 43 to 381 s on 4 vCPU.
+const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 600_000;
 
 /// Default ceiling on the union of analyzable workspace files and changed
-/// owner-attribution inputs. Match the repo-scope default and the diff
-/// narrowing threshold (raised in #4972 after this repository grew beyond
-/// 800 files) and stay below the 1,600–1,700-file external failure shapes
-/// in #3768. Guidance indexes the whole workspace, so it does not follow
-/// the 10,000-file diff memory guard.
+/// owner-attribution inputs. It was 1,200 while the guidance second stage
+/// evaluated every caller-file seam, which drove the 1,600–1,700-file
+/// failures in #3768 and a 13.9 GB OOM on this repository (#12940). Since
+/// #13919 bounds that stage, ripr-swarm (2,646 indexed files) peaks at
+/// 0.99–1.87 GB for diffs of 3 to 238 files, so the default admits about
+/// twice that workspace (#12940). Guidance indexes the whole workspace, so
+/// it does not follow the 10,000-file diff memory guard.
 /// This is input admission, not an RSS bound or evidence that admitted
 /// execution will complete on every runner.
-const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 1200;
+const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 5000;
 
 /// Env override for [`REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT`], in the
 /// `RIPR_MAX_DIFF_INDEX_FILES` family. Operators on larger, well-resourced
@@ -203,7 +209,17 @@ fn record_review_comments_error(
     phase: &str,
     error: String,
 ) -> String {
-    receipt.failed(phase, &error);
+    record_review_comments_failure(receipt, receipt_path, phase, "analysis_failed", error)
+}
+
+fn record_review_comments_failure(
+    receipt: &mut ReviewCommentsReceiptRun,
+    receipt_path: &Path,
+    phase: &str,
+    category: &'static str,
+    error: String,
+) -> String {
+    receipt.failed(phase, category, &error);
     match receipt.write_atomic(receipt_path) {
         Ok(()) => error,
         Err(receipt_error) => {
@@ -232,7 +248,15 @@ fn record_review_comments_timeout(
     phase: &str,
 ) -> String {
     receipt.limited_timeout(phase);
-    let error = format!("review-comments timed out during {phase}");
+    let error = if phase == "canonical_analysis" {
+        // #12940: name the recovery routes instead of failing bare.
+        format!(
+            "review-comments timed out during {phase}. Next step: {}",
+            receipt.timeout_repair_route(phase)
+        )
+    } else {
+        format!("review-comments timed out during {phase}")
+    };
     match receipt.write_atomic(receipt_path) {
         Ok(()) => error,
         Err(receipt_error) => {
@@ -249,7 +273,7 @@ fn record_review_comments_timeout(
 /// `None` and keeps the loader's own validation and error ordering.
 fn early_producer_refusal_error(path: Option<&Path>) -> Option<String> {
     let path = path?;
-    let text = crate::bounded_input::read_to_string(path).ok()?;
+    let text = crate::bounded_input::read_artifact_text(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
     if value.get("analysis_outcome").is_some()
         || crate::output::gate::discloses_limited_findings_bound(&value)
@@ -292,7 +316,7 @@ fn load_review_comments_analysis_outcome(
     let Some(path) = path else {
         return Ok(None);
     };
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -451,7 +475,7 @@ fn load_review_comments_analysis_outcome(
 fn load_check_output_suppressed_findings(
     path: &Path,
 ) -> Result<Vec<output::review_comments::CheckOutputSuppressedFinding>, String> {
-    let text = crate::bounded_input::read_to_string(path).map_err(|error| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|error| {
         format!(
             "review-comments --check-output {} is invalid: read failed: {error}",
             path.display()
@@ -469,7 +493,10 @@ fn load_check_output_suppressed_findings(
 }
 
 pub(in crate::cli) fn review_comments(args: &[String]) -> Result<(), String> {
+    // review-comments takes no `--diff`, so the missing-git message must not
+    // name it (#15257).
     review_comments_with_diff_loader(args, load_review_comments_diff)
+        .map_err(|error| crate::git::without_saved_diff_route(&error))
 }
 
 fn review_comments_with_diff_loader(
@@ -587,17 +614,18 @@ fn review_comments_with_admission(
                 "review-comments accepts at most one of --gap-ledger or --check-output".to_string(),
             );
         }
-        let gap_ledger_text = crate::bounded_input::read_to_string(gap_ledger).map_err(|err| {
-            record_review_comments_error(
-                &mut receipt,
-                &receipt_path,
-                "configuration",
-                format!(
-                    "review-comments --gap-ledger {} is invalid: read failed: {err}",
-                    output::pr_inline_comment_publish_plan::display_path(gap_ledger)
-                ),
-            )
-        })?;
+        let gap_ledger_text =
+            crate::bounded_input::read_artifact_text(gap_ledger).map_err(|err| {
+                record_review_comments_error(
+                    &mut receipt,
+                    &receipt_path,
+                    "configuration",
+                    format!(
+                        "review-comments --gap-ledger {} is invalid: read failed: {err}",
+                        output::pr_inline_comment_publish_plan::display_path(gap_ledger)
+                    ),
+                )
+            })?;
         let records = output::gap_decision_ledger::parse_gap_records_json(&gap_ledger_text)
             .map_err(|err| {
                 record_review_comments_error(
@@ -793,7 +821,13 @@ fn review_comments_with_admission(
         {
             record_review_comments_timeout(&mut receipt, &receipt_path, "language_facts")
         } else {
-            record_review_comments_error(&mut receipt, &receipt_path, "language_facts", error)
+            record_review_comments_failure(
+                &mut receipt,
+                &receipt_path,
+                "language_facts",
+                error.category,
+                error.detail,
+            )
         }
     })?;
     let payload_bytes = corpus_payload
@@ -1155,7 +1189,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
     let mut gap_ledger = None;
     let mut check_output = None;
     let mut suppression_policy = None;
-    let mut out = PathBuf::from("target/ripr/review/comments.json");
+    let mut out = None;
     let mut timeout_ms = DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS;
 
     let mut i = 0usize;
@@ -1236,7 +1270,7 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
                         "review-comments --out requires a non-empty path",
                     ));
                 }
-                out = PathBuf::from(value);
+                out = Some(PathBuf::from(value));
             }
             "--timeout-ms" => {
                 i += 1;
@@ -1248,6 +1282,11 @@ fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOption
         i += 1;
     }
 
+    // #15378: the default guidance lands under --root, where the gate,
+    // `reports ci-summary --root` and the report hints read it.
+    let out = out.unwrap_or_else(|| {
+        crate::cli::parse::default_output_under_root(&root, "target/ripr/review/comments.json")
+    });
     Ok(ReviewCommentsOptions {
         root,
         base: base.ok_or_else(|| crate::cli::usage_refusal::missing_required("--base", "review-comments requires --base <sha>; pass the pull request's base commit, for example `--base origin/main --head HEAD`"))?,
@@ -3179,8 +3218,37 @@ mod tests {
                 "deadline cancellation must be a typed timeout: {receipt}"
             ));
         }
-        if result != Err("review-comments timed out during canonical_analysis".to_string()) {
+        // #12940: the error and the receipt name the same recovery routes,
+        // `ripr check` on the same root and base over committed history, and a
+        // narrower diff, at the base the receipt recorded (this fixture has no
+        // Git, so the raw revision).
+        let base = receipt["base_sha"].as_str().unwrap_or_default();
+        let head = receipt["head_sha"].as_str().unwrap_or_default();
+        let check_root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.display().to_string()),
+        );
+        let route = format!(
+            "run `ripr check --root {check_root} --base {base} --committed --json` at the head \
+             checkout ({head}) for findings \
+             without review guidance, or narrow --base/--head to a smaller diff; a larger \
+             --timeout-ms restarts canonical_analysis from the beginning"
+        );
+        if base.is_empty() || head.is_empty() {
+            return Err(format!(
+                "canonical timeout receipt lost base/head: {receipt}"
+            ));
+        }
+        if result
+            != Err(format!(
+                "review-comments timed out during canonical_analysis. Next step: {route}"
+            ))
+        {
             return Err(format!("unexpected canonical timeout result: {result:?}"));
+        }
+        if receipt["limitations"][0]["repair_route"].as_str() != Some(route.as_str()) {
+            return Err(format!(
+                "canonical timeout receipt must carry the same repair route: {receipt}"
+            ));
         }
         // Work done is disclosed (none: the budget expired at the first
         // interior checkpoint) and the receipt says nothing was kept (#11107).
@@ -3811,31 +3879,41 @@ mod tests {
     }
 
     #[test]
-    fn guidance_payload_default_admits_current_family_but_refuses_failure_scale()
+    fn guidance_payload_default_admits_this_workspace_but_refuses_past_the_ceiling()
     -> Result<(), String> {
+        // #12940: ripr-swarm indexes 2,646 files and completes under the
+        // bounded second stage, so the default admits it with headroom and
+        // still refuses one file past the ceiling.
         let ceiling = GuidancePayloadCeiling::parse(
             Err(std::env::VarError::NotPresent),
             Err(std::env::VarError::NotPresent),
         )?;
-        assert_eq!(ceiling.max_index_files, 1200);
+        assert_eq!(ceiling.max_index_files, 5000);
         ceiling.enforce(
             analysis::CorpusPayloadSize {
-                file_count: 1200,
-                total_bytes: 1200,
+                file_count: 2646,
+                total_bytes: 2646,
             },
-            1200,
+            2646,
+        )?;
+        ceiling.enforce(
+            analysis::CorpusPayloadSize {
+                file_count: 5000,
+                total_bytes: 5000,
+            },
+            5000,
         )?;
         let error = ceiling
             .enforce(
                 analysis::CorpusPayloadSize {
-                    file_count: 1700,
-                    total_bytes: 1700,
+                    file_count: 5001,
+                    total_bytes: 5001,
                 },
-                1700,
+                5001,
             )
             .err()
-            .ok_or("the measured external failure scale must remain refused by default")?;
-        assert!(error.contains("=1200"));
+            .ok_or("a corpus past the default ceiling must remain refused")?;
+        assert!(error.contains("=5000"));
         assert!(error.contains("Narrowing only the diff does not reduce the workspace file count"));
         Ok(())
     }
@@ -4321,6 +4399,19 @@ mod tests {
         );
         assert_eq!(
             with(&["--out", "elsewhere/c.json"])?.out,
+            PathBuf::from("elsewhere/c.json")
+        );
+        // #15378: the default follows a named root; an explicit --out does not.
+        assert_eq!(
+            with(&["--root", "crates/itoa"])?.out,
+            PathBuf::from("crates/itoa/target/ripr/review/comments.json")
+        );
+        assert_eq!(
+            with(&[])?.out,
+            PathBuf::from("target/ripr/review/comments.json")
+        );
+        assert_eq!(
+            with(&["--root", "crates/itoa", "--out", "elsewhere/c.json"])?.out,
             PathBuf::from("elsewhere/c.json")
         );
         Ok(())

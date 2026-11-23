@@ -1,0 +1,22 @@
+{
+  "case_id": "authored-14087-raw-use-leaf-imported-render",
+  "subject_id": "authored-14087-raw-use-leaf",
+  "origin": "authored",
+  "anchor": "src/lib.rs:9",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "raw_use_leaf_exact_pin",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

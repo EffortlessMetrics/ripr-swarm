@@ -11,6 +11,7 @@ const DOCUMENTED_ON_CONTEXT_KEYS = new Set(['isWorkspaceTrusted', 'resourceLangI
 interface WalkthroughStep {
   id: string;
   title: string;
+  description?: string;
   media?: { markdown?: string };
   completionEvents?: string[];
 }
@@ -25,6 +26,11 @@ const EXPECTED_FLOW: Array<{ id: string; media: string; completionEvents: string
     id: 'ripr.openRustFile',
     media: 'walkthrough/open-file.md',
     completionEvents: ['onContext:resourceLangId == rust']
+  },
+  {
+    id: 'ripr.checkSetup',
+    media: 'walkthrough/setup.md',
+    completionEvents: ['onCommand:ripr.diagnoseSetup']
   },
   {
     id: 'ripr.readDiagnostics',
@@ -104,6 +110,53 @@ suite('Walkthrough Contribution Contract', () => {
     const readme = fs.readFileSync(path.join(extensionRoot, 'README.md'), 'utf8');
     assert.ok(readme.includes('ripr.toml'), 'README onboarding must name ripr.toml as the enablement surface');
     assert.ok(readme.includes('[languages]'), 'README onboarding must name the [languages] table');
+  });
+
+  test('the check-setup step runs a contributed command and names the missing-server fixes (#13638)', () => {
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+    const contributed = new Set<string>(
+      (parsed.contributes?.commands ?? []).map((command: { command: string }) => command.command)
+    );
+    const step = manifest().steps.find((candidate) => candidate.id === 'ripr.checkSetup');
+    assert.ok(step, 'expected a ripr.checkSetup walkthrough step');
+    // Every command a step links or completes on must exist, or the button is dead.
+    const referenced = manifest().steps.flatMap((candidate) => [
+      ...[...(candidate.description ?? '').matchAll(/\]\(command:([A-Za-z0-9_.]+)\)/g)].map((match) => match[1]),
+      ...(candidate.completionEvents ?? [])
+        .filter((event) => event.startsWith('onCommand:'))
+        .map((event) => event.slice('onCommand:'.length))
+    ]);
+    assert.ok(referenced.includes('ripr.diagnoseSetup'), JSON.stringify(referenced));
+    for (const command of referenced) {
+      assert.ok(contributed.has(command), `walkthrough names a command the extension does not contribute: ${command}`);
+    }
+    assert.ok(
+      (step.description ?? '').includes('](command:ripr.diagnoseSetup)'),
+      'the check-setup step must offer Diagnose Setup as its action'
+    );
+    const media = fs.readFileSync(path.join(extensionRoot, 'walkthrough', 'setup.md'), 'utf8');
+    for (const needle of [
+      'ripr: Diagnose Setup',
+      'ripr: server missing',
+      'ripr.server.path',
+      'ripr.server.downloadBaseUrl',
+      'ripr.server.autoDownload',
+      'cargo install ripr',
+      'ripr: Restart Server'
+    ]) {
+      assert.ok(media.includes(needle), `setup walkthrough must name ${needle}`);
+    }
+    // The names the media quotes must be the ones the extension really uses.
+    const titles = new Set<string>(
+      (parsed.contributes?.commands ?? []).map((command: { title: string }) => command.title)
+    );
+    assert.ok(titles.has('ripr: Diagnose Setup') && titles.has('ripr: Restart Server'), [...titles].join(', '));
+    const statusRender = fs.readFileSync(path.join(extensionRoot, 'src', 'statusRender.ts'), 'utf8');
+    assert.ok(statusRender.includes('ripr: server missing'), 'status bar no longer renders "ripr: server missing"');
+    const settings = Object.keys(parsed.contributes?.configuration?.properties ?? {});
+    for (const setting of ['ripr.server.path', 'ripr.server.downloadBaseUrl', 'ripr.server.autoDownload']) {
+      assert.ok(settings.includes(setting), `setup walkthrough names an unknown setting ${setting}`);
+    }
   });
 
   test('onContext events reject empty expressions and undocumented keys in every clause', () => {

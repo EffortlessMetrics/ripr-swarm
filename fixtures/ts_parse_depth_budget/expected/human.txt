@@ -9,7 +9,7 @@ Changed file(s) by language: typescript = 3
 
 Analysis outcome: limitations below (analysis incomplete)
   The 3 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: some changed files were not analyzed during language analysis; file: src/deep_over_budget.ts; affected items: 1; estimated expression nesting depth 2101 exceeds the 2000-level parse budget; parse refused to avoid a parser stack overflow; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis.
+  Limitation: some files were not fully analyzed during language analysis; file: src/deep_over_budget.ts; affected items: 1; estimated expression nesting depth 2101 exceeds the 2000-level parse budget; parse refused to avoid a parser stack overflow; recovery: retry — Fix the TypeScript or JavaScript parse error, then re-run the analysis.
 
 Start here:
   State: preview language, advisory only
@@ -56,7 +56,6 @@ Hidden:
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: ripr established no static test path for any of the 3 changed expression(s) in this diff (2
   found no path, 1 could not be classified). Scope analyzed: 3 changed expression(s) and 0

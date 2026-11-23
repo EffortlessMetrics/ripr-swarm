@@ -47,6 +47,24 @@ pub(crate) struct AgentReceiptReading {
     pub(crate) verification_status: Option<String>,
     /// The test file the edit cage measured changing, when one was named.
     pub(crate) test_changed: Option<String>,
+    /// The focused test run the caller reported at finish (`--test-result`),
+    /// when the attempt retained one (#14079). The receipt never carries it:
+    /// the attempt reader fills it from the manifest's committed record, so
+    /// `from_value` leaves it `None`.
+    pub(crate) reported_test_run: Option<ReportedTestRun>,
+}
+
+/// A caller-reported focused test run retained with a finished attempt. ripr
+/// checked the result's shape and its binding to the attempt, HEAD and test
+/// file; it did not run or observe the tests, so this is the caller's claim
+/// and a separate axis from the receipt's static movement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReportedTestRun {
+    pub(crate) file: String,
+    /// Unique tests that ran in the selected file or module.
+    pub(crate) ran: usize,
+    pub(crate) passed: usize,
+    pub(crate) failed: usize,
 }
 
 impl AgentReceiptReading {
@@ -67,6 +85,7 @@ impl AgentReceiptReading {
             analysis_outcome_error: text("/analysis_outcome_error"),
             verification_status: text("/verification/status"),
             test_changed: text("/test_changed"),
+            reported_test_run: None,
         }
     }
 

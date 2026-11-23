@@ -1,0 +1,9 @@
+# Rows whose test calls the owner or its caller lead their tier (#15026).
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::near_owner_rows_name_tests_that_call_the_owner_or_its_caller",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::finalized_related_tests_lead_with_rows_near_the_owner_within_a_tier",
+  "crates/ripr/tests/related_window_near_owner.rs::wrapper_tests_fill_the_window_before_file_only_neighbours",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_strong_owner_named_row_that_calls_an_owner_caller_leads_its_tier",
+]

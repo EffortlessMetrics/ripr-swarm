@@ -295,6 +295,31 @@ boundary's strong grade.
 Full, sharded and compact classified cache generations change with this
 reader; old classifications cannot satisfy a warm read (#10839).
 
+### Owner Opt-Outs (#14139, #15000)
+
+The repo-scope formats (`repo-exposure-*`, `repo-seams-*`, `repo-badge*`)
+withhold a seam whose owner cargo-mutants would skip: the owner function
+carries `#[mutants::skip]` (directly or through `cfg_attr`), or it sits inside
+an `impl` block, `trait` block, inline module or function that carries it, or
+in a file whose inner `#![mutants::skip]` skips it. The decision is the one
+diff scope applies to findings (`owner_opt_out::decide_in_file`,
+RIPR-SPEC-0450), made once per production file at extraction, so `ripr check`
+and the repo formats withhold the same owners. It shares diff scope's
+fail-closed rules: only parser-backed attributes count, an owner the parsed
+tree does not name exactly once on its `fn` line gets no enclosing scope, and a
+`#[mutants::skip] mod name;` declaration is not followed into the module's own
+file. Repo scope adds one rule of its own, from its line-based owner lookup: a
+seam on a line another function starts or ends on keeps reporting. A same-named owner outside the skipped scope keeps its seams. Withheld
+seams leave every count and are disclosed in `owner_opt_outs`
+(`docs/OUTPUT_SCHEMA.md`, "Repo scope owner opt-outs").
+
+Evidence: `crates/ripr/tests/repo_scope_enclosing_mutants_skip.rs` drives the
+built binary once per enclosing kind (impl, trait, inline module, file) against
+a byte-identical baseline, checks that diff and repo scope agree on the
+skipped owner and its sibling with and without the attribute, and pins the
+out-of-line `mod` bound in both scopes; `owner_opt_out.rs` unit tests pin the
+same decision on parsed facts.
+
 ### Static-Language Boundaries
 
 All static output must use the conservative vocabulary defined in

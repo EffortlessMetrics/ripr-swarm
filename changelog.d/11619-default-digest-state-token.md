@@ -1,4 +1,4 @@
-<!-- section: Changed -->
+<!-- section: Fixed -->
 - The default human digest no longer leads the missing-check line with a
   banned snake_case state token: a finding whose classifier wording starts
   `propagation_unknown: `, `weakly_exposed: `, `reachable_unrevealed: `,

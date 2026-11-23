@@ -55,8 +55,19 @@ fn closed_values(path: &str, flag: &str) -> Vec<String> {
             .into_iter()
             .map(str::to_string)
             .collect(),
+        ("outcome", "--format") => super::commands::OUTCOME_FORMAT_NAMES
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
         // Mirrors `parse_pilot_format`.
         ("pilot", "--format") => vec!["human".to_string(), "json".to_string()],
+        // Mirrors `parse_init_ci`.
+        ("init", "--ci") => vec!["github".to_string(), "gitlab".to_string()],
+        // Mirrors `parse_agents`.
+        ("init", "--agents") => ["claude", "codex", "cursor", "all"]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -97,6 +108,24 @@ fn is_flag_reference_list(rest: &str) -> bool {
     first.starts_with("--")
         && first.ends_with(',')
         && tokens.next().is_some_and(|next| next.starts_with("--"))
+}
+
+/// `true` for a value position that spells its closed set instead of a
+/// placeholder: two or more lowercase words joined by `|`.
+fn is_literal_alternatives(token: &str) -> bool {
+    let mut words = 0usize;
+    for word in token.split('|') {
+        if word.is_empty()
+            || !word
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            || !word.as_bytes()[0].is_ascii_lowercase()
+        {
+            return false;
+        }
+        words += 1;
+    }
+    words >= 2
 }
 
 struct ParsedOption {
@@ -175,7 +204,14 @@ fn parse_options(body: &str) -> Vec<ParsedOption> {
         let mut takes_value = inline_value;
         let mut literal_value = None;
         if let Some(token) = tokens.peek().copied() {
-            if is_metavar(token) {
+            if is_literal_alternatives(token) {
+                // `--phase before|after|verify`: the closed set, spelled out
+                // where a placeholder would be. Checked before `is_metavar`,
+                // which accepts the same token but keeps no values.
+                takes_value = true;
+                literal_value = Some(token.to_string());
+                tokens.next();
+            } else if is_metavar(token) {
                 takes_value = true;
                 tokens.next();
             } else if name == "--format"
@@ -252,7 +288,7 @@ pub(crate) fn flags_for(path: &str, body: &str) -> Vec<FlagJson> {
         if values.is_empty()
             && let Some(literal) = &option.literal_value
         {
-            values.push(literal.clone());
+            values.extend(literal.split('|').map(str::to_string));
         }
         let env = FLAG_ENVS
             .iter()
@@ -391,6 +427,25 @@ mod tests {
         }
         if !flag(&flags, "--label")?.repeatable {
             return Err("gate --label is repeatable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn spelled_out_alternatives_are_a_value_and_its_closed_set() -> Result<(), String> {
+        let body = "Usage: ripr demo --phase before|after [--loud]\n\nOptions:\n  --phase before|after\n                 Which phase to run.\n  --loud         Say more. Use a|b carefully.\n  --out PATH|-   Output path.\n";
+        let flags = flags_for("demo", body);
+        let phase = flag(&flags, "--phase")?;
+        assert!(phase.takes_value, "{phase:?}");
+        assert_eq!(phase.values, vec!["before", "after"]);
+        // Prose that starts the description is not a value set, and neither
+        // is an uppercase placeholder that offers `-`.
+        let loud = flag(&flags, "--loud")?;
+        assert!(!loud.takes_value && loud.values.is_empty(), "{loud:?}");
+        let out = flag(&flags, "--out")?;
+        assert!(out.takes_value && out.values.is_empty(), "{out:?}");
+        for token in ["a", "a|", "|a", "A|b", "a|B", "a b", "-a|b", "a||b"] {
+            assert!(!is_literal_alternatives(token), "{token}");
         }
         Ok(())
     }

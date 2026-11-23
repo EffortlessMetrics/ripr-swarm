@@ -326,8 +326,15 @@ fn full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records()
         });
     }
     let mut writer = Flushed::default();
-    emit_snapshot(&mut writer, &json!({"phase": "during"}), &sample, 7, 60_000)
-        .map_err(|error| error.to_string())?;
+    emit_snapshot(
+        &mut writer,
+        &json!({"phase": "during"}),
+        &sample,
+        &json!({"status": "unavailable"}),
+        7,
+        60_000,
+    )
+    .map_err(|error| error.to_string())?;
     assert!(writer.bytes.len() <= SNAPSHOT_BYTES);
     assert!(writer.record_sizes.iter().all(|size| *size <= LINE_BYTES));
     let text = std::str::from_utf8(&writer.bytes).map_err(|error| error.to_string())?;
@@ -337,6 +344,7 @@ fn full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records()
         .map(serde_json::from_str)
         .collect::<std::result::Result<_, _>>()
         .map_err(|error| error.to_string())?;
+    assert_eq!(records[0]["host_memory"]["status"], "unavailable");
     assert_eq!(writer.writes, records.len());
     assert_eq!(writer.flushes, records.len());
     assert_eq!(
@@ -361,5 +369,107 @@ fn full_schema_keeps_all_buckets_and_escaped_profile_entries_in_atomic_records()
     assert_eq!(end["emitted_profile_entries"], 8);
     assert_eq!(end["omitted_profile_entries"], 0);
     assert!(records.iter().all(|record| record["sequence"] == 7));
+    Ok(())
+}
+
+#[test]
+fn live_observer_wires_memory_and_preserves_failure() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let source = fixture.0.join("meminfo");
+    fs::write(
+        &source,
+        "MemTotal: 100 kB\nMemAvailable: 30 kB\nSwapTotal: 20 kB\nSwapFree: 5 kB\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let during_source = fixture.0.join("during-meminfo");
+    fs::write(
+        &during_source,
+        "MemTotal: 100 kB\nMemAvailable: 20 kB\nSwapTotal: 20 kB\nSwapFree: 4 kB\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let (mut release, child_input) =
+        std::os::unix::net::UnixStream::pair().map_err(|e| e.to_string())?;
+    let timeout_socket = release.try_clone().map_err(|e| e.to_string())?;
+    let (done, finished) = std::sync::mpsc::channel();
+    let watchdog = std::thread::spawn(move || {
+        if finished.recv_timeout(Duration::from_secs(5)).is_err() {
+            let _ = timeout_socket.shutdown(std::net::Shutdown::Both);
+        }
+    });
+    let mut command = std::process::Command::new("sh");
+    command
+        .args([
+            "-c",
+            "read answer || exit 99; [ \"$answer\" = release ] || exit 99; exit 37",
+        ])
+        .stdin(std::process::Stdio::from(std::os::fd::OwnedFd::from(
+            child_input,
+        )));
+    let mut output = Vec::new();
+    let mut sequence = 0;
+    let mut observer_error = None;
+    let result = run_observed(command, Duration::from_millis(10), 1, |event| {
+        let path = if event["phase"] == "final" {
+            fixture.0.join("missing")
+        } else if event["phase"] == "during" {
+            during_source.clone()
+        } else {
+            source.clone()
+        };
+        if let Err(error) = observe_event(&mut output, &event, &[], &path, sequence, 0) {
+            observer_error = Some(error.to_string());
+        }
+        if event["phase"] == "during" {
+            std::thread::sleep(Duration::from_millis(100));
+            if let Err(error) = writeln!(release, "release") {
+                observer_error = Some(error.to_string());
+            }
+        }
+        sequence += 1;
+    });
+    let _ = done.send(());
+    watchdog.join().map_err(|_panic| "watchdog failed")?;
+    let status = result?;
+    if let Some(error) = observer_error {
+        return Err(error);
+    }
+    assert_eq!(status, 37);
+    let records: Vec<Value> = std::str::from_utf8(&output)
+        .map_err(|e| e.to_string())?
+        .lines()
+        .filter_map(|line| line.strip_prefix("ripr-coverage-storage "))
+        .map(serde_json::from_str)
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    let summaries: Vec<_> = records.iter().filter(|v| v["kind"] == "summary").collect();
+    assert_eq!(summaries.len(), 3);
+    assert_eq!(summaries[0]["event"]["phase"], "before");
+    assert_eq!(summaries[1]["event"]["phase"], "during");
+    assert_eq!(
+        summaries[0]["host_memory"],
+        json!({"status": "available", "unit": "KiB", "mem_total": 100, "mem_available": 30, "swap_total": 20, "swap_free": 5})
+    );
+    assert_eq!(
+        summaries[1]["host_memory"],
+        json!({"status": "available", "unit": "KiB", "mem_total": 100, "mem_available": 20, "swap_total": 20, "swap_free": 4})
+    );
+    assert_eq!(summaries[2]["event"]["phase"], "final");
+    assert_eq!(summaries[2]["event"]["shell_status"], 37);
+    assert_eq!(summaries[2]["event"]["periodic_samples"], 1);
+    assert_eq!(summaries[2]["host_memory"]["status"], "unavailable");
+    Ok(())
+}
+
+#[test]
+fn oversized_summary_keeps_bounded_memory_in_partial_record() -> Result<()> {
+    let value = json!({"kind": "summary", "sequence": 9, "event": {"phase": "during"}, "host_memory": {"status": "available", "mem_available": 30, "swap_free": 5}, "padding": "x".repeat(LINE_BYTES)});
+    let (line, partial) = encoded_record(&value);
+    assert!(partial);
+    assert!(line.len() <= LINE_BYTES);
+    let record: Value =
+        serde_json::from_str(line.trim().trim_start_matches("ripr-coverage-storage "))
+            .map_err(|e| e.to_string())?;
+    assert_eq!(record["kind"], "partial_record");
+    assert_eq!(record["host_memory"]["mem_available"], 30);
     Ok(())
 }

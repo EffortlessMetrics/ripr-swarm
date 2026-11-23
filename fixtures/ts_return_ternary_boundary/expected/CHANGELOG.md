@@ -514,3 +514,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_return_ternary_boundary (39)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_return_ternary_boundary --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — ts_return_ternary_boundary (40)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_return_ternary_boundary --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

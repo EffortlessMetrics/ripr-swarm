@@ -32,11 +32,11 @@ pub(super) fn run() -> Result<i32> {
         SAMPLE_INTERVAL,
         PERIODIC_SAMPLES,
         |event| {
-            let snapshot = snapshot(&roots, Limits::default());
-            if let Err(error) = emit_snapshot(
+            if let Err(error) = observe_event(
                 &mut io::stdout().lock(),
                 &event,
-                &snapshot,
+                &roots,
+                Path::new("/proc/meminfo"),
                 sequence,
                 started.elapsed().as_millis(),
             ) {
@@ -49,6 +49,19 @@ pub(super) fn run() -> Result<i32> {
             sequence += 1;
         },
     )
+}
+
+fn observe_event(
+    writer: &mut impl Write,
+    event: &Value,
+    roots: &[Root],
+    memory_path: &Path,
+    sequence: u64,
+    elapsed_ms: u128,
+) -> io::Result<()> {
+    let memory = super::memory::observe(memory_path);
+    let snapshot = snapshot(roots, Limits::default());
+    emit_snapshot(writer, event, &snapshot, &memory, sequence, elapsed_ms)
 }
 
 #[derive(Clone, Copy)]
@@ -506,21 +519,28 @@ fn encoded_record(value: &Value) -> (String, bool) {
     let mut line = format!("\nripr-coverage-storage {value}\n");
     let partial = line.len() > LINE_BYTES;
     if partial {
-        line = format!(
-            "\nripr-coverage-storage {}\n",
-            json!({
-                "schema_version": "coverage_storage.v1",
-                "sequence": value["sequence"].as_u64(),
-                "kind": "partial_record",
-                "phase": value["event"]["phase"].as_str().filter(|phase| {
-                    matches!(*phase, "before" | "during" | "final")
-                }),
-                "exit": value["event"]["exit"].as_i64(),
-                "signal": value["event"]["signal"].as_i64(),
-                "partial": true,
-                "error": "receipt_byte_limit",
-            })
-        );
+        let mut fallback = json!({
+            "schema_version": "coverage_storage.v1",
+            "sequence": value["sequence"].as_u64(),
+            "kind": "partial_record",
+            "phase": value["event"]["phase"].as_str().filter(|phase| {
+                matches!(*phase, "before" | "during" | "final")
+            }),
+            "exit": value["event"]["exit"].as_i64(),
+            "signal": value["event"]["signal"].as_i64(),
+            "partial": true,
+            "error": "receipt_byte_limit",
+        });
+        if value["kind"] == "summary" {
+            fallback["host_memory"] = value["host_memory"].clone();
+        }
+        line = format!("\nripr-coverage-storage {fallback}\n");
+        if line.len() > LINE_BYTES {
+            fallback
+                .as_object_mut()
+                .map(|object| object.remove("host_memory"));
+            line = format!("\nripr-coverage-storage {fallback}\n");
+        }
     }
     (line, partial)
 }
@@ -533,6 +553,7 @@ fn emit_snapshot(
     writer: &mut impl Write,
     event: &Value,
     snapshot: &Snapshot,
+    memory: &Value,
     sequence: u64,
     elapsed_ms: u128,
 ) -> io::Result<()> {
@@ -543,6 +564,7 @@ fn emit_snapshot(
         "elapsed_ms": elapsed_ms,
         "command": {"program": "cargo", "arguments": CARGO_ARGS},
         "non_atomic": true,
+        "host_memory": memory,
         "allocation_assignment": "first_seen_device_inode",
         "event": event,
         "partial": snapshot.partial,

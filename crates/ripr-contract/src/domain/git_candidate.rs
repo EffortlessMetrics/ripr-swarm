@@ -484,4 +484,31 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn object_id_parse_rejects_one_non_hex_byte_among_hex() {
+        let value = format!("{}g", &SHA1_OID[..39]);
+        assert_eq!(
+            GitObjectId::parse(&value),
+            Err(GitCandidateSubjectError::ObjectIdMalformed {
+                value: value.clone()
+            })
+        );
+    }
+
+    #[test]
+    fn treeish_length_limit_admits_exactly_the_maximum() {
+        let at_limit = "a".repeat(MAX_TREEISH_LENGTH);
+        assert_eq!(
+            GitTreeish::new(&at_limit).map(|treeish| treeish.as_str().len()),
+            Ok(MAX_TREEISH_LENGTH)
+        );
+        let over_limit = "a".repeat(MAX_TREEISH_LENGTH + 1);
+        assert_eq!(
+            GitTreeish::new(&over_limit),
+            Err(GitCandidateSubjectError::TreeishMalformed {
+                value: over_limit.clone()
+            })
+        );
+    }
 }

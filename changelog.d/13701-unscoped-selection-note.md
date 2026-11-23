@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- A bare `ripr repair` whose selection is not narrowed to your change now says so when it offers a menu or starts a repair, not only when it refuses: when it could not read the change, or when the change touches no Rust production code (only tests or other files). The note says to pass `--base <ref>` and gives a `ripr repair --root <root> --base <ref>` example. Under `--json`, the menu's `cli_refusal` message carries the note, and the start document (and a resumed start's status document) carries an additive `repair_start_scope` block (#13701).

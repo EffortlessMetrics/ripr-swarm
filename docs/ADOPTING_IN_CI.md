@@ -33,8 +33,14 @@ the job log and summary, and fails only when ripr could not complete. Details:
 ripr init --ci github
 ```
 
+Run it at the repository root. GitHub reads workflows only from the
+repository's top-level `.github/workflows`, and the generated workflow
+analyzes the checkout root, so `ripr init --ci <provider> --root <subdir>`
+with a subdirectory of the repository refuses (exit 2) and names the command
+to run at the root (`--ci gitlab` has the same rule for `.gitlab-ci.yml`).
+
 Add `--dry-run` to print the workflow without writing it. The generated
-workflow reads two repository variables and leaves both unset, so it is
+workflow reads two gate repository variables and leaves both unset, so it is
 advisory only: it summarizes findings and uploads reports, and the job never
 fails.
 
@@ -115,6 +121,19 @@ a stronger test exists. Open `gate-decision.md` for the exact reason on each
 candidate. The same applies when a test changed in the pull request next to the
 gap: that candidate stays advisory with the reason stated.
 
+## When the summary says `blocked`
+
+`blocked` under First-run status means the pull-request analysis did not run,
+not that the pull request is blocked. The summary gives the reason on the next
+lines:
+
+- `Reason:` names a base branch that is not in the checkout. The generated
+  workflow checks out with `fetch-depth: 0`; a shallow checkout (a lower
+  `fetch-depth`, or another checkout action) cannot compare against the base.
+- `No pull request in this run` appears on a manual run (`workflow_dispatch`).
+  Repository-wide reports do not need a pull request; the changed-behavior
+  findings do.
+
 ## Fork and Dependabot pull requests
 
 The generated workflow runs on `pull_request`, so a pull request from a fork or
@@ -136,6 +155,12 @@ message names the way out: use `visible-only` to start without blocking, then
 run `ripr baseline create --from target/ripr/reports/gate-decision.json --out .ripr/gate-baseline.json`,
 commit the result and pass it with `--baseline` (`RIPR_GATE_BASELINE`). A
 `blocked` decision, by contrast, exits 3.
+
+A `RIPR_GATE_MODE` value that is not a gate mode (`visible_only`, say) also
+fails the job: the workflow treats any value other than empty or
+`visible-only` as blocking, and the gate refuses the value. In all three
+cases the failing `Run RIPR` step's error annotation and the first block of
+the job summary state the cause and, for a setup problem, the way out.
 
 ## GitLab merge requests
 

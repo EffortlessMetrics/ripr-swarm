@@ -556,3 +556,217 @@ fn long_line_regressions_finish_within_the_deadline() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The `else if` chain input the fuzz lane found (#15189): an owner whose
+/// body is one `if a == 0 { 0 } else if a == 1 { 1 } ...` line of arms.
+/// Every arm is a boundary seam, and each seam re-read the whole body to
+/// learn that `a` is a local of `amount`, so a one-line change beside 1,900
+/// arms took 8.7 seconds in a release build and far longer in debug. The
+/// case keeps 1,000 arms: with the alias fix alone, 1,900 took 47 of the 60
+/// deadline seconds on a hosted debug runner (merge-queue run 44677899080).
+/// Each seam also re-masked the body, re-resolved the changed binding,
+/// re-read the line and searched the body for its right-hand literal; those
+/// passes are now answered once per owner as well, and their per-pass unit
+/// tests count scans. The linear-time bound for the alias read is held by
+/// `every_seam_of_a_long_owner_is_answered_in_linear_time`. This case keeps
+/// the end-to-end answer bounded.
+///
+/// The diff changes the `let` on line 2 alone. The case must finish in time
+/// with the answer the slow pass exists to give: the changed binding is
+/// related to the chain on line 3 through the test that calls the owner. A
+/// refusal, or a run that skipped the chain, would finish in time without
+/// that finding.
+#[test]
+fn else_if_chain_regression_finishes_within_the_deadline() -> Result<(), String> {
+    const ARMS: usize = 1_000;
+    let mut chain = String::from("    if a == 0 { 0 }");
+    for arm in 1..ARMS {
+        chain.push_str(&format!(" else if a == {arm} {{ {arm} }}"));
+    }
+    chain.push_str(" else { a }");
+    let source = format!(
+        "pub fn price(amount: u64, years: u32) -> u64 {{\n    let a = {REGRESSION_NEW_INITIALIZER};\n{chain}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn discounts() {{\n        assert_eq!(price(5, 0), 5);\n    }}\n}}\n"
+    );
+    if source.lines().nth(2) != Some(chain.as_str()) {
+        return Err("fixture does not hold the chain on line 3".to_string());
+    }
+    let diff = format!(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-{REGRESSION_OLD_LET}\n+    let a = {REGRESSION_NEW_INITIALIZER};\n"
+    );
+    let workspace = Workspace::create(&[
+        ("Cargo.toml", CARGO_TOML.as_bytes()),
+        ("src/lib.rs", source.as_bytes()),
+        ("ripr.toml", languages_toml().as_bytes()),
+        ("fuzz.diff", diff.as_bytes()),
+    ])?;
+    let artifact = workspace.root.join("artifact.json");
+    workspace
+        .check_within(
+            REGRESSION_DEADLINE,
+            &[
+                "--write-artifact".to_string(),
+                artifact.display().to_string(),
+            ],
+        )
+        .map_err(|error| format!("else-if chain ({} bytes): {error}", source.len()))?
+        .map_err(|error| format!("the check refused the input: {error}"))?;
+    let text = std::fs::read_to_string(&artifact)
+        .map_err(|error| format!("read check artifact failed: {error}"))?;
+    let report: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("check artifact is not JSON: {error}"))?;
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| "check artifact has no findings array".to_string())?;
+    let related = findings.iter().any(|finding| {
+        let probe = &finding["probe"];
+        probe["family"].as_str() == Some("predicate")
+            && probe["location"]["line"].as_u64() == Some(3)
+            && finding["related_tests"].as_array().is_some_and(|tests| {
+                tests
+                    .iter()
+                    .any(|test| test["name"].as_str() == Some("discounts"))
+            })
+    });
+    if !related {
+        return Err(format!(
+            "the changed `let` was not related to the chain through `discounts` ({} findings)",
+            findings.len()
+        ));
+    }
+    Ok(())
+}
+
+/// The Python long-line input the fuzz lane found (#14195): a function whose
+/// `return` is one comprehension with 20,000 `for` clauses (260 KB). The
+/// comment-and-string lexer re-read the body for every match of a name, so
+/// the check took 16 seconds in a release build and minutes in a debug build.
+///
+/// The diff changes the assignment on line 2 alone. The case must finish in
+/// time with the answer the analysis exists to give: the change is reported
+/// as `exposed` through the test that calls the owner. A refusal, or a run
+/// that skipped the owner's body, would finish in time without that finding.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_long_line_regression_finishes_within_the_deadline() -> Result<(), String> {
+    const CLAUSES: usize = 20_000;
+    let source = format!(
+        "def price(amount, years):\n    a = amount - years\n    return [a {}]\n",
+        "for _ in [1] ".repeat(CLAUSES)
+    );
+    if source.lines().count() != 3 || source.len() < 13 * CLAUSES {
+        return Err("fixture is not one long body line".to_string());
+    }
+    let test =
+        "from pkg.account import price\n\n\ndef test_price():\n    assert price(200, 5) == [195]\n";
+    let diff = "diff --git a/pkg/account.py b/pkg/account.py\n--- a/pkg/account.py\n+++ b/pkg/account.py\n@@ -2,1 +2,1 @@\n-    a = amount\n+    a = amount - years\n";
+    let workspace = Workspace::create(&[
+        ("pyproject.toml", PYPROJECT_TOML.as_bytes()),
+        ("pkg/account.py", source.as_bytes()),
+        ("tests/test_account.py", test.as_bytes()),
+        ("ripr.toml", languages_toml().as_bytes()),
+        ("fuzz.diff", diff.as_bytes()),
+    ])?;
+    let artifact = workspace.root.join("artifact.json");
+    workspace
+        .check_within(
+            REGRESSION_DEADLINE,
+            &[
+                "--write-artifact".to_string(),
+                artifact.display().to_string(),
+            ],
+        )
+        .map_err(|error| format!("comprehension chain ({} bytes): {error}", source.len()))?
+        .map_err(|error| format!("the check refused the input: {error}"))?;
+    let text = std::fs::read_to_string(&artifact)
+        .map_err(|error| format!("read check artifact failed: {error}"))?;
+    let report: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("check artifact is not JSON: {error}"))?;
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| "check artifact has no findings array".to_string())?;
+    let exposed = findings.iter().any(|finding| {
+        finding["class"].as_str() == Some("exposed")
+            && finding["probe"]["location"]["line"].as_u64() == Some(2)
+            && finding["related_tests"].as_array().is_some_and(|tests| {
+                tests
+                    .iter()
+                    .any(|test| test["name"].as_str() == Some("test_price"))
+            })
+    });
+    if !exposed {
+        return Err(format!(
+            "the changed assignment was not reported as exposed through `test_price` ({} findings)",
+            findings.len()
+        ));
+    }
+    Ok(())
+}
+
+/// A one-line change beside a large test module (#15185): tests in one
+/// `#[cfg(test)]` module, each calling the changed function. Each test's name
+/// scopes re-read the whole file, so 4,000 tests took 38 seconds in a release
+/// build and several minutes in a debug build. The case keeps 2,000 tests:
+/// 4,000 took 50 of the 60 deadline seconds on a hosted debug runner even
+/// when fixed. The linear-time bound itself is held by
+/// `index_answers_every_test_of_a_large_module_in_linear_time`.
+///
+/// The case must finish in time with the answer the analysis exists to give:
+/// the changed predicate is `weakly_exposed` through the module's tests. A
+/// refusal, or a run that related no tests, would finish in time without that
+/// finding.
+#[test]
+fn large_test_module_regression_finishes_within_the_deadline() -> Result<(), String> {
+    const TESTS: usize = 2_000;
+    let mut source = String::from(
+        "pub fn price(amount: u64, years: u32) -> u64 {\n    if years > 3 { amount - 10 } else { amount }\n}\n\n#[cfg(test)]\nmod t {\n    use super::*;\n",
+    );
+    for at in 0..TESTS {
+        source.push_str(&format!(
+            "    #[test]\n    fn t{at}() {{\n        assert_eq!(price({at}, 1), {at});\n    }}\n"
+        ));
+    }
+    source.push_str("}\n");
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2,1 +2,1 @@\n-    if years > 2 { amount - 10 } else { amount }\n+    if years > 3 { amount - 10 } else { amount }\n";
+    let workspace = Workspace::create(&[
+        ("Cargo.toml", CARGO_TOML.as_bytes()),
+        ("src/lib.rs", source.as_bytes()),
+        ("ripr.toml", languages_toml().as_bytes()),
+        ("fuzz.diff", diff.as_bytes()),
+    ])?;
+    let artifact = workspace.root.join("artifact.json");
+    workspace
+        .check_within(
+            REGRESSION_DEADLINE,
+            &[
+                "--write-artifact".to_string(),
+                artifact.display().to_string(),
+            ],
+        )
+        .map_err(|error| format!("large test module ({} bytes): {error}", source.len()))?
+        .map_err(|error| format!("the check refused the input: {error}"))?;
+    let text = std::fs::read_to_string(&artifact)
+        .map_err(|error| format!("read check artifact failed: {error}"))?;
+    let report: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("check artifact is not JSON: {error}"))?;
+    let findings = report["findings"]
+        .as_array()
+        .ok_or_else(|| "check artifact has no findings array".to_string())?;
+    // The artifact lists the first related tests by name; the class needs
+    // the tests' inputs and exact assertions, which only related tests give.
+    let related = findings.iter().any(|finding| {
+        finding["class"].as_str() == Some("weakly_exposed")
+            && finding["probe"]["location"]["line"].as_u64() == Some(2)
+            && finding["related_tests"].as_array().is_some_and(|tests| {
+                ["t0", "t1", "t10"]
+                    .iter()
+                    .all(|name| tests.iter().any(|test| test["name"].as_str() == Some(name)))
+            })
+    });
+    if !related {
+        return Err(format!(
+            "the changed line was not reported with its related tests ({} findings)",
+            findings.len()
+        ));
+    }
+    Ok(())
+}

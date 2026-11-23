@@ -25,6 +25,10 @@
 //! - a non-literal `include!`, including the generated-code shape that
 //!   names `OUT_DIR` (build output can declare `#[path]` modules).
 //!
+//! A `mod` item gated by a `#[cfg]` no build satisfies (`#[cfg(any())]`),
+//! directly or through an enclosing inline module, declares nothing: rustc
+//! strips it before loading a file for it (#15877).
+//!
 //! An incomplete scan never proves a file unreachable; the consumer keeps its
 //! layout rule for that package.
 //!
@@ -46,7 +50,7 @@ use super::ra::{
     parse_rust_string_literal, path_target_from_attributes,
 };
 use crate::analysis::facts::ModulePathTarget;
-use crate::analysis::facts::cfg_predicates::rust_ident_name;
+use crate::analysis::facts::cfg_predicates::{attribute_disables_every_build, rust_ident_name};
 
 /// Std item-position macros whose expansion cannot declare a module.
 /// Compared after any `std::`/`core::` prefix is dropped.
@@ -193,6 +197,20 @@ fn scan_memo_insert(text: &str, scan: &RustModuleTreeScan) {
     }
 }
 
+/// Whether `node` is, or sits inside, a `mod` item that carries a `#[cfg]`
+/// no build satisfies (`#[cfg(any())]`). rustc strips the item before
+/// loading any file for it or expanding a macro in it, so nothing there
+/// declares an edge or leaves the scan incomplete (#15877).
+fn module_disabled_in_every_build(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    node.ancestors()
+        .filter_map(ast::Module::cast)
+        .any(|enclosing| {
+            enclosing
+                .attrs()
+                .any(|attr| attribute_disables_every_build(&attr.syntax().text().to_string()))
+        })
+}
+
 fn scan_module_tree(text: &str) -> RustModuleTreeScan {
     #[cfg(test)]
     tests::UNCACHED_SCANS.with(|count| count.set(count.get() + 1));
@@ -206,6 +224,9 @@ fn scan_module_tree(text: &str) -> RustModuleTreeScan {
         items_complete: true,
     };
     for module in tree.syntax().descendants().filter_map(ast::Module::cast) {
+        if module_disabled_in_every_build(module.syntax()) {
+            continue;
+        }
         let attributes = module
             .attrs()
             .map(|attr| attr.syntax().text().to_string())
@@ -287,6 +308,9 @@ fn scan_module_tree(text: &str) -> RustModuleTreeScan {
         }
     }
     for macro_call in tree.syntax().descendants().filter_map(ast::MacroCall::cast) {
+        if module_disabled_in_every_build(macro_call.syntax()) {
+            continue;
+        }
         let Some(path) = macro_call.path() else {
             continue;
         };
@@ -654,6 +678,26 @@ mod tests {
                 default(&["outer", "inner"], "leaf"),
                 RustModuleTreeEdge::Include(PathBuf::from("fragment.rs")),
             ]
+        );
+    }
+
+    #[test]
+    fn a_mod_no_build_enables_declares_no_edge_and_keeps_the_scan_complete() {
+        let scan = rust_module_tree_scan(
+            "mod kept;\n\
+             #[cfg(any())]\nmod stripped;\n\
+             #[cfg(any())]\n#[path = concat!(\"a\", \".rs\")]\nmod stripped_dynamic;\n\
+             #[cfg(not(all()))]\nmod outer { mod nested; #[cfg_attr(unix, path = \"u.rs\")] mod plat; }\n\
+             #[cfg(any(),)]\nmod trailing_comma;\n\
+             #[cfg(any())]\nmod macros { include!(\"frag.rs\"); decl::declare_mod!(generated); }\n\
+             #[cfg(feature = \"x\")]\nmod featured;\n",
+        );
+        assert!(scan.complete, "{scan:?}");
+        assert!(scan.items_complete, "{scan:?}");
+        assert_eq!(
+            scan.edges,
+            vec![default(&[], "kept"), default(&[], "featured")],
+            "only the mods some build enables declare edges"
         );
     }
 

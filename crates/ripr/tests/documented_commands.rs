@@ -530,3 +530,82 @@ fn usage_line_flags_are_in_the_catalog_inventory() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Sentences (in whitespace-normalized text) that name a `--phase after`
+/// command outside the JSON context. Since #7879 the plain before-phase
+/// summary ends with `Next, after the test edit: ripr continue ... --attempt
+/// <id>`; only the `--json` `repair_attempt.next_command` keeps the
+/// `--phase after` spelling. The JSON context has to be in the same sentence:
+/// a neighbouring sentence about `--json` does not excuse a plain-summary one.
+fn printed_phase_after_claims(markdown: &str) -> Vec<String> {
+    const SUBJECT: &str = "--phase after` command";
+    const JSON_CONTEXT: [&str; 3] = ["repair_attempt", "next_command", "--json"];
+    let text = markdown.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut claims = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text[from..].find(SUBJECT) {
+        let at = from + found;
+        let after = at + SUBJECT.len();
+        // A sentence ends at ". "; the ". " inside an elided "... " does not.
+        let ends_sentence = |(dot, _): &(usize, &str)| !text[..*dot].ends_with('.');
+        let start = text[..at]
+            .rmatch_indices(". ")
+            .find(ends_sentence)
+            .map_or(0, |(dot, _)| dot + 2);
+        let end = text[after..]
+            .match_indices(". ")
+            .map(|(dot, matched)| (after + dot, matched))
+            .find(ends_sentence)
+            .map_or(text.len(), |(dot, _)| dot + 1);
+        let sentence = &text[start..end];
+        if !JSON_CONTEXT.iter().any(|marker| sentence.contains(marker)) {
+            claims.push(sentence.to_string());
+        }
+        from = after;
+    }
+    claims
+}
+
+#[test]
+fn docs_name_the_command_the_before_phase_prints() -> Result<(), String> {
+    let stale = "Run the before phase, edit the test, then run the\n`--attempt ... --phase after` command it prints.";
+    assert_eq!(
+        printed_phase_after_claims(stale).len(),
+        1,
+        "negative control"
+    );
+    let json = "With `--json` the `repair_attempt` block prints the exact\n`--attempt ... --phase after` command.";
+    assert_eq!(printed_phase_after_claims(json), Vec::<String>::new());
+    let neighbour = "By default stdout is a short summary: the seam and the exact\n`--attempt ... --phase after` command. With `--json` stdout is one document.";
+    assert_eq!(
+        printed_phase_after_claims(neighbour).len(),
+        1,
+        "a following `--json` sentence does not excuse a plain-summary claim"
+    );
+
+    let mut problems = Vec::new();
+    let mut files = 0usize;
+    for (name, path) in documented_files()? {
+        let markdown = std::fs::read_to_string(&path)
+            .map_err(|error| format!("cannot read {name}: {error}"))?;
+        files += 1;
+        for claim in printed_phase_after_claims(&markdown) {
+            problems.push(format!("{name}: ...{claim}..."));
+        }
+    }
+    assert!(files >= 50, "scanned only {files} documents");
+    assert_eq!(
+        problems,
+        Vec::<String>::new(),
+        "the plain before-phase summary prints `ripr continue ... --attempt <id>`, not a `--phase after` command"
+    );
+
+    let repair_attempt =
+        std::fs::read_to_string(Path::new(REPO_ROOT).join("docs/REPAIR_ATTEMPT.md"))
+            .map_err(|error| format!("cannot read docs/REPAIR_ATTEMPT.md: {error}"))?;
+    assert!(
+        repair_attempt.contains("`ripr continue --root <root> --attempt <repair-attempt-id>`"),
+        "docs/REPAIR_ATTEMPT.md names the printed follow-up command"
+    );
+    Ok(())
+}

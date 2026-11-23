@@ -5,7 +5,7 @@ import * as path from 'path';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
-import { describeCodeActionFailure, observeCodeActionProvider, observeCodeActionRequests } from '../multiRootRequestDiagnostics';
+import { describeCodeActionFailure, observeCodeActionRequestWindow } from '../multiRootRequestDiagnostics';
 import { assertActionTargets, assertContextPacket, normalizeUriSpelling, RootExpectation } from '../multiRootAssertions';
 import { boundedRequestEvidence } from '../hostDiagnostics';
 import { observeDocuments, RequestEventTrace } from '../requestEventTrace';
@@ -438,7 +438,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       stages.push({ phase, code_action_request: requestEvidence() });
       trace.record('command.begin', { document_uri: uri.toString(), client_id: clientIdentity(client) });
       let actions: Array<vscode.CodeAction | vscode.Command>;
-      const requestEvents: Record<string, unknown>[] = [];
+      const requestEvents = trace.clientRequestEvents({ client_id: clientIdentity(client)! });
       const observe = () => ({ at: new Date().toISOString(), phase,
         uri: uri.toString(), root: controller.workspaceRoot, generation: controller.startGeneration,
         client_same: controller.client === client, client_state: client.state,
@@ -446,22 +446,8 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         document: vscode.workspace.textDocuments.filter(d => d.uri.toString() === uri.toString())
           .map(d => ({ version: d.version, dirty: d.isDirty, closed: d.isClosed })),
         active_uri: vscode.window.activeTextEditor?.document.uri.toString() });
-      const subscriptions: vscode.Disposable[] = [
-        client.onDidChangeState(event => requestEvents.push({ kind: 'client_state', ...event, ...observe() })),
-        vscode.workspace.onDidChangeTextDocument(event => {
-          if (event.document.uri.toString() === uri.toString()) {
-            requestEvents.push({ kind: 'document_change', ...observe() });
-          }
-        }),
-        vscode.workspace.onDidCloseTextDocument(document => {
-          if (document.uri.toString() === uri.toString()) {
-            requestEvents.push({ kind: 'document_close', ...observe() });
-          }
-        }),
-      ];
-      const restoreRequests = observeCodeActionRequests(client, observe, requestEvents);
       try {
-        actions = await observeCodeActionProvider(() =>
+        actions = await observeCodeActionRequestWindow(client, () =>
           vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
             'vscode.executeCodeActionProvider', uri, diagnostic.range), observe, requestEvents);
         trace.record('command.resolve', { document_uri: uri.toString(), client_id: clientIdentity(client) });
@@ -590,6 +576,19 @@ async function openAndSave(root: RootExpectation): Promise<void> {
   assert.strictEqual(await editor.edit(builder => builder.insert(document.positionAt(document.getText().length), '\n')), true);
   assert.strictEqual(document.isDirty, true);
   assert.strictEqual(await document.save(), true, 'must drive a real saved-workspace event');
+  // #13636: the repair start refuses while production source is uncommitted,
+  // and the server now withholds it with the commit step. The save above
+  // left src uncommitted, so fold it into the fixture's boundary commit:
+  // HEAD~1 (ripr.baseRef) is unchanged, the evidence is the same, and the
+  // committed change keeps the start offered as #13716 asserts. Waiting out
+  // the server's 1s per-root premise memo keeps a code-action request made
+  // before the amend from answering for the clean tree.
+  const cp = require('child_process') as typeof import('child_process');
+  cp.execFileSync('git', ['-C', root.root, 'commit', '--quiet', '--amend', '--no-edit', '--all'],
+    { stdio: 'pipe' });
+  assert.strictEqual(cp.execFileSync('git', ['-C', root.root, 'status', '--porcelain', '--untracked-files=no'],
+    { encoding: 'utf8' }), '', 'the saved fixture change must be committed before the start is asserted');
+  await new Promise(resolve => setTimeout(resolve, 1100));
 }
 
 async function assertReaped(observed: ProcessObservation): Promise<void> {

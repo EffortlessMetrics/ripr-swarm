@@ -146,6 +146,13 @@ There are at most 46 periodic samples, one per 60 seconds, plus initial and
 final samples. Incomplete writes and missing completion records are not full
 samples. Native command output remains inherited and uncaptured.
 
+Each Linux summary includes host `MemTotal`, `MemAvailable`, `SwapTotal` and
+`SwapFree` in KiB, with a 16 KiB input limit and one extra byte read to detect
+truncation from `/proc/meminfo`. Missing,
+malformed, unreadable or oversized input is explicit; unrelated fields are
+ignored. These non-atomic host samples do not establish a cgroup limit, peak or
+OOM cause. The command and sampler lifecycle remain unchanged.
+
 Disjoint target buckets separate raw profiles, plain and instrumented build
 state, RIPR artifacts, fixture native-target builds and remaining target
 scratch. Additional declared cache/toolchain/Git/runner-temp roots never

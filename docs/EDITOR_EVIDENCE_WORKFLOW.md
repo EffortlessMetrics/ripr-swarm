@@ -91,7 +91,8 @@ For external agents or clipboard-driven workflows, use:
 - `Start repair: copy repair command` when it is shown: it copies
   `ripr agent repair --root . --seam-id <id> --phase before` and appears only
   for a seam that passes the repair-packet flip (RIPR-SPEC-0087 §8) with a
-  test-surface target;
+  test-surface target (while tracked source files are uncommitted it is listed
+  disabled with the commit command to run first);
 - `Agent handoff: copy packet command`;
 - `Agent handoff: copy brief command`;
 - `ripr.collectEvidenceContext` through the existing copy-context path.

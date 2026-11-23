@@ -76,6 +76,14 @@ path without text hunks. The existing deletion, submodule, artifact and
 prior-limitation guard conditions are unchanged. Pure rename-only input without
 content or mode changes retains complete `no_changed_lines`.
 
+A `copy from`/`copy to` section is not a rename: its source stays in place,
+so every line of the destination is new code the patch does not carry. When
+the section's header and both lines name the same pair of paths, the diff
+intake reads the destination from the working tree as an added file, the
+changed lines the patch names without copy detection. A destination that is
+not a regular file below the root is disclosed as
+`changed_file_absent_from_worktree`.
+
 For ordinary two-way hunks, malformed input includes invalid numeric ranges
 and a body that disagrees with the declared old/new line counts at EOF or a
 hunk/file boundary. Omitted counts mean one and explicit zero counts mean zero;
@@ -97,6 +105,48 @@ Paired plain `---`/`+++` markers are ordinary body lines while both declared
 sides can consume them: a removal/addition of source text beginning `--`/`++`
 is indistinguishable from that pair. Truncation before such an ambiguous plain
 section cannot always be identified; unambiguous boundaries remain checked.
+Text after a hunk whose declared counts are complete is not that hunk's body
+(#14072): empty lines there are padding, and git's mail signature separator
+(`-- `) or mbox message separator (`From <object id> <date>`) ends the hunk, so
+a patch saved with trailing blank lines and `git format-patch` output are
+well-formed input. Any `+`, `-` or space-prefixed line past the declared counts
+is still an excess body line, also behind such padding, and a hunk that still
+owes lines reads an empty line as context and `-- ` as a removal.
+
+A path whose hunks arrive from file sections on both sides of a commit
+boundary (an mbox `From <object id>` line from `git format-patch --stdout`, or
+a `commit <object id>` header from `git log -p`), or whose later section's
+`index` line starts from a different old blob than its first (headerless
+`git log -p --oneline` or custom formats), has no single coordinate space: a series that edits the file in two commits, or a later commit that
+renames, copies or deletes an edited path, describes a different version of the
+file in each section. None
+of that path's lines are read, and a located `language_scope_unsupported`
+limitation at stage `diff_parse` names it with recovery `use_two_way_diff`
+(analyze one diff of the whole change). It is kept only for a path in an
+enabled analyzed language and outside ripr's own artifact roots; paths changed
+in a single section of the same input keep their lines, and an operator scope
+that admits only refused paths reports the limitation rather than
+`scope_filter_matched_nothing` (#15268). The refusal makes the outcome
+`partial_with_limitations`, never complete, with the exit status of other
+partial outcomes rather than the `unsupported_input` exit. Sections of one
+two-way diff that repeat a path with no commit boundary and no differing old
+blob (a hand-assembled diff with one section per hunk, or a file/symlink type
+change written as a deletion plus a creation) share one old/new pair and are
+read together as before. A refused path in a
+language that is routable but not enabled is dropped like any other
+out-of-language limitation, so it carries no refusal and no preview advisory.
+
+A `diff --git` section whose header names one path under two different
+mnemonic side prefixes (`i/`, `w/`, `c/`, `o/`, as git writes under
+`diff.mnemonicPrefix`) is read as the same section with `a/` and `b/`.
+A header repeating one token on both sides, a header whose two paths differ,
+and a section carrying rename or copy metadata keep their literal paths; other
+custom side prefixes are not guessed (#15103). When such a path reads as
+absent but the same path without its first component is a regular source file
+under the analysis root, the absent-file limitation stays and its recovery adds,
+as a conditional hint beside the checkout recovery, that a custom side prefix
+would explain it and names `git diff --src-prefix=a/ --dst-prefix=b/` or
+`--no-prefix`.
 
 Limitation paths retain filename whitespace, including leading and trailing
 whitespace. Portable slash and current-directory normalization must not collapse

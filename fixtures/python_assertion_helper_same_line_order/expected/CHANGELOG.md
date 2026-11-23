@@ -167,3 +167,25 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_assertion_helper_same_line_order (14)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_same_line_order --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_assertion_helper_same_line_order (15)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_assertion_helper_same_line_order --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

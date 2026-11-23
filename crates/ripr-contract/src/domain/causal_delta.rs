@@ -6,20 +6,36 @@
 
 use super::OracleStrength;
 
+/// How one canonical gap's evidence changed between the base and head
+/// snapshots.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeltaAttribution {
+    /// The gap is absent at base and present at head.
     IntroducedByChange,
+    /// The same item's oracle strength dropped at head.
     WeakenedByChange,
+    /// A gap that was resolved or already observed at base is actionable again
+    /// at head.
     ReintroducedByChange,
+    /// The gap is absent at head, became resolved or already observed, or its
+    /// oracle strength rose.
     ResolvedByChange,
+    /// The evidence is unchanged and the item is in a changed file. Whether
+    /// the diff touches the item itself is not checked.
     ChangedSurfaceExisting,
+    /// An existing gap next to the changed surface, not caused by the change.
     AdjacentPreexisting,
+    /// An existing gap with unchanged evidence outside the changed files.
     BaselineExisting,
+    /// The comparison could not establish a cause, for example because a
+    /// snapshot is unavailable, the identity is ambiguous, or the gap state is
+    /// unknown.
     ComparisonUnknown,
 }
 
 impl DeltaAttribution {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::IntroducedByChange => "introduced_by_change",
@@ -34,27 +50,47 @@ impl DeltaAttribution {
     }
 }
 
+/// One reason behind a [`DeltaAttribution`]. A delta can carry several.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AttributionBasis {
+    /// Base and head name the same canonical owner.
     SameCanonicalOwner,
+    /// Base and head name the same behavior identity.
     SameBehaviorIdentity,
+    /// Base and head name the same discriminator.
     SameDiscriminator,
+    /// Head's oracle strength ranks below base's.
     OracleStrengthDecreased,
+    /// Head's oracle strength ranks above base's.
     OracleStrengthIncreased,
+    /// The gap state differs between base and head.
     GapStateChanged,
+    /// Gap state and oracle strength are unchanged, counting `resolved` and
+    /// `already_observed` as the same state.
     UnchangedEvidence,
+    /// The item is absent from a complete base snapshot.
     BaseItemAbsent,
+    /// The item is absent from a complete head snapshot.
     HeadItemAbsent,
+    /// The base snapshot is unavailable.
     BaseSnapshotUnavailable,
+    /// The head snapshot is unavailable.
     HeadSnapshotUnavailable,
+    /// Base and head identities do not match, neither side has the item, or
+    /// a head item has no single base item to match.
     IdentityAmbiguous,
+    /// The item was matched across a rename or move.
     RenameOrMoveMapped,
+    /// The item is next to the changed surface rather than on it.
     AdjacentSurface,
+    /// The item was assigned to the baseline because its evidence is
+    /// unchanged and it is outside the changed files. No receipt is looked up.
     BaselineReceipt,
 }
 
 impl AttributionBasis {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::SameCanonicalOwner => "same_canonical_owner",
@@ -83,13 +119,18 @@ impl AttributionBasis {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GapState {
+    /// A gap a test could act on.
     Actionable,
+    /// A test already observes the behavior.
     AlreadyObserved,
+    /// The gap no longer applies.
     Resolved,
+    /// The producer state was opaque, unsupported or unrecognized.
     Unknown,
 }
 
 impl GapState {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Actionable => "actionable",
@@ -111,17 +152,24 @@ impl From<&str> for GapState {
     }
 }
 
+/// How much to trust a [`CanonicalDelta`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ComparisonConfidence {
+    /// Decided by the fixture-backed comparison rules in this module.
     FixtureBacked,
+    /// High confidence.
     High,
+    /// Medium confidence.
     Medium,
+    /// Low confidence.
     Low,
+    /// No causal comparison could be made.
     Unknown,
 }
 
 impl ComparisonConfidence {
+    /// The stable snake_case label used in output.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::FixtureBacked => "fixture_backed",
@@ -133,16 +181,24 @@ impl ComparisonConfidence {
     }
 }
 
+/// The evidence for one canonical item on one side of the comparison.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CanonicalEvidenceState {
+    /// The canonical owner of the changed behavior.
     pub canonical_owner: String,
+    /// The behavior identity within that owner.
     pub behavior_identity: String,
+    /// The discriminator identity for that behavior.
     pub discriminator_identity: String,
+    /// The gap state on this side.
     pub gap_state: GapState,
+    /// The oracle strength on this side.
     pub oracle_strength: OracleStrength,
 }
 
 impl CanonicalEvidenceState {
+    /// Build a state. `gap_state` accepts a [`GapState`] or its label; an
+    /// unrecognized label becomes [`GapState::Unknown`].
     pub fn new(
         canonical_owner: impl Into<String>,
         behavior_identity: impl Into<String>,
@@ -166,26 +222,41 @@ impl CanonicalEvidenceState {
     }
 }
 
+/// The comparison result for one canonical gap.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CanonicalDelta {
+    /// The canonical gap this delta describes.
     pub canonical_gap_id: String,
+    /// How the change affected the gap.
     pub delta_attribution: DeltaAttribution,
+    /// The base-side evidence, if the item was present.
     pub base_state: Option<CanonicalEvidenceState>,
+    /// The head-side evidence, if the item was present.
     pub head_state: Option<CanonicalEvidenceState>,
+    /// Why the attribution was chosen.
     pub attribution_basis: Vec<AttributionBasis>,
+    /// How much to trust the attribution.
     pub comparison_confidence: ComparisonConfidence,
 }
 
+/// Counts of items seen and matched across the comparison.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ComparisonCoverage {
+    /// Items in the base snapshot.
     pub base_items: usize,
+    /// Items in the head snapshot.
     pub head_items: usize,
+    /// Items matched between base and head.
     pub matched_items: usize,
+    /// Items whose identity could not be matched unambiguously.
     pub ambiguous_items: usize,
+    /// Items whose comparison stayed unknown. A producer may also add one for
+    /// each unavailable snapshot.
     pub unknown_items: usize,
 }
 
 impl ComparisonCoverage {
+    /// Whether the comparison has no ambiguous or unknown items.
     pub fn is_complete(&self) -> bool {
         self.ambiguous_items == 0 && self.unknown_items == 0
     }
@@ -710,5 +781,37 @@ mod tests {
                 AttributionBasis::GapStateChanged,
             ]
         );
+    }
+
+    #[test]
+    fn an_unknown_gap_on_either_side_alone_keeps_the_comparison_unknown() {
+        let unknown = || Some(state(GapState::Unknown, OracleStrength::Strong));
+        let known = || Some(state(GapState::Actionable, OracleStrength::Strong));
+        for (base, head, basis) in [
+            (None, unknown(), vec![AttributionBasis::BaseItemAbsent]),
+            (unknown(), None, vec![AttributionBasis::HeadItemAbsent]),
+        ] {
+            let delta = compare_fixture_delta("gap:one", true, true, base, head);
+            assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+            assert_eq!(delta.comparison_confidence, ComparisonConfidence::Unknown);
+            assert_eq!(delta.attribution_basis, basis);
+        }
+        // Control: the same shapes with a known gap state are attributed.
+        let introduced = compare_fixture_delta("gap:one", true, true, None, known());
+        assert_eq!(
+            introduced.delta_attribution,
+            DeltaAttribution::IntroducedByChange
+        );
+        let resolved = compare_fixture_delta("gap:one", true, true, known(), None);
+        assert_eq!(
+            resolved.delta_attribution,
+            DeltaAttribution::ResolvedByChange
+        );
+        // One unknown side beside a known side of the same identity.
+        for (base, head) in [(unknown(), known()), (known(), unknown())] {
+            let delta = compare_fixture_delta("gap:one", true, true, base, head);
+            assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
+            assert_eq!(delta.comparison_confidence, ComparisonConfidence::Unknown);
+        }
     }
 }

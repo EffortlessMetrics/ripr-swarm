@@ -63,5 +63,4 @@ Drill in:
   ripr explain --root <cwd>/fixtures/python_module_constant_boundary_test_local_shadow/input --diff <cwd>/fixtures/python_module_constant_boundary_test_local_shadow/diff.patch --mode fast probe:svc_a_src_pricing.py:python_preview:ecc92bfc
   ripr context --root <cwd>/fixtures/python_module_constant_boundary_test_local_shadow/input --diff <cwd>/fixtures/python_module_constant_boundary_test_local_shadow/diff.patch --mode fast --at probe:svc_a_src_pricing.py:python_preview:ecc92bfc
 
-
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

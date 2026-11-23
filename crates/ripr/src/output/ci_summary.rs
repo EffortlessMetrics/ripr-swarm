@@ -15,6 +15,7 @@
 //! `markdown_inline` spelling.
 
 pub(crate) mod annotations;
+pub(crate) mod gate_verdict;
 mod headline;
 mod jq;
 
@@ -42,7 +43,8 @@ mod tests;
 
 use crate::agent::loop_commands::{
     PILOT_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,
-    WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
+    WORKFLOW_AGENT_RECEIPT_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT,
+    WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
 };
 use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
 use crate::output::first_pr::{
@@ -90,7 +92,7 @@ const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 /// the producer refused to run, this envelope is the only place that names
 /// the cause; every downstream packet degrades to a missing/blocked state.
 const CHECK_JSON: &str = "target/ripr/pr/check.json";
-const GATE_JSON: &str = "target/ripr/reports/gate-decision.json";
+const GATE_JSON: &str = gate_verdict::GATE_DECISION_JSON;
 const GATE_MD: &str = "target/ripr/reports/gate-decision.md";
 const DELTA_JSON: &str = "target/ripr/reports/baseline-debt-delta.json";
 const DELTA_MD: &str = "target/ripr/reports/baseline-debt-delta.md";
@@ -109,6 +111,9 @@ pub(crate) struct CiSummaryInput {
     pub(crate) root: PathBuf,
     /// The PR base branch the missing-start-here route names.
     pub(crate) base_ref: String,
+    /// `GITHUB_EVENT_NAME`, empty outside GitHub Actions. A set event other
+    /// than `pull_request` has no pull request to analyze (#14148).
+    pub(crate) event_name: String,
     /// `RIPR_UPLOAD_SARIF == "true"`.
     pub(crate) upload_sarif: bool,
     /// `github.event_name == "pull_request"`. The packet renders the diff
@@ -120,6 +125,9 @@ pub(crate) struct CiSummaryInput {
     /// `RIPR_GATE_MODE` is not blank. When false the policy
     /// and governance sections are folded (#11217).
     pub(crate) gate_configured: bool,
+    /// `RIPR_GATE_MODE` as set, unvalidated. Names an unknown mode as the
+    /// cause when no gate decision was written (#14081).
+    pub(crate) gate_mode: String,
     /// `RIPR_COMMENT_MODE`, `off` when unset.
     pub(crate) comment_mode: String,
     /// The enabled language names `ripr doctor --json` reports.
@@ -136,9 +144,9 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
         attention: false,
         policy_reports_read: 0,
     };
-    summary.headline();
+    summary.headline(&input.gate_mode);
     summary.start_here();
-    summary.first_run_status(&input.base_ref);
+    summary.first_run_status(&input.base_ref, &input.event_name);
     summary.language_preview(&input.configured_languages);
     summary.front_panel();
     summary.recommended_next_test();
@@ -150,7 +158,7 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
     summary.assistant_proof();
     summary.agent_proof_status();
     summary.governance(input.gate_configured);
-    summary.gate_decision();
+    summary.gate_decision(&input.gate_mode);
     summary.baseline_delta(input.gate_baseline);
     summary.ripr_zero();
     summary.sarif_and_badges(input.upload_sarif, input.pull_request);
@@ -162,9 +170,28 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
 
 /// The checkout path as `pwd -P` and `$PWD` spelled it for the step.
 fn repo_relative_for(root: &Path) -> RepoRelative {
-    let physical = fs::canonicalize(root)
+    let canonical = fs::canonicalize(root).ok();
+    let physical = canonical
+        .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // Producers print command roots in their human display spelling
+    // (`command_root_display`): on Windows that is forward-slashed without the
+    // verbatim prefix, not the native canonical spelling. Match it too (#15858).
+    let shown = canonical
+        .as_deref()
+        .map(crate::output::path::human_path)
+        .unwrap_or_default();
+    // Command fields quote that spelling with `shell_arg` when it holds a
+    // shell metacharacter, so `/tmp/O'Brien/project` is printed as
+    // `'/tmp/O'\''Brien/project'`. Match the quoted form as well; a plain
+    // path needs no quoting and adds no spelling.
+    let quoted = quoted_root_opening(&shown);
+    let display = if shown == physical {
+        String::new()
+    } else {
+        shown
+    };
     // Like the shell, trust `$PWD` only while it still names the working
     // directory; otherwise the logical path is the physical one.
     let cwd = std::env::current_dir().ok();
@@ -188,7 +215,29 @@ fn repo_relative_for(root: &Path) -> RepoRelative {
         .unwrap_or_default();
     RepoRelative {
         physical: physical.into_bytes(),
+        display: display.into_bytes(),
+        quoted,
         logical: logical.into_bytes(),
+    }
+}
+
+/// The opening of `shell_arg(root)` without its closing quote, when the
+/// producer quotes the root in one plain quote pair (`'…'` or Windows
+/// `"…"`); empty otherwise. `RepoRelative` replaces it with the quote and
+/// `.`, so `'<root>'` becomes `'.'` and `'<root>/x'` becomes `'./x'`.
+fn quoted_root_opening(root: &str) -> Vec<u8> {
+    if root.is_empty() {
+        return Vec::new();
+    }
+    let quoted = crate::agent::loop_commands::shell_arg(root);
+    let bytes = quoted.as_bytes();
+    match (bytes.first(), bytes.split_last()) {
+        (Some(open @ (b'\'' | b'"')), Some((close, opening)))
+            if opening.len() > 1 && open == close =>
+        {
+            opening.to_vec()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -337,11 +386,12 @@ impl Summary {
     }
 
     /// The pull request's own verdict, before ripr's orientation (#11217).
-    fn headline(&mut self) {
+    fn headline(&mut self, gate_mode: &str) {
         self.line("## RIPR advisory summary");
         self.blank();
         self.line("RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.");
         self.blank();
+        self.gate_verdict(gate_mode);
         let report = fs::read(self.root.join(COMMENTS_JSON))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
@@ -355,6 +405,23 @@ impl Summary {
         if !lines.is_empty() {
             self.blank();
         }
+    }
+
+    /// A failing gate, before the findings (#14081): a blocked or
+    /// misconfigured gate is why the job is red, so it leads. A set mode the
+    /// gate refuses comes first, because the gate did not run under it. A
+    /// decision document is read only when it names this run's mode, so a
+    /// report left by an earlier run under another mode is never worded as
+    /// this run's verdict. Every other state prints nothing here.
+    fn gate_verdict(&mut self, gate_mode: &str) {
+        let verdict = gate_verdict::GateVerdict::for_run(&self.root, gate_mode);
+        let Some(verdict) = verdict else {
+            return;
+        };
+        for line in verdict.summary_lines() {
+            self.line(&line);
+        }
+        self.blank();
     }
 
     fn start_here(&mut self) {
@@ -424,8 +491,28 @@ impl Summary {
         self.line("- Retry note: per-file facts computed before the deadline are written to `target/ripr/cache`; when the workflow restores that directory between runs, the retry resumes from them. Later whole-repo stages are not cached and can still need the larger deadline.");
     }
 
-    fn first_run_status(&mut self, base_ref: &str) {
+    /// A run with no pull request, named before the states it causes
+    /// (#14148). The packet runs its pull-request stages only for a
+    /// `pull_request` event, so a manual or push run has no PR repair cards
+    /// and the start-here packet reports them missing; without this line a
+    /// first manual run reads as broken. An unset event (a local run) and a
+    /// `pull_request` event print nothing.
+    fn no_pull_request(&mut self, event_name: &str) {
+        if event_name.is_empty() || event_name == "pull_request" {
+            return;
+        }
+        self.line(&format!(
+            "- No pull request in this run: the event is {}, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.",
+            code_span(event_name)
+        ));
+        self.line(
+            "- Next step: open or update a pull request to get changed-behavior findings for it.",
+        );
+    }
+
+    fn first_run_status(&mut self, base_ref: &str, event_name: &str) {
         self.line("#### First-run status");
+        self.no_pull_request(event_name);
         // #11161: when the producer refused to run, the downstream packets
         // carry missing/blocked states whose regeneration commands cannot
         // succeed — the author sees an unexplained "blocked". The refusal
@@ -452,7 +539,7 @@ impl Summary {
                 self.line("- Safe next action: no base is derivable from the event payload (base_ref and default_branch are both empty); re-run with an event JSON that names the repository's default branch, or resolve the base commit and pass `ripr first-pr --base <ref>` explicitly.");
             } else {
                 self.line(&format!(
-                    "- Safe next action: run `ripr first-pr --root . --base origin/{base_ref} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet {WORKFLOW_AGENT_PACKET_ARTIFACT} --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports`."
+                    "- Safe next action: run `ripr first-pr --root . --base origin/{base_ref} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet {WORKFLOW_AGENT_PACKET_ARTIFACT} --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`."
                 ));
             }
             self.line("- Fallback safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.");
@@ -463,6 +550,13 @@ impl Summary {
 
     fn start_here_status(&mut self, doc: &Doc) {
         let field = |paths: &[&str], default: &str| inline(&doc.field(paths, default, "unknown"));
+        // Commands and paths the packet wrote with the runner's checkout
+        // path: shown from the repository root, as the front panel and first
+        // action are, so they paste into the reader's checkout (#15858).
+        let relative = self.relative.clone();
+        let local = |paths: &[&str], default: &str| {
+            inline(&relative.value(&doc.field(paths, default, "unknown")))
+        };
         let status = field(&["status"], "unknown");
         let state = field(&["selected.state"], "unknown");
         let gap = field(
@@ -513,8 +607,8 @@ impl Summary {
             &["selected.static_evidence_boundary"],
             "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
         );
-        let target = field(&["selected.repair.target_file"], "not_available");
-        let related = field(&["selected.repair.related_test"], "not_available");
+        let target = local(&["selected.repair.target_file"], "not_available");
+        let related = local(&["selected.repair.related_test"], "not_available");
         let limit = inline(&doc.text(
             |value| {
                 let kind = jq::at(value, "selected.static_limit_kind")?;
@@ -531,12 +625,12 @@ impl Summary {
             },
             "unknown",
         ));
-        let verify = field(&["selected.verify_command"], "not_available");
-        let receipt = field(&["selected.receipt_command"], "not_available");
-        let receipt_path = field(&["selected.receipt_path"], "not_available");
+        let verify = local(&["selected.verify_command"], "not_available");
+        let receipt = local(&["selected.receipt_command"], "not_available");
+        let receipt_path = local(&["selected.receipt_path"], "not_available");
         let receipt_state = field(&["selected.receipt_state"], "receipt_missing");
         let repair_command = doc.optional(&["selected.repair_command"]);
-        let next = field(
+        let next = local(
             &[
                 "selected.repair_command",
                 "selected.next_command",
@@ -547,10 +641,17 @@ impl Summary {
         let warnings = inline(&doc.length("warnings"));
         let labels = ProofLabels::new(!repair_command.is_empty());
         if !repair_command.is_empty() {
-            self.repair_start("Start repair", &inline(&repair_command));
+            self.repair_start("Start repair", &inline(&relative.value(&repair_command)));
         }
         self.status_row(&status, &format!("- Status: `{status}`"));
         self.status_row(&state, &format!("- Selected state: `{state}`"));
+        // #14148: a blocked packet carries its own reason; without it the
+        // reader sees a state token and a command, and the sentence that
+        // explains both is only in the start-here report in the uploaded artifact.
+        let reason = doc.optional(&["selected.message"]);
+        if !reason.is_empty() {
+            self.line(&format!("- Reason: {}", code_span(&reason)));
+        }
         self.status_row(&gap, &format!("- Canonical gap: `{gap}`"));
         self.status_row(&language, &format!("- Language: `{language}`"));
         self.status_row(&kind, &format!("- Top gap/no-action: `{kind}`"));
@@ -585,6 +686,11 @@ impl Summary {
 
     fn first_action_status(&mut self, doc: &Doc) {
         let field = |paths: &[&str], default: &str| inline(&doc.field(paths, default, "unknown"));
+        // Its commands are shown from the repository root too (#15858).
+        let relative = self.relative.clone();
+        let local = |paths: &[&str], default: &str| {
+            inline(&relative.value(&doc.field(paths, default, "unknown")))
+        };
         let status = field(&["status"], "unknown");
         let action_kind = field(&["action_kind"], "unknown");
         let title = field(&["title"], "not_available");
@@ -650,10 +756,10 @@ impl Summary {
             },
             "unknown",
         ));
-        let repair = field(&["commands.repair"], "not_available");
-        let packet = field(&["commands.context_packet"], "not_available");
-        let verify = field(&["commands.verify"], "not_available");
-        let receipt = field(&["commands.receipt"], "not_available");
+        let repair = local(&["commands.repair"], "not_available");
+        let packet = local(&["commands.context_packet"], "not_available");
+        let verify = local(&["commands.verify"], "not_available");
+        let receipt = local(&["commands.receipt"], "not_available");
         let fallback = field(&["fallback.summary", "fallback.kind"], "none");
         let warnings = inline(&doc.length("warnings"));
         let led = repair != "not_available" && repair != "unknown";
@@ -951,7 +1057,20 @@ impl Summary {
             .doc(WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT)
             .map(|doc| doc.optional(&["static_movement.state"]))
             .unwrap_or_default();
-        if movement == "missing_artifact" {
+        if movement == "missing_artifact"
+            && self.root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT).exists()
+        {
+            // Something is at the receipt path but the review summary read no
+            // static movement from it (unreadable, not JSON, or no seam).
+            // "No receipt yet" would send the reader to start a repair over
+            // evidence that exists; name the file and the full packet.
+            self.line(&format!(
+                "- Receipt: `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it on a local checkout: rerun `ripr agent verify`, then `ripr agent receipt`."
+            ));
+            self.line(&format!(
+                "- Full packet: `{WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT}` (workflow artifact)."
+            ));
+        } else if movement == "missing_artifact" {
             self.line(&format!("- Receipt: {NO_RECEIPT_BEFORE_REPAIR}"));
             let repair = self
                 .doc(START_HERE_JSON)
@@ -1470,7 +1589,7 @@ impl Summary {
         );
     }
 
-    fn gate_decision(&mut self) {
+    fn gate_decision(&mut self, gate_mode: &str) {
         self.line("### Gate decision");
         if let Some(doc) = self.doc(GATE_JSON) {
             let count = |path: &str| inline(&doc.field(&[path], "0", "0"));
@@ -1583,10 +1702,7 @@ impl Summary {
             self.line("- Related inputs: `ripr/review/comments.json`, `ci/labels.json`");
             self.blank();
         }
-        self.report_or(
-            GATE_MD,
-            "Gate decision was not run. Set `RIPR_GATE_MODE` to `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate` to opt in.",
-        );
+        self.report_or(GATE_MD, &gate_verdict::missing_decision_line(gate_mode));
     }
 
     fn baseline_delta(&mut self, gate_baseline: bool) {

@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_counter.ts:typescript_preview:1aa358b1|probe:src_counter.ts:typescript_preview:1aa358b1|src/counter.ts"
+            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_counter.ts:typescript_preview:1aa358b1|probe:src_counter.ts:typescript_preview:1aa358b1|fixtures/typescript_private_method_unknown/input/src/counter.ts"
           },
           "level": "note",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/counter.ts"
+                  "uri": "fixtures/typescript_private_method_unknown/input/src/counter.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "static_unknown static exposure for predicate probe:     return value >= 50 ? 55 : 0;. Next step: TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_counter.ts:typescript_preview:1aa358b1|probe:src_counter.ts:typescript_preview:1aa358b1|src/counter.ts"
+            "riprFingerprintV1": "ripr.finding.static_unknown|probe:src_counter.ts:typescript_preview:1aa358b1|probe:src_counter.ts:typescript_preview:1aa358b1|fixtures/typescript_private_method_unknown/input/src/counter.ts"
           },
           "properties": {
             "changed_expression": "    return value >= 50 ? 55 : 0;",
