@@ -16,7 +16,9 @@
 //! `unknown`, not absent. An owner call outside every such macro, or an
 //! assertion that names no owner call, keeps its parsed reading. A call
 //! qualified by another type (`Other::new(..)` for the owner
-//! `impl Widget::new`) is not a call of the owner and is not counted.
+//! `impl Widget::new`), or a `.` method or field on a receiver when the owner
+//! is a free function (`other.pick(0)` for `pick`), is not a use of the owner
+//! and is not counted.
 
 use std::collections::BTreeSet;
 
@@ -66,6 +68,12 @@ impl<'a> OwnerName<'a> {
             name: &owner.name,
             types,
         }
+    }
+
+    /// Whether the owner is an associated function, which a `.` method call
+    /// (`w.read()`) may reach. A free function is never `x.name(..)`.
+    fn is_method(&self) -> bool {
+        !self.types.is_empty()
     }
 
     /// Whether a call qualified by `qualifier` (`Q::name(..)`) may be a call
@@ -172,7 +180,12 @@ fn walk(
                     position += 3;
                     continue;
                 }
+                let after_dot = position
+                    .checked_sub(1)
+                    .and_then(|at| children.get(at))
+                    .is_some_and(|before| before.kind() == SyntaxKind::DOT);
                 if token.text() == owner.name
+                    && (!after_dot || owner.is_method())
                     && qualifier(&children, position)
                         .is_none_or(|qualifier| owner.admits_qualifier(&qualifier))
                 {
@@ -314,6 +327,21 @@ mod tests {
                 false,
             ),
             (
+                "assert_eq!(check_ok!(pick(0)), other.pick(0))",
+                Some(local),
+                true,
+            ),
+            (
+                "assert_eq!(check_ok!(other.pick(0)), Mode::A)",
+                Some(local),
+                false,
+            ),
+            (
+                "assert_eq!(check_ok!(pick(0)), cfg.pick)",
+                Some(local),
+                true,
+            ),
+            (
                 "assert_eq!(check_ok!(other(0)), Mode::A)",
                 Some(local),
                 false,
@@ -347,6 +375,7 @@ mod tests {
             ("assert_eq!(mystery!(Other::new()), w)", false),
             ("assert_eq!(mystery!(Other::new()), Widget::new())", false),
             ("assert_eq!(mystery!(Widget::new()), Other::new())", true),
+            ("assert_eq!(mystery!(w.new()), w)", true),
         ];
         for (text, expected) in cases {
             assert_eq!(

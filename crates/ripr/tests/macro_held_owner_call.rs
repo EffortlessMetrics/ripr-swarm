@@ -140,6 +140,9 @@ impl Drop for Workspace {
 fn an_owner_call_only_an_untrusted_macro_holds_gives_no_exact_credit() -> Result<(), String> {
     let vec_shadow = "macro_rules! vec { ($($t:tt)*) => { 0 }; }";
     // (label, test-local macros, assertion, expected grip class, oracle kind)
+    let other_method = format!(
+        "{CHECK_OK}\n    struct Other;\n    impl Other {{ fn pick(&self, _: u32) -> Result<Mode, ()> {{ Ok(Mode::A) }} }}"
+    );
     let cases: &[(&str, &str, &str, &str, &str)] = &[
         (
             "a local macro holds the only owner call",
@@ -168,6 +171,13 @@ fn an_owner_call_only_an_untrusted_macro_holds_gives_no_exact_credit() -> Result
             "assert_eq!(vec![pick(0)], vec![Ok(Mode::A)]);",
             "strongly_gripped",
             "exact_value",
+        ),
+        (
+            "a method of the same name on another receiver is not the owner",
+            other_method.as_str(),
+            "assert_eq!(check_ok!(pick(0)), Other.pick(0));",
+            "propagation_unknown",
+            "unknown",
         ),
         (
             "plain owner call",
