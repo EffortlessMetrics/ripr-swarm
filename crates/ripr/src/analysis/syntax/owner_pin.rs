@@ -7740,14 +7740,16 @@ fn eager_path(
                 return Err("a `loop` after a `break` or `continue` that can skip it");
             }
         } else if let Some(table) = ast::ForExpr::cast(parent.clone()) {
-            // A `for` over a non-empty array runs its body at least once,
-            // like `loop` above (RIPR-SPEC-0197 rule 8). Any other iterable
-            // may be empty and stays refused. This admits execution only:
-            // what a row's value proves is read by each oracle rule, which
-            // keeps its own constant-row requirement (#14116).
+            // A `for` over a non-empty array of call-free rows runs its body
+            // at least once, like `loop` above (RIPR-SPEC-0197 rule 8). Any
+            // other iterable may be empty, and a row that calls code may
+            // leave the test before the loop starts, so both stay refused.
+            // This admits execution only: an expected value read from rows
+            // that are not constant is refused by the owner-return pin
+            // through [`opaque_row_names`] (#14116).
             if table.loop_body().is_none_or(|body| body.syntax() != &node)
                 || table.label().is_some()
-                || row_array(&table, function, non_empty_rows).is_none()
+                || row_array(&table, function, call_free_rows).is_none()
             {
                 return Err(conditional_construct(&parent));
             }
@@ -8274,6 +8276,105 @@ fn skip_list(source: &str, name: &str) -> Option<Vec<String>> {
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {
     non_empty_rows(rows) && rows.exprs().all(|row| constant_value(&row))
+}
+
+/// Whether `rows` is a non-empty list array whose every row evaluates
+/// without running code: a constant row, or a path (a local, `const` or
+/// `static`), alone or inside parentheses, shared references, tuples,
+/// nested list arrays and full-range slices of array literals
+/// (`&[..][..]`). A `const` is evaluated at compile time and a path
+/// read cannot leave the test, so the loop always starts; a call, method,
+/// macro, operator or block in a row may exit the process first.
+fn call_free_rows(rows: &ast::ArrayExpr) -> bool {
+    non_empty_rows(rows) && rows.exprs().all(|row| call_free_value(&row))
+}
+
+fn call_free_value(value: &ast::Expr) -> bool {
+    constant_value(value)
+        || match value {
+            ast::Expr::PathExpr(path) => path.path().is_some(),
+            ast::Expr::ParenExpr(inner) => inner.expr().is_some_and(|expr| call_free_value(&expr)),
+            ast::Expr::RefExpr(reference) => {
+                reference.mut_token().is_none()
+                    && reference.raw_token().is_none()
+                    && reference.expr().is_some_and(|expr| call_free_value(&expr))
+            }
+            ast::Expr::TupleExpr(tuple) => tuple.fields().all(|field| call_free_value(&field)),
+            ast::Expr::ArrayExpr(items) => {
+                items.semicolon_token().is_none()
+                    && items.exprs().all(|item| call_free_value(&item))
+            }
+            // `&[a, b][..]`: a full-range index of an array literal is the
+            // built-in slice view, which runs no user code and cannot panic.
+            ast::Expr::IndexExpr(index) => {
+                matches!(index.index(), Some(ast::Expr::RangeExpr(range))
+                    if ast::RangeItem::start(&range).is_none() && ast::RangeItem::end(&range).is_none())
+                    && index.base().is_some_and(|base| array_literal(&base))
+            }
+            _ => false,
+        }
+}
+
+/// Whether `value` is a call-free list array literal, behind any shared
+/// references and parentheses.
+fn array_literal(value: &ast::Expr) -> bool {
+    match value {
+        ast::Expr::ArrayExpr(_) => call_free_value(value),
+        ast::Expr::ParenExpr(inner) => inner.expr().is_some_and(|expr| array_literal(&expr)),
+        ast::Expr::RefExpr(reference) => {
+            reference.mut_token().is_none()
+                && reference.raw_token().is_none()
+                && reference.expr().is_some_and(|expr| array_literal(&expr))
+        }
+        _ => false,
+    }
+}
+
+/// The names a test binds from loop rows that are not constant: every name
+/// in the pattern of a `for` whose body [`eager_path`] admits over rows
+/// that are call-free but not constant, and every name a `let` inside such
+/// a loop's body binds. A row may hold the owner's own output (`const
+/// EXPECTED: u32 = weight(4);` in `for want in [EXPECTED]`), so the
+/// owner-return pin refuses an expected operand naming one of them; a
+/// constant-row table's names stay readable (#14116).
+pub(crate) fn opaque_row_names(fn_text: &str) -> Vec<String> {
+    if !fn_text.contains("for") {
+        return Vec::new();
+    }
+    let Some(parse) = parse_clean_source_file(fn_text) else {
+        return Vec::new();
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for table in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::ForExpr::cast)
+    {
+        if row_array(&table, &function, call_free_rows).is_none()
+            || row_array(&table, &function, constant_rows).is_some()
+        {
+            continue;
+        }
+        let pattern = table.pat().map(|pat| pat.syntax().clone());
+        let lets = table
+            .loop_body()
+            .into_iter()
+            .flat_map(|body| body.syntax().descendants().filter_map(ast::LetStmt::cast))
+            .filter_map(|binding| binding.pat().map(|pat| pat.syntax().clone()));
+        for scope in pattern.into_iter().chain(lets) {
+            names.extend(
+                scope
+                    .descendants()
+                    .filter_map(ast::IdentPat::cast)
+                    .filter_map(|ident| ident.name())
+                    .map(|name| name.text().trim_start_matches("r#").to_string()),
+            );
+        }
+    }
+    names
 }
 
 /// Whether `rows` is a list array with at least one element that no
