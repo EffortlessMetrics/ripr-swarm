@@ -356,24 +356,30 @@ pin above never applied.
 
 The name now reaches the return sink (`bare_name_returned_tail` in
 `classify/flow.rs`) when the owner declares a non-unit return type, the probe
-is one snake_case identifier before and after the edit that resolves, at its own
-position, to a binding the owner introduces (a `let` in an enclosing block
-that precedes it, or else a parameter; a `let` in a disjoint scope such as
-the other `if` branch does not count; an item declared in an enclosing
-block that mentions the name, or a preceding `let .. else` that names it,
-where a bare name may be a constant pattern, makes the reader decline), and
-the parser places that
-identifier, once on its line, at a position whose value the owner returns:
-the body's tail, or the tail of a plain block or of either `if` branch in
-such a position. `self`, paths, generics, labelled or `async`/`unsafe`
-blocks, `match` arms, loops, closures and a `let` initializer add no sink,
-and neither does a constant, static, unit struct or imported item spelled as
-one identifier.
-Syntax alone cannot tell a binding from a path pattern (`let Fallback = x;`
-is a unit-struct pattern when `struct Fallback;` is in scope), so the
-snake_case rule is a spelling heuristic, the casing Rust's lints expect of a
-local, not name resolution. It admits only the sink. Only the sink moves; credit still comes from the reached-tail pin (or the
-other existing readers).
+is one snake_case identifier before and after the edit, and the parser places
+that identifier, once on its line, at a position whose value the owner
+returns: the body's tail, or the tail of a plain block or of either `if`
+branch in such a position. `self`, paths, generics, labelled or
+`async`/`unsafe` blocks, `match` arms, loops, closures and a `let`
+initializer add no sink.
+
+The reader also needs syntactic binding evidence at that position
+(`owner_binding_visible_at`): a preceding `let` in a block enclosing the
+tail, or else a parameter, that names the identifier. A `let` in a disjoint
+scope, such as the other `if` branch, does not count. The reader declines
+when it sees an item declared in an enclosing block that mentions the name,
+or a preceding `let .. else` that names it (a refutable pattern, where a
+bare name may be a constant pattern).
+
+This is not name resolution. Syntax alone cannot tell a binding from a path
+pattern: `let Fallback = x;` is a unit-struct pattern when
+`struct Fallback;` is in scope, and a module-level
+`use defaults::Fallback as fallback;` gives a unit constructor a lowercase
+spelling this reader cannot see. The snake_case rule and the item and
+let-else declines withhold the item-like spellings and ambiguous patterns the
+reader sees; they do not claim to rule out every item. The reading admits
+only the sink, so it can withhold credit but not add it: credit still comes
+from the reached-tail pin (or the other existing readers).
 
 A bare owner name is the one token the changed text offers, and a test that
 spells it names its own binding (`let amount = discounted(100, true);`), so

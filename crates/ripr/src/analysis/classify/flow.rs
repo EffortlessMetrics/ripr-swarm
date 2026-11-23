@@ -952,11 +952,13 @@ fn predicate_as_owner_tail(
 /// returns: the body's tail, or, recursively, the tail of a plain block or of
 /// either branch of an `if` in such a position. Fails closed unless the owner
 /// declares a non-unit return type, the probe (before and after the edit) is
-/// one identifier that resolves, at its own position, to a binding the owner
-/// introduces (a parameter, or a preceding `let` in an enclosing block), and
-/// its line holds that identifier once, at a returned position. A constant or
-/// other item spelled as one identifier is not read here. `self`, paths, generics, labelled or `async`/`unsafe` blocks,
-/// `match` arms, loops and closures add no sink here.
+/// one snake_case identifier with syntactic binding evidence at its own
+/// position (a parameter, or a preceding `let` in an enclosing block; see
+/// [`owner_binding_visible_at`]), and its line holds that identifier once, at
+/// a returned position. This withholds the item-like spellings and ambiguous
+/// patterns it can see; it is not name resolution. `self`, paths, generics,
+/// labelled or `async`/`unsafe` blocks, `match` arms, loops and closures add
+/// no sink here.
 fn bare_name_returned_tail(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
