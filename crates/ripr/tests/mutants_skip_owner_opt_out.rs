@@ -1342,15 +1342,15 @@ fn printed_argv_inverts_both_quoting_forms() -> Result<(), String> {
         ["ripr", "context", "id", "--root", "a b", "--diff", "it's"]
     );
     assert_eq!(
-        printed_argv(r#"ripr context id --root "C:\Temp\fx" --from "C:\a b\\" --x "q""t""#)?,
+        printed_argv(r#"ripr context id --root "tmp\fx" --from "x\a b\\" --x "q""t""#)?,
         [
             "ripr",
             "context",
             "id",
             "--root",
-            r"C:\Temp\fx",
+            r"tmp\fx",
             "--from",
-            r"C:\a b\",
+            r"x\a b\",
             "--x",
             "q\"t"
         ]
