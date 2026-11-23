@@ -576,6 +576,17 @@ fn spreads_computed_keys_and_accessors_are_unreadable_literals() -> Result<(), S
                 "expect(title({ '__proto__': { name: 'Bob' } })).toBe('Bob');",
                 "weakly_exposed",
             ),
+            // Escaped keys spell `name` and `__proto__` without their text.
+            (
+                "escaped-own-key",
+                r"expect(title({ 'na\u006de': 'Bob' })).toBe('Bob');",
+                "weakly_exposed",
+            ),
+            (
+                "escaped-proto-key",
+                r"expect(title({ '__pr\u006fto__': { name: 'Bob' } })).toBe('Bob');",
+                "weakly_exposed",
+            ),
             // Controls: an own empty value and a plain missing key still read.
             (
                 "own-empty",
