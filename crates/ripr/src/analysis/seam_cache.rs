@@ -790,7 +790,8 @@ pub(crate) struct CachedSeamLimitInfo {
 /// package reads as an unknown oracle (#10150).
 /// `1.193`: main claimed `1.192`; the same merge, re-pinned above it.
 /// `1.194`: #16195 claimed `1.193`; the same merge, re-pinned above it.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.194";
+/// `1.195`: a sibling claimed `1.194`; the same merge, re-pinned above it.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.195";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1024,7 +1025,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.194";
 /// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
 /// `0.195`: main claimed `0.194`; the same merge, re-pinned above it.
 /// `0.196`: #16195 claimed `0.195`; the same merge, re-pinned above it.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.196";
+/// `0.197`: a sibling claimed `0.196`; the same merge, re-pinned above it.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1260,7 +1262,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.196";
 /// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
 /// `0.195`: main claimed `0.194`; the same merge, re-pinned above it.
 /// `0.196`: #16195 claimed `0.195`; the same merge, re-pinned above it.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.196";
+/// `0.197`: a sibling claimed `0.196`; the same merge, re-pinned above it.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5862,7 +5865,8 @@ mod tests {
         // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150).
         // 1.192 -> 1.193: the merge of #6732 and #12876, re-pinned above #10150.
         // 1.193 -> 1.194: #16195 claimed 1.193; the same merge, re-pinned above it.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.194");
+        // 1.194 -> 1.195: a sibling claimed 1.194; the same merge, re-pinned above it.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.195");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6034,8 +6038,9 @@ mod tests {
         // 0.193 -> 0.194: same manifest-rebound assertion root as full 1.192 (#10150).
         // 0.194 -> 0.195: the merge of #6732 and #12876, re-pinned above #10150.
         // 0.195 -> 0.196: #16195 claimed 0.195; the same merge, re-pinned above it.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.196");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.196");
+        // 0.196 -> 0.197: a sibling claimed 0.196; the same merge, re-pinned above it.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.197");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.197");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
