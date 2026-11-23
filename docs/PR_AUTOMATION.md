@@ -486,6 +486,14 @@ route is claimed. Ordinary local `precommit` keeps formatting and selected Clipp
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+The formatting step of `check-fast`, `ci-fast`, local `precommit` and `shape`
+is the `cargo fmt` obligation run as bounded `rustfmt` batches over the same
+target roots, one batch group per edition. `cargo fmt` passes every root on
+one command line, which Windows caps at 32,767 characters; package `ripr`
+passed that with its integration-test roots, and the step failed with
+os error 206 before rustfmt started (#12004). The hosted workflow keeps its
+explicit `cargo fmt --check` step.
+
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,
 `crates/ripr-contract/src/domain/`, `lsp.rs`, `docs/OUTPUT_SCHEMA.md`,
