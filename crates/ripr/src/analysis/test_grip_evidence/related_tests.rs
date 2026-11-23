@@ -906,19 +906,31 @@ pub(super) fn sort_related_tests_for_seam<'a>(
     // #12478: one reverse owner-reach walk for the whole related set. A
     // one-element slice per test rebuilt the walk (and its unbounded
     // OnceLock closure) on every related test of the seam.
-    let credited_views = ((refuse || claims_pin.is_some()) && !related.is_empty()).then(|| {
-        let related_pairs: Vec<_> = related
-            .iter()
-            .map(|&(indexed, reason)| (indexed.test, reason))
-            .collect();
-        super::credited_related_tests(
-            context,
-            owner_fn,
-            &related_pairs,
-            refuse,
-            claims_pin.as_ref(),
-        )
+    // #16188: an owner call only an untrusted inner macro holds is read
+    // through the credited view too, so the published row agrees.
+    let macro_held = owner_fn.is_some_and(|owner| {
+        related.iter().any(|(indexed, _)| {
+            super::macro_operand_owner_call::test_has_macro_held_owner_call(
+                indexed.test,
+                &owner.name,
+                context.index,
+            )
+        })
     });
+    let credited_views = ((refuse || claims_pin.is_some() || macro_held) && !related.is_empty())
+        .then(|| {
+            let related_pairs: Vec<_> = related
+                .iter()
+                .map(|&(indexed, reason)| (indexed.test, reason))
+                .collect();
+            super::credited_related_tests(
+                context,
+                owner_fn,
+                &related_pairs,
+                refuse,
+                claims_pin.as_ref(),
+            )
+        });
     debug_assert!(
         credited_views
             .as_ref()

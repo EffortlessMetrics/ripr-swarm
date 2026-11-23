@@ -17,6 +17,7 @@ mod call_budget;
 mod claims_payload_pin;
 mod framework_snapshot;
 pub(in crate::analysis) mod local_operand_alias;
+mod macro_operand_owner_call;
 mod owner_result_binding;
 mod panic_outcome;
 mod reach_limit;
@@ -1142,6 +1143,20 @@ fn credited_related_tests<'a>(
                         position += 1;
                         !withheld.contains(&(position - 1))
                     });
+                }
+            }
+            // #16188: an owner call that only an untrusted inner macro holds
+            // is not established by the assertion.
+            if let Some(owner) = owner_fn {
+                let source = context
+                    .index
+                    .files()
+                    .get(&test.file)
+                    .map(|facts| facts.data().source.as_ref());
+                if let Some(assertions) =
+                    macro_operand_owner_call::demoted_view(&view, &owner.name, source)
+                {
+                    view.to_mut().assertions = assertions;
                 }
             }
             view
