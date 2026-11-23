@@ -2177,6 +2177,26 @@ Tests: `positional_only_marker_tests.rs::positional_calls_do_not_expose_a_marker
 `positional_only_marker_tests.rs::an_aliased_keyword_call_keeps_exposed`,
 `positional_only_marker_tests.rs::marker_only_edits_name_the_moved_parameters`.
 
+A one-line `return`, `if` or `elif` condition whose only edit swaps its one
+top-level `and` for `or`, or back (#16203), changes the result only for inputs
+where the two operands disagree. Each operand must be a parameter (in an
+`if` or `elif` only, since `return a or b` returns an operand rather than its
+truth value), `not` a parameter, or one comparison between parameters, scalar literals and unrebound
+module constants, and each parameter must be one the body never rebinds. When
+every strong related call resolves both operands and gives them the same truth
+value, the edit reads `weakly_exposed` and the missing discriminator names a
+call where the operands differ. A call the reader cannot resolve, or no
+resolved call at all, leaves the reading to the other rules. Such a swap moves
+no comparison boundary, so the changed-predicate boundary rule does not read
+its comparisons.
+
+Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap`,
+`connective_swap_tests.rs::a_call_with_disagreeing_operands_keeps_exposed`,
+`connective_swap_tests.rs::an_unresolved_call_keeps_exposed`,
+`connective_swap_tests.rs::a_float_operand_is_read_by_its_represented_value`,
+`connective_swap_tests.rs::an_if_condition_with_a_module_constant_reads_agreeing_calls`,
+`connective_swap_tests.rs::only_a_lone_connective_swap_between_simple_operands_is_read`.
+
 ## Changed Range Header Amendment (#12948)
 
 A strong exact-value assertion on an owner does not establish that a changed

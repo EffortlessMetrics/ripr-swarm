@@ -4,12 +4,24 @@
 
 A test-local check helper with a `?` now lends its assertion when every eager
 call in the test is `check(..)?`, which bumps the analyzer cache schema to
-1.196 (1.195 is left for #16209). Move the portable unchanged-attempt snapshots
+1.196. Move the portable unchanged-attempt snapshots
 to 1.196, recompute the `raw_json_placeholder_v1` artifact content commitment,
 then the dependent verify commitments and receipt byte hashes. Weak grip,
 unchanged movement, historical currentness, incomplete receipt status and
 fail-closed first-action routing remain unchanged. No other fixture output is
 regenerated.
+
+## Pending — corpus cache generation 1.195 for macro-held owner-result locals (#16192)
+
+A plain local bound to an owner call whose only uses sit inside an inner
+macro the analyzer does not trust (`let r = pick(0); assert_eq!(check_ok!(r),
+..)`) now makes that assertion read as an unknown oracle for the owner, which
+bumps the analyzer cache schema to 1.195. Move the
+portable unchanged-attempt snapshots to 1.195, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
 
 ## Pending — corpus cache generation 1.194 for non-empty array loops (#14116)
 
