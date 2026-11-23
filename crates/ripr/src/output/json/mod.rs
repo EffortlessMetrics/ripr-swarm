@@ -7,7 +7,9 @@ mod terse;
 
 pub(crate) use context_packet::CONTEXT_PACKET_VERSION_CONTRACT;
 pub use context_packet::render_context_packet;
-pub(crate) use context_packet::render_context_packet_with_explain_command;
+pub(crate) use context_packet::{
+    render_context_packet_with_explain_command, render_selected_context_packet,
+};
 // Test-only since #5994: production surfaces render through
 // `render_context_packet_with_explain_command`; the raw-DTO render is the
 // parity oracle for the LSP packet tests.
