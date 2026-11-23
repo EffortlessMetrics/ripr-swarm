@@ -178,6 +178,7 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
     // `ripr -v -v mcp` routed. Version is a side-effect-free identity
     // query, so it must not emit the verbose diagnostic even when callers
     // append or prepend the flag.
+    let argv_before_extraction = args.clone();
     let verbose_flag = !version_requested && parse::extract_global_verbose(&mut args);
     if verbose_flag {
         crate::set_verbose(true);
@@ -189,9 +190,20 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
         if args.get(1).is_some_and(|arg| arg == "help")
             && args.get(2).is_some_and(|arg| arg == "--json")
         {
-            return Err(CommandError::from(
-                "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands".to_string(),
-            ));
+            // The extraction removed the flag, so the stray argument is
+            // the first token of the original argv that is not one of the
+            // two route tokens (#16072). That is the verbosity flag itself
+            // unless another extra precedes it.
+            let mut route = ["help", "--json"].into_iter().peekable();
+            let stray = argv_before_extraction
+                .iter()
+                .skip(1)
+                .find(|arg| route.next_if(|token| arg.as_str() == *token).is_none())
+                .cloned();
+            return Err(CommandError::from(command::strict_route_usage(
+                "help --json",
+                stray.as_slice(),
+            )));
         }
         eprintln!("ripr: verbose mode enabled");
     } else if env_verbose_applies(&args) && verbose_requested_by_env() {
@@ -584,6 +596,7 @@ fn before_phase_attempt_stderr(
     manifest_path: &Path,
     next_command: &str,
     baseline_ambiguous: bool,
+    focused_result_requirement: Option<&str>,
 ) {
     if baseline_ambiguous {
         eprintln!(
@@ -602,6 +615,10 @@ fn before_phase_attempt_stderr(
     // Human next-step lines teach `ripr continue` for ordinary attempts
     // (#7879). The persisted manifest and JSON continuation keep the
     // advanced `--phase after` spelling.
+    // #16164: a proposal attempt's requirement precedes the command naming it.
+    if let Some(requirement) = focused_result_requirement {
+        eprintln!("ripr: {requirement}");
+    }
     let follow_up = crate::agent::human_after_phase_follow_up(next_command);
     eprintln!("ripr: attempt next command: {follow_up}");
     if let Some(form) = crate::output::markdown::powershell_text_variant(&follow_up) {
@@ -645,7 +662,7 @@ fn persist_before_repair_attempt(
         )
     })?;
     let mut policy =
-        crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
+        crate::app::repair_attempt::edit_cage_policy_from_packet_in(root, &packet_text, seam_id)?;
     crate::app::repair_attempt::include_resolved_explicit_store_operational_write(
         &mut policy,
         root,
@@ -767,6 +784,22 @@ fn persist_before_repair_attempt(
             path: &binding.record_path,
         });
     }
+    // #16164: an attempt that follows a new-test proposal finishes only with a
+    // focused result, so its published after command names the flag up front
+    // instead of letting the first after phase learn it from a refusal. The
+    // cage policy derived from this packet is the one proposal authority.
+    let next_command_suffix = format!(
+        "{}{}",
+        binding
+            .as_ref()
+            .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX)
+            .unwrap_or_default(),
+        if policy.new_test_proposal.is_some() {
+            crate::app::focused_run::PROPOSAL_FOCUSED_RESULT_FLAG
+        } else {
+            ""
+        }
+    );
     let begin_options = crate::app::repair_attempt::BeginRepairAttemptOptions {
         root,
         root_argument: root,
@@ -779,9 +812,8 @@ fn persist_before_repair_attempt(
         // explicit authorization, so the published follow-up must name
         // the required flags with an explicit placeholder identity — the
         // driver never persists a granted authorization.
-        next_command_suffix: binding
-            .as_ref()
-            .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
+        next_command_suffix: (!next_command_suffix.is_empty())
+            .then_some(next_command_suffix.as_str()),
         store: options.store.as_deref(),
     };
     let result = match gap_binding {
@@ -830,6 +862,21 @@ fn persist_before_repair_attempt(
         baseline_ambiguous,
         typescript_test_cache_guidance,
         focused_test_command: focused_test_command(root, &packet_text),
+        declared_cargo_test_target: policy.declared_cargo_test_target,
+        // #16186: name the command resolved for the proposed file's own
+        // package and target when it can be established.
+        focused_result_requirement: policy.new_test_proposal.as_ref().map(|proposal| {
+            let resolved = (proposal.kind
+                == crate::analysis::new_test_target::NewTestKind::Integration)
+                .then(|| crate::app::test_stub::focused_result_run_command(root, &proposal.file))
+                .flatten();
+            crate::app::focused_run::proposal_focused_result_requirement(
+                "This attempt",
+                resolved
+                    .as_deref()
+                    .map(|command| (command, proposal.file.as_str())),
+            )
+        }),
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -859,6 +906,15 @@ fn persist_before_repair_attempt(
             eprintln!(
                 "{}",
                 crate::output::human::terminal_safe(format!("ripr: {line}"))
+            );
+        }
+        // #15902: when unignored untracked files alone exceed the capture
+        // budget, say so and name the fix instead of leaving the generic
+        // "resolve the workspace condition" text as the only guidance.
+        if let Some(cause) = crate::edit_cage::oversized_untracked_cause(root) {
+            eprintln!(
+                "{}",
+                crate::output::human::terminal_safe(format!("ripr: {cause}"))
             );
         }
     } else if options.gap_id.is_some() {
@@ -907,6 +963,7 @@ fn persist_before_repair_attempt(
             &result.manifest_path,
             &result.manifest.next_command,
             baseline_ambiguous,
+            continuation.focused_result_requirement.as_deref(),
         );
     }
     // The stdout document owns its trailer: the after-edit directive, or the
@@ -926,9 +983,11 @@ fn persist_before_repair_attempt(
 fn focused_test_command(root: &std::path::Path, packet: &str) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(packet).ok()?;
     let test = value.pointer("/packets/0/recommended_test")?;
-    let file = test.get("file")?.as_str()?;
+    // The packet spells the file as stable path text; the manifest lookup
+    // compares native names (`spec/discount%.rs`, not `spec/discount%25.rs`).
+    let file = crate::analysis::decode_stable_path_text(test.get("file")?.as_str()?);
     let name = test.get("name")?.as_str()?;
-    crate::app::test_stub::focused_test_run_command(root, file, name)
+    crate::app::test_stub::focused_test_run_command(root, file.to_str()?, name)
 }
 
 #[cfg(test)]
@@ -1391,11 +1450,12 @@ mod tests {
             format_error
         );
         // A switch given a boolean literal stays one token and is refused
-        // as typed, never read as the switch plus a stray value.
+        // as typed, never read as the switch plus a stray value. The refusal
+        // names it as a switch (#15898).
         assert_eq!(
             run(args(&["ripr", "check", "--quiet=false"])),
             Err(CommandError::Failure(
-                "unknown check argument \"--quiet=false\". Run `ripr check --help --all`."
+                "unknown check argument \"--quiet=false\". `--quiet` is a switch and takes no value: write `--quiet` alone; a switch is on when present and off when absent. Run `ripr check --help --all`."
                     .to_string()
             ))
         );

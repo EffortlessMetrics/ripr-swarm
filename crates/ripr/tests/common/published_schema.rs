@@ -75,6 +75,16 @@ pub fn check(value: &Value, schema: &Value, root: &Value, location: &str) -> Res
             ));
         }
     }
+    if let Some(branches) = schema.get("anyOf").and_then(Value::as_array)
+        && !branches
+            .iter()
+            .any(|branch| check(value, branch, root, location).is_ok())
+    {
+        return Err(format!(
+            "{location}: matched none of {} anyOf branches",
+            branches.len()
+        ));
+    }
     if let Some(negated) = schema.get("not")
         && check(value, negated, root, location).is_ok()
     {
@@ -310,8 +320,12 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
     }
     if let Some(pattern) = schema.get("pattern").and_then(Value::as_str) {
         match pattern {
-            SHA256_DIGEST_PATTERN => {
-                let hex = text.strip_prefix("sha256:").unwrap_or("");
+            SHA256_DIGEST_PATTERN | HEX_DIGEST_PATTERN => {
+                let hex = if pattern == SHA256_DIGEST_PATTERN {
+                    text.strip_prefix("sha256:").unwrap_or("")
+                } else {
+                    text
+                };
                 let lowercase_hex = hex
                     .chars()
                     .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c));
@@ -332,7 +346,7 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
             }
             other => {
                 return Err(format!(
-                    "{location}: unsupported `pattern` {other:?}; this checker only evaluates {SHA256_DIGEST_PATTERN:?}, {LONG_FLAG_PATTERN:?} and {RELATIVE_WORKDIR_PATTERN:?}"
+                    "{location}: unsupported `pattern` {other:?}; this checker only evaluates {SHA256_DIGEST_PATTERN:?}, {HEX_DIGEST_PATTERN:?}, {LONG_FLAG_PATTERN:?} and {RELATIVE_WORKDIR_PATTERN:?}"
                 ));
             }
         }
@@ -343,6 +357,8 @@ fn check_string(text: &str, schema: &Value, location: &str) -> Result<(), String
 /// The regular expressions this checker evaluates. Any other `pattern` is an
 /// error at check time, never an assumed match.
 pub const SHA256_DIGEST_PATTERN: &str = "^sha256:[0-9a-f]{64}$";
+/// A bare lowercase-hex SHA-256 digest.
+pub const HEX_DIGEST_PATTERN: &str = "^[0-9a-f]{64}$";
 /// Unanchored at the end: a long flag is `--` then a lowercase letter, then
 /// anything.
 pub const LONG_FLAG_PATTERN: &str = "^--[a-z]";
@@ -373,6 +389,7 @@ const SUPPORTED_KEYWORDS: &[&str] = &[
     "$schema",
     "additionalProperties",
     "allOf",
+    "anyOf",
     "const",
     "description",
     "else",
@@ -420,7 +437,7 @@ fn collect_unsupported(schema: &Value, found: &mut Vec<String>) {
             "items" | "if" | "then" | "else" | "not" | "additionalProperties" => {
                 collect_unsupported(nested, found)
             }
-            "allOf" | "oneOf" | "prefixItems" => {
+            "allOf" | "anyOf" | "oneOf" | "prefixItems" => {
                 for member in nested.as_array().into_iter().flatten() {
                     collect_unsupported(member, found);
                 }

@@ -10,13 +10,11 @@ description = "Static check for Rust changes: does your test suite notice if the
 readme = "README.md"
 keywords = ["mutation-testing", "testing", "rust", "static-analysis", "lsp"]
 categories = ["development-tools", "development-tools::testing"]
-# The source distribution carries what a build of `ripr` reads and the sample
-# workspace. Development tests stay out of it (#15216), which also keeps the
-# crate under the crates.io 10 MiB upload limit (#14071): out-of-line unit-test
-# modules (`tests.rs`, `tests/`, `*_tests.rs`, all declared under
-# `#[cfg(test)]`) and all of `tests/`. The rendered-help harness
-# (`tests/cli_help_hierarchy.rs`) runs during release qualification against
-# the executable installed from the qualified archive instead.
+# Ship production sources and the sample workspace. Development tests stay out
+# of the source archive (#15216), which keeps it under the crates.io 10 MiB
+# limit (#14071). Release qualification runs the rendered-help harness against
+# the installed executable. The publish rehearsal checks both archives for
+# test-only modules, unreferenced source files and unused source data.
 # Include patterns are gitignore-style and the last match wins, so the
 # production modules whose names end in `_tests.rs` are listed again after the
 # exclusion. A new production module with such a name must be added there, or
@@ -36,6 +34,24 @@ include = [
   "!src/**/tests.rs",
   "!src/**/tests/**",
   "!src/**/*_tests.rs",
+  "!src/analysis/language/python/bool_oracle_tests/**",
+  "!src/testing/**",
+  "!src/**/kani_proofs.rs",
+  "!src/**/*_kani.rs",
+  "!src/kani_smoke.rs",
+  "!src/app/kani_import/fixtures/**",
+  "!src/analysis/classification_properties.rs",
+  "!src/analysis/classify/activation/method_hop_rows.rs",
+  "!src/analysis/classify/activation/rebinding_scan.rs",
+  "!src/analysis/classify/stop_reason_contract.rs",
+  "!src/analysis/language/python/may_reach.rs",
+  "!src/analysis/source_role_corpus.rs",
+  "!src/analysis/test_grip_evidence/value_contradiction/fold_plan.rs",
+  "!src/analysis/verification_plan/resources.rs",
+  "!src/analysis/witness/language_projection_fixtures.rs",
+  "!src/analysis/witness/parity.rs",
+  "!src/lsp/saved_edit_measurement.rs",
+  "!src/lsp/saved_edit_sequence.rs",
   "src/analysis/classify/related_tests.rs",
   "src/analysis/facts/macro_generated_tests.rs",
   "src/analysis/facts/parameterized_tests.rs",

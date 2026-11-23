@@ -157,12 +157,19 @@ fn a_directory_at_the_manifest_path_fails_instead_of_passing() -> Result<(), Str
     let result = validate_config(&root);
     let _ = fs::remove_dir_all(&root);
     let error = result.err().ok_or("a directory is not a manifest")?;
-    if !error.starts_with(".ripr/suppressions.toml validation failed:\nfailed to read ") {
+    // The confinement check refuses a non-regular file before the read, so the
+    // refusal names the regular-file rule instead of a read error.
+    if !error.starts_with(
+        ".ripr/suppressions.toml validation failed:\n`suppressions.path` must resolve to a regular file inside the repository",
+    ) {
         return Err(format!("unexpected error: {error}"));
     }
     Ok(())
 }
 
+// Windows refuses a control byte in a file name (os error 123), so the
+// fixture file can exist only on Unix.
+#[cfg(unix)]
 #[test]
 fn a_control_byte_in_the_manifest_path_is_escaped_on_success() -> Result<(), String> {
     let root = workspace("escape")?;

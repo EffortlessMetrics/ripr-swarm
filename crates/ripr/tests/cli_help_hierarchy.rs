@@ -373,6 +373,8 @@ const BARE_HELP_GROUPS: &[&str] = &[
     "config",
     "pr-ledger",
     "pr-review",
+    // #15985: joined the list when bare `pr-comments` stopped implying `plan`.
+    "pr-comments",
     "coverage-grip",
     "gate",
 ];

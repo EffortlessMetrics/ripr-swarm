@@ -94,6 +94,21 @@ relative path ONLY when ALL of:
    `src/owner.cts`) resolve to `None`, and a near-miss suffix that is not a
    routed source extension is not a candidate.
 
+Amendment (#15914): a target that names a directory. When the substituted
+target has no source extension, names a directory without a `package.json`, and
+the effective module resolution performs directory lookup, the directory's
+`index.ts`, `index.tsx`, `index.js` and `index.jsx` join the candidates of
+rule 5, under the same exactly-one rule (`x.ts` beside `x/index.ts` resolves
+nothing). Directory lookup is taken as performed for `moduleResolution`
+`node`, `node10` or `bundler`, and, with no `moduleResolution`, for a `module`
+that is absent, `commonjs` or `preserve`. It is not for `node16`, `nodenext`
+or `classic`, for another `module` value with no `moduleResolution`, or when
+an `extends` base that was not followed could have set `moduleResolution`.
+Both options are read through the same `extends` chain as `paths`. A target
+written with a source extension names that file only, and a directory with a
+`package.json` stays unresolved because its entry fields are not read. Tests:
+`crates/ripr/tests/typescript_paths_directory_target.rs`.
+
 Amendment (#4549): the config is read as JSONC, matching `tsc`. `//` and
 `/* */` comments and trailing commas before `}` / `]` are removed outside
 string literals, then the text is parsed strictly. An unterminated block

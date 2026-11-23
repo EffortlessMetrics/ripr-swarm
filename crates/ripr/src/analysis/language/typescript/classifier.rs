@@ -449,6 +449,19 @@ pub(crate) fn ts_candidate_changed_sink_observation(
                 merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
                 continue;
             }
+            // #14858: `f().retries.other` names the changed field but reads a
+            // child of it the change does not move, so it cannot witness the
+            // change either. A read of a moved child keeps the credit.
+            if ts_value_observed_reads_unchanged_child(
+                observed,
+                changed_fields,
+                &owner_names,
+                owner_is_method,
+                &namespace_receivers,
+            ) {
+                merged = merged.merge(TypeScriptChangedSinkObservation::AffirmativelyOtherSink);
+                continue;
+            }
             // #14857: when the edit moves TWO OR MORE values of the returned
             // literal, `changed_field` is `None` and the guard above is
             // skipped. A read of a field the change never touched still cannot
@@ -974,6 +987,100 @@ fn ts_masked_reads_key_as_alias_member(
         }
     }
     words.any(|word| word == key)
+}
+
+/// #14858: whether `observed` reads, directly off the owner call, a child of a
+/// changed field that the change does not move: `f().retries.other` while the
+/// edit turns `retries: 3` into `retries: { n: 5 }`.
+///
+/// The read must be `<owner call>.<changed key>.<child>`, the key read
+/// directly off the owner call's result,
+/// and the changed field's new value must be an object literal whose moved
+/// children are known (see `TypeScriptChangedField::changed_children`). The
+/// moved child (`f().retries.n`) and the whole field (`f().retries`) keep the
+/// existing credit.
+fn ts_value_observed_reads_unchanged_child(
+    observed: &str,
+    changed: &[TypeScriptChangedField],
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    fn is_ident(text: &str) -> bool {
+        text.chars()
+            .next()
+            .is_some_and(|ch| ch.is_alphabetic() || ch == '_' || ch == '$')
+            && text
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+    }
+    let normalized = ts_normalize_bracket_field_reads(observed.trim());
+    let masked = ts_mask_literals_and_comments(&normalized);
+    let Some((path, child)) = masked.rsplit_once('.') else {
+        return false;
+    };
+    let child = child.trim();
+    let Some((base, key)) = path.rsplit_once('.') else {
+        return false;
+    };
+    let key = key.trim();
+    if !is_ident(child) || !is_ident(key) {
+        return false;
+    }
+    let Some(field) = changed.iter().find(|field| field.key == key) else {
+        return false;
+    };
+    let Some(moved) = field.changed_children() else {
+        return false;
+    };
+    if moved.iter().any(|name| name == child) {
+        return false;
+    }
+    let base = base.trim().trim_end_matches('?').trim_end();
+    if base.is_empty() || !ts_chain_is_plain_projection(base) {
+        return false;
+    }
+    // The changed key must sit directly on the owner call's result
+    // (`f().retries.other`, `this.f()?.retries.other`): a deeper path
+    // (`f().retries.retries.other`) or a wrapper (`wrap(f()).retries.other`)
+    // reads some other value whose children this check does not know.
+    if !ts_base_is_owner_call(base, owner_names) {
+        return false;
+    }
+    ts_masked_observes_owner(base, owner_names, owner_is_method, namespace_receivers)
+}
+
+/// #14858: whether `base` ends in a call of an owner name, `f(...)` or
+/// `recv.f(...)`, so a member read on it reads the owner's result directly.
+fn ts_base_is_owner_call(base: &str, owner_names: &[&str]) -> bool {
+    let Some(without_close) = base.strip_suffix(')') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut open_at = None;
+    for (offset, character) in without_close.char_indices().rev() {
+        match character {
+            ')' => depth += 1,
+            '(' if depth == 0 => {
+                open_at = Some(offset);
+                break;
+            }
+            '(' => depth -= 1,
+            _ => {}
+        }
+    }
+    let Some(callee) = open_at.and_then(|at| without_close.get(..at)) else {
+        return false;
+    };
+    let callee = callee.trim_end().trim_end_matches("?.").trim_end();
+    owner_names.iter().any(|name| {
+        callee.strip_suffix(name).is_some_and(|before| {
+            !before
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        })
+    })
 }
 
 /// #14857: whether `observed` reads a field of the owner's returned literal
@@ -4236,7 +4343,7 @@ fn is_test_framework_source(source: &str) -> bool {
 /// owner's module (its declaration). A second occurrence may be a
 /// recursive or mutually recursive call, a self alias, or a re-export that
 /// lets another path re-enter the owner with a different input.
-fn owner_module_names_owner_once(owner: &TypeScriptOwner, root: &Path) -> bool {
+pub(crate) fn owner_module_names_owner_once(owner: &TypeScriptOwner, root: &Path) -> bool {
     let Ok(source) = std::fs::read_to_string(root.join(&owner.file)) else {
         return false;
     };
@@ -6160,6 +6267,13 @@ pub(crate) fn owner_namespace_receivers(
                 .map(|import| import.local.clone()),
         );
     }
+    // An ES namespace import of a barrel whose member named like the owner
+    // is the owner's own export (#15923).
+    for local in super::related_tests::barrel_namespace_receivers(test, owner) {
+        if !receivers.contains(&local) {
+            receivers.push(local);
+        }
+    }
     // A dynamic import binds the same module namespace a static
     // `import * as` would, but as a local declaration, so it never reaches
     // `imports_in_file`. Without it the member-call gate below would
@@ -6563,14 +6677,68 @@ fn starts_with_spread(argument: &str) -> bool {
 }
 
 /// Split the text after a call's opening parenthesis into its top-level
-/// arguments, stopping at the matching closing parenthesis.
+/// arguments, stopping at the matching closing parenthesis. Commas inside
+/// strings, template literals, brackets, `/* */` or `//` comments and regex
+/// literals do not split an argument; an unterminated comment, string or
+/// regex leaves the list unreadable (`None`), so a caller that needs exact
+/// arguments keeps its verdict instead of reading invented slots.
 pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
+    let chars: Vec<char> = inner.chars().collect();
     let mut depth = 0usize;
     let mut quote: Option<char> = None;
     let mut escaped = false;
+    let mut block_comment = false;
+    let mut line_comment = false;
+    let mut regex = false;
+    let mut regex_class = false;
+    let mut skip_next = false;
+    let mut previous = '\0';
+    let mut last_significant = '\0';
     let mut current = String::new();
     let mut arguments = Vec::new();
-    for ch in inner.chars() {
+    for (index, &ch) in chars.iter().enumerate() {
+        if skip_next {
+            // The `*` of a `/*` opener is not a closer's `*`.
+            current.push(ch);
+            previous = '\0';
+            skip_next = false;
+            continue;
+        }
+        if block_comment {
+            current.push(ch);
+            if previous == '*' && ch == '/' {
+                block_comment = false;
+            }
+            previous = ch;
+            continue;
+        }
+        if line_comment {
+            current.push(ch);
+            if ch == '\n' {
+                line_comment = false;
+            }
+            previous = ch;
+            continue;
+        }
+        if regex {
+            current.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '[' {
+                regex_class = true;
+            } else if ch == ']' {
+                regex_class = false;
+            } else if ch == '/' && !regex_class {
+                regex = false;
+                last_significant = '/';
+            } else if ch == '\n' {
+                return None;
+            }
+            previous = ch;
+            continue;
+        }
         if let Some(open) = quote {
             current.push(ch);
             if escaped {
@@ -6579,12 +6747,32 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
                 escaped = true;
             } else if ch == open {
                 quote = None;
+                last_significant = open;
             }
+            previous = ch;
             continue;
         }
         match ch {
             '"' | '\'' | '`' => {
                 quote = Some(ch);
+                current.push(ch);
+            }
+            '/' if previous == '/' => {
+                line_comment = true;
+                current.push(ch);
+            }
+            '/' if chars.get(index + 1) == Some(&'*') => {
+                block_comment = true;
+                current.push(ch);
+                // The opener's `*` is not the closer's: `/*/` opens a comment
+                // that runs on, it does not close at the third character.
+                skip_next = true;
+                previous = '\0';
+                continue;
+            }
+            '/' if regex_can_start(last_significant) && regex_end(&chars, index).is_some() => {
+                regex = true;
+                regex_class = false;
                 current.push(ch);
             }
             '(' | '[' | '{' => {
@@ -6607,6 +6795,46 @@ pub(crate) fn balanced_call_arguments(inner: &str) -> Option<Vec<String>> {
                 current.clear();
             }
             _ => current.push(ch),
+        }
+        if !ch.is_whitespace() {
+            last_significant = ch;
+        }
+        previous = ch;
+    }
+    None
+}
+
+/// Whether a `/` after the last significant character can open a regex literal
+/// rather than divide. After an operand end (identifier, number, string, `)`,
+/// `]`, `}`) it is division, and whitespace does not change that, so `8 / 2`
+/// stays division while `, /x/` opens a regex.
+fn regex_can_start(last_significant: char) -> bool {
+    !(last_significant.is_ascii_alphanumeric()
+        || matches!(
+            last_significant,
+            '_' | '$' | ')' | ']' | '}' | '\'' | '"' | '`'
+        ))
+}
+
+/// The index of the `/` that closes a regex literal starting at `start`, or
+/// `None` when the text has no closing `/` before a line break (so the `/` is
+/// division, not a regex).
+fn regex_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut escaped = false;
+    let mut class = false;
+    for (offset, &ch) in chars.iter().enumerate().skip(start + 1) {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '[' {
+            class = true;
+        } else if ch == ']' {
+            class = false;
+        } else if ch == '/' && !class {
+            return Some(offset);
+        } else if ch == '\n' {
+            return None;
         }
     }
     None
@@ -9030,6 +9258,36 @@ pub(crate) fn classify_resolved_owner(
                     workspace_root,
                 )
             });
+    // #13592: reach whose every path passes a closure edge (the owner, or a
+    // function on the way to it, is passed or stored as a value) or another
+    // module's export. When, or whether, the value runs is not modeled, so
+    // any oracle there reads unknown.
+    let reach_only_through_opaque_entry = reach_only_through_module_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .all(|candidate| {
+                module_entry_reach_is_opaque_only(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
+    let reach_through_closure_entry = reach_only_through_opaque_entry
+        && related_candidates
+            .iter()
+            .filter(|candidate| candidate.relation.uses_oracle())
+            .any(|candidate| {
+                module_entry_reach_includes_closure(
+                    candidate,
+                    owner,
+                    reexport_index,
+                    alias_map,
+                    workspace_root,
+                )
+            });
     // Mixed entry reach: some related test reaches the owner through another
     // module's export, but not every one does, so neither "same-module" nor
     // "cross-module" alone describes it.
@@ -9311,6 +9569,25 @@ pub(crate) fn classify_resolved_owner(
     let lookup_witnessed = lookup_change.as_ref().is_none_or(|change| {
         ts_lookup_table_witnessed(change, owner, related_candidates, alias_map, workspace_root)
     });
+    // #15306: a changed literal return of one arm of a literal-return lookup
+    // is seen only by an assertion that expects that arm's old result.
+    // Only a lone one-for-one line replacement: another changed line could
+    // change another arm's result or pair this line with the wrong old text.
+    let literal_arm_unpinned = (strong_oracle_present && context.single_line_replacement)
+        .then(|| literal_arm_return(owner, line, line_text, old_line_text))
+        .flatten()
+        .and_then(|change| {
+            match ts_literal_arm_witness(
+                &change,
+                owner,
+                related_candidates,
+                alias_map,
+                workspace_root,
+            ) {
+                LiteralArmWitness::Unpinned(expected) => Some((change, expected)),
+                LiteralArmWitness::Kept => None,
+            }
+        });
     let returned_expression_unexercised = strong_oracle_present
         && ts_returned_expression_unexercised(
             line,
@@ -9340,6 +9617,7 @@ pub(crate) fn classify_resolved_owner(
     let observation_confirmed = strong_oracle_present
         && boundary_witnessed
         && lookup_witnessed
+        && literal_arm_unpinned.is_none()
         && !returned_expression_unexercised
         && unwitnessed_input_class.is_none()
         && (field_update_witnessed
@@ -9454,7 +9732,8 @@ pub(crate) fn classify_resolved_owner(
         // assertion in the same test says nothing about the entry's result.
         let entry_oracle_is_strong = (strongest_strength >= OracleStrength::Strong.rank()
             && ts_entry_result_is_asserted(related_candidates))
-            || reach_only_through_cross_module_entry;
+            || reach_only_through_cross_module_entry
+            || reach_only_through_opaque_entry;
         let (class, observe, discriminate) = if entry_oracle_is_strong {
             (
                 ExposureClass::StaticUnknown,
@@ -9513,6 +9792,12 @@ pub(crate) fn classify_resolved_owner(
                     .collect::<Vec<_>>()
                     .join(", "),
                 owner.name
+            )
+        } else if let Some((change, expected)) = &literal_arm_unpinned {
+            format!(
+                "{} Add a case whose input reaches that arm and expects `{}`.",
+                ts_literal_arm_unpinned_line(&owner.name, change, expected),
+                change.old_text
             )
         } else if returned_expression_unexercised {
             // RIPR-SPEC-0246 rule 11: when the same-outcome inputs are a
@@ -9783,6 +10068,12 @@ pub(crate) fn classify_resolved_owner(
                 "The change to `{}` is a `{}` edit: {}. No assertion is requested until a test input is shown to change the behavior.",
                 owner.name, shape.shape, shape.reason
             )];
+            // #15306: the unpinned arm stays named under the unknown reading.
+            if let Some((change, expected)) = &literal_arm_unpinned {
+                verdict
+                    .missing
+                    .push(ts_literal_arm_unpinned_line(&owner.name, change, expected));
+            }
             infection = Some(TsInfectionVerdict {
                 state: StageState::Unknown,
                 shape: shape.shape,
@@ -9869,6 +10160,7 @@ pub(crate) fn classify_resolved_owner(
         1,
     );
     let probe = Probe {
+        before_condition: None,
         id: ts_probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
         owner: Some(owner_sym),
@@ -9964,6 +10256,10 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
     } else if loop_count_unknown {
         "TypeScript preview adapter: the changed counted-loop header is observed only through a mock call count; the iteration count is not modeled, so discriminate unknown (RIPR-SPEC-0246 rule 8).".to_string()
+    } else if ladder_entry_unknown && reach_through_closure_entry {
+        // #13592: the path to the owner passes a function or constant used
+        // as a value (a callback, a reviver, a combinator-built rule).
+        "TypeScript preview adapter: the related tests reach the changed owner only through code that passes it, or a function that leads to it, as a value (a callback or a combinator-built constant); when that value runs is not modeled, so discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_entry_unknown && reach_only_through_cross_module_entry {
         // #13592: the caller is an export of another module that imports and
         // calls the owner (RIPR-SPEC-0243).
@@ -10024,6 +10320,9 @@ pub(crate) fn classify_resolved_owner(
                 .first()
                 .map_or("see missing evidence.", String::as_str)
         )
+    } else if strongest_strength >= OracleStrength::Strong.rank() && literal_arm_unpinned.is_some()
+    {
+        "TypeScript preview adapter: strong oracle found but every exact assertion expects another arm's result; the changed arm's old result is not pinned.".to_string()
     } else if returned_expression_unexercised {
         "TypeScript preview adapter: strong oracle found but its literal inputs give the old and the changed code the same value; the assertion does not discriminate the change.".to_string()
     } else if strongest_strength >= OracleStrength::Strong.rank() {
@@ -10065,6 +10364,9 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::ReachableUnrevealed if infection.is_some() => {
             "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if ladder_entry_unknown && reach_through_closure_entry => {
+            "TypeScript preview advisory: the related test reaches the changed owner only through a callback or a value passed between functions, so no new assertion is needed on that evidence; no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown
             if ladder_entry_unknown && reach_only_through_cross_module_entry =>
@@ -12801,8 +13103,19 @@ fn module_entry_reach_summary(
         .iter()
         .filter(|entry| entry.cross_module.is_some())
         .count();
+    let closure_called = called_entries.iter().any(|entry| entry.closure);
+    let opaque_only = called_entries
+        .iter()
+        .all(|entry| entry.closure || entry.cross_module.is_some());
     let scope = if owner.class_name.is_some() {
         "same-class"
+    } else if closure_called && opaque_only {
+        // #13592: every path passes the owner, or a function on the way to
+        // it, as a value, or crosses a module.
+        "callback or value-passing"
+    } else if closure_called {
+        // Some tests reach it through plain same-module calls too.
+        "same-module or callback"
     } else if cross_module_called > 0 && cross_module_called == called_entries.len() {
         // #13592: every entry the tests call is an export of another module
         // that reaches the owner through an imported binding.

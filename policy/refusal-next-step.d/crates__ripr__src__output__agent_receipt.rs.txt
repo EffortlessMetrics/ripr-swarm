@@ -1,0 +1,5 @@
+crates/ripr/src/output/agent_receipt.rs|agent receipt seam_id {seam_id} was not found in agent verify JSON
+crates/ripr/src/output/agent_receipt.rs|agent verify JSON is missing `inputs`
+crates/ripr/src/output/agent_receipt.rs|agent verify JSON is missing `{key}` array
+crates/ripr/src/output/agent_receipt.rs|{context} is missing numeric field `{key}`
+crates/ripr/src/output/agent_receipt.rs|{context} is missing string field `{key}`

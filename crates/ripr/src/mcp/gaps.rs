@@ -266,7 +266,7 @@ impl RepairReadiness {
             // condition (strength and relation confidence are applied by
             // `fix_site_candidates`); the test-surface predicate is re-applied
             // here so swapping candidates can never widen the edit surface.
-            Some(candidate) if !crate::analysis::is_test_surface_path(&candidate.file) => {
+            Some(candidate) if !fix_site_is_test_surface(root, &candidate.file) => {
                 self.ready = false;
                 self.fix_site = Some(candidate);
                 self.ineligibility = Some("fix_site_not_test_surface");
@@ -378,7 +378,7 @@ impl RepairReadiness {
         };
         let Some(fix_site) = candidates
             .into_iter()
-            .find(|site| crate::analysis::is_test_surface_path(&site.file))
+            .find(|site| fix_site_is_test_surface(root, &site.file))
         else {
             return Self {
                 ready: false,
@@ -456,6 +456,16 @@ impl RepairReadiness {
             }
         }
     }
+}
+
+/// Whether a fix site's file is a test surface. The site spells its file as
+/// stable path text (`%` escaped as `%25`), while the manifest authority
+/// compares native names, so `spec/discount%.rs` is decoded before it asks
+/// (#15910). A name that is not UTF-8 is not admitted.
+fn fix_site_is_test_surface(root: &Path, file: &str) -> bool {
+    crate::analysis::decode_stable_path_text(file)
+        .to_str()
+        .is_some_and(|native| crate::analysis::is_test_surface(root, native))
 }
 
 /// High-confidence directly-related tests that can be the fix site, strongest
@@ -614,7 +624,7 @@ impl GapItem {
         admission: &SeamAdmission,
     ) -> Result<Self, String> {
         let canonical_id = canonical_id_of(finding);
-        let file = crate::analysis::finding_location_text(root, &finding.probe.location.file);
+        let file = crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
         let served_file =
             crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
         let class = finding.class.as_str().to_string();
@@ -985,6 +995,15 @@ fn gap_evidence_core(
     ) {
         object.insert("arm_result".to_string(), Value::from(result));
     }
+    // #15420: a predicate whose `before` is the whole old line also names
+    // the old `if`/`while` condition, at the granularity of `after`. Present
+    // only when read; `before` keeps the whole old line.
+    if let (Some(condition), Some(object)) = (
+        crate::analysis::old_condition_of_whole_line(finding),
+        changed_behavior.as_object_mut(),
+    ) {
+        object.insert("before_condition".to_string(), Value::from(condition));
+    }
     let source_currentness = serde_json::to_value(finding.source_currentness)
         .map_err(|error| format!("serialize source currentness: {error}"))?;
     let static_limitation = finding
@@ -1063,10 +1082,11 @@ pub(super) fn finding_guidance(item: &GapItem) -> Value {
 
 /// Budget items for the shared [`crate::lsp::diagnostic_budget`] authority.
 /// Eligibility is the producer's candidate-actionability predicate captured
-/// at projection time; MCP does not invent its own filter or ranking. The
-/// selection key uses the same unset (128) ranks the LSP delivery bridge
-/// uses, so the budget's evidence-owned order (selection key, then canonical
-/// id, then document) is the only ordering applied.
+/// at projection time; MCP does not invent its own filter or ranking. Every
+/// item here is a gap from the analyzed change, so they share one unset
+/// (128) selection key and the budget's canonical-id-then-document order is
+/// the only ordering applied. (The LSP bridge ranks the same findings ahead
+/// of repository seam inventory rows, which this list never carries.)
 pub(crate) fn budget_items(
     items: &[GapItem],
 ) -> Vec<crate::lsp::diagnostic_budget::DiagnosticBudgetItem> {
@@ -1278,6 +1298,7 @@ pub(crate) fn test_finding() -> Result<Finding, String> {
             normalized_discriminator: "total == 10000".to_string(),
         }),
         probe: Probe {
+            before_condition: None,
             id: ProbeId("probe:test:1".to_string()),
             location: SourceLocation::new("src/lib.rs", 12, 5),
             owner: Some(crate::domain::SymbolId("symbol:checkout".to_string())),
@@ -1568,10 +1589,13 @@ mod tests {
         let mut finding = finding()?;
         finding.probe.location =
             crate::domain::SourceLocation::new(root.join("src").join("main.rs"), 4, 1);
+        // Check/context/human keep the shared `./` spelling (#5996); the MCP
+        // item serves the same location without that prefix.
         let expected = "./src/main.rs";
+        let served = "src/main.rs";
 
         let item = GapItem::from_finding(&finding, &root)?;
-        if item.file != expected {
+        if item.file != served {
             return Err(format!(
                 "MCP diagnostic budget key must keep the shared spelling: {}",
                 item.file
@@ -1588,7 +1612,7 @@ mod tests {
                     item.evidence_core
                 )
             })?;
-        if location_file != "src/main.rs" {
+        if location_file != served {
             return Err(format!(
                 "MCP gap location file must be workspace-relative: {location_file}"
             ));
@@ -3379,7 +3403,7 @@ mod tests {
             finding.probe.location.file = file;
             let item = GapItem::from_finding(&finding, root)?;
             let expected =
-                crate::analysis::finding_location_text(root, &finding.probe.location.file);
+                crate::analysis::finding_location_text_bare(root, &finding.probe.location.file);
             let budget = budget_items(std::slice::from_ref(&item));
             assert_eq!(budget[0].document, expected);
             assert_eq!(item.list_summary["file"], "src/lib.rs");
@@ -3412,6 +3436,33 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// The served file never carries the presentational `./` prefix, while
+    /// a plain relative root (already bare) and an out-of-root file are
+    /// unchanged by the normalization.
+    #[test]
+    fn served_finding_file_strips_only_the_dot_slash_prefix() {
+        let root = std::env::temp_dir().join("ripr-gap-path-root");
+        assert_eq!(
+            crate::analysis::finding_location_text_bare(&root, &root.join("src/lib.rs")),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            crate::analysis::finding_location_text_bare(Path::new("."), Path::new("src/lib.rs")),
+            "src/lib.rs"
+        );
+        let outside = std::env::temp_dir().join("ripr-gap-path-elsewhere/lib.rs");
+        assert_eq!(
+            crate::analysis::finding_location_text_bare(&root, &outside),
+            outside.to_string_lossy().replace('\\', "/"),
+            "an out-of-root file keeps its exact stable spelling"
+        );
+        assert_eq!(
+            crate::analysis::finding_location_text_bare(&root, Path::new("../x")),
+            "../x",
+            "a parent-relative file keeps its spelling"
+        );
     }
 
     #[test]
@@ -3471,6 +3522,36 @@ mod tests {
         let core = gap_evidence_core(&predicate, "gap:test:1", root, &ready_readiness())?;
         if core["changed_behavior"].get("arm_result").is_some() {
             return Err(format!("non-arm probe named: {}", core["changed_behavior"]));
+        }
+        Ok(())
+    }
+
+    /// #15420: `ripr_get_gap` names the old condition when `before` is the
+    /// whole old line and the producer carried one, and leaves the field out
+    /// when `before` is already the condition. `before` is unchanged either way.
+    #[test]
+    fn get_gap_names_the_old_condition_of_a_whole_old_line() -> Result<(), String> {
+        let mut finding = finding()?;
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        finding.probe.before = Some("if total >= 100 { total - 10 } else { total }".to_string());
+        finding.probe.after = Some("total > 200".to_string());
+        finding.probe.before_condition = Some("total >= 100".to_string());
+        let root = Path::new("repo");
+        let core = gap_evidence_core(&finding, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"]["before_condition"] != "total >= 100"
+            || core["changed_behavior"]["before"] != "if total >= 100 { total - 10 } else { total }"
+        {
+            return Err(format!(
+                "old condition not named: {}",
+                core["changed_behavior"]
+            ));
+        }
+
+        let mut cut = finding;
+        cut.probe.before = Some("total >= 100".to_string());
+        let core = gap_evidence_core(&cut, "gap:test:1", root, &ready_readiness())?;
+        if core["changed_behavior"].get("before_condition").is_some() {
+            return Err(format!("cut before named: {}", core["changed_behavior"]));
         }
         Ok(())
     }

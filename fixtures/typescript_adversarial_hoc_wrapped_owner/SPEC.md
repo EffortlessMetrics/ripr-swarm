@@ -38,10 +38,14 @@ variant of this family is already pinned by
 
 ## Then
 
-ripr classifies the change `no_static_path`. The test never names
-`computeTotal`, so no direct or imported owner-call relation fires, and a
-same-file-stem test that does not reference the owner is not related at all
-(RIPR-SPEC-0027), so the wrapper's strong assertion is never borrowed.
+ripr classifies the change `static_unknown`. The test never names
+`computeTotal`, so no direct or imported owner-call relation fires. The test
+does call `total`, a call-built constant whose initializer passes
+`computeTotal` to `withLogging` as a value; that closure path (RIPR-SPEC-0243
+closure continuation, #13592) relates the test with reach only. When the
+wrapper runs the inner function is not modeled, so the wrapper's strong
+assertion is never borrowed: discriminate stays unknown and no repair packet
+is emitted. Before #13592 this read `no_static_path`.
 
 **This fixture must NEVER read `exposed`.** Crediting the wrapped call's
 oracle as observing the obscured inner owner would be exactly the

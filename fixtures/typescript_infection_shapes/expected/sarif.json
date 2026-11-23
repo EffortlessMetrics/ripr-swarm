@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_guard.ts:typescript_preview:0e63c99e|probe:src_guard.ts:typescript_preview:0e63c99e|src/guard.ts"
+            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_guard.ts:typescript_preview:0e63c99e|probe:src_guard.ts:typescript_preview:0e63c99e|fixtures/typescript_infection_shapes/input/src/guard.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/guard.ts"
+                  "uri": "fixtures/typescript_infection_shapes/input/src/guard.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "reachable_unrevealed static exposure for return_value probe:     return b;. Next step: TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_guard.ts:typescript_preview:0e63c99e|probe:src_guard.ts:typescript_preview:0e63c99e|src/guard.ts"
+            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_guard.ts:typescript_preview:0e63c99e|probe:src_guard.ts:typescript_preview:0e63c99e|fixtures/typescript_infection_shapes/input/src/guard.ts"
           },
           "properties": {
             "changed_expression": "    return b;",
@@ -191,14 +191,14 @@
         },
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_guard.ts:typescript_preview:2fd6b073|probe:src_guard.ts:typescript_preview:2fd6b073|src/guard.ts"
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_guard.ts:typescript_preview:2fd6b073|probe:src_guard.ts:typescript_preview:2fd6b073|fixtures/typescript_infection_shapes/input/src/guard.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/guard.ts"
+                  "uri": "fixtures/typescript_infection_shapes/input/src/guard.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -211,7 +211,7 @@
             "text": "Missing check: changed TypeScript returned-value at line 9 lacks a concrete preview discriminator. weakly_exposed static exposure for return_value probe:     return x;. Next step: TypeScript preview advisory: add or strengthen a focused assertion for the missing check `return value == x`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_guard.ts:typescript_preview:2fd6b073|probe:src_guard.ts:typescript_preview:2fd6b073|src/guard.ts"
+            "riprFingerprintV1": "ripr.finding.weakly_exposed|probe:src_guard.ts:typescript_preview:2fd6b073|probe:src_guard.ts:typescript_preview:2fd6b073|fixtures/typescript_infection_shapes/input/src/guard.ts"
           },
           "properties": {
             "changed_expression": "    return x;",
@@ -351,14 +351,14 @@
         },
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:b7b2112c|probe:src_pricing.ts:typescript_preview:b7b2112c|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:b7b2112c|probe:src_pricing.ts:typescript_preview:b7b2112c|fixtures/typescript_infection_shapes/input/src/pricing.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/pricing.ts"
+                  "uri": "fixtures/typescript_infection_shapes/input/src/pricing.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -371,7 +371,7 @@
             "text": "infection_unknown static exposure for return_value probe:     return 6;. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:b7b2112c|probe:src_pricing.ts:typescript_preview:b7b2112c|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:b7b2112c|probe:src_pricing.ts:typescript_preview:b7b2112c|fixtures/typescript_infection_shapes/input/src/pricing.ts"
           },
           "properties": {
             "changed_expression": "    return 6;",
@@ -509,14 +509,14 @@
         },
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.exposed|probe:src_pricing.ts:typescript_preview:26f2aacf|probe:src_pricing.ts:typescript_preview:26f2aacf|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.exposed|probe:src_pricing.ts:typescript_preview:26f2aacf|probe:src_pricing.ts:typescript_preview:26f2aacf|fixtures/typescript_infection_shapes/input/src/pricing.ts"
           },
           "level": "note",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/pricing.ts"
+                  "uri": "fixtures/typescript_infection_shapes/input/src/pricing.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -529,7 +529,7 @@
             "text": "exposed static exposure for return_value probe:   return a / b + 0;. Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.exposed|probe:src_pricing.ts:typescript_preview:26f2aacf|probe:src_pricing.ts:typescript_preview:26f2aacf|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.exposed|probe:src_pricing.ts:typescript_preview:26f2aacf|probe:src_pricing.ts:typescript_preview:26f2aacf|fixtures/typescript_infection_shapes/input/src/pricing.ts"
           },
           "properties": {
             "changed_expression": "  return a / b + 0;",
@@ -658,14 +658,14 @@
         },
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:1ba7ffcf|probe:src_pricing.ts:typescript_preview:1ba7ffcf|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:1ba7ffcf|probe:src_pricing.ts:typescript_preview:1ba7ffcf|fixtures/typescript_infection_shapes/input/src/pricing.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/pricing.ts"
+                  "uri": "fixtures/typescript_infection_shapes/input/src/pricing.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -678,7 +678,7 @@
             "text": "infection_unknown static exposure for return_value probe:   return opts?.max ?? 20;. Next step: TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:1ba7ffcf|probe:src_pricing.ts:typescript_preview:1ba7ffcf|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.infection_unknown|probe:src_pricing.ts:typescript_preview:1ba7ffcf|probe:src_pricing.ts:typescript_preview:1ba7ffcf|fixtures/typescript_infection_shapes/input/src/pricing.ts"
           },
           "properties": {
             "changed_expression": "  return opts?.max ?? 20;",
@@ -816,14 +816,14 @@
         },
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|fixtures/typescript_infection_shapes/input/src/pricing.ts"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/pricing.ts"
+                  "uri": "fixtures/typescript_infection_shapes/input/src/pricing.ts"
                 },
                 "region": {
                   "startColumn": 1,
@@ -836,7 +836,7 @@
             "text": "reachable_unrevealed static exposure for predicate probe: export function say(msg: string, loud = true): string {. Next step: TypeScript preview advisory: every related call passes the argument whose default changed, so the default never applies; add a test call that omits it before strengthening any assertion. No repair packet is emitted."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|src/pricing.ts"
+            "riprFingerprintV1": "ripr.finding.reachable_unrevealed|probe:src_pricing.ts:typescript_preview:7d52efbc|probe:src_pricing.ts:typescript_preview:7d52efbc|fixtures/typescript_infection_shapes/input/src/pricing.ts"
           },
           "properties": {
             "changed_expression": "export function say(msg: string, loud = true): string {",

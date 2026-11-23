@@ -435,8 +435,8 @@ impl RelatedTestCandidateIndex {
     }
 
     /// #15104: record a module declaration reading of every index file that
-    /// may declare a module, for a run without a diff (a repo scan): no
-    /// declaration changed.
+    /// may declare a module or hold a gate outside one (#14952), for a run
+    /// without a diff (a repo scan): no declaration changed.
     pub(in crate::analysis) fn with_unchanged_module_declarations(
         self,
         index: &crate::analysis::rust_index::RustIndex,
@@ -448,6 +448,9 @@ impl RelatedTestCandidateIndex {
                 .filter(|(_, facts)| {
                     !facts.module_declarations.is_empty()
                         || crate::analysis::diff::may_declare_module(&facts.source)
+                        || crate::analysis::diff::ModuleDeclarations::may_hold_outside_gate(
+                            &facts.source,
+                        )
                 })
                 .map(|(path, facts)| (path.as_path(), facts.data().source.as_ref())),
             std::iter::empty(),
@@ -1370,8 +1373,23 @@ fn find_related_tests_with_candidates<'a>(
             &full_scan_pin_syntax
         }
     };
+    // #15932: read once per owner; each test only adds its own crate.
+    let owner_is_crate_private = std::cell::OnceCell::new();
     for test_index in candidate_indices {
         let test = index.test_at(test_index);
+        // #15932: an integration test cannot name a function its crate does
+        // not export, so neither a call of that name (it runs another
+        // function) nor a test named after it is a relation to this owner.
+        // The namesake call counts as no call at all: every other route (a
+        // public entry on the helper chain, a method entry, an equality or
+        // formatting dispatch) relates the test exactly as it would without
+        // that call.
+        let owner_is_out_of_reach = owner_fn.is_some_and(|owner| {
+            super::call_identity::is_plain_integration_test(index, test)
+                && *owner_is_crate_private.get_or_init(|| {
+                    super::call_identity::owner_is_private_to_its_crate(index, owner)
+                })
+        });
         // Registration proves the callback, not its owner. Match the repo
         // path before any relation can lend evidence, and keep a later
         // policy-modified fact from falling through as an ordinary test.
@@ -1434,7 +1452,7 @@ fn find_related_tests_with_candidates<'a>(
         {
             continue;
         }
-        let calls_owner = calls_owner_by_name || dispatches_to_fmt;
+        let calls_owner = (calls_owner_by_name && !owner_is_out_of_reach) || dispatches_to_fmt;
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
         // signal from `calls_owner`: it bypasses none of the cross-package
@@ -1689,7 +1707,9 @@ fn find_related_tests_with_candidates<'a>(
         // `config` can occur in unrelated test paths (for example
         // `reconfigure.rs`).
         let file_path_token_matches = test_path_names_probe_stem(&test.file, &file_name);
-        let owner_name_in_test = !owner_name_lc.is_empty() && test_name.contains(&owner_name_lc);
+        let owner_name_in_test = !owner_name_lc.is_empty()
+            && test_name.contains(&owner_name_lc)
+            && !owner_is_out_of_reach;
         let token_in_test_name = test_name_words
             .iter()
             .any(|word| test_name_has_word(&test_name, word));
@@ -2971,6 +2991,29 @@ pub(super) fn own_crate_qualified_entry_path(
     (is_qualified_owner_call(code_line, &spelled_path)
         && own_crate_name_unshadowed_in_test(index, test, crate_name))
     .then_some(spelled_path)
+}
+
+/// The path an integration test spells `owner` through when it calls it by
+/// the package's own library path with no `use` (`pkg::owner`,
+/// `pkg::module::owner`), for a reader that otherwise evaluates only a bare
+/// owner call (the reached-tail pin).
+///
+/// The path is [`own_crate_qualified_entry_path`]'s, so the same authority
+/// that relates the test to the owner decides the spelling: no second
+/// resolver. `None` when no call of the owner in `test` is established that
+/// way. A call written bare never reaches the authority, so the common
+/// spelling pays no file scan here.
+pub(in crate::analysis) fn own_crate_qualified_owner_path(
+    index: &RustIndex,
+    test: &TestSummary,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    test.calls.iter().find_map(|call| {
+        (call.name == owner.name
+            && !super::helper_transfer::is_direct_call_site(&call.text, &owner.name))
+        .then(|| own_crate_qualified_entry_path(index, test, owner, call.line))
+        .flatten()
+    })
 }
 
 /// Whether `owner` is a top-level `impl` item of a file of the root package's library (`src/lib.rs` or a
@@ -7804,9 +7847,22 @@ fn visible_receiver_binding_names_type(
     for ancestor in call.ancestors().skip(1) {
         // These patterns may bind the receiver. This small admission does not
         // infer their types, and never borrows an outer same-spelled binding.
-        if ast::ClosureExpr::can_cast(ancestor.kind())
-            || ast::ForExpr::can_cast(ancestor.kind())
-            || ast::MatchArm::can_cast(ancestor.kind())
+        if ast::ClosureExpr::can_cast(ancestor.kind()) || ast::MatchArm::can_cast(ancestor.kind()) {
+            return false;
+        }
+        // #6485: a `for` loop binds only its own pattern. When that pattern
+        // does not spell the receiver, the receiver is the binding visible
+        // around the loop (`let mut stats = ..; for _ in 0..n {
+        // stats.record() }`), so the walk continues outward. A pattern that
+        // does spell it may bind any type and still refuses, and so does a
+        // pattern holding a macro (`for bind!(stats) in ..`), whose expansion
+        // may bind any name.
+        if let Some(for_loop) = ast::ForExpr::cast(ancestor.clone())
+            && for_loop.pat().is_none_or(|pattern| {
+                pattern.syntax().descendants().any(|node| {
+                    ast::MacroPat::can_cast(node.kind()) || ast::MacroCall::can_cast(node.kind())
+                }) || ident_pat_binds_name(Some(pattern), name)
+            })
         {
             return false;
         }
@@ -17106,6 +17162,7 @@ let r = try_parse_summary();",
 
     fn wrapper_error_probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:wrapper".to_string()),
             location: SourceLocation::new(file, 5, 1),
             owner: Some(SymbolId(format!("{file}::owner"))),
@@ -18500,6 +18557,7 @@ try_parse_summary(raw).map_err(Into::into)"
 
     fn probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new(file, 2, 1),
             owner: Some(SymbolId(format!("{file}::owner"))),
@@ -18516,6 +18574,7 @@ try_parse_summary(raw).map_err(Into::into)"
     /// A probe with no function owner — models a module-level struct field.
     fn struct_field_probe(file: &str, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:struct-field".to_string()),
             location: SourceLocation::new(file, 46, 1),
             owner: None,

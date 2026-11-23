@@ -1597,6 +1597,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         authority_boundary: TS_AUTHORITY_BOUNDARY.to_string(),
         typescript_package_root: evidence_value(finding, "typescript_package_root: ")
             .map(ToString::to_string),
+        verify_cwd: None,
     };
     // Receipt command (RIPR-SPEC-0079 `canonical_receipt_command` field rule):
     // the canonical `ripr receipt write …` form built by the shared receipt-write
@@ -1816,6 +1817,7 @@ pub(crate) mod tests {
             id: "probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string()),
                 location: SourceLocation::new("src/discount.ts", 3, 1),
                 owner: Some(SymbolId(

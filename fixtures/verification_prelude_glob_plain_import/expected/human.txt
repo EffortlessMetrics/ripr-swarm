@@ -13,8 +13,7 @@ Start here:
   File: ./src/lib.rs:9
   Static exposure: unknown (severity: note, confidence 0.64)
   Why unknown: the analysis could not determine a static exposure state
-  Not credited: `assert_eq!` in weighs at src/lib.rs:14: `use prusti_contracts::*;` at src/lib.rs:6
-    glob-imports from outside the workspace, which may bring in a different `assert_eq!`
+  Not credited: `assert_eq!` in weighs at src/lib.rs:15: `use prusti_contracts::*;` at src/lib.rs:6 glob-imports from outside the workspace, which may bring in a different `vec!`
   Changed behavior: input * 3
   Analyzer limit: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs
     as the standard macro on the path that reaches this change (for example the file did not parse,

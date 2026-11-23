@@ -999,3 +999,252 @@ index 1111111..2222222 100644
     }
     Ok(())
 }
+
+/// The class of the changed tail `tail` on `line` of `file` in a
+/// multi-file crate.
+fn file_tail_class(
+    files: &[(&str, &str)],
+    patch: &str,
+    file: &str,
+    tail: &str,
+    line: usize,
+) -> Result<(ExposureClass, Finding), String> {
+    let findings = TempRepo::create_files(files, patch)?.findings()?;
+    let in_file: Vec<Finding> = findings
+        .iter()
+        .filter(|finding| finding.probe.location.file.ends_with(file))
+        .cloned()
+        .collect();
+    let finding = tail_finding(&in_file, line, tail)?;
+    Ok((finding.class.clone(), finding))
+}
+
+/// `src/real.rs` holding the changed owner `f` (tail `-x` to `x`).
+const REAL_F: &str = "pub fn f(x: i32) -> i32 {\n    x\n}\n";
+
+/// The diff that deletes the `-` from `src/real.rs`'s tail.
+const REAL_F_PATCH: &str = "diff --git a/src/real.rs b/src/real.rs
+index 1111111..2222222 100644
+--- a/src/real.rs
++++ b/src/real.rs
+@@ -1,3 +1,3 @@
+ pub fn f(x: i32) -> i32 {
+-    -x
++    x
+ }
+";
+
+/// `src/lib.rs` made of `items` and a test module pinning `f(5)` through
+/// `use super::*`.
+fn lib_with(items: &str) -> String {
+    format!(
+        "{items}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+    #[test]
+    fn pins() {{
+        assert_eq!(f(5), 5);
+    }}
+}}
+"
+    )
+}
+
+/// A test-only stand-in for `f` that is not a function: the shared
+/// identity, not a same-name function scan, has to see the gate.
+const CONST_TWIN: &str = "#[cfg(test)]
+#[allow(non_upper_case_globals)]
+pub const f: fn(i32) -> i32 = identity;
+
+fn identity(x: i32) -> i32 {
+    x
+}
+";
+
+/// The diff that deletes the `-` from the tail of `real::f` written inline
+/// on lines 1-5 of `src/lib.rs`.
+const INLINE_F_PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub mod real {
+     pub fn f(x: i32) -> i32 {
+-        -x
++        x
+     }
+ }
+";
+
+/// `real::f` written inline, its tail on line 3.
+const INLINE_F: &str = "pub mod real {
+    pub fn f(x: i32) -> i32 {
+        x
+    }
+}
+";
+
+/// The class of the changed `x` tail of `real::f`, written inline in
+/// `src/lib.rs` (`inline`) or in `src/real.rs`, with `items` (and, out of
+/// line, `mod real;`'s own declaration among them) in `src/lib.rs`.
+fn real_f_class(inline: bool, items: &str) -> Result<(ExposureClass, Finding), String> {
+    let other = "pub fn g(x: i32) -> i32 {\n    x\n}\n";
+    if inline {
+        let lib = lib_with(&format!("{INLINE_F}{items}"));
+        file_tail_class(
+            &[("src/lib.rs", &lib), ("src/other.rs", other)],
+            INLINE_F_PATCH,
+            "src/lib.rs",
+            "x",
+            3,
+        )
+    } else {
+        let lib = lib_with(items);
+        file_tail_class(
+            &[
+                ("src/lib.rs", &lib),
+                ("src/real.rs", REAL_F),
+                ("src/other.rs", other),
+            ],
+            REAL_F_PATCH,
+            "src/real.rs",
+            "x",
+            2,
+        )
+    }
+}
+
+/// #14952 cfg_use: only the `pub use` re-exporting the owner is
+/// `cfg(not(test))`, and the tests run a stand-in that is not a function
+/// (the base commit credited these). Each shape withholds propagation credit
+/// and reads `propagation_unknown`, or `no_static_path` where the reach
+/// reading finds no test path to `real::f` (the inline glob form).
+#[test]
+fn a_cfg_gate_on_the_owner_reexport_is_not_exposed() -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for (inline, items, expected) in [
+        (
+            true,
+            format!("#[cfg(not(test))]\npub use real::f;\n{CONST_TWIN}"),
+            ExposureClass::PropagationUnknown,
+        ),
+        (
+            false,
+            format!("mod real;\n#[cfg(not(test))]\npub use real::f;\n{CONST_TWIN}"),
+            ExposureClass::PropagationUnknown,
+        ),
+        // A glob re-export gates every item of the module.
+        (
+            true,
+            format!("#[cfg(not(test))]\npub use real::*;\n{CONST_TWIN}"),
+            ExposureClass::NoStaticPath,
+        ),
+        // `cfg_attr` may carry a `cfg`.
+        (
+            true,
+            format!("#[cfg_attr(test, cfg(any()))]\npub use real::f;\n{CONST_TWIN}"),
+            ExposureClass::PropagationUnknown,
+        ),
+    ] {
+        let (class, finding) = real_f_class(inline, &items)?;
+        if class != expected || finding.ripr.propagate.state == StageState::Yes {
+            wrong.push(format!("{items}: {class:?} {:?}", finding.ripr.propagate));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}
+
+/// #14952 inc_cfg: `src/real.rs` reaches the crate only through a `cfg`'d
+/// `include!` (through a renamed macro). No `mod real;` declares it, so the
+/// identity reports a gate; the reach reading finds no test path to
+/// `real::f`, so the class is `no_static_path` with reach `no`.
+#[test]
+fn an_owner_file_reached_only_through_include_is_not_exposed() -> Result<(), String> {
+    let lib = lib_with(&format!(
+        "use core::include as inc;\n#[cfg(not(test))]\ninc!(\"real.rs\");\n{CONST_TWIN}"
+    ));
+    let (class, finding) = file_tail_class(
+        &[("src/lib.rs", &lib), ("src/real.rs", REAL_F)],
+        REAL_F_PATCH,
+        "src/real.rs",
+        "x",
+        2,
+    )?;
+    assert_eq!(class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert_eq!(finding.ripr.reach.state, StageState::No, "{finding:?}");
+    assert_ne!(finding.ripr.propagate.state, StageState::Yes, "{finding:?}");
+    Ok(())
+}
+
+/// Controls (#14952 pos_plain, pos_unrelated_mod, pos_unrelated_gated): an
+/// ungated re-export, an unrelated gated module or re-export keep
+/// `weakly_exposed` with propagation credited; the test module's own private
+/// import keeps `exposed`.
+#[test]
+fn ungated_or_unrelated_reexports_keep_their_credit() -> Result<(), String> {
+    let mut wrong = Vec::new();
+    for (inline, items, expected) in [
+        (true, "pub use real::f;\n", ExposureClass::WeaklyExposed),
+        (
+            true,
+            "pub use real::f;\n#[cfg(test)]\nmod other;\n",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            true,
+            "pub use real::f;\nmod other;\n#[cfg(not(test))]\npub use other::g;\n",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            false,
+            "mod real;\npub use real::f;\n",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            false,
+            "mod real;\npub use real::f;\n#[cfg(test)]\nmod other;\n",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            false,
+            "mod real;\npub use real::f;\nmod other;\n#[cfg(not(test))]\npub use other::g;\n",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let (class, finding) = real_f_class(inline, items)?;
+        if class != expected || finding.ripr.propagate.state != StageState::Yes {
+            wrong.push(format!("{items}: {class:?} {:?}", finding.ripr.propagate));
+        }
+    }
+    // The test module's own private import, gated only by `#[cfg(test)]` on
+    // its module, is not a re-export twin.
+    let lib = format!(
+        "{INLINE_F}
+#[cfg(test)]
+mod tests {{
+    use crate::real::f;
+    #[test]
+    fn pins() {{
+        assert_eq!(f(5), 5);
+    }}
+}}
+"
+    );
+    let (class, finding) = file_tail_class(
+        &[("src/lib.rs", &lib)],
+        INLINE_F_PATCH,
+        "src/lib.rs",
+        "x",
+        3,
+    )?;
+    if class != ExposureClass::Exposed {
+        wrong.push(format!(
+            "private import: {class:?} {:?}",
+            finding.ripr.propagate
+        ));
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    Ok(())
+}

@@ -309,18 +309,39 @@ one changed raise only (#12952); the general class-only table row stays weak.
    rejects, with each `{...}` placeholder read as a wildcard. The literals
    read are: the `match=` / `assertRaisesRegex` pattern (literal characters
    and the `.` wildcard only, searched as a substring), the string operand of
-   a one-line `assert x == "..."` or `assertEqual` (it must equal the whole
+   an `assert x == "..."` or `assertEqual` (it must equal the whole
    text), and the string operand of `assert "..." in x` or `assertIn` against
-   a non-literal container (a substring). At least half of the literal must
+   a non-literal container (a substring). The whole statement is read, so
+   it may span lines, and each conjunct of a positive `and` chain is read on
+   its own (`assert len(e.value.args) == 1 and str(e.value) == "..."`,
+   #15646), including a conjunct weaker than the one that grades the
+   assertion; an `or` operand or anything under `not` pins nothing. At least half of the literal must
    match fixed characters of the old text; against the new text one fixed
-   character is enough, and a new text made only of placeholders rejects
-   nothing. A literal shorter than four characters pins only through
+   character is enough, and a non-empty new text made only of placeholders
+   rejects nothing (an empty new text rejects every non-empty literal). A literal shorter than four characters pins only through
    whole-text equality. Call arguments,
-   assert messages, `!=`, `not in`, two-constant comparisons and statements
-   that span lines pin nothing. Otherwise the change is `weakly_exposed`
+   assert messages, `!=`, `not in` and two-constant comparisons pin
+   nothing. Otherwise the change is `weakly_exposed`
    with missing discriminator `class attribute <name> text "<new text>"`.
-   A decorated or multi-line constant and a non-string value keep the
-   existing verdict.
+   A decorated or multi-line constant keeps the existing verdict.
+   Class-attribute value (#16009): when the changed line is a one-line
+   `name = value` or `name: T = value` directly in a class body with a
+   non-string value, the change is `exposed` only if a related oracle test
+   reads `name` or calls a method of the class that reads it, directly or
+   through a same-class call (an attribute read `.method` of the test
+   body). Any test that mentions `name`, related to the class or not, also
+   keeps the existing verdict. Otherwise the change is `weakly_exposed` with
+   missing discriminator `class attribute <name> value <new value>`, and the
+   reason lists the reading methods. The rule keeps the existing verdict
+   when the readers cannot be listed from the class alone: the class has a
+   decorator, a base other than `object` or a keyword; the name is a
+   dunder; the old or new value is not a plain value (a non-string
+   constant, a name or dotted name, or unary, binary, tuple, list or set
+   forms of those); another class-body statement (an alias such as
+   `annual = years`), a nested class or a dunder method reads the name or a
+   reader; no method reads the name; or code of the same file outside the
+   class mentions the name or a reader. A test that reaches a reader only
+   through a helper in another source file is not seen.
 3. **A fluent helper chain is a custom helper.** A call statement whose
    callee chain contains a call whose last segment starts with `assert_`
    or equals `assert_that` (`assert_that(x).is_equal_to(y)`) assigns
@@ -735,7 +756,9 @@ This order is the existing behavior and is normative:
   or an unanalysed compound statement (such as `try`, `for` or `with`)
   mentioning the alias also withholds credit (#14846).
   `C` is the owner's class imported under its own
-  name from the owner's module, and the fixture's file binds neither the
+  name from the owner's module or from a package whose `__init__.py`
+  re-exports that class (RIPR-SPEC-0028's bounded chain, #15967), and the
+  fixture's file binds neither the
   fixture name nor `C` a second time. The test takes the fixture as a
   parameter without a default, does not rebind it, and carries no
   decorator other than a pytest mark. In its scope (the test's module and
@@ -743,7 +766,18 @@ This order is the existing behavior and is normative:
   read and parsed; no other fixture, renamed `name=` fixture (decorators
   included) or top-level compound statement spells the fixture name; no
   file but the fixture's own binds the name by import or assignment;
-  every `from` import comes from the owner's module or pytest; and no file
+  every `from` import comes from the owner's module, a package that
+  re-exports the owner's class, pytest, or a module that can bring no
+  fixture (#15967): a non-star import of a standard-library module, or
+  of a workspace module (a relative import is read as the module it
+  resolves to) whose import closure (at most 256 modules, with the
+  `__init__.py` of every parent package that loading them runs) defines
+  no fixture, has no star import or other opaque construct, and imports
+  only workspace or standard-library modules (never pytest or a
+  conftest). An import that resolves to no workspace file and is not
+  standard library, such a module anywhere in the closure, and a
+  standard-library name a workspace file also answers to whose closure
+  has one of these hazards keep the limit; and no file
   star-imports, declares `pytest_plugins` or `pytestmark`, defines a
   `pytest_*` hook, has a fixture that walks the request (`getfixturevalue`,
   `fixturenames`, `funcargs`, `node`) or rebinds a name with `global`.
@@ -989,7 +1023,9 @@ the rule; ripr still reports only what the static shape shows.
     `self.assertRaises(...) as N` or `self.assertRaisesRegex(...) as N`
     (no other receiver), is recorded `exact_error_variant` / strong when a statement after the
     `with` statement, in the same test body, asserts `==` (an `assert`
-    with one `==`, or `assertEqual`) between two operands, one of which
+    with one `==`, an `==` conjunct of an `assert` whose test is a positive
+    `and` chain (#15646; a chain in which any operand could rebind or
+    mutate `N` promotes nothing), or `assertEqual`) between two operands, one of which
     is a value-preserving read of the exception: `N.value` (pytest) or
     `N.exception` (unittest), alone, as `str(...)` or `repr(...)` of it,
     or as its `.args` or a literal index of `.args`, and whose other operand
@@ -1890,6 +1926,66 @@ mutant calibrates the rule; ripr reports only the static shape.
     helper substitution, which keeps its own module-attribute rule, and
     fixture definitions' imports are not rewritten.
 
+34. **An edited member of a literal membership collection needs an input
+    equal to that member** (#15632). The rule only withholds `exposed`; it
+    never credits and never moves another verdict up. It reads the parsed
+    owner module on the new side and on the old side (the new source with
+    the changed line restored) and engages on the one `<subject> in
+    <display>` or `<subject> not in <display>` comparison whose lines
+    include the changed line and whose members differ, wherever it sits in
+    the changed statement: an `if`/`elif`/`while` condition, an `and`/`or`
+    compound, `not (...)`, a parenthesized test, a one-line `if`, a
+    `return`, an assignment, or a display spanning several lines. The
+    display is a tuple, list or set of scalar literals (numbers,
+    `True`/`False`, `None`, plain strings without escapes), at least one
+    member is kept, and the subject text and operator match on both sides.
+    When the changed line also edits code outside the display (`and` to
+    `or`, added `not` or parentheses, a one-line `if` whose body changes),
+    or some member on either side is not such a literal (`"\t"`, `1e0`,
+    `0x1`, a name, `b"y"`), the change reads `weakly_exposed` without
+    reading rows, naming the first readable altered member when there is
+    one. A removed-only line inside a multi-line display is read from the
+    old file and the new one: the old comparison holding the line pairs with
+    the new comparison whose members are the old ones without the line's
+    elements, and the same hit rule applies; when no such new comparison is
+    found the change reads `weakly_exposed`. The subject is
+    a bare owner parameter `p`, or `p.lower()`, `p.casefold()`,
+    `p.upper()`, `p.strip()` or `str(p)`. The altered members are those
+    present on one side only under Python equality (`True == 1`,
+    `False == 0`, `1 == 1.0`): a removed member, an added member, or both
+    for a changed one. A strong related call row hits an altered member
+    when its literal input equals the member and the old and new membership
+    results for that input differ; a compound condition may still not flip
+    on that input, which the rule accepts because it never credits by
+    itself. A string input counts under a case normalization of the
+    parameter (`val = val.lower()`, `.casefold()`, `.upper()`, before the
+    comparison and outside any loop) or a transforming subject only when the
+    transform leaves it unchanged (for `strip`, an ASCII string with no
+    surrounding whitespace); a non-string counts under a normalization only
+    when each normalization line sits directly under
+    `if isinstance(<subject>, str):`, and never under a transforming
+    subject. Any other rebinding of the parameter before the comparison, a
+    walrus or `;`-separated statement binding it on the comparison line, any
+    rebinding inside a loop around it, and any rebinding after a `while`
+    comparison places no input. A plain `val = val in (...)` assigns after
+    the comparison reads the call input, so it keeps the input. Every altered
+    member needs a hit, or the change reads `weakly_exposed` with the first
+    unhit member named as the boundary discriminator (`val == "y"`),
+    including when no strong row binds a literal, some strong call goes
+    unread, or the rebinding is not modelled. A changed line that holds
+    only literal elements inside a display an `in` comparison owns, whose
+    old side cannot be paired (the restored old source does not parse, or
+    its comparisons do not match the new ones), reads `weakly_exposed` the
+    same way. Removing `1` while `True` stays alters nothing, so a row
+    passing `1` never hits it. Not engaged, so the existing verdict stands:
+    a whole-collection replacement (no member kept) with nothing else on the
+    line changed, a non-literal or computed display (`TRUTHY + ("t",)`, a
+    named constant), a subject that is not a parameter or one of the
+    transforms above (an alias bound from the parameter, `self.attr`,
+    `cfg["key"]`), and an owner source that does not parse. The membership
+    rule does not govern `match` arm patterns. See RIPR-SPEC-0260 and #15691
+    for match-arm evidence.
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
@@ -2669,6 +2765,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `crates/ripr/src/analysis/language/python/literal_fixture_tests.rs`
   pins the inlined control, the conftest and same-module fixture, and
   every negative shape and interference route of example 41.
+  `crates/ripr/src/analysis/language/python/class_identity_tests.rs` pins
+  the re-exported class, the standard-library and fixture-free scope
+  imports, and the imports that keep the limit (#15967).
 - Async test styles (#14803):
   `crates/ripr/src/app/tests/python_test_style_matrix.rs` pins the
   `pytest_asyncio` literal fixture, the awaited result local, the
@@ -2783,6 +2882,9 @@ strong assertions is retained.
   `py-grid-*-property` corpus cases.
 - `crates/ripr/src/analysis/language/python/package_aliases.rs`: rule 33,
   pinned by `package_alias_tests.rs`.
+- `crates/ripr/src/analysis/language/python/membership_activation.rs`:
+  rule 34, read by `classify.rs` ahead of the boundary rule and pinned by
+  `membership_activation_tests.rs`.
 - `crates/ripr/src/analysis/language/python/param_fixtures.rs` (literal
   `params=` rows and the unpack rewrite) with `fixtures.rs` (isolation) and
   `static_limits.rs` (direct parametrize argnames): L8, example 42.
