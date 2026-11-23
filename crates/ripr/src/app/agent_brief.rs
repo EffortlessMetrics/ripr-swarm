@@ -1471,6 +1471,7 @@ mod tests {
             evidence: TestGripEvidence {
                 seam_id,
                 related_tests: vec![Arc::new(RelatedTestGrip {
+                    assertion_targets_non_function: None,
                     test_name: format!("{owner}_test"),
                     file: PathBuf::from("tests/sample.rs"),
                     line: 5,

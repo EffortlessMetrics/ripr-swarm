@@ -49,6 +49,10 @@ mod kani_lane;
 mod public_proof;
 mod publish_rehearsal;
 mod publish_stage;
+mod release_authority;
+mod release_crates_io_transaction;
+mod release_github_transaction;
+mod source_package_contents;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;
@@ -161,27 +165,27 @@ pub(crate) use dogfood::{
     DogfoodReportPacketIndexRun, DogfoodRun, DogfoodSurfaceProjectionAlignmentRun,
     DogfoodTypescriptPreviewRepairLoopRun, DogfoodTypescriptPreviewRepairLoopScenario,
     DogfoodUserSurfaceProjectionRun, GENERATED_CI_COCKPIT_COMMAND,
-    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
-    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR,
-    TypeScriptBunUbCalibrationCase, artifact_router_path_violation,
-    bun_ub_calibration_report_markdown, bun_ub_calibration_report_value,
-    bun_ub_preview_summary_markdown, bun_ub_preview_summary_report_value,
-    configured_bridge_inventory_markdown, configured_bridge_inventory_report_value,
-    cross_language_oracle_graph_cases, cross_language_oracle_graph_corpus_path,
-    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
-    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
-    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families,
-    dogfood_first_action_run, dogfood_first_action_scenarios, dogfood_first_pr_metrics,
-    dogfood_first_pr_run, dogfood_first_pr_scenarios, dogfood_gate_adoption_run,
-    dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
-    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
-    dogfood_push_python_ranked_findings_json, dogfood_python_no_action_eval_scenarios,
-    dogfood_python_ranked_findings, dogfood_python_real_repo_eval_scenarios,
-    dogfood_python_static_limit_eval_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios, dogfood_report_status,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
+    GENERATED_CI_PACKET_INDEX_REPAIR, TypeScriptBunUbCalibrationCase,
+    artifact_router_path_violation, bun_ub_calibration_report_markdown,
+    bun_ub_calibration_report_value, bun_ub_preview_summary_markdown,
+    bun_ub_preview_summary_report_value, configured_bridge_inventory_markdown,
+    configured_bridge_inventory_report_value, cross_language_oracle_graph_cases,
+    cross_language_oracle_graph_corpus_path, dogfood_bun_ub_cross_language_scenarios,
+    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
+    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
+    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_first_action_run,
+    dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
+    dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_result, dogfood_generated_ci_cockpit_run_from_surfaces,
+    dogfood_language_preview_run, dogfood_language_preview_scenarios,
+    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+    dogfood_push_python_quality_ratio_json, dogfood_push_python_ranked_findings_json,
+    dogfood_python_no_action_eval_scenarios, dogfood_python_ranked_findings,
+    dogfood_python_real_repo_eval_scenarios, dogfood_python_static_limit_eval_scenarios,
+    dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
+    dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_typescript_false_actionable_audit_summary,
     dogfood_typescript_preview_repair_loop_scenarios, finding_alignment_verify_command_is_missing,
     front_panel_case_inputs, json_number_after, parse_bun_ub_preview_summary_args,
@@ -336,9 +340,10 @@ use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist,
     check_cli_exit_contract, check_covered_by, check_doc_roles, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
-    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, qualify_python_wheelhouse,
+    check_no_panic_family, check_package_content, check_packaged_readme,
+    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
+    check_release_targets, check_static_language, check_text_encoding, check_user_text,
+    check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -1160,7 +1165,11 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
         policy: files
             .iter()
             .any(|f| f.starts_with("policy/") || f.starts_with(".ripr/")),
-        fixture: files.iter().any(|f| f.starts_with("fixtures/")),
+        // The floor is the fixture gates' denominator: an edit that removes a
+        // line from it must meet the gate that reads it (#15925).
+        fixture: files.iter().any(|f| {
+            f.starts_with("fixtures/") || f == fixture_contracts::FIXTURE_DENOMINATOR_FLOOR_PATH
+        }),
     }
 }
 
@@ -1325,6 +1334,10 @@ mod check_fast_selector_tests {
             assert!(!categories.rust_src, "{path}");
             assert_eq!(categories.fixture, path.starts_with("fixtures/"), "{path}");
         }
+        // #15925: a floor-only edit selects the gate that reads the floor.
+        let floor = categorize_changed_files(&["policy/fixture-denominator-floor.txt".to_string()]);
+        assert!(floor.fixture && floor.policy);
+        assert!(!categorize_changed_files(&["policy/other.txt".to_string()]).fixture);
     }
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
@@ -17540,77 +17553,9 @@ fn missing_anchor_violation(
     ))
 }
 
-/// The anchor GitHub gives a heading whose text is `text`.
-///
-/// GitHub lowercases the text, turns each space into `-`, and drops every other
-/// character that is not a letter, digit, `_` or `-`. Dropping rather than
-/// collapsing is load-bearing: an em-dash or a slash surrounded by spaces
-/// leaves both of those spaces behind and so produces a doubled dash, which
-/// links into this repository's own headings depend on.
-fn heading_slug(text: &str) -> String {
-    let mut slug = String::new();
-    for ch in text.chars() {
-        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
-            slug.extend(ch.to_lowercase());
-        } else if ch == ' ' {
-            slug.push('-');
-        }
-    }
-    slug
-}
-
-/// Every anchor the headings of `text` offer.
-///
-/// Headings that slugify the same way are numbered the way GitHub numbers them:
-/// the first keeps the bare slug and later ones gain `-1`, `-2`, and so on.
-fn heading_slugs(text: &str) -> BTreeSet<String> {
-    let mut slugs = BTreeSet::new();
-    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
-    let mut in_fence = false;
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        let Some(title) = atx_heading_title(trimmed) else {
-            continue;
-        };
-        let base = heading_slug(title);
-        let count = seen.entry(base.clone()).or_insert(0);
-        let slug = if *count == 0 {
-            base
-        } else {
-            format!("{base}-{count}")
-        };
-        *count += 1;
-        slugs.insert(slug);
-    }
-    slugs
-}
-
-/// The heading text of an ATX heading line, or `None` when `trimmed` is not one.
-fn atx_heading_title(trimmed: &str) -> Option<&str> {
-    let rest = trimmed.trim_start_matches('#');
-    let level = trimmed.len() - rest.len();
-    if level == 0 || level > 6 {
-        return None;
-    }
-    if !rest.is_empty() && !rest.starts_with(' ') {
-        // `#hashtag` is body text, not a heading.
-        return None;
-    }
-    let title = rest.trim();
-    // A closing sequence of hashes is decoration when a space precedes it.
-    let without_closing = title.trim_end_matches('#');
-    if without_closing.len() < title.len() && without_closing.ends_with(' ') {
-        return Some(without_closing.trim_end());
-    }
-    Some(title)
-}
+#[cfg(test)]
+use repo_policy::markdown_headings::heading_slug;
+use repo_policy::markdown_headings::heading_slugs;
 
 fn next_checkpoints_from_capabilities(text: &str) -> Result<Vec<String>, String> {
     let mut checkpoints = Vec::new();
@@ -21809,6 +21754,8 @@ pub(crate) fn read_file_policy_test_commands(
             (None, entry.covered_by),
             (Some(FilePolicyHost::Unix), entry.covered_by_unix),
             (Some(FilePolicyHost::Windows), entry.covered_by_windows),
+            (Some(FilePolicyHost::Linux), entry.covered_by_linux),
+            (Some(FilePolicyHost::Macos), entry.covered_by_macos),
         ] {
             for command in values.unwrap_or_default() {
                 if is_cargo_test_command(&command) {
@@ -21828,18 +21775,31 @@ impl FilePolicyHost {
     fn parse(family: &str) -> Result<Self, String> {
         match family {
             "unix" => Ok(Self::Unix),
+            "linux" => Ok(Self::Linux),
+            "macos" => Ok(Self::Macos),
             "windows" => Ok(Self::Windows),
             _ => Err(format!("unsupported file-policy host family `{family}`")),
         }
     }
 
     fn current() -> Result<Self, String> {
-        Self::parse(std::env::consts::FAMILY)
+        Self::parse(match std::env::consts::OS {
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => std::env::consts::FAMILY,
+        })
+    }
+
+    /// Whether this declared scope includes the executing host.
+    fn applies_to(self, host: Self) -> bool {
+        self == host || (self == Self::Unix && matches!(host, Self::Linux | Self::Macos))
     }
 
     fn name(self) -> &'static str {
         match self {
             Self::Unix => "unix",
+            Self::Linux => "linux",
+            Self::Macos => "macos",
             Self::Windows => "windows",
         }
     }
@@ -21927,7 +21887,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                     "classification" => entry.classification = Some(scalar()?),
                     "reason" => entry.reason = Some(scalar()?),
                     "generated_by" => entry.generated_by = Some(scalar()?),
-                    "covered_by" | "covered_by_unix" | "covered_by_windows" => {
+                    "covered_by" | "covered_by_unix" | "covered_by_windows"
+                    | "covered_by_linux" | "covered_by_macos" => {
                         let array_error = || {
                             format!(
                                 "{path}:{field_line} non-Rust allowlist `{key}` requires a string array"
@@ -21948,6 +21909,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                         match key {
                             "covered_by_unix" => entry.covered_by_unix = Some(commands),
                             "covered_by_windows" => entry.covered_by_windows = Some(commands),
+                            "covered_by_linux" => entry.covered_by_linux = Some(commands),
+                            "covered_by_macos" => entry.covered_by_macos = Some(commands),
                             _ => entry.covered_by = Some(commands),
                         }
                     }
@@ -22032,6 +21995,8 @@ fn validate_file_policy_allow_entry(
     for (field, commands) in [
         ("covered_by_unix", &entry.covered_by_unix),
         ("covered_by_windows", &entry.covered_by_windows),
+        ("covered_by_linux", &entry.covered_by_linux),
+        ("covered_by_macos", &entry.covered_by_macos),
     ] {
         if let Some(commands) = commands
             && (commands.is_empty() || commands.iter().any(|value| !is_cargo_test_command(value)))
@@ -22980,6 +22945,16 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("benchmarks/agentic/cohort/harness/") && path.ends_with(".py") {
         return Some(
             "Opt-in agent cohort harness drives headless `claude -p` sessions and scores hidden mutants with stdlib Python; it is never on the default CI path (#12902).",
+        );
+    }
+
+    if matches!(
+        path,
+        "benchmarks/mutation_spot_check/run_python_calibration.py"
+            | "benchmarks/mutation_spot_check/test_run_python_calibration.py"
+    ) {
+        return Some(
+            "Bounded Python real-mutant calibration must run the authored subjects' own pytest suites with the subject interpreter and drive ripr check --diff per mutant; it is stdlib-only, never on the default CI path, and its receipt is re-derived by the Rust-owned python_calibration tests (#12901).",
         );
     }
 

@@ -66,6 +66,7 @@ pub(crate) fn probes_for_repo_file_seeded(
         let required_oracles = required_oracles(&shape.text, &family);
 
         let probe = Probe {
+            before_condition: None,
             id,
             location: SourceLocation::new(root.join(path), shape.start_line(), 1),
             owner,
@@ -106,6 +107,7 @@ pub(crate) fn probes_for_repo_file_seeded(
             u32::try_from(ordinal + 1).unwrap_or(u32::MAX),
         );
         probes.push(SeededProbe::from_probe(Probe {
+            before_condition: None,
             id,
             location: SourceLocation::new(root.join(path), region.start_line, 1),
             owner: None,

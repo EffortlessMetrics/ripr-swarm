@@ -1,0 +1,1508 @@
+{
+  "schema_version": 5,
+  "product_version": "0.11.0",
+  "catalog_contract_version": "1",
+  "commands": [
+    {
+      "id": "cmd:agent",
+      "path": "agent",
+      "class": "public",
+      "discovery": "ordinary_public",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Show the agent surface.",
+      "task": "Repair a selected Rust gap",
+      "workflows": [
+        "repair-loop"
+      ],
+      "operation": "read-only",
+      "cost": "small",
+      "effects": {
+        "may_run_analysis": false,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": false
+      },
+      "primary_inputs": [],
+      "outputs": {
+        "default": null,
+        "optional": []
+      },
+      "state_target": null,
+      "accepts_json_flag": null,
+      "writes_json_artifacts": false,
+      "flags": [],
+      "flags_scope": "no_help_body",
+      "example": "ripr agent",
+      "next_routes": [
+        "agent repair",
+        "agent status"
+      ],
+      "stop_states": [],
+      "exit": {
+        "kind": "completed_or_failed",
+        "completed": 0,
+        "could_not_complete": 2
+      },
+      "limitations": "prints the agent surface; repair and status carry the loop.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:agent.brief",
+      "path": "agent brief",
+      "class": "advanced",
+      "discovery": "advanced",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Write a bounded coding-agent brief over the current diff or change.",
+      "task": "Repair a selected Rust gap",
+      "workflows": [
+        "editor-agent",
+        "repair-loop"
+      ],
+      "operation": "read-only",
+      "cost": "analysis",
+      "effects": {
+        "may_run_analysis": true,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": true
+      },
+      "primary_inputs": [
+        "the current diff (--diff, --base, --files, or --seam-id)"
+      ],
+      "outputs": {
+        "default": null,
+        "optional": []
+      },
+      "state_target": null,
+      "accepts_json_flag": "--json",
+      "writes_json_artifacts": false,
+      "flags": [
+        {
+          "name": "--base",
+          "takes_value": true,
+          "values": [],
+          "required": true,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--diff",
+          "takes_value": true,
+          "values": [],
+          "required": true,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--files",
+          "takes_value": true,
+          "values": [],
+          "required": true,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--json",
+          "takes_value": false,
+          "values": [],
+          "required": true,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--line-ranges",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--max-seams",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--root",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--seam-id",
+          "takes_value": true,
+          "values": [],
+          "required": true,
+          "repeatable": false,
+          "env": null
+        }
+      ],
+      "flags_scope": "own_help_body",
+      "example": "ripr agent brief --root . --diff PATH --json",
+      "next_routes": [
+        "agent packet",
+        "agent repair"
+      ],
+      "stop_states": [],
+      "exit": {
+        "kind": "completed_or_failed",
+        "completed": 0,
+        "could_not_complete": 2
+      },
+      "limitations": "--json is required until a human brief surface exists.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:agent.card",
+      "path": "agent card",
+      "class": "advanced",
+      "discovery": "advanced",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Hand off one seam as the compact default repair card.",
+      "task": "Repair a selected Rust gap",
+      "workflows": [
+        "editor-agent",
+        "repair-loop"
+      ],
+      "operation": "read-only",
+      "cost": "analysis",
+      "effects": {
+        "may_run_analysis": true,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": true
+      },
+      "primary_inputs": [
+        "--seam-id"
+      ],
+      "outputs": {
+        "default": null,
+        "optional": []
+      },
+      "state_target": null,
+      "accepts_json_flag": "--json",
+      "writes_json_artifacts": false,
+      "flags": [
+        {
+          "name": "--json",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--root",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--seam-id",
+          "takes_value": true,
+          "values": [],
+          "required": true,
+          "repeatable": false,
+          "env": null
+        }
+      ],
+      "flags_scope": "own_help_body",
+      "example": "ripr agent card --root . --seam-id ID",
+      "next_routes": [
+        "agent packet",
+        "agent repair"
+      ],
+      "stop_states": [],
+      "exit": {
+        "kind": "decision_or_refusal",
+        "completed": 0,
+        "could_not_complete": 2,
+        "decision_or_refusal": 3,
+        "stdout_on_refusal": "json_optional"
+      },
+      "limitations": "the complete canonical packet stays behind the explicit `ripr agent packet` route; the card never embeds it.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:assistant-loop.health",
+      "path": "assistant-loop health",
+      "class": "public",
+      "discovery": "ordinary_public",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Project assistant-loop health from one or more proof artifacts.",
+      "task": "Compose PR evidence",
+      "workflows": [
+        "review"
+      ],
+      "operation": "writes-artifacts",
+      "cost": "small",
+      "effects": {
+        "may_run_analysis": false,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": false
+      },
+      "primary_inputs": [
+        "assistant proof JSON (--proof, repeatable)"
+      ],
+      "outputs": {
+        "default": "target/ripr/reports/assistant-loop-health.json",
+        "optional": [
+          "target/ripr/reports/assistant-loop-health.md"
+        ]
+      },
+      "state_target": null,
+      "accepts_json_flag": null,
+      "writes_json_artifacts": true,
+      "flags": [
+        {
+          "name": "--out",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--out-md",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--proof",
+          "takes_value": true,
+          "values": [],
+          "required": true,
+          "repeatable": true,
+          "env": null
+        },
+        {
+          "name": "--root",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        }
+      ],
+      "flags_scope": "leaf_section",
+      "example": "ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json",
+      "next_routes": [
+        "pr-review front-panel"
+      ],
+      "stop_states": [
+        "explicit refusal on malformed inputs"
+      ],
+      "exit": {
+        "kind": "completed_or_failed",
+        "completed": 0,
+        "could_not_complete": 2
+      },
+      "limitations": "health counts stay advisory; it does not gate the assistant loop.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:check",
+      "path": "check",
+      "class": "public",
+      "discovery": "ordinary_public",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Find changed behavior in your diff that your tests may not catch.",
+      "task": "Inspect one change",
+      "workflows": [
+        "inspect-change"
+      ],
+      "operation": "writes-artifacts",
+      "cost": "analysis",
+      "effects": {
+        "may_run_analysis": true,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": true
+      },
+      "primary_inputs": [
+        "the current diff (--base, --worktree, or --diff PATH)"
+      ],
+      "outputs": {
+        "default": null,
+        "optional": [
+          "--write-artifact PATH reusable findings artifact"
+        ]
+      },
+      "state_target": null,
+      "accepts_json_flag": "--json",
+      "writes_json_artifacts": true,
+      "flags": [
+        {
+          "name": "--all",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--base",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--candidate-base",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--candidate-tree",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--committed",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--diff",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--exclude",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": true,
+          "env": null
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "values": [
+            "human",
+            "text",
+            "human-full",
+            "text-full",
+            "json",
+            "json-compact",
+            "json-terse",
+            "check-findings-json",
+            "github",
+            "missed-txt",
+            "agent",
+            "sarif",
+            "sarif-compact",
+            "badge-json",
+            "badge-shields",
+            "badge-plus-json",
+            "badge-plus-shields",
+            "repo-badge-json",
+            "repo-badge-shields",
+            "repo-badge-plus-json",
+            "repo-badge-plus-shields",
+            "repo-seams-json",
+            "repo-seams-md",
+            "repo-exposure-json",
+            "repo-exposure-summary-json",
+            "repo-exposure-md",
+            "repo-sarif",
+            "repo-sarif-compact",
+            "agent-seam-packets-json"
+          ],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--gap-ledger",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--git-timeout",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": "RIPR_GIT_TIMEOUT"
+        },
+        {
+          "name": "--json",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--legend",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--mode",
+          "takes_value": true,
+          "values": [
+            "instant",
+            "draft",
+            "fast",
+            "deep",
+            "ready"
+          ],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--no-unchanged-tests",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--output-dir",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--path",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": true,
+          "env": null
+        },
+        {
+          "name": "--perl-facts",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--quiet",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": "RIPR_QUIET"
+        },
+        {
+          "name": "--root",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--suppression-policy",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--timeout",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": "RIPR_CHECK_TIMEOUT"
+        },
+        {
+          "name": "--worktree",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--write-artifact",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        }
+      ],
+      "flags_scope": "own_help_body",
+      "example": "ripr check --base REV",
+      "next_routes": [
+        "context",
+        "explain",
+        "repair"
+      ],
+      "stop_states": [
+        "explicit refusal when no diff can be resolved"
+      ],
+      "exit": {
+        "kind": "advisory_findings",
+        "completed": 0,
+        "could_not_complete": 2,
+        "findings_including_exposed": 0,
+        "unsupported_input": 2,
+        "partial_with_limitations": 0
+      },
+      "limitations": "writes results to stdout by convention; shell redirection to target/ripr/reports/check.json is the report path and --write-artifact PATH also saves the reusable findings artifact. Findings, including exposed, and partial_with_limitations stay advisory (exit 0); unsupported_input keeps its report and exits 2.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:compat.start-here",
+      "path": "start-here",
+      "class": "compatibility",
+      "discovery": "compatibility_alias",
+      "relation": {
+        "kind": "alias_of",
+        "target": "first-pr"
+      },
+      "aliases": [],
+      "summary": "Compatibility alias for first-pr; compose the same start-here bundle.",
+      "task": "Compose PR evidence",
+      "workflows": [
+        "pr-evidence"
+      ],
+      "operation": "writes-artifacts",
+      "cost": "small",
+      "effects": {
+        "may_run_analysis": false,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": false
+      },
+      "primary_inputs": [
+        "the same artifact inputs as first-pr"
+      ],
+      "outputs": {
+        "default": "target/ripr/reports/start-here.json",
+        "optional": [
+          "target/ripr/reports/start-here.md"
+        ]
+      },
+      "state_target": null,
+      "accepts_json_flag": null,
+      "writes_json_artifacts": true,
+      "flags": [],
+      "flags_scope": "no_help_body",
+      "example": "ripr start-here [same options as first-pr]",
+      "next_routes": [
+        "first-pr"
+      ],
+      "stop_states": [
+        "--check fails when the composed bundle is stale"
+      ],
+      "exit": {
+        "kind": "completed_or_failed",
+        "completed": 0,
+        "could_not_complete": 2
+      },
+      "limitations": "same composition as first-pr; kept for existing docs and scripts during the rename.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:doctor",
+      "path": "doctor",
+      "class": "public",
+      "discovery": "ordinary_public",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Check the local ripr setup and show what to fix.",
+      "task": "Diagnose setup",
+      "workflows": [
+        "setup"
+      ],
+      "operation": "read-only",
+      "cost": "small",
+      "effects": {
+        "may_run_analysis": false,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": true
+      },
+      "primary_inputs": [
+        "the selected workspace root"
+      ],
+      "outputs": {
+        "default": null,
+        "optional": []
+      },
+      "state_target": null,
+      "accepts_json_flag": "--json",
+      "writes_json_artifacts": false,
+      "flags": [
+        {
+          "name": "--json",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--profile",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--root",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--timings",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        }
+      ],
+      "flags_scope": "own_help_body",
+      "example": "ripr doctor",
+      "next_routes": [
+        "config validate",
+        "init"
+      ],
+      "stop_states": [
+        "missing tools print as skipped with the reason and do not fail the run"
+      ],
+      "exit": {
+        "kind": "doctor_findings",
+        "completed": 0,
+        "could_not_complete": 2,
+        "findings": 3
+      },
+      "limitations": "reports environment readiness; it does not run verification.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:gate",
+      "path": "gate",
+      "class": "public",
+      "discovery": "ordinary_public",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Show the gate command surface.",
+      "task": "Adopt advisory CI",
+      "workflows": [
+        "policy-gate"
+      ],
+      "operation": "read-only",
+      "cost": "small",
+      "effects": {
+        "may_run_analysis": false,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": false
+      },
+      "primary_inputs": [],
+      "outputs": {
+        "default": null,
+        "optional": []
+      },
+      "state_target": null,
+      "accepts_json_flag": null,
+      "writes_json_artifacts": false,
+      "flags": [
+        {
+          "name": "--acknowledgement-label",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": true,
+          "env": null
+        },
+        {
+          "name": "--acknowledgements",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--agent-receipt",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--agent-verify",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--base",
+          "takes_value": true,
+          "values": [],
+          "required": true,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--baseline",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--exception-policy",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--gap-ledger",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--guidance-out",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--head",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--label",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": true,
+          "env": null
+        },
+        {
+          "name": "--labels-json",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--mode",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--mutation-calibration",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--out",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--out-md",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--pr-guidance",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--recommendation-calibration",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--repo-exposure",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--root",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--sarif-policy",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--suppression-policy",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--timeout-ms",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        }
+      ],
+      "flags_scope": "shared_help_body",
+      "example": "ripr gate",
+      "next_routes": [
+        "baseline create",
+        "gate check",
+        "gate evaluate"
+      ],
+      "stop_states": [],
+      "exit": {
+        "kind": "completed_or_failed",
+        "completed": 0,
+        "could_not_complete": 2
+      },
+      "limitations": "prints the gate surface; evaluation lives in `ripr gate check` and `ripr gate evaluate`.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:gate.check",
+      "path": "gate check",
+      "class": "public",
+      "discovery": "ordinary_public",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Fail CI on new gaps in this diff with one command.",
+      "task": "Adopt advisory CI",
+      "workflows": [
+        "policy-gate"
+      ],
+      "operation": "writes-artifacts",
+      "cost": "analysis",
+      "effects": {
+        "may_run_analysis": true,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": true
+      },
+      "primary_inputs": [
+        "git base revision (--base) and head (--head, default HEAD)",
+        "optional waiver labels (--label, --labels-json)"
+      ],
+      "outputs": {
+        "default": "target/ripr/reports/gate-decision.json (--out overrides)",
+        "optional": [
+          "target/ripr/reports/gate-decision.md (--out-md overrides)",
+          "target/ripr/review/comments.json and .md (--guidance-out overrides)"
+        ]
+      },
+      "state_target": null,
+      "accepts_json_flag": null,
+      "writes_json_artifacts": true,
+      "flags": [
+        {
+          "name": "--acknowledgement-label",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": true,
+          "env": null
+        },
+        {
+          "name": "--acknowledgements",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--agent-receipt",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--agent-verify",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--base",
+          "takes_value": true,
+          "values": [],
+          "required": true,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--baseline",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--exception-policy",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--gap-ledger",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--guidance-out",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--head",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--label",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": true,
+          "env": null
+        },
+        {
+          "name": "--labels-json",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--mode",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--mutation-calibration",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--out",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--out-md",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--pr-guidance",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--recommendation-calibration",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--repo-exposure",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--root",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--sarif-policy",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--suppression-policy",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--timeout-ms",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        }
+      ],
+      "flags_scope": "shared_help_body",
+      "example": "ripr gate check --base origin/main",
+      "next_routes": [
+        "baseline create",
+        "gate evaluate"
+      ],
+      "stop_states": [
+        "no actionable gap"
+      ],
+      "exit": {
+        "kind": "gate_evaluate",
+        "completed": 0,
+        "config_error": 2,
+        "blocked": 3
+      },
+      "limitations": "runs review-comments then gate evaluate in one process; defaults to acknowledgeable mode, so an eligible new gap blocks unless the configured waiver label is present. A producer failure is a config_error (exit 2), never a pass. The command does not install a CI required check by itself.",
+      "not_applicable_reason": null
+    },
+    {
+      "id": "cmd:receipt.check",
+      "path": "receipt check",
+      "class": "public",
+      "discovery": "ordinary_public",
+      "relation": {
+        "kind": "canonical"
+      },
+      "aliases": [],
+      "summary": "Validate a receipt JSON against structure and the live gap set.",
+      "task": "Repair a selected Rust gap",
+      "workflows": [
+        "repair-loop"
+      ],
+      "operation": "read-only",
+      "cost": "small",
+      "effects": {
+        "may_run_analysis": false,
+        "may_compile": false,
+        "may_run_tests": false,
+        "may_run_mutation": false,
+        "may_use_network": false,
+        "may_start_child_process": false
+      },
+      "primary_inputs": [
+        "receipt JSON (--path, or resolved via --gap)"
+      ],
+      "outputs": {
+        "default": null,
+        "optional": []
+      },
+      "state_target": null,
+      "accepts_json_flag": "--json",
+      "writes_json_artifacts": false,
+      "flags": [
+        {
+          "name": "--gap",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--json",
+          "takes_value": false,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--ledger",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        },
+        {
+          "name": "--path",
+          "takes_value": true,
+          "values": [],
+          "required": false,
+          "repeatable": false,
+          "env": null
+        }
+      ],
+      "flags_scope": "own_help_body",
+      "example": "ripr receipt check --path PATH",
+      "next_routes": [
+        "receipt write",
+        "reports gap-ledger"
+      ],
+      "stop_states": [
+        "orphan_receipt and receipt_gap_mismatch refuse the receipt"
+      ],
+      "exit": {
+        "kind": "receipt_check",
+        "completed": 0,
+        "could_not_complete": 2,
+        "orphan_or_gap_mismatch": 2
+      },
+      "limitations": "structural and ledger cross-reference only; without --ledger the cross-reference stays not_available.",
+      "not_applicable_reason": null
+    }
+  ],
+  "workflows": [
+    {
+      "id": "adopt-ci",
+      "aliases": [
+        "ci-adoption"
+      ],
+      "command_tag": "setup",
+      "purpose": "Install ripr's advisory, non-blocking CI configuration and check its policy posture.",
+      "applicability": "A repository wants advisory ripr checks in CI without merge blocking.",
+      "prerequisites": [
+        "a GitHub Actions workflow set the installer may extend",
+        "the selected repository root"
+      ],
+      "first_command": "cmd:init",
+      "steps": [
+        {
+          "command": "cmd:init",
+          "role": "install ripr.toml and, with --ci github, the advisory workflow",
+          "cost": "small",
+          "operation": "state-changing",
+          "effects": {
+            "may_run_analysis": false,
+            "may_compile": false,
+            "may_run_tests": false,
+            "may_run_mutation": false,
+            "may_use_network": false,
+            "may_start_child_process": false
+          },
+          "writes": [
+            ".github/workflows/ripr.yml with --ci github",
+            "ripr.toml"
+          ]
+        },
+        {
+          "command": "cmd:config.validate",
+          "role": "check the installed configuration before the first analysis",
+          "cost": "small",
+          "operation": "read-only",
+          "effects": {
+            "may_run_analysis": false,
+            "may_compile": false,
+            "may_run_tests": false,
+            "may_run_mutation": false,
+            "may_use_network": false,
+            "may_start_child_process": false
+          },
+          "writes": []
+        },
+        {
+          "command": "cmd:doctor",
+          "role": "probe tool readiness for the CI environment",
+          "cost": "small",
+          "operation": "read-only",
+          "effects": {
+            "may_run_analysis": false,
+            "may_compile": false,
+            "may_run_tests": false,
+            "may_run_mutation": false,
+            "may_use_network": false,
+            "may_start_child_process": true
+          },
+          "writes": []
+        },
+        {
+          "command": "cmd:policy.readiness",
+          "role": "render the advisory policy-readiness view over saved artifacts",
+          "cost": "small",
+          "operation": "writes-artifacts",
+          "effects": {
+            "may_run_analysis": false,
+            "may_compile": false,
+            "may_run_tests": false,
+            "may_run_mutation": false,
+            "may_use_network": false,
+            "may_start_child_process": false
+          },
+          "writes": [
+            "target/ripr/reports/policy-readiness.json"
+          ]
+        }
+      ],
+      "optional_steps": [
+        {
+          "command": "cmd:check",
+          "role": "run the first diff-scoped analysis the CI gate will wrap",
+          "cost": "analysis",
+          "operation": "writes-artifacts",
+          "effects": {
+            "may_run_analysis": true,
+            "may_compile": false,
+            "may_run_tests": false,
+            "may_run_mutation": false,
+            "may_use_network": false,
+            "may_start_child_process": true
+          },
+          "writes": [
+            "--write-artifact PATH reusable findings artifact"
+          ]
+        },
+        {
+          "command": "cmd:policy.history",
+          "role": "append the policy history ledger when --out-jsonl names it",
+          "cost": "small",
+          "operation": "state-changing",
+          "effects": {
+            "may_run_analysis": false,
+            "may_compile": false,
+            "may_run_tests": false,
+            "may_run_mutation": false,
+            "may_use_network": false,
+            "may_start_child_process": false
+          },
+          "writes": [
+            "--out-jsonl PATH append-only JSONL history"
+          ]
+        }
+      ],
+      "result_families": [
+        {
+          "from": "cmd:init",
+          "family": "configuration installed",
+          "next": {
+            "kind": "command",
+            "command": "cmd:config.validate"
+          }
+        },
+        {
+          "from": "cmd:config.validate",
+          "family": "configuration valid",
+          "next": {
+            "kind": "command",
+            "command": "cmd:doctor"
+          }
+        },
+        {
+          "from": "cmd:doctor",
+          "family": "environment ready",
+          "next": {
+            "kind": "command",
+            "command": "cmd:policy.readiness"
+          }
+        },
+        {
+          "from": "cmd:policy.readiness",
+          "family": "readiness rendered",
+          "next": {
+            "kind": "stop",
+            "statement": "stop: review the advisory report; the workflow stays non-blocking"
+          }
+        }
+      ],
+      "artifacts_read": [
+        "the selected repository root"
+      ],
+      "artifacts_written": [
+        ".github/workflows/ripr.yml with --ci github",
+        "ripr.toml",
+        "target/ripr/reports/policy-readiness.json"
+      ],
+      "recovery": [
+        {
+          "when": "init refuses because a target exists",
+          "route": "cmd:init"
+        },
+        {
+          "when": "the installed configuration is invalid",
+          "route": "cmd:config.validate"
+        }
+      ],
+      "stop_conditions": [
+        "explicit refusal",
+        "the existing workflow is kept when writing cannot finish",
+        "the readiness projection stays advisory and never blocks merges"
+      ],
+      "advanced_alternatives": [],
+      "limitations": "advisory only: ripr writes configuration and a workflow for review; it never edits source, gates merges by itself, or contacts the network."
+    }
+  ],
+  "catalog_digest": "43addde448b3fa01d6bf037c58967a66a4303ecef2c58f765b05958e3700438a",
+  "limitations": [
+    "ordering is explicit: commands and workflows sort by identity key, and every embedded string list is sorted",
+    "the catalog digest covers the sorted command rows, workflow rows, and catalog contract version only; product version, human help wording, and renderer layout are excluded",
+    "the document is advisory discovery data; it does not prove command outcomes or workflow success",
+    "per-command exit objects name the typed 0/2/3 process contract from docs/EXIT_CODES.md; they do not prove a given invocation's status"
+  ],
+  "non_claims": [
+    "does not execute commands or workflows",
+    "does not run analysis, compilation, tests, or mutation",
+    "does not spawn child processes, open the network, or start the LSP",
+    "does not read git state, caches, or the filesystem beyond the binary itself",
+    "does not write product artifacts or mutate the workspace"
+  ]
+}

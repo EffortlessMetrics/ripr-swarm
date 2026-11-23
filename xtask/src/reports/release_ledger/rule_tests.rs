@@ -674,7 +674,7 @@ fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(),
     ))
     .map_err(|error| error.to_string())?;
     let historical = "included_historical_reachable_only";
-    let reviewed: [(&str, &str, &[&str]); 8] = [
+    let reviewed: [(&str, &str, &[&str]); 9] = [
         ("264db5967022a0aeaec26cc2827d432d3cdb62a5", historical, &[]),
         ("bafadaf7986e9056cb9fbc8819d0158bb712baca", historical, &[]),
         ("c44d0f6ccef88cad1059f994e69831632e90fb5e", historical, &[]),
@@ -694,6 +694,11 @@ fn recorded_provisional_overrides_resolve_only_the_reviewed_rows() -> Result<(),
             "40631fc14a9a10ff7272ff61f6cb2e44a27309d5",
             "included_accepted_release_or_control",
             &["evals/ripr-eval-smoke/src/lib.rs"],
+        ),
+        (
+            "090336241623cd0f5f7c6d5252e7c9553ff29f83",
+            "included_test_or_evidence",
+            &["examples/typescript-discount-threshold/project/package.json"],
         ),
     ];
     let mut commits = Vec::new();

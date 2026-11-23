@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.exposed|probe:src_stats.py:python_preview:1fd9a5f2|probe:src_stats.py:python_preview:1fd9a5f2|src/stats.py"
+            "riprFingerprintV1": "ripr.finding.exposed|probe:src_stats.py:python_preview:1fd9a5f2|probe:src_stats.py:python_preview:1fd9a5f2|fixtures/python_assertion_helper_field/input/src/stats.py"
           },
           "level": "note",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/stats.py"
+                  "uri": "fixtures/python_assertion_helper_field/input/src/stats.py"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "exposed static exposure for predicate probe:         self.writes += 1. Next step: Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.exposed|probe:src_stats.py:python_preview:1fd9a5f2|probe:src_stats.py:python_preview:1fd9a5f2|src/stats.py"
+            "riprFingerprintV1": "ripr.finding.exposed|probe:src_stats.py:python_preview:1fd9a5f2|probe:src_stats.py:python_preview:1fd9a5f2|fixtures/python_assertion_helper_field/input/src/stats.py"
           },
           "properties": {
             "canonical_gap": {

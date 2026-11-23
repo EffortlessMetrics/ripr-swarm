@@ -63,6 +63,7 @@ fn missing() -> MissingDiscriminatorFact {
 
 fn related_test() -> RelatedTestGrip {
     RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "below_threshold_has_no_discount".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -139,6 +140,7 @@ fn python_repair_card() -> PythonRepairCard {
         ),
         verify_command:
             "pytest tests/test_pricing.py::test_calculate_discount_above_threshold".to_string(),
+        verify_cwd: None,
         verify_command_confidence: "high".to_string(),
         receipt_command: None,
         receipt_status: "unavailable_until_python_gap_ledger".to_string(),
@@ -1136,11 +1138,12 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     ];
     let artifacts = pilot_artifacts();
     let context = pilot_context(&artifacts);
-    let ranked = "more are in target/ripr/pilot/pilot-summary.md; --max-seams N shows more";
+    let ranked =
+        "the ranked list is in target/ripr/pilot/pilot-summary.md; --max-seams N lists more there";
 
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
-        terminal.contains(&format!("  3 gaps to fix; showing the top 1 ({ranked})\n")),
+        terminal.contains(&format!("  3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1 ({ranked})\n")),
         "{terminal}"
     );
 
@@ -1160,7 +1163,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     let terminal = render_pilot_terminal(&entries, limited);
     assert!(
         terminal.contains(&format!(
-            "  at least 3 gaps to fix; showing the top 1 ({ranked})\n"
+            "  at least 3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1 ({ranked})\n"
         )),
         "{terminal}"
     );
@@ -1180,7 +1183,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     };
     let terminal = render_pilot_terminal(&entries, declined_context);
     assert!(
-        terminal.contains("  at least 3 gaps to fix; showing the top 1"),
+        terminal.contains("  at least 3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1"),
         "{terminal}"
     );
 
@@ -1196,7 +1199,10 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
         terminal.contains("  1 gap to fix; showing it\n"),
         "{terminal}"
     );
-    assert!(!terminal.contains("--max-seams N shows more"), "{terminal}");
+    assert!(
+        !terminal.contains("--max-seams N lists more there"),
+        "{terminal}"
+    );
 }
 
 #[test]
@@ -4350,10 +4356,30 @@ fn changed(file: &str, line: usize) -> PilotCurrentChange {
 }
 
 fn changed_lines(lines: &[(&str, usize)]) -> PilotCurrentChange {
-    let diff = lines
-        .iter()
-        .map(|(file, line)| one_line_diff(file, *line))
-        .collect::<String>();
+    // One section per file, as git writes it: a path repeated across sections
+    // is a patch series whose coordinates the parser refuses (#15268).
+    let mut diff = String::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for (file, _) in lines {
+        if seen.contains(file) {
+            continue;
+        }
+        seen.push(file);
+        let mut hunks = lines
+            .iter()
+            .filter(|(other, _)| other == file)
+            .map(|(_, line)| *line)
+            .collect::<Vec<_>>();
+        hunks.sort_unstable();
+        hunks.dedup();
+        let mut section = one_line_diff(file, hunks[0]);
+        for line in &hunks[1..] {
+            let full = one_line_diff(file, *line);
+            let hunk_start = full.find("@@").unwrap_or(0);
+            section.push_str(&full[hunk_start..]);
+        }
+        diff.push_str(&section);
+    }
     PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), &diff)
 }
 
@@ -5459,13 +5485,13 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs", "src/lib.rs"]),
+        &diff(&["build.rs", "xtask/src/main.rs", "src/lib.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
         (
-            PathBuf::from("lib/odd.rs"),
-            DiffOnlySource::DeclaredOutsideSrc,
+            PathBuf::from("xtask/src/main.rs"),
+            DiffOnlySource::RepoAutomation,
         ),
     ])
     .with_seams_counted(&[], None);
@@ -5478,13 +5504,13 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let only_several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs"]),
+        &diff(&["build.rs", "xtask/src/main.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
         (
-            PathBuf::from("lib/odd.rs"),
-            DiffOnlySource::DeclaredOutsideSrc,
+            PathBuf::from("xtask/src/main.rs"),
+            DiffOnlySource::RepoAutomation,
         ),
     ])
     .with_seams_counted(&[], None);
@@ -5786,6 +5812,57 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
     assert!(!terminal.contains("  python:"), "{terminal}");
 }
 
+/// #15302: a nested Python project's project-relative verify command is shown
+/// with its directory on every pilot surface, so it runs from the root.
+#[cfg(not(windows))]
+#[test]
+fn pilot_surfaces_run_a_nested_python_verify_command_from_its_project() {
+    let artifacts = pilot_artifacts();
+    let mut python = python_first_use();
+    if let Some(card) = python.top_repair_card.as_mut() {
+        card.verify_command = "python -m pytest tests/test_price.py::test_discount".to_string();
+        card.verify_cwd = Some("py".to_string());
+    }
+    let context = pilot_context_with_python(&artifacts, &python);
+    let json = render_pilot_summary_json(&[], context);
+    let md = render_pilot_summary_md(&[], context);
+    let terminal = render_pilot_terminal(&[], context);
+    let rooted = "(cd -- py && python -m pytest tests/test_price.py::test_discount)";
+    assert!(json.contains(r#""verify_cwd": "py""#), "{json}");
+    assert!(
+        json.contains(r#""verify_command": "python -m pytest tests/test_price.py::test_discount""#),
+        "{json}"
+    );
+    assert!(md.contains(&format!("Verify: `{rooted}`")), "{md}");
+    assert!(
+        terminal.contains(&format!("verify: {rooted}")),
+        "{terminal}"
+    );
+    let root_level = python_first_use();
+    let root_context = pilot_context_with_python(&artifacts, &root_level);
+    for text in [
+        render_pilot_summary_json(&[], root_context),
+        render_pilot_summary_md(&[], root_context),
+        render_pilot_terminal(&[], root_context),
+    ] {
+        assert!(
+            !text.contains("verify_cwd") && !text.contains("cd -- "),
+            "{text}"
+        );
+    }
+    for (surface, text) in [("markdown", &md), ("terminal", &terminal)] {
+        for line in text
+            .lines()
+            .filter(|line| line.contains("pytest tests/test_price.py"))
+        {
+            assert!(
+                line.contains("cd -- py &&"),
+                "{surface} line without the project directory: {line}"
+            );
+        }
+    }
+}
+
 fn raw_terminal_controls(text: &str) -> Vec<char> {
     text.chars()
         .filter(|ch| {
@@ -5855,4 +5932,115 @@ fn pilot_terminal_for_a_plain_file_name_is_unchanged_by_the_escape() {
             .any(|line| line.starts_with("Next, by hand:") && line.contains("src/pricing.rs")),
         "{terminal}"
     );
+}
+
+/// #15278 item 4: a gap no test reaches says which function a test must
+/// call, instead of describing oracles that never run it or blaming a
+/// missing test file.
+#[test]
+fn pilot_terminal_names_the_function_a_test_must_call_for_an_unreached_gap() {
+    let entry = classified_in_owner(
+        SeamGripClass::Ungripped,
+        "src/lib.rs",
+        "impl Counter::bump",
+        11,
+    );
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(
+        terminal.contains(
+            "  why it matters: no test is seen calling `bump`, so no assertion can notice a change here\n"
+        ),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("  test to add: one that calls `bump` and asserts the exact value"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("has no test file to use"), "{terminal}");
+}
+
+/// The control: a gap tests do reach keeps its own reason and the
+/// no-test-file wording.
+#[test]
+fn pilot_terminal_keeps_the_reached_gap_wording() {
+    let entry = classified_in_owner(
+        SeamGripClass::ReachableUnrevealed,
+        "src/lib.rs",
+        "impl Counter::bump",
+        11,
+    );
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(!terminal.contains("no test is seen calling"), "{terminal}");
+    assert!(terminal.contains("has no test file to use"), "{terminal}");
+}
+
+/// #15278 review: an unreached effect-only gap (a call that may or may not
+/// run) leaves no value to assert, so the test to add observes the effect.
+#[test]
+fn pilot_terminal_asks_an_unreached_effect_gap_to_observe_the_effect() {
+    let mut entry = classified_in_owner(SeamGripClass::Ungripped, "src/lib.rs", "run", 11);
+    entry.seam = RepoSeam::new(
+        "src/lib.rs",
+        "run",
+        SeamKind::CallPresence,
+        110,
+        11,
+        "notify()",
+        RequiredDiscriminator::CallSite {
+            target: "notify()".to_string(),
+        },
+        ExpectedSink::SideEffect,
+    );
+    entry.evidence.seam_id = entry.seam.id().clone();
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(
+        terminal.contains(
+            "  test to add: one that calls `run` and observes the effect this line changes"
+        ),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("asserts the exact value"), "{terminal}");
+}
+
+/// #15278 review: with nothing ranked, pilot's closing line follows what
+/// `ripr check` read on a gripped changed spot, binds the printed command to
+/// pilot's root, and never reads a check that could not run as agreement.
+#[test]
+fn pilot_empty_ranking_follows_the_check_reading_of_a_gripped_change() {
+    let entries = [classified_with(
+        SeamGripClass::StronglyGripped,
+        "src/lib.rs",
+        10,
+        vec![],
+        vec![],
+    )];
+    let artifacts = pilot_artifacts();
+    let cases = [
+        (
+            Some(1),
+            "Pilot ranked no gap, but `ripr check` reads your changed code as a gap or cannot tell: run `ripr check --root ",
+        ),
+        (
+            None,
+            "Pilot ranked no gap, but ripr could not confirm what `ripr check` reads for your changed code: run `ripr check --root ",
+        ),
+        (Some(0), "No gap was found, so there is no test to add;"),
+    ];
+    for (reading, expected) in cases {
+        let change = changed("src/lib.rs", 10)
+            .with_seams_counted(&entries, None)
+            .with_check_reads_open(reading);
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(&change);
+        let terminal = render_pilot_terminal(&entries, context);
+        assert!(terminal.contains(expected), "{reading:?}:\n{terminal}");
+        assert_eq!(
+            terminal.contains("so there is no test to add"),
+            reading == Some(0),
+            "{reading:?}:\n{terminal}"
+        );
+    }
 }

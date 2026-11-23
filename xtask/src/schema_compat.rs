@@ -38,6 +38,59 @@ pub(crate) enum Compat {
     Violations(Vec<String>),
 }
 
+/// Published schemas whose documents carry their pinned version under a key
+/// other than `schema_version`. The `ripr context` packet keeps its
+/// documented top-level `version` key (#5081); renaming it on the wire would
+/// be its own migration. Every other schema pins `schema_version`.
+pub(crate) const VERSION_KEY_OVERRIDES: &[(&str, &str)] =
+    &[("schemas/ripr/context.schema.json", "version")];
+
+/// The top-level property that pins the version of the schema at `rel`.
+pub(crate) fn version_key(rel: &str) -> &'static str {
+    VERSION_KEY_OVERRIDES
+        .iter()
+        .find(|(path, _)| *path == rel)
+        .map_or("schema_version", |(_, key)| key)
+}
+
+/// `assess` for a schema that pins its version under `key`: the pin and any
+/// `schema_version` property swap names in both copies first, so a changed
+/// pin is the same sanctioned bump signal under either key, and a separate
+/// `schema_version` property is still compared (under `key`'s name) rather
+/// than overwritten.
+pub(crate) fn assess_with_version_key(old: &Value, new: &Value, key: &str) -> Compat {
+    if key == "schema_version" {
+        return assess(old, new);
+    }
+    let swap = |name: &str| match name {
+        "schema_version" => Some(key),
+        other if other == key => Some("schema_version"),
+        _ => None,
+    };
+    let rename = |schema: &Value| {
+        let mut schema = schema.clone();
+        if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+            let pin = properties.remove(key);
+            let declared = properties.remove("schema_version");
+            if let Some(pin) = pin {
+                properties.insert("schema_version".to_string(), pin);
+            }
+            if let Some(declared) = declared {
+                properties.insert(key.to_string(), declared);
+            }
+        }
+        if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+            for name in required.iter_mut() {
+                if let Some(swapped) = name.as_str().and_then(swap) {
+                    *name = Value::String(swapped.to_string());
+                }
+            }
+        }
+        schema
+    };
+    assess(&rename(old), &rename(new))
+}
+
 /// Compare `old` to `new` and decide whether the edit is acceptable.
 pub(crate) fn assess(old: &Value, new: &Value) -> Compat {
     let mut breaking = Vec::new();
@@ -112,6 +165,72 @@ fn accepts_everything(value: Option<&Value>) -> bool {
 
 fn number(value: Option<&Value>) -> Option<f64> {
     value.and_then(Value::as_f64)
+}
+
+/// A properties-only branch is satisfied by every formerly valid instance if
+/// each named scalar guard was already required whenever that property existed.
+/// Missing properties still satisfy the branch. Exclude references and other
+/// context-dependent keywords whose meaning can change when moved.
+fn repeats_scalar_properties(old: &serde_json::Map<String, Value>, branch: &Value) -> bool {
+    let Some(branch) = branch.as_object().filter(|branch| branch.len() == 1) else {
+        return false;
+    };
+    let Some(properties) = branch.get("properties").and_then(Value::as_object) else {
+        return false;
+    };
+    let Some(previous) = old.get("properties").and_then(Value::as_object) else {
+        return false;
+    };
+    !properties.is_empty()
+        && properties.iter().all(|(name, guard)| {
+            let Some(guard) = guard.as_object().filter(|g| !g.is_empty()) else {
+                return false;
+            };
+            let Some(prior) = previous.get(name).and_then(Value::as_object) else {
+                return false;
+            };
+            guard.iter().all(|(keyword, value)| {
+                matches!(keyword.as_str(), "type" | "minLength")
+                    && prior.get(keyword) == Some(value)
+            })
+        })
+}
+
+fn valid_required_names(value: &Value) -> bool {
+    let Some(names) = value.as_array() else {
+        return false;
+    };
+    let mut seen = BTreeSet::new();
+    !names.is_empty()
+        && names
+            .iter()
+            .all(|name| name.as_str().is_some_and(|name| seen.insert(name)))
+}
+
+/// Once another arm covers every old instance, this sibling only has to be a
+/// well-formed predicate. Keep references, combinators and unknown keywords
+/// outside this proof; their evaluation may depend on the surrounding schema.
+fn supported_additive_arm(schema: &Value, remaining_depth: usize) -> bool {
+    let Some(depth) = remaining_depth.checked_sub(1) else {
+        return false;
+    };
+    schema.as_object().is_some_and(|object| {
+        object.iter().all(|(key, value)| match key.as_str() {
+            "const" => true,
+            "description" => value.is_string(),
+            "type" => value.as_str() == Some("string"),
+            "additionalProperties" => value.is_boolean(),
+            "required" => valid_required_names(value),
+            "minItems" | "maxItems" => value.as_u64().is_some(),
+            "items" => supported_additive_arm(value, depth),
+            "properties" => value.as_object().is_some_and(|properties| {
+                properties
+                    .values()
+                    .all(|child| supported_additive_arm(child, depth))
+            }),
+            _ => false,
+        })
+    })
 }
 
 fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
@@ -309,8 +428,27 @@ fn compare(old: &Value, new: &Value, path: &str, out: &mut Vec<String>) {
             for (index, (o, n)) in o.iter().zip(n).enumerate() {
                 compare(o, n, &format!("{path}/{key}/{index}"), out);
             }
-        } else if old.get(key).is_none() && new.get(key).is_some() {
-            out.push(format!("{path}: {key} constraint added"));
+        } else if old.get(key).is_none()
+            && let Some(alternatives) = new.get(key)
+        {
+            // Widening an existing oneOf arm could overlap another arm. This
+            // implication is only a proof for the document root.
+            let covered = path == "#"
+                && key == "anyOf"
+                && alternatives.as_array().is_some_and(|branches| {
+                    let mut retained = false;
+                    for branch in branches {
+                        if repeats_scalar_properties(old, branch) {
+                            retained = true;
+                        } else if !supported_additive_arm(branch, 32) {
+                            return false;
+                        }
+                    }
+                    retained
+                });
+            if !covered {
+                out.push(format!("{path}: {key} constraint added"));
+            }
         }
     }
     if let (Some(Value::Array(o)), Some(Value::Array(n))) = (old.get("allOf"), new.get("allOf")) {
@@ -478,7 +616,7 @@ pub(crate) fn check(root: &Path, published: &[String]) -> (Vec<String>, String) 
             continue;
         };
         compared += 1;
-        match assess(&old, &new) {
+        match assess_with_version_key(&old, &new, version_key(rel)) {
             Compat::Compatible {
                 bumped: true,
                 breaking,
@@ -564,6 +702,142 @@ mod tests {
             assess(&base(), &wider),
             Compat::Compatible { breaking: 0, .. }
         ));
+    }
+
+    #[test]
+    fn added_any_of_preserves_a_repeated_scalar_guard_only() -> Result<(), String> {
+        let old = json!({"type":"object","properties":{"root":{"type":"string","minLength":1},
+            "other":{"type":"integer"}}});
+        let guard = json!({"properties":{"root":{"type":"string","minLength":1}}});
+        let refusal = json!({"required":["status","error"]});
+        let mut widened = old.clone();
+        widened["properties"]["root"] = json!({"type":"string"});
+        widened["anyOf"] = json!([guard, refusal]);
+        let accepted = |candidate: &Value| {
+            matches!(
+                assess(&old, candidate),
+                Compat::Compatible { breaking: 0, .. }
+            )
+        };
+        if !accepted(&widened) {
+            return Err("old property guard rejected".into());
+        }
+        let closed = json!({
+            "description":"closed refusal",
+            "additionalProperties":false,
+            "required":["status","details"],
+            "properties":{
+                "status":{"const":"refused"},
+                "details":{"minItems":1,"maxItems":1,"items":{"properties":{"code":{"type":"string"}}}}
+            }
+        });
+        let mut bounded = widened.clone();
+        bounded["anyOf"] = json!([guard, closed]);
+        if !accepted(&bounded) {
+            return Err("retained guard with a well-formed closed sibling rejected".into());
+        }
+        for bad in [
+            json!({"properties":{"root":{"minLength":2}}}),
+            json!({"properties":{"root":{"type":"integer"}}}),
+            json!({"properties":{"new":{"type":"string"}}}),
+            json!({"properties":{"root":{"$ref":"#/$defs/root"}}}),
+            json!({"properties":{"root":{"type":"string"}},"required":["root"]}),
+        ] {
+            let mut narrowed = widened.clone();
+            narrowed["anyOf"] = json!([bad, refusal]);
+            if accepted(&narrowed) {
+                return Err(format!("unproven guard accepted: {bad}"));
+            }
+        }
+        for malformed in [
+            json!({"required":"status"}),
+            json!({"required":["status","status"]}),
+            json!({"required":[true]}),
+            json!({"format":"unknown"}),
+            json!({"properties":{"status":{"$ref":"#/$defs/missing"}}}),
+            json!({"properties":{"details":{"items":{"type":"unknown"}}}}),
+            json!({"properties":{"details":{"items":[]}}}),
+            json!({"properties":[]}),
+            json!({"additionalProperties":"false"}),
+            json!({"maxItems":-1}),
+            json!({"minItems":1.5}),
+            json!({"description":false}),
+        ] {
+            let mut candidate = widened.clone();
+            candidate["anyOf"] = json!([guard, malformed]);
+            if accepted(&candidate) {
+                return Err(format!(
+                    "invalid or unsupported alternative accepted: {malformed}"
+                ));
+            }
+        }
+        let mut exclusive = old.clone();
+        exclusive["oneOf"] = json!([guard, refusal]);
+        let mut sibling = widened.clone();
+        sibling["properties"]["other"]["minimum"] = json!(1);
+        if accepted(&exclusive) || accepted(&sibling) {
+            return Err("oneOf overlap or sibling narrowing escaped the checker".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn published_check_root_widening_does_not_admit_overlapping_cache_receipts()
+    -> Result<(), String> {
+        let mut before: Value =
+            serde_json::from_str(include_str!("../../schemas/ripr/check.schema.json"))
+                .map_err(|e| e.to_string())?;
+        let guard = json!({"properties":{"root":{"type":"string","minLength":1}}});
+        // Exercise both generations of the published file as #15842 lands.
+        let obj = before.as_object_mut().ok_or("expected schema object")?;
+        let alternatives = obj
+            .remove("anyOf")
+            .unwrap_or_else(|| json!([guard,{"required":["status","error"]}]));
+        before["properties"]["root"] = json!({"type":"string","minLength":1});
+        let mut after = before.clone();
+        after["properties"]["root"] = json!({"type":"string"});
+        after["anyOf"] = alternatives;
+        if !matches!(
+            assess(&before, &after),
+            Compat::Compatible { breaking: 0, .. }
+        ) {
+            return Err("real check root widening rejected".into());
+        }
+
+        let cache = &before["properties"]["file_fact_cache"];
+        let mut bad = before.clone();
+        let arm = bad
+            .pointer_mut("/properties/file_fact_cache/oneOf/1")
+            .and_then(Value::as_object_mut)
+            .ok_or("missing cache object alternative")?;
+        arm.remove("type");
+        arm.insert(
+            "anyOf".into(),
+            json!([{"properties":{"hits":{"type":"integer"}}},{"required":["status"]}]),
+        );
+        let mut old_errors = Vec::new();
+        let mut new_errors = Vec::new();
+        crate::verification_contracts::validate_value_against_schema(
+            &Value::Null,
+            cache,
+            &before,
+            "cache".into(),
+            &mut old_errors,
+        );
+        crate::verification_contracts::validate_value_against_schema(
+            &Value::Null,
+            &bad["properties"]["file_fact_cache"],
+            &bad,
+            "cache".into(),
+            &mut new_errors,
+        );
+        if !old_errors.is_empty()
+            || new_errors.is_empty()
+            || !matches!(assess(&before, &bad), Compat::Violations(_))
+        {
+            return Err("null cache receipt became invalid without a compatibility refusal".into());
+        }
+        Ok(())
     }
 
     #[test]
@@ -688,6 +962,52 @@ mod tests {
                 breaking: 1
             }
         );
+    }
+
+    /// The context packet pins `version`, not `schema_version` (#5081): a
+    /// changed `version` const is its sanctioned bump, and a tightening
+    /// without one is still caught under that key.
+    #[test]
+    fn an_overridden_version_key_is_the_bump_signal() {
+        assert_eq!(version_key("schemas/ripr/context.schema.json"), "version");
+        assert_eq!(
+            version_key("schemas/ripr/diff.schema.json"),
+            "schema_version"
+        );
+        let keyed = |version: &str, values: Value| {
+            json!({
+                "type": "object",
+                "required": ["version", "a"],
+                "properties": {"version": {"const": version}, "a": {"enum": values}}
+            })
+        };
+        let old = keyed("1.1", json!(["x", "y"]));
+        let tightened = keyed("1.1", json!(["x"]));
+        let bumped = keyed("1.2", json!(["x"]));
+        assert!(matches!(
+            assess_with_version_key(&old, &tightened, "version"),
+            Compat::Violations(_)
+        ));
+        assert_eq!(
+            assess_with_version_key(&old, &bumped, "version"),
+            Compat::Compatible {
+                bumped: true,
+                breaking: 1
+            }
+        );
+        // Read under the default key, the same bump is an unsanctioned const
+        // change, so the override is what admits it.
+        assert!(matches!(assess(&old, &bumped), Compat::Violations(_)));
+        // A separate `schema_version` property beside the overridden pin is
+        // still compared: tightening it without a bump is caught.
+        let mut declared = old.clone();
+        declared["properties"]["schema_version"] = json!({"type": "string"});
+        let mut tightened_declared = declared.clone();
+        tightened_declared["properties"]["schema_version"] = json!({"enum": ["only"]});
+        assert!(matches!(
+            assess_with_version_key(&declared, &tightened_declared, "version"),
+            Compat::Violations(_)
+        ));
     }
 
     #[test]

@@ -27,7 +27,7 @@ use std::path::Path;
 /// the scoreboard enough scored recommendations on small crates.
 pub(super) const PILOT_MAX_SEAMS: usize = 10;
 
-pub(crate) const CLAIM_BOUNDARY: &str = "A pilot recommendation is confirmed when a viable operator mutant of its predicate or return expression was missed (with none, a viable mutant on its line; with none there either, a whole-body mutant of its innermost function), refuted when every such mutant was caught, and unscored otherwise. Precision is confirmed over confirmed plus refuted, for the recorded revisions and cargo-mutants versions only.";
+pub(crate) const CLAIM_BOUNDARY: &str = "A pilot recommendation is confirmed when a viable operator mutant of its predicate or return expression was missed (with none, a viable mutant on its line — restricted to mutants starting inside its expression when that expression occurs once on the line; with none there either, a whole-body mutant of its innermost function), refuted when every such mutant was caught, and unscored otherwise. A line whose mutants only timed out is unscored, never judged by the whole-body tier; a whole-body mutant cannot refute an error_variant recommendation or one whose innermost function also has a missed mutant. Precision is confirmed over confirmed plus refuted, for the recorded revisions and cargo-mutants versions only.";
 
 /// The 1-based column range `[start, end)` of `expression` on `line`, in
 /// characters as cargo-mutants reports them, when it occurs exactly once.
@@ -116,6 +116,46 @@ struct Outcome<'a> {
     function_span: Option<(u64, u64)>,
     whole_body: bool,
     missed: bool,
+}
+
+/// Whether a non-whole-body mutant on `file`:`line` timed out, so the
+/// line produced candidates but no viable verdict for them. When the
+/// seam expression is located (`columns`), only timeouts starting inside
+/// it count; otherwise the whole line counts.
+fn timeout_on_line(
+    mutants: &Value,
+    outcomes: &Value,
+    file: &str,
+    line: u64,
+    columns: Option<(u64, u64)>,
+) -> bool {
+    let timed_out: std::collections::BTreeSet<&str> = outcomes
+        .get("outcomes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|record| record.get("summary").and_then(Value::as_str) == Some("Timeout"))
+        .filter_map(|record| record.pointer("/scenario/Mutant/name")?.as_str())
+        .collect();
+    if timed_out.is_empty() {
+        return false;
+    }
+    mutants.as_array().into_iter().flatten().any(|mutant| {
+        mutant.get("genre").and_then(Value::as_str).unwrap_or("") != "FnValue"
+            && mutant.get("file").and_then(Value::as_str) == Some(file)
+            && mutant.pointer("/span/start/line").and_then(Value::as_u64) == Some(line)
+            && columns.is_none_or(|(start, end)| {
+                let column = mutant
+                    .pointer("/span/start/column")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                (start..end).contains(&column)
+            })
+            && mutant
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| timed_out.contains(name))
+    })
 }
 
 /// Join cargo-mutants `mutants.json` (locations) to `outcomes.json`
@@ -210,9 +250,22 @@ pub(crate) fn judge_recommendations(
                         && super::operator_mutant_of_expression(o.genre, o.name, kind, expression)
                 })
                 .collect::<Vec<_>>();
+            // When the expression is located exactly once, the line tier
+            // counts only mutants starting inside it; mutants of another
+            // expression on the same line fall through to the owner tier.
+            let line_joined = match columns {
+                Some((start, end)) => on_line
+                    .iter()
+                    .copied()
+                    .filter(|o| (start..end).contains(&o.column))
+                    .collect::<Vec<_>>(),
+                None => on_line.clone(),
+            };
             let (tier, joined) = if !precise.is_empty() {
                 ("seam", precise)
-            } else if on_line.is_empty() {
+            } else if !line_joined.is_empty() {
+                ("line", line_joined)
+            } else {
                 let containing = viable
                     .iter()
                     .filter(|o| o.whole_body && o.file == file)
@@ -220,21 +273,56 @@ pub(crate) fn judge_recommendations(
                     .filter(|((start, end), _)| (*start..=*end).contains(&line))
                     .collect::<Vec<_>>();
                 let innermost = containing.iter().map(|((start, _), _)| *start).max();
-                let owner = containing
+                let mut owner = containing
                     .into_iter()
                     .filter(|((start, _), _)| Some(*start) == innermost)
                     .map(|(_, outcome)| outcome)
                     .collect::<Vec<_>>();
+                // A seam inside a nested function is owned by that
+                // function, not by an enclosing whole-body mutant, when a
+                // viable mutant records the tighter function span.
+                let known_innermost = viable
+                    .iter()
+                    .filter(|o| o.file == file)
+                    .filter_map(|o| o.function_span)
+                    .filter(|(start, end)| (*start..=*end).contains(&line))
+                    .max_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
+                if let Some(known) = known_innermost
+                    && owner.first().and_then(|o| o.function_span) != Some(known)
+                {
+                    owner.clear();
+                }
                 ("owner", owner)
-            } else {
-                ("line", on_line)
             };
             let missed = joined.iter().filter(|o| o.missed).count();
             let caught = joined.len() - missed;
-            let (verdict, tier) = match (missed, caught) {
-                (0, 0) => ("unscored", "none"),
-                (0, _) => ("refuted", tier),
-                _ => ("confirmed", tier),
+            // The whole-body tier replaces the entire function, so it cannot
+            // refute a pick whose own line only timed out, an error_variant
+            // pick (no mutant genre changes the variant), or a pick whose
+            // innermost function also has a missed mutant.
+            let owner_blocked = tier == "owner"
+                && !joined.is_empty()
+                && (timeout_on_line(mutants, outcomes, file, line, columns)
+                    || (missed == 0
+                        && (kind == "error_variant"
+                            || joined.first().and_then(|o| o.function_span).is_some_and(
+                                |span| {
+                                    viable.iter().any(|o| {
+                                        !o.whole_body
+                                            && o.missed
+                                            && o.file == file
+                                            && o.function_span == Some(span)
+                                    })
+                                },
+                            ))));
+            let (verdict, tier) = if owner_blocked {
+                ("unscored", "none")
+            } else {
+                match (missed, caught) {
+                    (0, 0) => ("unscored", "none"),
+                    (0, _) => ("refuted", tier),
+                    _ => ("confirmed", tier),
+                }
             };
             let text = |key: &str| seam.get(key).cloned().unwrap_or(Value::Null);
             json!({
@@ -505,6 +593,188 @@ mod tests {
             verdicts,
             vec![Some("refuted"), Some("confirmed"), Some("unscored")]
         );
+    }
+
+    fn seam_kind(line: u64, kind: &str) -> Value {
+        let mut value = seam(line);
+        value["kind"] = json!(kind);
+        value
+    }
+
+    fn verdict(judged: &[Value]) -> (Option<&str>, Option<&str>) {
+        (judged[0]["verdict"].as_str(), judged[0]["tier"].as_str())
+    }
+
+    #[test]
+    fn timeout_on_seam_line_blocks_owner_refutation() {
+        // Split per critic: no missed-in-function mutant here, so only the
+        // timeout blocker can prevent the caught FnValue refuting.
+        let mutants = json!([
+            mutant(
+                "src/a.rs:3:10: replace > with >= in gate",
+                3,
+                "BinaryOperator",
+                (1, 9)
+            ),
+            mutant(
+                "src/a.rs:3:12: replace > with == in gate",
+                3,
+                "BinaryOperator",
+                (1, 9)
+            ),
+            mutant("body-caught", 2, "FnValue", (1, 9)),
+        ]);
+        let outcomes = json!({"outcomes": [
+            outcome("src/a.rs:3:10: replace > with >= in gate", "Timeout"),
+            outcome("src/a.rs:3:12: replace > with == in gate", "Timeout"),
+            outcome("body-caught", "CaughtMutant"),
+        ]});
+        let judged = judge_recommendations(
+            &[seam_kind(3, "predicate_boundary")],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+            &|_, _| None,
+        );
+        assert_eq!(verdict(&judged), (Some("unscored"), Some("none")));
+    }
+
+    #[test]
+    fn missed_mutant_in_function_blocks_owner_refutation() {
+        // No timeout here, so only the missed-in-function gate applies.
+        let mutants = json!([
+            mutant("op-missed", 4, "BinaryOperator", (1, 9)),
+            mutant("body-caught", 2, "FnValue", (1, 9)),
+        ]);
+        let outcomes = json!({"outcomes": [
+            outcome("op-missed", "MissedMutant"),
+            outcome("body-caught", "CaughtMutant"),
+        ]});
+        let judged = judge_recommendations(
+            &[seam_kind(3, "predicate_boundary")],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+            &|_, _| None,
+        );
+        assert_eq!(verdict(&judged), (Some("unscored"), Some("none")));
+    }
+
+    #[test]
+    fn error_variant_owner_cannot_refute_but_predicate_owner_can() {
+        let mutants = json!([mutant("body-caught", 2, "FnValue", (1, 9))]);
+        let outcomes = json!({"outcomes": [outcome("body-caught", "CaughtMutant")]});
+        let error = judge_recommendations(
+            &[seam_kind(3, "error_variant")],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+            &|_, _| None,
+        );
+        assert_eq!(verdict(&error), (Some("unscored"), Some("none")));
+        let predicate = judge_recommendations(
+            &[seam_kind(3, "predicate_boundary")],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+            &|_, _| None,
+        );
+        assert_eq!(verdict(&predicate), (Some("refuted"), Some("owner")));
+    }
+
+    #[test]
+    fn line_tier_uses_only_mutants_inside_located_expression() -> Result<(), String> {
+        let text = "    let v = size.into() * KB;";
+        let star = text.find('*').ok_or("test line has no `*`")? as u64 + 1;
+        let inside = text.find("size.into()").ok_or("test line has no call")? as u64 + 2;
+        let outside_name = format!("src/a.rs:3:{star}: replace * with + in size");
+        let inside_name = format!("src/a.rs:3:{inside}: replace * with + in size");
+        let source =
+            |file: &str, line: u64| (file == "src/a.rs" && line == 3).then(|| text.to_string());
+        let expressions = BTreeMap::from([("s3", "size.into()")]);
+        for (name, expected) in [
+            (outside_name.as_str(), (Some("unscored"), Some("none"))),
+            (inside_name.as_str(), (Some("confirmed"), Some("line"))),
+        ] {
+            let mutants = json!([mutant(name, 3, "BinaryOperator", (1, 9))]);
+            let outcomes = json!({"outcomes": [outcome(name, "MissedMutant")]});
+            let judged = judge_recommendations(
+                &[seam_kind(3, "call_presence")],
+                &mutants,
+                &outcomes,
+                &expressions,
+                &source,
+            );
+            assert_eq!(verdict(&judged), expected, "mutant {name}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn timeout_outside_located_expression_does_not_block_owner() {
+        // The timeout starts after `size.into()` on the same line, so it
+        // belongs to another expression and cannot erase the owner verdict;
+        // a timeout inside the expression can.
+        let text = "    let v = size.into() * KB;";
+        let source =
+            |file: &str, line: u64| (file == "src/a.rs" && line == 3).then(|| text.to_string());
+        let expressions = BTreeMap::from([("s3", "size.into()")]);
+        for (column, expected) in [
+            (30_u64, (Some("refuted"), Some("owner"))),
+            (16, (Some("unscored"), Some("none"))),
+        ] {
+            let timeout_name = format!("src/a.rs:3:{column}: replace * with + in size");
+            let mutants = json!([
+                mutant(&timeout_name, 3, "BinaryOperator", (1, 9)),
+                mutant("body-caught", 2, "FnValue", (1, 9)),
+            ]);
+            let outcomes = json!({"outcomes": [
+                outcome(&timeout_name, "Timeout"),
+                outcome("body-caught", "CaughtMutant"),
+            ]});
+            let judged = judge_recommendations(
+                &[seam_kind(3, "call_presence")],
+                &mutants,
+                &outcomes,
+                &expressions,
+                &source,
+            );
+            assert_eq!(verdict(&judged), expected, "timeout at column {column}");
+        }
+    }
+
+    #[test]
+    fn nested_miss_does_not_block_outer_owner_and_nested_seam_skips_outer() {
+        // Outer function (1, 20) has a caught whole-body mutant; a nested
+        // function (8, 12) has a missed operator mutant on line 10.
+        let mutants = json!([
+            mutant("nested-missed", 10, "BinaryOperator", (8, 12)),
+            mutant("body-caught", 2, "FnValue", (1, 20)),
+        ]);
+        let outcomes = json!({"outcomes": [
+            outcome("nested-missed", "MissedMutant"),
+            outcome("body-caught", "CaughtMutant"),
+        ]});
+        // Seam in the outer function: the nested miss is not its function's
+        // miss, so the caught whole-body mutant still refutes it.
+        let outer = judge_recommendations(
+            &[seam_kind(4, "predicate_boundary")],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+            &|_, _| None,
+        );
+        assert_eq!(verdict(&outer), (Some("refuted"), Some("owner")));
+        // Seam inside the nested function: its owner has no whole-body
+        // mutant, so the outer body mutant cannot judge it.
+        let nested = judge_recommendations(
+            &[seam_kind(9, "predicate_boundary")],
+            &mutants,
+            &outcomes,
+            &BTreeMap::new(),
+            &|_, _| None,
+        );
+        assert_eq!(verdict(&nested), (Some("unscored"), Some("none")));
     }
 
     #[test]

@@ -426,7 +426,7 @@ where
 
 fn package_install_check(version: &str, crate_version: Option<&str>) -> ReleaseReadinessCheck {
     let command = format!(
-        "cargo xtask publish-dry-run (vendored packaging) && cargo install --path <external-package-root>/ripr-{version} --root {INSTALL_ROOT} --force && installed ripr doctor --root <external-fixture> --json"
+        "cargo xtask publish-dry-run (staged multi-package packaging) && cargo install --path <external-package-root>/ripr-{version} --root {INSTALL_ROOT} --force && installed ripr doctor --root <external-fixture> --json"
     );
     let Some(crate_version) = crate_version else {
         return readiness_check(
@@ -539,14 +539,14 @@ pub(crate) fn run_packaged_install(
 
     // ADR 0027 lockstep: a bare `cargo package -p ripr` resolves the exact
     // `ripr-contract` requirement against crates.io and fails pre-publish.
-    // Package through the vendored rehearsal route instead.
+    // Package both from the publish stage in one multi-package invocation.
     let scratch = Path::new("target/ripr/release-readiness/package-scratch");
     let _ = fs::remove_dir_all(scratch);
     let (contract_crate, packaged_ripr) =
-        match crate::publish_rehearsal::vendored_ripr_crate(scratch, version) {
+        match crate::publish_rehearsal::staged_crates(scratch, version) {
             Ok(pair) => pair,
             Err(err) => {
-                details.push(format!("vendored packaging failed: {err}"));
+                details.push(format!("staged packaging failed: {err}"));
                 return Ok(PackageInstallResult {
                     success: false,
                     artifacts,
@@ -554,7 +554,7 @@ pub(crate) fn run_packaged_install(
                 });
             }
         };
-    details.push("packaged ripr against vendored ripr-contract".to_string());
+    details.push("packaged ripr with ripr-contract from the publish stage".to_string());
     if let Some(parent) = archive.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("create package archive directory failed: {err}"))?;

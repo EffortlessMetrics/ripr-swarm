@@ -317,6 +317,9 @@ valid-ledger control that yields no reasons.
   `touching_a_span_boundary_line_is_a_product_change`,
   `an_escaped_quote_char_literal_is_blanked_whole`,
   `cfg_test_on_a_field_or_parameter_is_not_an_item_span`.
+- `xtask/src/reports/release_ledger/inline_tests/batch/tests.rs`:
+  `batch_frames_preserve_raw_bytes_and_reject_incomplete_responses` and
+  `real_batch_and_fallback_preserve_sides_and_original_git_errors`.
 - `xtask/src/reports/release_ledger/capture_tests.rs`:
   `inline_test_edits_are_detected_per_hunk_from_real_git`,
   `editor_rust_is_scanned_and_same_line_product_edits_stay_product`,

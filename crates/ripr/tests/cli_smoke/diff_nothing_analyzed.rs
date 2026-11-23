@@ -309,3 +309,98 @@ fn a_binary_rendered_copy_read_as_added_source_is_not_named_unread() -> TestResu
     );
     Ok(())
 }
+
+// Real `git diff --binary` output: a `chmod +x` and a changed PNG (#15862).
+const MODE_ONLY_LIB: &str =
+    "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n";
+const BINARY_PATCH_LOGO: &str = "diff --git a/logo.png b/logo.png\nindex 8352675d67aed6625ece79af41c27fdb4ee2e867..1592e5c60f1a460928916dc5681fee1a9bd10868 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nKcmZQzWC8#H2LJ>B\n\n";
+// Lookalikes with the same valid header: not a Git mode, a bare marker, and
+// a size line followed by text that is not a base85 data line.
+const INVALID_MODE_LIB: &str =
+    "diff --git a/src/lib.rs b/src/lib.rs\nold mode invalid\nnew mode invalid\n";
+const BARE_BINARY_MARKER: &str = "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 0\n";
+const NON_PAYLOAD_BINARY: &str =
+    "diff --git a/logo.png b/logo.png\nGIT binary patch\nliteral 0\nnot payload\n";
+// A valid forward block whose reverse block is not payload, and an
+// unfinished patch after a valid mode pair.
+const CORRUPT_REVERSE_BINARY: &str = "diff --git a/logo.png b/logo.png\nindex 8352675d67aed6625ece79af41c27fdb4ee2e867..1592e5c60f1a460928916dc5681fee1a9bd10868 100644\nGIT binary patch\nliteral 3\nKcmZQzWCj2L2ml2D\n\nliteral 3\nnot payload\n\n";
+const MODE_THEN_BARE_MARKER: &str =
+    "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\nGIT binary patch\n";
+
+/// #15862: a well-formed binary- or mode-only diff keeps the `malformed_diff`
+/// schema token, but the human limitation line must not call it unparseable
+/// next to the detail that says it is well formed. Lookalikes with an invalid
+/// mode or a bare binary marker, and garbage input, keep the parse label.
+#[test]
+fn a_mode_only_diff_is_not_labelled_unparseable() -> TestResult {
+    let run = |name: &str, sections: &[&str]| -> TestResult<(String, String, serde_json::Value)> {
+        let (root, diff) = intake_workspace(name, sections)?;
+        let _cleanup = DeclaredHunkScratch(root.clone());
+        let human = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["check", "--diff", &diff],
+        )?;
+        let json = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &["check", "--diff", &diff, "--format", "json"],
+        )?;
+        let json: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+        // Every case carries the same schema token.
+        let limitations = &json["analysis_outcome"]["outcome"]["limitations"];
+        assert_eq!(limitations[0]["kind"], "malformed_diff", "{name}: {json}");
+        Ok((
+            String::from_utf8_lossy(&human.stdout).into_owned(),
+            String::from_utf8_lossy(&human.stderr).into_owned(),
+            json,
+        ))
+    };
+    for (name, section) in [
+        ("diff-mode-only-label", MODE_ONLY_LIB),
+        ("diff-binary-patch-label", BINARY_PATCH_LOGO),
+    ] {
+        let (human, stderr, json) = run(name, &[section])?;
+        let detail = &json["analysis_outcome"]["outcome"]["limitations"][0]["bounded_detail"];
+        assert!(
+            detail
+                .as_str()
+                .is_some_and(|detail| detail.contains("well formed")),
+            "{name}: {json}"
+        );
+        assert!(
+            human.contains("Limitation: the diff has only binary or file-mode changes during"),
+            "{name}: {human}"
+        );
+        assert!(!human.contains("could not be parsed"), "{name}: {human}");
+        assert!(
+            stderr.contains("only binary files or file modes"),
+            "{name}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("not a valid unified diff"),
+            "{name}: {stderr}"
+        );
+    }
+    for (name, section) in [
+        ("diff-invalid-mode-label", INVALID_MODE_LIB),
+        ("diff-bare-binary-marker-label", BARE_BINARY_MARKER),
+        ("diff-non-payload-binary-label", NON_PAYLOAD_BINARY),
+        ("diff-corrupt-reverse-binary-label", CORRUPT_REVERSE_BINARY),
+        ("diff-mode-then-bare-marker-label", MODE_THEN_BARE_MARKER),
+        ("diff-garbage-label-control", "this is not a diff\n"),
+    ] {
+        let (human, stderr, json) = run(name, &[section])?;
+        assert!(
+            human.contains("Limitation: the diff could not be parsed during"),
+            "{name}: {human}"
+        );
+        assert!(!human.contains("binary or file-mode"), "{name}: {human}");
+        assert!(!json.to_string().contains("well formed"), "{name}: {json}");
+        assert!(
+            !stderr.contains("only binary files or file modes"),
+            "{name}: {stderr}"
+        );
+    }
+    Ok(())
+}

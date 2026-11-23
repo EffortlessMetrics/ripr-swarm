@@ -1141,6 +1141,12 @@ pub(super) struct AnalysisSnapshot {
     /// Invoking `ripr.refreshDiagnostics` produces a new snapshot with
     /// `seams_deferred = false` and the full seam inventory.
     pub(super) seams_deferred: bool,
+    /// Whether a full refresh under this snapshot's configuration builds the
+    /// spot inventory (full diagnostic profile, spot diagnostics enabled,
+    /// Rust enabled; #13636). A deferred snapshot only promises that
+    /// "ripr: Refresh Full Analysis" brings repair spots back when this is
+    /// true; otherwise the refresh would leave them out as well.
+    pub(super) seam_inventory_on_full_refresh: bool,
     /// Partial diff-scope run state (RIPR-PROP-0019, #1999). `Some` only when
     /// the diff exceeded the partial-selection budget and the run analyzed a
     /// deterministic bounded partition (`limited_partial_scope`). The run
@@ -2092,6 +2098,12 @@ fn document_line_extent(text: &str, target_line: usize) -> Option<(usize, usize)
 /// encoding, while Rust string edits require UTF-8 byte boundaries. Lines end
 /// at `\n`, `\r\n` or a bare `\r`, and the terminator is excluded from the
 /// line's character span, matching the protocol's line semantics.
+///
+/// A line past the document's last line defaults back to the end of the
+/// document, as an overlong character defaults back to the line end: the
+/// reference `TextDocument.offsetAt` resolves it to the content length, and
+/// clients append at such positions. Only the line is clamped this way; a
+/// character inside a multi-unit character stays refused.
 fn document_position_byte_offset(
     text: &str,
     position: Position,
@@ -2100,7 +2112,10 @@ fn document_position_byte_offset(
     let target_line = usize::try_from(position.line).ok()?;
     let target_units = usize::try_from(position.character).ok()?;
 
-    let (line_start, line_end) = document_line_extent(text, target_line)?;
+    let Some((line_start, line_end)) = document_line_extent(text, target_line) else {
+        // `document_line_extent` refuses only a line past the final line.
+        return Some(text.len());
+    };
     let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
@@ -3700,11 +3715,8 @@ mod tests {
         assert_eq!(edit("ab\r", 0, 2)?, "abX\r");
         // An offset past the line end clamps to the line end (LSP 3.17).
         assert_eq!(edit("ab\r", 0, 3)?, "abX\r");
-        // Lines past the final terminator do not exist.
-        assert_eq!(
-            edit("ab\r", 2, 0),
-            Err("edit at 2:0 of \"ab\\r\" was refused".to_string())
-        );
+        // A line past the final line defaults back to the document end.
+        assert_eq!(edit("ab\r", 2, 0)?, "ab\rX");
         // An empty final line after CRLF, and mixed terminators in one buffer.
         assert_eq!(edit("ab\r\n", 1, 0)?, "ab\r\nX");
         assert_eq!(edit("a\nb\rc\r\nd", 3, 1)?, "a\nb\rc\r\ndX");
@@ -4032,8 +4044,13 @@ mod tests {
                 _ => {
                     // A valid replacement may change bytes before a subsequent
                     // invalid range fails. Accounting must cover this return too.
+                    // A UTF-16 position inside the inserted surrogate pair is
+                    // refused whatever the text; a line past the end is not.
                     let mut params = full_replace_params(uri, step, &text);
-                    params.content_changes.push(ranged_insert(99, 0, "bad"));
+                    params
+                        .content_changes
+                        .push(ranged_insert(0, 0, "\u{1F389}"));
+                    params.content_changes.push(ranged_insert(0, 1, "bad"));
                     store.change(params, &PositionEncodingKind::UTF16);
                 }
             }
@@ -4420,14 +4437,15 @@ mod tests {
                     text: "A".to_string(),
                 },
                 TextDocumentContentChangeEvent {
+                    // A reversed range: rejected after the first change applied.
                     range: Some(tower_lsp_server::ls_types::Range {
                         start: Position {
-                            line: 9,
-                            character: 0,
+                            line: 0,
+                            character: 3,
                         },
                         end: Position {
-                            line: 9,
-                            character: 0,
+                            line: 0,
+                            character: 1,
                         },
                     }),
                     range_length: None,
@@ -5003,6 +5021,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5042,6 +5061,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5091,6 +5111,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5148,6 +5169,7 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
@@ -5903,7 +5925,7 @@ mod tests {
     }
 
     /// Overlong LSP character offsets clamp to the line end for every negotiated
-    /// encoding (#7316). Mid-character and absent-line positions stay refused.
+    /// encoding (#7316). Mid-character positions stay refused.
     #[test]
     fn overlong_incremental_character_offsets_clamp_to_line_end() -> Result<(), String> {
         let line = "abc";
@@ -5966,29 +5988,6 @@ mod tests {
             );
         }
 
-        // Absent line is still refused.
-        let mut buffer = line.to_string();
-        let absent = apply_document_content_changes(
-            &mut buffer,
-            vec![TextDocumentContentChangeEvent {
-                range: Some(tower_lsp_server::ls_types::Range {
-                    start: Position {
-                        line: 9,
-                        character: 0,
-                    },
-                    end: Position {
-                        line: 9,
-                        character: 0,
-                    },
-                }),
-                range_length: None,
-                text: "X".to_string(),
-            }],
-            &PositionEncodingKind::UTF16,
-        );
-        assert!(absent.is_err());
-        assert_eq!(buffer, line);
-
         // Mid-surrogate (UTF-16 code unit inside emoji) is still refused.
         let mut emoji = "a🎉b".to_string();
         let original = emoji.clone();
@@ -6013,6 +6012,83 @@ mod tests {
         assert!(mid.is_err());
         assert_eq!(emoji, original);
 
+        Ok(())
+    }
+
+    /// A line past the document's last line defaults back to the document end,
+    /// as an overlong character defaults back to the line end. A client that
+    /// appends below the last line must not quarantine the document.
+    #[test]
+    fn incremental_line_past_end_clamps_to_document_end() -> Result<(), String> {
+        let apply = |text: &str,
+                     start: (u32, u32),
+                     end: (u32, u32),
+                     insert: &str,
+                     encoding: &PositionEncodingKind|
+         -> Result<String, String> {
+            let mut buffer = text.to_string();
+            apply_document_content_changes(
+                &mut buffer,
+                vec![TextDocumentContentChangeEvent {
+                    range: Some(tower_lsp_server::ls_types::Range {
+                        start: Position {
+                            line: start.0,
+                            character: start.1,
+                        },
+                        end: Position {
+                            line: end.0,
+                            character: end.1,
+                        },
+                    }),
+                    range_length: None,
+                    text: insert.to_string(),
+                }],
+                encoding,
+            )
+            .map_err(|()| format!("refused {start:?}..{end:?} on {text:?}"))?;
+            Ok(buffer)
+        };
+
+        // Eleven lines ending in a newline; line 14 lies past the final line.
+        let eleven: String = (0..11).map(|n| format!("// line {n}\n")).collect();
+        for encoding in [
+            PositionEncodingKind::UTF8,
+            PositionEncodingKind::UTF16,
+            PositionEncodingKind::UTF32,
+        ] {
+            assert_eq!(
+                apply(&eleven, (14, 0), (14, 0), "// tail\n", &encoding)?,
+                format!("{eleven}// tail\n"),
+                "append past the last line, {encoding:?}"
+            );
+            // Past-end end with an in-document start replaces the suffix.
+            assert_eq!(
+                apply("ab\ncd", (1, 1), (9, 4), "X", &encoding)?,
+                "ab\ncX",
+                "past-end end, {encoding:?}"
+            );
+        }
+        // Without a trailing terminator the clamp lands after the last
+        // character, not at the start of a phantom line.
+        assert_eq!(
+            apply("abc", (9, 0), (9, 0), "X", &PositionEncodingKind::UTF16)?,
+            "abcX"
+        );
+        // A past-end start with an in-document end is reversed and refused.
+        let reversed = apply("ab\ncd", (9, 0), (0, 1), "X", &PositionEncodingKind::UTF16);
+        assert!(reversed.is_err(), "reversed range applied: {reversed:?}");
+        // The line clamp does not relax mid-surrogate refusal on a real line.
+        let mid_surrogate = apply(
+            "a\u{1F389}b",
+            (0, 2),
+            (5, 0),
+            "X",
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(
+            mid_surrogate.is_err(),
+            "mid-surrogate start applied: {mid_surrogate:?}"
+        );
         Ok(())
     }
 }

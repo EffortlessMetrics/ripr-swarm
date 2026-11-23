@@ -140,34 +140,84 @@ jobs:
           cargo -V | Tee-Object (Join-Path $root 'cargo-version.txt')
           node --version | Tee-Object (Join-Path $root 'node-version.txt')
 
-      - name: Package and install exact crate
+      - name: Package exact crate from the publish stage
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $root = $env:QUAL_ROOT
-          cargo --config $env:CARGO_TEMP_CONFIG package --target-dir $env:CARGO_TARGET_DIR -p ripr --locked 2>&1 | Tee-Object (Join-Path $root 'cargo-package.log')
-          if ($LASTEXITCODE -ne 0) { throw "cargo package failed with exit $LASTEXITCODE" }
-          $crate = Get-ChildItem (Join-Path $env:CARGO_TARGET_DIR 'package\*.crate') | Sort-Object LastWriteTime | Select-Object -Last 1
-          if ($null -eq $crate) { throw 'cargo package did not produce a .crate' }
+          # Qualify the archive the release ships, not the checkout's crate.
+          # `ripr` is published from the publish stage (inline `#[cfg(test)]`
+          # modules stripped, #14198); the checkout's own crate is over the
+          # crates.io upload limit and is never uploaded. `ripr` also requires
+          # `ripr-contract =x.y.z` (ADR 0027), which is not on crates.io before
+          # the release, so a bare `cargo package -p ripr` cannot resolve.
+          # `cargo xtask publish-dry-run` is the release's own producer: it
+          # packages both crates from the stage in one invocation, compiles the
+          # packaged pair, and writes its receipt only after that passed.
+          # The rehearsal's child Cargo commands read the repository config,
+          # whose forced TEMP is the checkout's `target`; this job builds in an
+          # external target directory, so create it.
+          New-Item -ItemType Directory -Force -Path 'target' | Out-Null
+          cargo --config $env:CARGO_TEMP_CONFIG xtask publish-dry-run 2>&1 | Tee-Object (Join-Path $root 'cargo-package.log')
+          if ($LASTEXITCODE -ne 0) { throw "publish-stage packaging failed with exit $LASTEXITCODE" }
+          $metadata = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'ripr' | Select-Object -First 1
+          $stagePackages = Join-Path (Get-Location) 'target\package'
+          $crate = Get-Item (Join-Path $stagePackages "ripr-$($metadata.version).crate")
+          $contractCrate = Get-Item (Join-Path $stagePackages "ripr-contract-$($metadata.version).crate")
+          $crateHash = (Get-FileHash $crate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $contractHash = (Get-FileHash $contractCrate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          # Bind the archives to this run's rehearsal and to the candidate: an
+          # archive left by another run, or a stage of another commit, is refused.
+          $publishReceiptPath = Join-Path $stagePackages 'publish-receipt.json'
+          $publishReceipt = Get-Content $publishReceiptPath -Raw | ConvertFrom-Json
+          if ($publishReceipt.verification -ne 'packaged-check-passed') { throw "publish-stage receipt verification is '$($publishReceipt.verification)', not packaged-check-passed" }
+          if ($publishReceipt.stage_commit -ne $env:CANDIDATE_SHA.ToLowerInvariant()) { throw "publish stage commit $($publishReceipt.stage_commit) is not candidate_sha $env:CANDIDATE_SHA" }
+          if ($publishReceipt.ripr_sha256 -ne $crateHash) { throw "ripr archive $crateHash is not the rehearsed archive $($publishReceipt.ripr_sha256)" }
+          if ($publishReceipt.contract_sha256 -ne $contractHash) { throw "ripr-contract archive $contractHash is not the rehearsed archive $($publishReceipt.contract_sha256)" }
+          Copy-Item -LiteralPath $publishReceiptPath -Destination (Join-Path $root 'publish-receipt.json')
+          "RIPR_STAGE_CRATE=$($crate.FullName)" >> $env:GITHUB_ENV
+          "RIPR_STAGE_CONTRACT_CRATE=$($contractCrate.FullName)" >> $env:GITHUB_ENV
+          "RIPR_PACKAGED_VERSION=$($metadata.version)" >> $env:GITHUB_ENV
+
+      - name: Install exact crate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = $env:QUAL_ROOT
+          $crate = Get-Item $env:RIPR_STAGE_CRATE; $contractCrate = Get-Item $env:RIPR_STAGE_CONTRACT_CRATE
+          $publishReceipt = Get-Content (Join-Path $root 'publish-receipt.json') -Raw | ConvertFrom-Json
+          # Hash again at the point of use: these are the archives that get installed.
+          $crateHash = (Get-FileHash $crate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $contractHash = (Get-FileHash $contractCrate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($publishReceipt.ripr_sha256 -ne $crateHash -or $publishReceipt.contract_sha256 -ne $contractHash) { throw 'packaged archives changed after the publish-stage receipt was checked' }
           $packageRoot = Join-Path $env:QUAL_TEMP_ROOT 'crate-source'; $installRoot = Join-Path $env:QUAL_TEMP_ROOT 'install'
           New-Item -ItemType Directory -Force -Path $packageRoot, $installRoot | Out-Null
-          $crateHash = (Get-FileHash $crate.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           tar -tf $crate.FullName | Set-Content -Encoding utf8 (Join-Path $root 'crate-files.txt')
           tar -xf $crate.FullName -C $packageRoot
-          $packageDir = Get-ChildItem $packageRoot -Directory | Select-Object -First 1
-          if ($null -eq $packageDir) { throw 'packaged source directory was not extracted' }
-          cargo --config $env:CARGO_TEMP_CONFIG install --target-dir $env:CARGO_TARGET_DIR --path $packageDir.FullName --locked --root $installRoot --force 2>&1 | Tee-Object (Join-Path $root 'cargo-install.log')
+          if ($LASTEXITCODE -ne 0) { throw "extracting $($crate.Name) failed with exit $LASTEXITCODE" }
+          tar -tf $contractCrate.FullName | Set-Content -Encoding utf8 (Join-Path $root 'contract-crate-files.txt')
+          tar -xf $contractCrate.FullName -C $packageRoot
+          if ($LASTEXITCODE -ne 0) { throw "extracting $($contractCrate.Name) failed with exit $LASTEXITCODE" }
+          $packageDir = Get-Item (Join-Path $packageRoot "ripr-$env:RIPR_PACKAGED_VERSION")
+          $contractDir = Get-Item (Join-Path $packageRoot "ripr-contract-$env:RIPR_PACKAGED_VERSION")
+          # Install the packaged `ripr` against the packaged `ripr-contract`
+          # beside it; after publication the same requirement resolves from
+          # crates.io. `--locked` keeps every other dependency on the packaged
+          # lockfile.
+          $contractPatch = "patch.crates-io.ripr-contract.path='$($contractDir.FullName)'"
+          cargo --config $env:CARGO_TEMP_CONFIG --config $contractPatch install --target-dir $env:CARGO_TARGET_DIR --path $packageDir.FullName --locked --root $installRoot --force 2>&1 | Tee-Object (Join-Path $root 'cargo-install.log')
           if ($LASTEXITCODE -ne 0) { throw "cargo install failed with exit $LASTEXITCODE" }
           $binary = Join-Path $installRoot 'bin\ripr.exe'
           if (-not (Test-Path $binary)) { throw "isolated binary missing: $binary" }
           $binaryPath = (Resolve-Path $binary).Path
           if (-not $binaryPath.StartsWith($env:QUAL_TEMP_ROOT, [System.StringComparison]::OrdinalIgnoreCase)) { throw "installed binary escaped its runner-temp prefix: $binaryPath" }
-          $metadata = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'ripr' | Select-Object -First 1
+          # Built from the stage of the candidate, the binary reports that commit.
+          $reportedVersion = & $binaryPath --version
+          if ($LASTEXITCODE -ne 0 -or "$reportedVersion" -notmatch [regex]::Escape($env:CANDIDATE_SHA.ToLowerInvariant())) { throw "installed binary does not report candidate_sha: $reportedVersion" }
           $binaryHash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
-          [ordered]@{ crate = $crate.Name; crate_sha256 = $crateHash; package_dir = $packageDir.FullName; binary = $binaryPath; binary_sha256 = $binaryHash; version = $metadata.version } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root 'crate-install-identity.json')
+          [ordered]@{ crate = $crate.Name; crate_sha256 = $crateHash; contract_crate = $contractCrate.Name; contract_crate_sha256 = $contractHash; package_source = 'publish-stage'; stage_commit = $publishReceipt.stage_commit; stage_stripped_files = $publishReceipt.stage_stripped_files; stage_strip_digest = $publishReceipt.stage_strip_digest; package_dir = $packageDir.FullName; binary = $binaryPath; binary_sha256 = $binaryHash; version = $env:RIPR_PACKAGED_VERSION } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $root 'crate-install-identity.json')
           "RIPR_PACKAGED=$binaryPath" >> $env:GITHUB_ENV
           "RIPR_PACKAGED_SHA256=$binaryHash" >> $env:GITHUB_ENV
-          "RIPR_PACKAGED_VERSION=$($metadata.version)" >> $env:GITHUB_ENV
 
       - name: Run isolated packaged CLI journey
         shell: pwsh

@@ -1638,8 +1638,8 @@ mod tests {
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
-        ("gate", GATE_PARSER_RS, &["parse_gate_options"]),
-        ("gate evaluate", GATE_PARSER_RS, &["parse_gate_options"]),
+        ("gate", GATE_PARSER_RS, &["parse_gate_options_for"]),
+        ("gate evaluate", GATE_PARSER_RS, &["parse_gate_options_for"]),
         ("gate check", GATE_PARSER_RS, &["parse_gate_check_plan"]),
         (
             "impacted-evidence",
