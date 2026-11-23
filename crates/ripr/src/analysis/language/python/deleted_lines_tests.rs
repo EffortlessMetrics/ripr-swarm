@@ -2217,6 +2217,116 @@ fn code_replaced_by_a_comment_and_an_import_is_base_side_evidence() -> Result<()
     Ok(())
 }
 
+/// A comment that opens an added run with code replaces nothing either
+/// (#16011). The diff pairs it with the first removed line by coordinate;
+/// keeping that pair hid the removed line, since a comment inside a run with
+/// code carries no probe, so the deletion had no record at all.
+#[test]
+fn code_beside_a_comment_in_a_run_with_code_keeps_its_base_side_record() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    result = total\n    # Clamp below as well.\n    result = max(result, 0)\n    return result\n";
+    let findings = analyze_with_test(
+        "comment-in-code-run",
+        source,
+        CAP_TEST_PY,
+        &[3, 4],
+        vec![
+            line(3, 3, "    if total > cap:"),
+            line(4, 3, "        result = cap"),
+        ],
+    )?;
+    assert!(
+        candidate_side(&findings)
+            .iter()
+            .all(|(_, text)| !text.starts_with('#')),
+        "{findings:?}"
+    );
+    assert!(
+        base_side_texts(&findings).contains(&"if total > cap:".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A removed statement folded into the run's code was rewritten, not
+/// deleted, so the comment beside that code keeps its pairing (#16011).
+#[test]
+fn statement_folded_into_code_beside_a_comment_has_no_base_side_record() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    # one clamp for both ends\n    return max(min(total, cap), 0)\n";
+    let findings = analyze_with_test(
+        "comment-beside-folded-code",
+        source,
+        CAP_TEST_PY,
+        &[2, 3],
+        vec![
+            line(2, 2, "    total = min(total, cap)"),
+            line(3, 2, "    return max(total, 0)"),
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A comment that replaces a removed import in a run with no code holds no
+/// code either, so it pairs with nothing and is no finding (#16011 review).
+#[test]
+fn comment_replacing_a_removed_import_is_no_finding() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    # Loaded at module level now.\n    return min(total, cap)\n";
+    let findings = analyze_with_test(
+        "comment-for-import",
+        source,
+        CAP_TEST_PY,
+        &[2],
+        vec![line(2, 2, "    import textwrap")],
+    )?;
+    // A removed import records nothing, and the comment is no finding.
+    assert_eq!(findings.len(), 0, "{findings:?}");
+    Ok(())
+}
+
+/// A lone closing bracket in the run is structure, not rewritten code, so
+/// it does not keep a comment's pair alive (#16011 review).
+#[test]
+fn lone_closer_beside_a_comment_does_not_hide_a_deleted_argument() -> Result<(), String> {
+    let source = "def capped_total(total, cap, rebate):\n    return calculate(\n        total,\n        # Use the service default.\n        discount=compute_discount(rebate),\n    )\n";
+    let findings = analyze_with_test(
+        "comment-with-closer",
+        source,
+        CAP_TEST_PY,
+        &[4, 5, 6],
+        vec![
+            line(4, 4, "        priority=cap,"),
+            line(5, 4, "        discount=compute_discount(total))"),
+        ],
+    )?;
+    assert!(
+        base_side_texts(&findings).contains(&"priority=cap,".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// Names inside a string are text: a removed guard whose expression only
+/// survives inside a string literal was deleted (#16011 review).
+#[test]
+fn guard_named_only_inside_a_string_is_deleted() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    # The cap moved to the caller.\n    log(\"total > cap\")\n    return total\n";
+    let findings = analyze_with_test(
+        "comment-with-string",
+        source,
+        CAP_TEST_PY,
+        &[2, 3],
+        vec![
+            line(2, 2, "    if total > cap:"),
+            line(3, 2, "        total = log(cap)"),
+        ],
+    )?;
+    assert!(
+        base_side_texts(&findings).contains(&"if total > cap:".to_string()),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
 /// A `#` line inside a multi-line string is content. It replaced the old
 /// content line, so the pair stays an edit on the candidate side.
 #[test]
