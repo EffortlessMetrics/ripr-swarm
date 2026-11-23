@@ -33,7 +33,7 @@ Changed
   before: output.borrow_mut().push(0)
   after:  output.borrow_mut().push(1)
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/lib.rs::record

@@ -445,7 +445,7 @@ fn gated_jobs(workflow: &str) -> &[&str] {
         "public-proof.yml" => &["drift"],
         "security.yml" => &["cargo-deny", "dependency-review"],
         "test-analytics.yml" => &["rust-tests"],
-        "windows-advisory.yml" => &["windows-advisory"],
+        "windows-advisory.yml" => &["windows-advisory-integration", "windows-advisory"],
         "zed-extension.yml" => &["zed-extension"],
         _ => &[],
     }

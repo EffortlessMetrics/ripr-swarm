@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A changed private helper reached only through a pure forwarding wrapper (`pub fn cash_total(c: u32) -> u32 { round_to_nickel(c) }`) no longer reads `exposed` when every test pins the wrapper at inputs where the old and new helper agree (`assert_eq!(cash_total(105), 105)` for `c / 5 * 5` becoming `(c + 2) / 5 * 5`). Infection now reads `weak`, as it already did for a test that calls the helper directly. A wrapper input that separates the versions keeps `exposed` (#15034).

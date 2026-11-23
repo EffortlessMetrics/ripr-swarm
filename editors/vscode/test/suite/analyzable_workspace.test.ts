@@ -4,6 +4,8 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
+  NESTED_PROJECT_MARKER_MAX_DEPTH,
+  NESTED_PROJECT_MARKER_MAX_DIRS,
   workspaceHasAnalyzableProject,
 } from '../../src/workspaceHelpers';
 import {
@@ -32,6 +34,12 @@ async function writeMarker(root: string, marker: string): Promise<void> {
   } else {
     fs.writeFileSync(filePath, 'fixture\n');
   }
+}
+
+function writeNestedFile(root: string, relativePath: string): void {
+  const filePath = path.join(root, ...relativePath.split('/'));
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, '# fixture\n');
 }
 
 suite('Analyzable workspace markers', () => {
@@ -116,6 +124,87 @@ suite('Analyzable workspace markers', () => {
     }
   });
 
+  test('a project marker a few folders below the root is analyzable', async () => {
+    for (const marker of ['backend/Cargo.toml', 'packages/app/tsconfig.json', 'services/api/v1/pyproject.toml']) {
+      const root = tempWorkspaceDir('ripr-analyzable-nested-');
+      try {
+        writeNestedFile(root, marker);
+        assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), true, marker);
+      } finally {
+        fs.rmSync(root, { force: true, recursive: true });
+      }
+    }
+  });
+
+  test('nested markers outside the bounded project search are not analyzable', async () => {
+    const cases = [
+      // Deeper than the search goes.
+      Array.from({ length: NESTED_PROJECT_MARKER_MAX_DEPTH + 1 }, (_, level) => `l${level}`).join('/') + '/Cargo.toml',
+      // Dependency, build, environment and hidden folders.
+      'node_modules/dep/tsconfig.json',
+      'target/package/crate-0.1.0/Cargo.toml',
+      'vendor/crate/Cargo.toml',
+      'venv/lib/pyproject.toml',
+      '.cache/tool/Cargo.toml',
+      // Root-only markers: tooling files in a project of another language.
+      'docs/requirements.txt',
+      'tools/noxfile.py',
+      'examples/ripr.toml',
+      // Not a marker at any level.
+      'web/package.json',
+    ];
+    for (const marker of cases) {
+      const root = tempWorkspaceDir('ripr-analyzable-nested-miss-');
+      try {
+        writeNestedFile(root, marker);
+        assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), false, marker);
+      } finally {
+        fs.rmSync(root, { force: true, recursive: true });
+      }
+    }
+  });
+
+  test('a nested folder named like a marker is not analyzable', async () => {
+    const root = tempWorkspaceDir('ripr-analyzable-nested-dir-');
+    try {
+      fs.mkdirSync(path.join(root, 'backend', 'Cargo.toml'), { recursive: true });
+      assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('the nested project search stops at its folder budget', async () => {
+    const root = tempWorkspaceDir('ripr-analyzable-nested-budget-');
+    try {
+      // More first-level folders than the read budget, counting the root's
+      // own read: the budget runs out before any second-level folder is read,
+      // in whatever order the folders are listed.
+      for (let index = 0; index < NESTED_PROJECT_MARKER_MAX_DIRS; index++) {
+        fs.mkdirSync(path.join(root, `a${String(index).padStart(4, '0')}`));
+      }
+      writeNestedFile(root, 'zz/inner/Cargo.toml');
+      assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), false);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('a wide sibling does not use up the budget before a queued marker folder is read', async () => {
+    const root = tempWorkspaceDir('ripr-analyzable-nested-wide-');
+    try {
+      // `assets` lists before `backend` and holds more folders than the
+      // budget. Queuing them must not stop the walk before `backend` is read.
+      for (let index = 0; index <= NESTED_PROJECT_MARKER_MAX_DIRS; index++) {
+        fs.mkdirSync(path.join(root, 'assets', `a${String(index).padStart(4, '0')}`), { recursive: true });
+      }
+      writeNestedFile(root, 'backend/Cargo.toml');
+      assert.strictEqual(await workspaceHasAnalyzableProject([workspaceFolder(root)]), true);
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test('multi-root windows are analyzable when any folder has a marker', async () => {
     const bare = tempWorkspaceDir('ripr-analyzable-mixed-bare-');
     const rust = tempWorkspaceDir('ripr-analyzable-mixed-rust-');
@@ -157,6 +246,24 @@ suite('Activation server start gate', () => {
         lines.some((line) => line.includes('staying idle')),
         `expected idle log line, got: ${lines.join(' | ')}`
       );
+    } finally {
+      fs.rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test('activation start runs when the Cargo.toml is below the folder root', async () => {
+    const root = tempWorkspaceDir('ripr-activation-nested-rust-');
+    const output = { appendLine: () => undefined } as unknown as vscode.LogOutputChannel;
+    let starts = 0;
+    const controller = {
+      start: async () => {
+        starts += 1;
+      },
+    };
+    try {
+      writeNestedFile(root, 'backend/Cargo.toml');
+      await startServerOnActivationIfAnalyzable(controller, output, [workspaceFolder(root)]);
+      assert.strictEqual(starts, 1);
     } finally {
       fs.rmSync(root, { force: true, recursive: true });
     }

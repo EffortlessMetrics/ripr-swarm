@@ -1,6 +1,7 @@
 import type * as vscode from 'vscode';
 import type { CodeActionMiddleware } from 'vscode-languageclient/node';
 import { boundedRequestEvidence, redactHostDiagnosticsText } from './hostDiagnostics';
+import type { CodeActionEventSink } from './multiRootRequestDiagnostics';
 
 export const MAX_REQUEST_TRACE_EVENTS = 64;
 export const MAX_REQUEST_TRACE_BYTES = 16 * 1024;
@@ -8,12 +9,15 @@ type ProviderMiddleware = NonNullable<CodeActionMiddleware['provideCodeActions']
 type DocumentIdentity = Pick<vscode.TextDocument, 'uri' | 'version'>;
 type TraceKind = 'document.open' | 'document.change' | 'document.save' | 'document.close'
   | 'provider.begin' | 'provider.cancel' | 'provider.resolve' | 'provider.reject'
+  | 'client.request.start' | 'client.request.cancel' | 'client.request.resolve' | 'client.request.reject'
+  | 'client.observer.cleanup-failed'
   | 'client.state' | 'process.spawn' | 'process.exit' | 'process.close'
   | 'command.begin' | 'command.resolve' | 'command.reject' | 'teardown.begin'
   | 'control.model-edit' | 'control.matching-provider-change' | 'control.neither';
 interface Fields {
   document_id?: number; document_uri?: string; document_version?: number;
   invocation_id?: number; client_id?: number; client_pid?: number;
+  request_window_id?: number; client_request_id?: number; result_count?: number;
   content_changes?: number; trigger_kind?: number; cancelled?: boolean;
   old_state?: number; new_state?: number; exit_code?: number; signal?: string;
   range_start_line?: number; range_start_character?: number;
@@ -36,6 +40,7 @@ export class RequestEventTrace {
   private sequence = 0;
   private nextDocument = 0;
   private nextInvocation = 0;
+  private nextRequestWindow = 0;
   private dropped = 0;
   private readonly started: number;
 
@@ -59,7 +64,7 @@ export class RequestEventTrace {
         range_end_character: fields.range_end_character }, error);
       delete safe.method;
       for (const key of ['document_id', 'invocation_id', 'content_changes', 'trigger_kind',
-        'old_state', 'new_state', 'exit_code'] as const) {
+        'old_state', 'new_state', 'exit_code', 'request_window_id', 'client_request_id', 'result_count'] as const) {
         const value = fields[key];
         if (typeof value === 'number' && Number.isFinite(value)) { safe[key] = value; }
       }
@@ -79,6 +84,42 @@ export class RequestEventTrace {
     return { schema: 'ripr-request-event-trace-v1', dropped_events: this.dropped,
       events: this.events.map(event => ({ ...event })),
       claim_limit: 'Local observation IDs and delivery order; no LSP request IDs, global provider-set observation or cancellation-cause attribution.' };
+  }
+
+  /** Client sendRequest ordinals are observations, not JSON-RPC wire IDs. */
+  clientRequestEvents(client: { client_id: number }): CodeActionEventSink {
+    const window = ++this.nextRequestWindow;
+    return { push: event => {
+      try {
+        const kinds: Record<string, TraceKind> = {
+          client_request_start: 'client.request.start', client_token_canceled: 'client.request.cancel',
+          client_request_result: 'client.request.resolve', client_request_failed: 'client.request.reject',
+          client_observer_cleanup_failed: 'client.observer.cleanup-failed',
+        };
+        const kind = typeof event.kind === 'string' && Object.hasOwn(kinds, event.kind)
+          ? kinds[event.kind] : undefined;
+        if (!kind) { return; } // Command/provider observations already have their own trace owner.
+        const range = event.request_range as { start?: { line?: number; character?: number };
+          end?: { line?: number; character?: number } } | undefined;
+        const document = Array.isArray(event.document) && event.document.length === 1
+          && event.request_uri === event.uri ? event.document[0] : undefined;
+        let error: Error | undefined;
+        if (kind === 'client.request.reject' || kind === 'client.observer.cleanup-failed') {
+          error = new Error(typeof event.error_message === 'string' ? event.error_message
+            : typeof event.error === 'string' ? event.error : '[failure description unavailable]');
+          if (typeof event.error_name === 'string') { error.name = event.error_name; }
+          error.stack = typeof event.error_stack === 'string' ? event.error_stack : undefined;
+          Object.assign(error, { code: event.code });
+        }
+        this.record(kind, { client_id: client.client_id, request_window_id: window,
+          client_request_id: event.request_id as number | undefined,
+          client_pid: event.pid as number | undefined, document_uri: event.request_uri as string | undefined,
+          document_version: document?.version, range_start_line: range?.start?.line,
+          range_start_character: range?.start?.character, range_end_line: range?.end?.line,
+          range_end_character: range?.end?.character, result_count: event.count as number | undefined,
+          cancelled: kind === 'client.request.cancel' ? true : event.canceled as boolean | undefined }, error);
+      } catch { this.dropped++; } // Even hostile metadata must not replace the original outcome.
+    } };
   }
 
   /** Read immediately at command settlement, before later events can evict it.

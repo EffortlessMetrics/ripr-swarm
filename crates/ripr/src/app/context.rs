@@ -128,15 +128,20 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => {
-            Ok(output::json::render_context_packet_with_explain_command(
-                finding,
-                max_related_tests,
-                config,
-                Some(navigation.explain_command(&finding.id)),
-                &output.root,
-            ))
-        }
+        FindingSelection::Unique(finding) => Ok(output::json::render_selected_context_packet(
+            finding,
+            max_related_tests,
+            config,
+            Some(navigation.explain_command(&finding.id)),
+            &output.root,
+            // The same run's owner opt-out decision, as `explain` reads it:
+            // a withheld finding stays stopped when an agent follows the
+            // explanation's `next=` pointer here (#14133).
+            output
+                .owner_opt_outs
+                .iter()
+                .find(|entry| entry.finding_id == finding.id),
+        )),
         FindingSelection::Ambiguous(candidates) => Err(
             crate::core_error::CoreError::selector_miss(super::explain::ambiguous_finding_match(
                 selector,
@@ -191,12 +196,12 @@ pub(crate) fn collect_context_from_artifact(
     asserted_base: Option<&str>,
     mode_explicit: bool,
 ) -> Result<String, crate::core_error::CoreError> {
-    let findings = super::check_artifact::load_findings_for_reuse_core(
-        artifact_path,
-        &input,
-        config,
-        asserted_base,
-    )?;
+    let artifact =
+        super::check_artifact::load_for_reuse(artifact_path, &input, config, asserted_base)?;
+    let findings = artifact.findings;
+    // The artifact records each withheld finding's decision; replay uses it
+    // rather than the current source's attributes (#14133).
+    let owner_opt_outs = artifact.owner_opt_outs;
     // As in `explain --from`, the navigation names the artifact: replaying
     // it keeps the verified identity without re-running the pipeline.
     // An explicit Draft must survive replay over a non-Draft repo default,
@@ -211,17 +216,18 @@ pub(crate) fn collect_context_from_artifact(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => {
-            Ok(output::json::render_context_packet_with_explain_command(
-                finding,
-                max_related_tests,
-                config,
-                Some(navigation.explain_command(&finding.id)),
-                // The artifact records the analyzed root; the packet location
-                // renders against it like every fresh route (#5996).
-                input.root.as_path(),
-            ))
-        }
+        FindingSelection::Unique(finding) => Ok(output::json::render_selected_context_packet(
+            finding,
+            max_related_tests,
+            config,
+            Some(navigation.explain_command(&finding.id)),
+            // The artifact records the analyzed root; the packet location
+            // renders against it like every fresh route (#5996).
+            input.root.as_path(),
+            owner_opt_outs
+                .iter()
+                .find(|entry| entry.finding_id == finding.id),
+        )),
         FindingSelection::Ambiguous(candidates) => {
             Err(crate::core_error::CoreError::selector_miss(
                 super::explain::ambiguous_finding_match(selector, &candidates, "ripr check --json"),

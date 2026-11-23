@@ -16,7 +16,8 @@ use model::*;
 pub(crate) use model::{GateEvaluateInput, GateMode};
 pub(crate) use presentation::{
     gate_decision_inline_detail, gate_decision_should_fail, gate_decision_status,
-    markdown_path_for, render_gate_decision_json, render_gate_decision_markdown,
+    gate_decision_unavailable_inputs, markdown_path_for, render_gate_decision_json,
+    render_gate_decision_markdown,
 };
 use repair_route::{
     GateRouteSource, build_gate_repair_route, gate_repair_route_is_complete, normalize_route_source,
@@ -145,12 +146,14 @@ pub(crate) fn build_gate_decision_report(
     };
     let mut gap_ledger_coverage = None;
     let mut gap_ledger_refusal: Vec<String> = Vec::new();
+    let mut gap_ledger_owner_opt_outs = None;
     let gap_ledger = read_gap_ledger(
         input,
         &mut config_errors,
         &mut consumed,
         &mut gap_ledger_coverage,
         &mut gap_ledger_refusal,
+        &mut gap_ledger_owner_opt_outs,
     );
     warn_for_optional_json(
         &input.root,
@@ -293,6 +296,7 @@ pub(crate) fn build_gate_decision_report(
                     records,
                     gap_ledger_coverage.as_ref(),
                     &gap_ledger_refusal,
+                    gap_ledger_owner_opt_outs.as_ref(),
                 ),
             ),
             None => {
@@ -617,8 +621,16 @@ fn read_gap_ledger(
     consumed: &mut input::ConsumedInputHashes,
     coverage: &mut Option<Value>,
     refusal: &mut Vec<String>,
+    owner_opt_outs: &mut Option<Value>,
 ) -> Option<Vec<GapRecord>> {
-    input::read_gap_ledger_impl(input, config_errors, consumed, coverage, refusal)
+    input::read_gap_ledger_impl(
+        input,
+        config_errors,
+        consumed,
+        coverage,
+        refusal,
+        owner_opt_outs,
+    )
 }
 
 fn read_recommendation_calibration(
@@ -1652,14 +1664,19 @@ fn read_json_value_and_bytes_with_display(
             format!("read {display} failed: {err}")
         }
     })?;
+    // The subject hash covers the bytes as written; the parse reads the same
+    // bytes decoded from a PowerShell 5.1 encoding when one is marked (#15936).
+    let text = crate::bounded_input::decode_artifact_text(&bytes).map_err(|err| {
+        format!("read {display} failed: {err}; save the file as UTF-8, then rerun")
+    })?;
     let value =
-        serde_json::from_slice(&bytes).map_err(|err| format!("parse {display} failed: {err}"))?;
+        serde_json::from_str(&text).map_err(|err| format!("parse {display} failed: {err}"))?;
     Ok((value, bytes))
 }
 
 fn read_json_value_with_display(path: &Path, display: &Path) -> Result<Value, String> {
     let display = display_path(display);
-    let text = crate::bounded_input::read_to_string(path).map_err(|err| {
+    let text = crate::bounded_input::read_artifact_text(path).map_err(|err| {
         if err.kind() == std::io::ErrorKind::NotFound {
             format!("read {display} failed: not found")
         } else {

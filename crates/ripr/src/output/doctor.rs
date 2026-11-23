@@ -2101,6 +2101,14 @@ fn evaluate_doctor_core_with_probe_for_profile(
                     }
                     crate::analysis::HeadRefState::Unknown => {}
                 }
+                // An interrupted merge/rebase can leave conflict regions that
+                // `ripr check` refuses to read as changes (exit 2); name the
+                // operation and its finish/abort step next to the recommendation.
+                if let Some(message) =
+                    crate::analysis::git_operation_advisory(root, Some(DOCTOR_TOOL_TIMEOUT))
+                {
+                    report.add_advisory_check("git_operation", message);
+                }
             }
             Some(WorkTreeProbe::Refused(message)) => {
                 report.add_check("git_repository", DoctorStatus::Fail, Some(message));
@@ -7221,8 +7229,9 @@ mod tests {
         let usable = outside_work_tree_evidence(root, false);
         let refused = outside_work_tree_evidence(root, true);
         assert!(usable.contains("not inside a Git work tree"), "{usable}");
+        let quoted_root = crate::agent::loop_commands::shell_arg(&human_path(root));
         assert!(
-            usable.contains("ripr pilot --root '/work/my app'"),
+            usable.contains(&format!("ripr pilot --root {quoted_root}")),
             "{usable}"
         );
         assert!(refused.contains("not inside a Git work tree"), "{refused}");

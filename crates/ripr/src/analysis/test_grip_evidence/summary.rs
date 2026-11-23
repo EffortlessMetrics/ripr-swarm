@@ -109,6 +109,7 @@ mod tests {
         target: Option<TestTargetEvidence>,
     ) -> RelatedTestGrip {
         RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from(file),
             line,

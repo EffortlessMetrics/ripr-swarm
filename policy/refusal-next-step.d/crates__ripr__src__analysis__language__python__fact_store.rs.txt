@@ -1,0 +1,3 @@
+crates/ripr/src/analysis/language/python/fact_store.rs|create python file fact cache dir failed: {err}
+crates/ripr/src/analysis/language/python/fact_store.rs|decode failed: {err}
+crates/ripr/src/analysis/language/python/fact_store.rs|encode python file fact envelope failed: {err}

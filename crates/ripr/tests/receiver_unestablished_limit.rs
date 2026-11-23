@@ -472,6 +472,22 @@ fn draft_mode_withholds_the_unplaced_generated_mount_control() -> Result<(), Str
     Ok(())
 }
 
+/// Draft mode leaves `b` unindexed. Its literal `#[path]` mount of
+/// `shared.rs` withholds placement from that one file (#14116), so the
+/// mounted test's receiver still reads the named limitation, not a gap.
+#[test]
+fn draft_mode_names_the_limit_for_a_test_an_unindexed_member_mounts() -> Result<(), String> {
+    let workspace = Workspace::create(Placement::Resolved, CONTROL)?;
+    let finding = workspace.finding_from(&workspace.run_with_mode(true, "draft")?)?;
+    assert_eq!(
+        text(&finding, "/classification")?,
+        "static_unknown",
+        "{finding}"
+    );
+    assert_eq!(limit(&finding), Some(LIMIT), "{finding}");
+    Ok(())
+}
+
 /// Draft indexes the owner package and its dependent test crate. A namesake
 /// sibling with no `include!` / `#[path]` stays unindexed and must not
 /// withhold placement of the indexed members (#10149 narrowing).

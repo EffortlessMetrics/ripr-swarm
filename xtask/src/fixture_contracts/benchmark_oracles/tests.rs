@@ -438,7 +438,15 @@ fn benchmark_semantic_oracle_rejects_artifact_drift_and_escaping_paths() -> Resu
 #[test]
 fn benchmark_semantic_oracle_command_discloses_absent_corpus() -> Result<(), String> {
     crate::tests::with_temp_cwd("semantic-oracle-command-disclosure", |root| {
-        crate::fixture_contracts::check_fixture_contracts()?;
+        // #15925: no fixtures directory is a refusal, not a pass, and the
+        // refusal still discloses the unavailable corpus without a zero count.
+        let result = crate::fixture_contracts::check_fixture_contracts();
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.contains("fixtures/ does not exist")),
+            "{result:?}"
+        );
         let report = fs::read_to_string(root.join("target/ripr/reports/fixture-contracts.md"))
             .map_err(|error| error.to_string())?;
         assert!(report.contains("Benchmark semantic-oracle scope"));
@@ -792,6 +800,7 @@ fn benchmark_semantic_oracle_production_command_discloses_custody_and_rejection(
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     crate::tests::with_temp_cwd("semantic-oracle-production-custody", |root| {
         crate::tests::copy_dir_recursive(&repo.join("fixtures"), &root.join("fixtures"))?;
+        crate::fixture_contracts::denominator_floor::seed_floor_in_cwd()?;
         let corpus_root = root.join("fixtures/evidence-quality-benchmark");
         let original = read_json(&corpus_root.join("corpus.json"))?;
         for mode in ["external", "local", "rejected"] {
@@ -816,6 +825,8 @@ fn benchmark_semantic_oracle_production_command_discloses_custody_and_rejection(
                 serde_json::to_vec(&corpus).map_err(|error| error.to_string())?,
             )
             .map_err(|error| error.to_string())?;
+            // Each mode renames the first case, so each tree names its own floor.
+            crate::fixture_contracts::denominator_floor::seed_floor_in_cwd()?;
             let result = crate::fixture_contracts::check_fixture_contracts();
             assert_eq!(result.is_ok(), mode != "rejected", "{mode}: {result:?}");
             let report = fs::read_to_string(root.join("target/ripr/reports/fixture-contracts.md"))

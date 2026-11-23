@@ -1,0 +1,10 @@
+# A relative `--root .` admits the same closed-workspace readings as an
+# absolute root (#15753).
+[[extend]]
+id = "RIPR-SPEC-0170"
+tests = [
+  "crates/ripr/tests/native_path_roots.rs::relative_dot_root_keeps_closed_workspace_readings",
+]
+code = [
+  "crates/ripr/src/analysis/facts/member_crates.rs",
+]

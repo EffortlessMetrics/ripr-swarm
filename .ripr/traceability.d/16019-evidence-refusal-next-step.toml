@@ -1,0 +1,8 @@
+# `ripr pr-evidence --check` and `ripr impacted-evidence --check` refusals name the command that writes the packet (#16019).
+[[extend]]
+id = "RIPR-SPEC-0014"
+tests = [
+  "crates/ripr/tests/evidence_refusal_next_step.rs::pr_evidence_check_without_a_packet_names_the_command_that_writes_it",
+  "crates/ripr/tests/evidence_refusal_next_step.rs::pr_evidence_check_with_a_broken_packet_names_the_regeneration",
+  "crates/ripr/tests/evidence_refusal_next_step.rs::impacted_evidence_check_without_outputs_names_the_command_that_writes_them",
+]

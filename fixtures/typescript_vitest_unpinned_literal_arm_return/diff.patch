@@ -1,0 +1,11 @@
+diff --git a/src/dir.ts b/src/dir.ts
+--- a/src/dir.ts
++++ b/src/dir.ts
+@@ -1,6 +1,6 @@
+ export function dir(n: number): string {
+   switch (n) {
+     case 1:
+-      return 'one';
++      return 'uno';
+     case 2:
+       return 'two';

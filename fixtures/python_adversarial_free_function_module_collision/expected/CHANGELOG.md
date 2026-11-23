@@ -712,3 +712,15 @@ Command:
 
 Updated:
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_free_function_module_collision (40)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`

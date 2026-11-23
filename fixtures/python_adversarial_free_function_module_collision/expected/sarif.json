@@ -35,14 +35,14 @@
       "results": [
         {
           "fingerprints": {
-            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_handler.py:python_preview:c48883f0|probe:src_handler.py:python_preview:c48883f0|src/handler.py"
+            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_handler.py:python_preview:c48883f0|probe:src_handler.py:python_preview:c48883f0|fixtures/python_adversarial_free_function_module_collision/input/src/handler.py"
           },
           "level": "warning",
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "src/handler.py"
+                  "uri": "fixtures/python_adversarial_free_function_module_collision/input/src/handler.py"
                 },
                 "region": {
                   "startColumn": 1,
@@ -55,7 +55,7 @@
             "text": "no_static_path static exposure for return_value probe:     return payload.strip() == \"ok\". Next step: Python preview: no statically linked test calls `validate(`; add a test that calls the changed owner with an exact return-value assertion, run the project's native Python test command, then rerun `ripr check` to refresh the finding."
           },
           "partialFingerprints": {
-            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_handler.py:python_preview:c48883f0|probe:src_handler.py:python_preview:c48883f0|src/handler.py"
+            "riprFingerprintV1": "ripr.finding.no_static_path|probe:src_handler.py:python_preview:c48883f0|probe:src_handler.py:python_preview:c48883f0|fixtures/python_adversarial_free_function_module_collision/input/src/handler.py"
           },
           "properties": {
             "canonical_gap": {

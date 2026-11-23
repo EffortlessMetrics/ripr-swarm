@@ -1,0 +1,6 @@
+# Registers the invoked test-local assertion wrapper row (#15475) under RIPR-SPEC-0120.
+[[extend]]
+id = "RIPR-SPEC-0120"
+tests = [
+  "crates/ripr/tests/unread_assertion_macro_row.rs::an_invoked_local_wrapper_names_the_macro_it_wraps",
+]

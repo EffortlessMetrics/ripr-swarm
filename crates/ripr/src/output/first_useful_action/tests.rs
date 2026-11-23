@@ -2269,12 +2269,16 @@ fn display_path_converts_backslashes() -> Result<(), String> {
     let result = display_path(path);
     assert!(
         !(result.contains('\\')),
-        "expected forward slashes but got: {result}"
+        "expected no raw backslash but got: {result}"
     );
-    assert!(
-        result.contains("some/windows/path.json"),
-        "unexpected path: {result}"
-    );
+    // A backslash is a separator on Windows and a file-name byte, spelled
+    // `%5C`, on Unix (#15908).
+    let expected = if cfg!(unix) {
+        "some%5Cwindows%5Cpath.json"
+    } else {
+        "some/windows/path.json"
+    };
+    assert!(result.contains(expected), "unexpected path: {result}");
     Ok(())
 }
 

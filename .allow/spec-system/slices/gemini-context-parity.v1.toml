@@ -1,0 +1,39 @@
+schema_version = "2.0"
+id = "ripr.slice.gemini-context-parity.v1"
+generation = 1
+
+source_issue = "issue:14255"
+design_reference = "RIPR-SPEC-0060#gemini-context-pointer-parity"
+change_class = "behavior_change"
+
+claim_boundary = """
+A repository-relative Gemini context pointer uses the shared AGENTS root.
+The existing agent-skills gate and its preflight receipt catch source drift
+in the pointer and competing workspace paths.
+"""
+
+non_goals = [
+  "Provider configuration, installation, or setup.",
+  "Authenticated Gemini runtime or fresh-host qualification.",
+]
+
+return_conditions = [
+  "Return to root if the pointer requires provider configuration or a second policy body.",
+]
+
+owned_seams = ["seam:ripr:repo-policy:gemini-context-parity"]
+shared_seams = ["seam:ripr:repo-policy:agent-skills"]
+forbidden_seams = ["seam:ci:branch-protection"]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0060#gemini-context-pointer-parity"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

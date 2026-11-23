@@ -2,6 +2,11 @@
 
 Status: accepted
 
+Implementation status: contract only. No Haskell adapter, `LanguageId`,
+Cargo feature, or capability-registry cell exists yet; `accepted` here is
+the document disposition under [Spec Format](../SPEC_FORMAT.md), not a
+support claim. Do not read this spec as Haskell support.
+
 Owner: language-adapter / Haskell epic (#5596)
 
 Created: 2026-11-02

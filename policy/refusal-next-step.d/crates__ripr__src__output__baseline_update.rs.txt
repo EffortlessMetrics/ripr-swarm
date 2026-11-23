@@ -1,0 +1,9 @@
+crates/ripr/src/output/baseline_update.rs|baseline update input must be a JSON object
+crates/ripr/src/output/baseline_update.rs|baseline update skipped summary must be a JSON object
+crates/ripr/src/output/baseline_update.rs|baseline update summary must be a JSON object
+crates/ripr/src/output/baseline_update.rs|baseline update warnings must be a JSON array
+crates/ripr/src/output/baseline_update.rs|parse {label} {path} failed: {err}
+crates/ripr/src/output/baseline_update.rs|{label} {path} has unsupported kind `{kind}`; expected `{expected_kind}`
+crates/ripr/src/output/baseline_update.rs|{label} {path} has unsupported schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`
+crates/ripr/src/output/baseline_update.rs|{label} {path} missing kind
+crates/ripr/src/output/baseline_update.rs|{label} {path} missing schema_version
