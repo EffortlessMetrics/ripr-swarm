@@ -6,7 +6,7 @@ use super::connective_swap::{compare, swapped_connective, truthy};
 use super::owners_tests::{extract_owners, extract_tests};
 use super::*;
 
-const SOURCE: &str = "LIMIT = 10\n\n\ndef ok(a, b):\n    return a > 0 and b > 0\n\n\ndef capped(n, strict):\n    if n > LIMIT and strict:\n        return 0\n    return n\n";
+const SOURCE: &str = "LIMIT = 10\n\n\ndef ok(a, b):\n    return a > 0 and b > 0\n\n\ndef capped(n, strict):\n    if n > LIMIT and strict:\n        return 0\n    return n\n\n\ndef near(a, b):\n    return a == 0.1 and b == 0\n";
 
 fn classify(line: usize, old: &str, new: &str, test_source: &str) -> Result<Finding, String> {
     let owners = extract_owners(Path::new("src/rules.py"), SOURCE);
@@ -70,6 +70,33 @@ fn a_call_with_disagreeing_operands_keeps_exposed() -> Result<(), String> {
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     assert_eq!(finding.ripr.infect.state, StageState::Yes);
+    Ok(())
+}
+
+fn classify_near(test_source: &str) -> Result<Finding, String> {
+    classify(
+        15,
+        "    return a == 0.1 and b == 0",
+        "    return a == 0.1 or b == 0",
+        test_source,
+    )
+}
+
+#[test]
+fn a_float_operand_is_read_by_its_represented_value() -> Result<(), String> {
+    // `0.10000000000000001 == 0.1` holds in Python, so both operands are
+    // true here and `and`/`or` agree.
+    let agreeing = classify_near(
+        "from src.rules import near\n\n\ndef test_near():\n    assert near(0.10000000000000001, 0) is True\n",
+    )?;
+    assert_eq!(agreeing.class, ExposureClass::WeaklyExposed);
+    // With `b == 0` false, the operands disagree and the call tells the
+    // versions apart.
+    let disagreeing = classify_near(
+        "from src.rules import near\n\n\ndef test_near():\n    assert near(0.10000000000000001, 1) is False\n",
+    )?;
+    assert_eq!(disagreeing.class, ExposureClass::Exposed);
+    assert_eq!(disagreeing.ripr.infect.state, StageState::Yes);
     Ok(())
 }
 

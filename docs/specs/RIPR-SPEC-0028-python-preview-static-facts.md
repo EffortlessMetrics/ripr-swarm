@@ -2193,6 +2193,7 @@ its comparisons.
 Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap`,
 `connective_swap_tests.rs::a_call_with_disagreeing_operands_keeps_exposed`,
 `connective_swap_tests.rs::an_unresolved_call_keeps_exposed`,
+`connective_swap_tests.rs::a_float_operand_is_read_by_its_represented_value`,
 `connective_swap_tests.rs::an_if_condition_with_a_module_constant_reads_agreeing_calls`,
 `connective_swap_tests.rs::only_a_lone_connective_swap_between_simple_operands_is_read`.
 
