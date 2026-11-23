@@ -119,10 +119,11 @@ pub struct ResourceDependencyEdgeV1 {
     pub semantic_digest: String,
     /// What kind of resource this is.
     pub resource_kind: ResourceKindV1,
-    /// Repository-relative path of the resource.
+    /// Repository-relative path of the resource. For an opaque edge it is a
+    /// placeholder built from the consumer file and line, not a resource path.
     pub resource_path: PathBuf,
-    /// Content digest of the resource, or a marker when it is missing or
-    /// unresolved.
+    /// Content digest of the resource, or a marker when it could not be read
+    /// or resolved. A read failure gives the same marker as a missing file.
     pub content_identity: String,
     /// The symbol that depends on the resource.
     pub consumer_id: SymbolId,
@@ -135,7 +136,8 @@ pub struct ResourceDependencyEdgeV1 {
     /// Short code naming the rule that resolved the edge, such as
     /// `include_str_literal`.
     pub resolution_basis: String,
-    /// Whether the resource exists in the base snapshot.
+    /// Whether the resource exists in the base snapshot. The current producer
+    /// sets base and head from one check of the analyzed tree.
     pub base_presence: ResourcePresenceV1,
     /// Whether the resource exists in the head snapshot.
     pub head_presence: ResourcePresenceV1,
