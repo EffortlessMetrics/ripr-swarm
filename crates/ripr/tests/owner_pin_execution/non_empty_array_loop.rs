@@ -1,8 +1,8 @@
-//! #14116: a `for` over a non-empty array of call-free rows runs its body,
-//! so its assertion is on the test's path whatever paths the rows name. Only
-//! execution is admitted: an expected value read from rows that are not
-//! constant (here a `const` holding the owner's own output) is never
-//! credited as a discriminator, and a row that runs code keeps the refusal.
+//! #14116: a `for` over a non-empty array runs its body, so its assertion is
+//! on the test's path unless a row exits the process first. Only execution
+//! is admitted: an expected value read from rows that are not constant (a
+//! call of the owner, or a `const` holding its output) is never credited as
+//! a discriminator.
 
 use super::{Scratch, source_runtime_control};
 use ripr::{CheckInput, ExposureClass, Mode, OutputFormat, ProbeFamily, check_workspace};
@@ -60,13 +60,19 @@ const CASES: &[(&str, &str, ExposureClass, Option<bool>)] = &[
         ExposureClass::WeaklyExposed,
         Some(false),
     ),
-    // A row that runs code may leave the test before the loop starts.
     (
         "call_row",
         "for x in [four()] { assert_eq!(weight(x), 12); }",
-        ExposureClass::ReachableUnrevealed,
+        ExposureClass::Exposed,
         Some(true),
     ),
+    (
+        "owner_call_row",
+        "for (x, want) in [(4, weight(4))] { assert_eq!(weight(x), want); }",
+        ExposureClass::WeaklyExposed,
+        Some(false),
+    ),
+    // A row that exits the process ends the test before the loop starts.
     (
         "exiting_row",
         "for _ in [std::process::exit(0)] { assert_eq!(weight(4), 12); }",

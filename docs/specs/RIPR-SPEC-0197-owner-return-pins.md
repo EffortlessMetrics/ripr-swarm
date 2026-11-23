@@ -471,21 +471,20 @@ wrong credits.
    unknown.
    Non-empty array loops (#5328, widened by #14116): the body of an
    unlabeled `for` loop is on the path when the loop's iterable is a
-   non-empty array of call-free rows, so its first iteration runs. The array
-   is written inline (`for r in [..]`, `&[..]`) or bound once by a plain
-   immutable, unattributed `let` in the statement list that holds the loop,
-   whose name (raw `r#` spelling included) has no other token in the test
-   (no shadowing, mutation, alias or second use). No attribute may appear
-   anywhere in the rows, since a `#[cfg]` can remove every element. A row is
-   call-free when it is constant (below) or a path (a local, `const` or
-   `static`), alone or inside parentheses, shared references, tuples,
-   nested list arrays and full-range slices of array literals
-   (`&[a, b][..]`): a `const` is evaluated at compile time, and reading a
-   path or taking the built-in full slice cannot leave the test. A call, method, macro, operator, index or
-   block in a row may run code that exits the process before the loop
-   starts (`[std::process::exit(0)]`), so it refuses. Repeat arrays
-   (`[r; n]`, whose count may be zero), `vec![..]`, ranges, method chains
-   and any other iterable may be empty or hide their length and stay
+   non-empty array, so its first iteration runs. The array is written inline
+   (`for r in [..]`, `&[..]`) or bound once by a plain immutable,
+   unattributed `let` in the statement list that holds the loop, whose name
+   (raw `r#` spelling included) has no other token in the test (no
+   shadowing, mutation, alias or second use). No attribute may appear
+   anywhere in the rows, since a `#[cfg]` can remove every element. A row
+   that holds a loop, or a call naming a process exit (a last segment
+   `exit` or `abort`, or any path through `process`), may end the test
+   before the loop starts and refuses. Other calls in a row run before the
+   loop as a call in a statement before the assertion does, and a panic
+   there fails the test. An alias of a process exit in a row is not
+   recognised, as in a `let` initializer. Repeat arrays (`[r; n]`, whose
+   count may be zero), `vec![..]`, ranges, method chains and any other
+   iterable may be empty or hide their length and stay
    refused. A `break` or `continue` anywhere in the loop before the
    assertion refuses it, as for `loop`. This admits the assertion's
    execution only; every other rule still applies to it. A row value counts
@@ -497,11 +496,12 @@ wrong credits.
    `[ ] ( ) , - &`; parentheses, references, tuples and nested arrays of
    these are constant. A bare CamelCase name may be a `fn` or `const`, and a
    SCREAMING_CASE `const` may be computed by the owner (`const EXPECTED: u32
-   = f(4);`), so neither is constant. An expected operand that names a value
+   = f(4);`), so neither is constant, nor is a call. An expected operand that names a value
    bound from rows that are not constant (a name in the loop's pattern, or
    one a `let` in its body binds) is treated as the owner's own output:
    `for want in [EXPECTED] { assert_eq!(f(4), want) }` runs its assertion
-   but credits nothing, as `assert_eq!(f(4), EXPECTED)` does.
+   but is not credited as a discriminator, as `assert_eq!(f(4), EXPECTED)`
+   is not.
    RIPR-SPEC-0186 says when a loop-bound argument is a boundary input.
    `?` in a root test remains supported (an error fails an ordinary Result
    test); `?` in a closure is refused because its result could be discarded.
@@ -1295,7 +1295,7 @@ general combinator, callback or mutation adequacy.
      call is on the test's eager path under the same rule-1 walk as an inline
      assertion: not inside a loop, branch, argument, deferred closure or
      `async` block, after no root `return`, with no attribute. A `for` loop
-     over a non-empty array of call-free rows (#5328, #14116) is an eager path here
+     over a non-empty array (#5328, #14116) is an eager path here
      exactly as for inline assertions. A call inside any closure, even a
      directly invoked one, is refused: the helper-assertion producer never
      credits it to the test. One eager
@@ -1384,7 +1384,7 @@ general combinator, callback or mutation adequacy.
    same-named import in that module, and a function body with no exits, loops
    or untrusted macros runs to its end. Following helpers further (helpers of
    helpers, cross-module or cross-file helpers, generic helpers, helpers with
-   early exits, calls in a loop other than over a non-empty array of call-free rows) needs value, dispatch or loop-count
+   early exits, calls in a loop other than over a non-empty array) needs value, dispatch or loop-count
    reasoning this bounded query does not do, so those shapes stay refused
    rather than approximated. The decision stays in the existing owner-pin
    owner (`syntax/owner_pin.rs` for context, `classify/owner_pin.rs` for the
@@ -3360,7 +3360,7 @@ assertions. This repair shares the existing callback without that larger migrati
 
 - Rule 7 follows one hop into one same-module check helper. Helpers of
   helpers, helpers called in a closure or in a loop other than over a
-  non-empty array of call-free rows, cross-module and cross-file helpers, generic helpers
+  non-empty array, cross-module and cross-file helpers, generic helpers
   and helpers with early exits keep the rule-1 refusal. A helper's arguments are its parameters, whose values stay
   unresolved (RIPR-SPEC-0229); rule 7 establishes execution and call identity
   only. The one exception is a short-circuit tail (#7969), whose run check
@@ -3668,7 +3668,7 @@ assertions. This repair shares the existing callback without that larger migrati
   (`crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs`, #6482):
   `an_eagerly_called_local_check_helper_lends_its_assertion` (plain,
   `#[track_caller]`, one eager plus one deferred call, a `for` loop over a
-  non-empty array of call-free rows); `a_helper_call_off_the_eager_path_lends_nothing`
+  non-empty array); `a_helper_call_off_the_eager_path_lends_nothing`
   (a loop over a non-constant iterator, branch,
   uninvoked closure, argument, after `return`, cfg-attributed, `async`
   block, qualified path, macro operand, untrusted macro);
