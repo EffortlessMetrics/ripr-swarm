@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 53] = [
+    let cases: [(&str, bool); 64] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -876,6 +876,53 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\n```\nBLOCK\n```", false),
         ("SOURCE_REVIEW_READY\n```\nINCOMPLETE\n```", false),
         ("SOURCE_REVIEW_READY\n```\nBLOCK: no\n```", false),
+        // The property form: a live defect in the remainder keeps the phrase.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is still red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The build is still red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is still broken.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build remains red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build continues to be red.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is still incomplete.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The owner is still unreadable.",
+            false,
+        ),
+        // Deliberate trade: the widened vocabulary also refuses these ordinary
+        // prose forms, which admit on main.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier bot claim is still wrong.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe Devin thread is still wrong about the receiver.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo code change needed. The BLOCK was cleared.",
+            false,
+        ),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);

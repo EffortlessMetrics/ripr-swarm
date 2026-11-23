@@ -204,14 +204,14 @@ NEGATION = re.compile(
     r"|\b(?:is|are|remains?|still)[ \t]+blocked\b|\bblocked[ \t]+(?:on|by)\b"
     r"|\bblockers?[ \t]+(?:found|remains?|remaining|open|still|exists?)\b"
     r"|\btests?[ \t]+(?:fail|fails|failed|failing)\b|\bci[ \t]+(?:is[ \t]+)?red\b"
-    r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:red|broken|failing|fails?)(?![-\w])"
+    r"|\b(?:build|ci)[ \t]+(?:is[ \t]+)?(?:still[ \t]+|remains?[ \t]+|continues?[ \t]+to[ \t]+be[ \t]+)?(?:red|broken|failing|fails?)(?![-\w])"
     # #15980 review: the widened negated-blocker filler set makes the phrase
     # strippable, so the remainder scan must cover the "still"/"remains"/
     # "continues to" forms that report a live defect. Without these, "No new
     # blocker found. The build still fails." would admit.
-    r"|\bstill[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?)\b"
-    r"|\bremains?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?)\b"
-    r"|\bcontinues?[ \t]+to(?:[ \t]+be)?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?)\b"
+    r"|\bstill[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
+    r"|\bremains?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
+    r"|\bcontinues?[ \t]+to(?:[ \t]+be)?[ \t]+(?:fail(?:s|ed|ing)?|wrong|misattributed|disagree(?:s|d|ing)?|red|broken|incomplete|unreadable|reported)\b"
     r"|\b(?:a[ \t]+)?fix(?:es)?[ \t]+(?:is|are)?[ \t]*(?:needed|required)\b"
     r"|\bon[ \t]+hold\b|\bhold[ \t]+(?:the[ \t]+)?merge\b|\bchanges[ \t]+requested\b"
     r"|\b(?:never|won't|will[ \t]+not|should[ \t]+not|must[ \t]+not|shouldn't|mustn't)[ \t]+(?:merge|approve|ship|land)\b"
@@ -679,10 +679,15 @@ def strip_negated_blocker(line: str) -> str:
         if STATE_TOKEN.search(after) or BARE_STATE_TOKEN.search(after):
             return match.group(0)
         before_clause = before.rsplit(",", 1)[-1]
+        # #15980 review: the property form. Strip the negated phrase only when
+        # the rest of the sentence carries no NEGATION predicate at all, so a
+        # live defect in any form keeps the phrase and refuses. This closes the
+        # class instead of enumerating each "still"/"remains" shape.
         if (
             NEGATED_CHANGE_TAIL.match(after)
             and not REFUTES_NEGATION.search(before_clause)
             and not REFUTATION_AFTER.search(after)
+            and not NEGATION.search(after)
         ):
             return " "
         return match.group(0)
@@ -1904,6 +1909,53 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\n```\nBLOCK\n```", False),
         ("SOURCE_REVIEW_READY\n```\nINCOMPLETE\n```", False),
         ("SOURCE_REVIEW_READY\n```\nBLOCK: no\n```", False),
+        # #15980: the property form keeps the phrase when the remainder has a
+        # live defect in any form.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is still red.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The build is still red.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The CI is still broken.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build remains red.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The build continues to be red.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The suite is still incomplete.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo blocker found. The owner is still unreadable.",
+            False,
+        ),
+        # #15980: deliberate trade, these ordinary prose forms admit on main.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier bot claim is still wrong.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe Devin thread is still wrong about the receiver.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nNo code change needed. The BLOCK was cleared.",
+            False,
+        ),
         # #15980: the Rust carrier's changed row, mirrored here.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
