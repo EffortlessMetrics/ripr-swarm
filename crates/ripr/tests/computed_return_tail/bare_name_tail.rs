@@ -179,17 +179,20 @@ fn only_a_name_the_owner_binds_gets_the_return_sink() -> Result<(), String> {
     assert!(returns_name(&bound, "fallback"), "{bound:?}");
     // A same-file constant spelled as one identifier is not owner-bound, so
     // this reader gives it no return sink.
-    let constant = "pub const FALLBACK: u32 = 7;
+    // The constant is spelled like a local, so only the binding check (not
+    // the casing rule) keeps it out.
+    let constant = "#[allow(non_upper_case_globals)]
+pub const fallback: u32 = 7;
 
 pub fn price(amount: u32, member: bool) -> u32 {
     if member {
         amount
     } else {
-        FALLBACK
+        fallback
     }
 }";
-    let item = findings_on_edited_line(constant, "amount + 1", "FALLBACK", test)?;
-    assert!(!returns_name(&item, "FALLBACK"), "{item:?}");
+    let item = findings_on_edited_line(constant, "amount + 1", "fallback", test)?;
+    assert!(!returns_name(&item, "fallback"), "{item:?}");
     Ok(())
 }
 
@@ -199,21 +202,21 @@ fn a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail() -> Result<(),
     // The `else` block imports the constant it returns; the item declared in
     // an enclosing block makes the name ambiguous to this reader.
     let imported = "pub mod defaults {
-    pub const FALLBACK: u32 = 7;
+    #[allow(non_upper_case_globals)]
+    pub const fallback: u32 = 7;
 }
 
-#[allow(non_snake_case)]
 pub fn price(amount: u32, member: bool) -> u32 {
     if member {
-        let FALLBACK = amount;
-        FALLBACK + 0
+        let fallback = amount;
+        fallback + 0
     } else {
-        use crate::defaults::FALLBACK;
-        FALLBACK
+        use crate::defaults::fallback;
+        fallback
     }
 }";
-    let item = findings_on_edited_line(imported, "amount + 1", "FALLBACK", test)?;
-    assert!(!returns_name(&item, "FALLBACK"), "{item:?}");
+    let item = findings_on_edited_line(imported, "amount + 1", "fallback", test)?;
+    assert!(!returns_name(&item, "fallback"), "{item:?}");
     // Control: a preceding `let` in the returning block itself binds it.
     let same_block = "pub fn price(amount: u32, member: bool) -> u32 {
     if member {
@@ -230,25 +233,52 @@ pub fn price(amount: u32, member: bool) -> u32 {
 
 #[test]
 fn a_bare_name_in_a_preceding_let_else_is_not_read_as_a_local() -> Result<(), String> {
-    // With the constant in scope, `let FALLBACK = amount else { .. };` is a
+    // With the constant in scope, `let fallback = amount else { .. };` is a
     // constant pattern, not a new binding, so the tail returns the constant.
-    let source = "pub const FALLBACK: u32 = 7;
+    let source = "#[allow(non_upper_case_globals)]
+pub const fallback: u32 = 7;
 
+#[allow(non_upper_case_globals)]
 pub fn price(amount: u32, member: bool) -> u32 {
     if member {
         return amount;
     }
-    let FALLBACK = amount else {
+    let fallback = amount else {
         return 0;
     };
-    FALLBACK
+    fallback
 }";
     let findings = findings_on_edited_line(
         source,
         "amount + 1",
-        "FALLBACK",
+        "fallback",
         "assert_eq!(price(7, false), 7);",
     )?;
-    assert!(!returns_name(&findings, "FALLBACK"), "{findings:?}");
+    assert!(!returns_name(&findings, "fallback"), "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_name_spelled_like_an_item_is_not_read_as_a_local() -> Result<(), String> {
+    // With `struct Fallback;` in scope, `let Fallback = input;` is an
+    // irrefutable unit-struct pattern, not a binding; the casing rule
+    // declines it.
+    let source = "#[derive(Debug, PartialEq)]
+pub struct Fallback;
+
+pub fn pick(input: Fallback, member: bool) -> Fallback {
+    if member {
+        return input;
+    }
+    let Fallback = input;
+    Fallback
+}";
+    let findings = findings_on_edited_line(
+        source,
+        "input",
+        "Fallback",
+        "assert_eq!(pick(Fallback, false), Fallback);",
+    )?;
+    assert!(!returns_name(&findings, "Fallback"), "{findings:?}");
     Ok(())
 }

@@ -11,6 +11,7 @@ tests = [
   "crates/ripr/tests/computed_return_tail/bare_name_tail.rs::only_a_name_the_owner_binds_gets_the_return_sink",
   "crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail",
   "crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_in_a_preceding_let_else_is_not_read_as_a_local",
+  "crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_name_spelled_like_an_item_is_not_read_as_a_local",
 ]
 fixtures = [
   "fixtures/rust_bare_name_return_tail_reached",

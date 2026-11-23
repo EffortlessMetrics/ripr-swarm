@@ -356,7 +356,7 @@ pin above never applied.
 
 The name now reaches the return sink (`bare_name_returned_tail` in
 `classify/flow.rs`) when the owner declares a non-unit return type, the probe
-is one identifier before and after the edit that resolves, at its own
+is one snake_case identifier before and after the edit that resolves, at its own
 position, to a binding the owner introduces (a `let` in an enclosing block
 that precedes it, or else a parameter; a `let` in a disjoint scope such as
 the other `if` branch does not count; an item declared in an enclosing
@@ -369,7 +369,10 @@ such a position. `self`, paths, generics, labelled or `async`/`unsafe`
 blocks, `match` arms, loops, closures and a `let` initializer add no sink,
 and neither does a constant, static, unit struct or imported item spelled as
 one identifier.
-Only the sink moves; credit still comes from the reached-tail pin (or the
+Syntax alone cannot tell a binding from a path pattern (`let Fallback = x;`
+is a unit-struct pattern when `struct Fallback;` is in scope), so the
+snake_case rule is a spelling heuristic, the casing Rust's lints expect of a
+local, not name resolution. It admits only the sink. Only the sink moves; credit still comes from the reached-tail pin (or the
 other existing readers).
 
 A bare owner name is the one token the changed text offers, and a test that
@@ -442,6 +445,7 @@ pin both sides in the evidence-promotion honesty corpus.
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::only_a_name_the_owner_binds_gets_the_return_sink`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_same_named_local_in_a_disjoint_scope_does_not_bind_the_tail`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_in_a_preceding_let_else_is_not_read_as_a_local`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_name_spelled_like_an_item_is_not_read_as_a_local`
 
 ## Implementation Mapping
 

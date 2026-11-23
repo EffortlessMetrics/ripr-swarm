@@ -1012,14 +1012,21 @@ fn bare_name_returned_tail(
             .to_string()
     };
     let name = code(&probe.expression);
+    // Syntax alone cannot tell a binding from a path pattern: `let Fallback
+    // = x;` is a unit-struct pattern when `struct Fallback;` is in scope, and
+    // `let LIMIT = x else { .. };` a constant pattern. So the name must be
+    // spelled as a binding (snake_case), the casing Rust's lints expect of a
+    // local and not of a constant, static, unit struct or variant. This is a
+    // spelling heuristic, not name resolution; it only admits the return
+    // sink, and credit still needs the reached-tail pin (#16162 review).
     let is_identifier = name
         .chars()
         .next()
-        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_lowercase())
         && name
             .chars()
-            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-        && !matches!(name.as_str(), "_" | "self" | "Self" | "true" | "false");
+            .all(|ch| ch == '_' || ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        && !matches!(name.as_str(), "_" | "self" | "true" | "false");
     if !is_identifier || probe.after.as_deref().map(code).as_deref() != Some(name.as_str()) {
         return None;
     }
