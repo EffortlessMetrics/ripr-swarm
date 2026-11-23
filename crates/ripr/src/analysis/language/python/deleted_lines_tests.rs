@@ -2247,6 +2247,25 @@ fn code_beside_a_comment_in_a_run_with_code_keeps_its_base_side_record() -> Resu
     Ok(())
 }
 
+/// A removed statement folded into the run's code was rewritten, not
+/// deleted, so the comment beside that code keeps its pairing (#16011).
+#[test]
+fn statement_folded_into_code_beside_a_comment_has_no_base_side_record() -> Result<(), String> {
+    let source = "def capped_total(total, cap):\n    # one clamp for both ends\n    return max(min(total, cap), 0)\n";
+    let findings = analyze_with_test(
+        "comment-beside-folded-code",
+        source,
+        CAP_TEST_PY,
+        &[2, 3],
+        vec![
+            line(2, 2, "    total = min(total, cap)"),
+            line(3, 2, "    return max(total, 0)"),
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
 /// A `#` line inside a multi-line string is content. It replaced the old
 /// content line, so the pair stays an edit on the candidate side.
 #[test]

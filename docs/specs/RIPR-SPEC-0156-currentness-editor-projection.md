@@ -84,9 +84,10 @@ no end-to-end corpus a downstream consumer could run against.
     unreadable candidate file unpairs nothing. A comment line inside a
     template literal is not told apart from a comment. A comment added beside replacement code keeps its
     pairing: the code line of the run carries the change. In Python that
-    holds only while a code line of the run has no counterpart of its own
-    (#16011): when every code line of the run is already paired, the
-    comment replaced nothing, so its removed line keeps the removed-only
+    holds only while a code line of the run has no counterpart of its own,
+    or while every name and number of the removed line appears in the
+    run's code (the removed statement was folded into it) (#16011):
+    otherwise the comment replaced nothing, so its removed line keeps the removed-only
     record instead of disappearing behind a line that carries no probe. Before this
     rule Python reported the comment text as a changed `predicate` and
     could grade it `exposed`, and TypeScript recorded nothing for the

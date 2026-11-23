@@ -571,9 +571,9 @@ pub(super) struct ImportLines<'a> {
 /// removed line an added `import` stands on, unless it was an import itself
 /// (an import that replaces an import re-points a name). A comment or blank
 /// added line in a run with code replaced nothing either when every code
-/// line of the run has its own counterpart (#16011): its pair is dropped
-/// too, so the removed line is not hidden behind a line that carries no
-/// probe. A line inside a multi-line string is content, not a
+/// line of the run has its own counterpart and the removed line was not
+/// folded into them (#16011): its pair is dropped too, so the removed line is
+/// not hidden behind a line that carries no probe. A line inside a multi-line string is content, not a
 /// comment; with no `string_lines` (an unreadable or unlexable file) every
 /// pair is kept.
 pub(super) fn unpair_runs_without_code(
@@ -607,9 +607,8 @@ pub(super) fn unpair_runs_without_code(
         .map(|added| added.line)
         .collect();
     // A comment pair in a run with code is dropped only when every code line
-    // of the run already has its own counterpart; an unpaired code line in
-    // the run is where the removed line was rewritten, and it carries the
-    // probe.
+    // of the run already has its own counterpart and the removed line was not
+    // folded into that code; otherwise the run's code carries the rewrite.
     let quiet = |added: &ChangedLine| {
         comment_or_blank.contains(&added.line)
             || is_python_import_line(&added.text)
@@ -620,19 +619,31 @@ pub(super) fn unpair_runs_without_code(
         .iter()
         .map(|added| (added.line, added))
         .collect();
-    let run_has_unpaired_code = |line: usize| {
+    // The code lines of the added run around `line`.
+    let run_code = |line: usize| -> Vec<&ChangedLine> {
         let mut start = line;
         while start > 0 && added_at.contains_key(&(start - 1)) {
             start -= 1;
         }
         (start..)
-            .map_while(|index| added_at.get(&index))
-            .any(|added| !quiet(added) && !counterparts.contains_key(&added.line))
+            .map_while(|index| added_at.get(&index).copied())
+            .filter(|added| !quiet(added))
+            .collect()
     };
     let replaced_nothing: std::collections::BTreeSet<usize> = comment_or_blank
         .iter()
         .copied()
-        .filter(|line| counterparts.contains_key(line) && !run_has_unpaired_code(*line))
+        .filter(|line| {
+            let Some(removed) = counterparts.get(line) else {
+                return false;
+            };
+            let code = run_code(*line);
+            !code.is_empty()
+                && code
+                    .iter()
+                    .all(|added| counterparts.contains_key(&added.line))
+                && !folded_into(&removed.text, &code)
+        })
         .collect();
     counterparts.retain(|added_line, removed| {
         if replaced_nothing.contains(added_line) {
@@ -642,6 +653,30 @@ pub(super) fn unpair_runs_without_code(
             || is_python_import_line(&removed.text)
             || super::line_is_in_ranges(removed.line, imports.removed)
     });
+}
+
+/// Whether every name and number of `removed` appears among the code lines
+/// of an added run: the removed statement was folded into them
+/// (`x = min(x * 2, CAP)` into `return max(min(x * 2, CAP), 0)`), not deleted.
+/// A removed line with no name or number is never read as folded.
+fn folded_into(removed: &str, code: &[&ChangedLine]) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del",
+        "elif", "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with",
+        "yield",
+    ];
+    let words = |text: &str| -> std::collections::BTreeSet<String> {
+        let code = text.split('#').next().unwrap_or_default();
+        code.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+            .filter(|word| !word.is_empty() && !KEYWORDS.contains(word))
+            .map(str::to_string)
+            .collect()
+    };
+    let removed_words = words(removed);
+    let added_words: std::collections::BTreeSet<String> =
+        code.iter().flat_map(|added| words(&added.text)).collect();
+    !removed_words.is_empty() && removed_words.is_subset(&added_words)
 }
 
 /// For each added line, whether it is `quiet` (no behavior, structural, or an
