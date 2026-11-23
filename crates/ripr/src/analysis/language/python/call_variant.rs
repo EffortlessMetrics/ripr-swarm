@@ -112,7 +112,7 @@ pub(super) fn python_call_variant_evidence(
 ) -> Option<PythonCallVariantEvidence> {
     if !matches!(
         owner.owner_kind,
-        Some(OwnerKind::Function | OwnerKind::Method)
+        Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
     ) {
         return None;
     }

@@ -55,6 +55,7 @@ fn inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip() -> Result<
         "{:?}",
         finding.activation.missing_discriminators
     );
+    assert_eq!(finding.ripr.infect.state, StageState::Weak);
     Ok(())
 }
 
@@ -64,6 +65,7 @@ fn an_input_with_trailing_whitespace_keeps_strip_to_lstrip_exposed() -> Result<(
         "from src.text import clean\n\n\ndef test_clean():\n    assert clean(\"  a\") == \"a\"\n    assert clean(\"b \") == \"b\"\n",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.ripr.infect.state, StageState::Yes);
     Ok(())
 }
 
