@@ -1145,3 +1145,158 @@ fn agent_and_replay_explain_the_recorded_owner_opt_out() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The single `next=` command an agent explanation prints.
+fn printed_next(text: &str) -> Result<String, String> {
+    let commands: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("next="))
+        .collect();
+    match commands.as_slice() {
+        [command] => Ok((*command).to_string()),
+        _ => Err(format!("expected exactly one next= command: {text}")),
+    }
+}
+
+/// Split a printed command into argv by POSIX single-quote and backslash
+/// rules, without a shell. Anything else a shell would expand (`$`, a
+/// backtick, a glob or a double quote) is refused rather than guessed.
+fn printed_argv(command: &str) -> Result<Vec<String>, String> {
+    let mut argv = Vec::new();
+    let mut word: Option<String> = None;
+    let mut chars = command.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            ' ' => {
+                if let Some(done) = word.take() {
+                    argv.push(done);
+                }
+            }
+            '\'' => {
+                let current = word.get_or_insert_with(String::new);
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(quoted) => current.push(quoted),
+                        None => return Err(format!("unterminated quote: {command}")),
+                    }
+                }
+            }
+            '\\' => {
+                let escaped = chars
+                    .next()
+                    .ok_or_else(|| format!("trailing backslash: {command}"))?;
+                word.get_or_insert_with(String::new).push(escaped);
+            }
+            '$' | '`' | '"' | '*' | '?' | '[' | ';' | '&' | '|' | '<' | '>' => {
+                return Err(format!("printed command needs a shell: {command}"));
+            }
+            other => word.get_or_insert_with(String::new).push(other),
+        }
+    }
+    if let Some(done) = word {
+        argv.push(done);
+    }
+    Ok(argv)
+}
+
+impl Repo {
+    /// Run the literal printed `ripr ...` command against the tested binary
+    /// from a directory outside the fixture root, and parse its JSON packet.
+    fn follow_context(&self, printed: &str) -> Result<(String, serde_json::Value), String> {
+        let argv = printed_argv(printed)?;
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| format!("empty printed command: {printed}"))?;
+        if program != "ripr" || args.first().map(String::as_str) != Some("context") {
+            return Err(format!("next= must be a ripr context command: {printed}"));
+        }
+        let foreign = self.base.join("elsewhere");
+        fs::create_dir_all(&foreign).map_err(|e| e.to_string())?;
+        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .args(args)
+            .current_dir(&foreign)
+            .env("RIPR_CACHE_DIR", self.base.join("cache"))
+            .output()
+            .map_err(|e| format!("run {printed}: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{printed} failed: {}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let text = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+        let packet =
+            serde_json::from_str(&text).map_err(|e| format!("context is not JSON: {e}: {text}"))?;
+        Ok((text, packet))
+    }
+}
+
+fn packet_stops_for_owner(packet: &serde_json::Value) -> bool {
+    packet["stop_reasons"]
+        .as_array()
+        .is_some_and(|reasons| reasons.iter().any(|reason| reason == REASON))
+}
+
+/// #14133: an agent that follows the `next=` pointer of a withheld finding's
+/// explanation reaches a context packet that keeps the probe and evidence,
+/// states the `owner_mutants_skip` stop and offers no next step, on the fresh
+/// route and on artifact replay after the attribute is gone from the source.
+/// The ordinary sibling's packet is unchanged, and fresh analysis after the
+/// edit is actionable again.
+#[test]
+fn context_followed_from_explain_keeps_the_owner_opt_out_stop() -> Result<(), String> {
+    let repo = Repo::new(&two_impl_lib("#[mutants::skip]"), &two_impl_diff())?;
+    let path = repo.base.join("check.json");
+    let artifact = path.to_str().ok_or("non-UTF8 artifact path")?;
+    let report: serde_json::Value =
+        serde_json::from_str(&repo.run(&["--json", "--write-artifact", artifact])?)
+            .map_err(|err| err.to_string())?;
+    let held = first_id_on_line(&report, 5)?;
+    let ordinary = first_id_on_line(&report, 9)?;
+
+    let fresh_held = printed_next(&repo.ripr("explain", &[&held, "--format", "agent"])?)?;
+    // The ordinary gap's explanation omits `next=` (the packet adds nothing
+    // its record lacks), so the control takes the same route with its id.
+    assert_eq!(fresh_held.matches(held.as_str()).count(), 1, "{fresh_held}");
+    let fresh_ordinary = fresh_held.replace(held.as_str(), &ordinary);
+    let (_, held_packet) = repo.follow_context(&fresh_held)?;
+    let (ordinary_text, ordinary_packet) = repo.follow_context(&fresh_ordinary)?;
+
+    // The attribute now only quotes the spelling: fresh analysis no longer
+    // withholds, while replay must keep the recorded decision.
+    write(
+        &repo.root.join("src/lib.rs"),
+        &two_impl_lib("#[doc = \"mutants::skip\"]"),
+    )?;
+    let replay_held =
+        printed_next(&repo.ripr("explain", &[&held, "--format", "agent", "--from", artifact])?)?;
+    assert!(replay_held.contains("--from "), "{replay_held}");
+    let (_, replay_packet) = repo.follow_context(&replay_held)?;
+
+    for packet in [&held_packet, &replay_packet] {
+        assert_eq!(packet["probe"]["id"], held.as_str(), "{packet}");
+        assert!(packet_stops_for_owner(packet), "{packet}");
+        assert_eq!(packet["recommended_next_step"], "", "{packet}");
+        assert!(
+            packet["ripr"]["reach"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "evidence stays visible: {packet}"
+        );
+    }
+
+    let (_, edited_held) = repo.follow_context(&fresh_held)?;
+    assert!(!packet_stops_for_owner(&edited_held), "{edited_held}");
+    assert_ne!(edited_held["recommended_next_step"], "", "{edited_held}");
+
+    assert!(
+        !packet_stops_for_owner(&ordinary_packet),
+        "{ordinary_packet}"
+    );
+    assert_ne!(ordinary_packet["recommended_next_step"], "");
+    let (edited_ordinary_text, _) = repo.follow_context(&fresh_ordinary)?;
+    assert_eq!(ordinary_text, edited_ordinary_text);
+    Ok(())
+}

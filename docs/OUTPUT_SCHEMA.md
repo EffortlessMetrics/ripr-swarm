@@ -4219,6 +4219,10 @@ the same run's `owner_opt_outs`, for example
 Agent output names the owner, scope and reason in its `stop=` record.
 `explain --from <artifact>` uses the recorded opt-out in both formats.
 Agent explanations and human artifact replay offer no repair for a withheld finding.
+`ripr context` on a withheld finding, on a fresh run or with `--from`, keeps
+the probe, stages and evidence, adds `owner_mutants_skip` to `stop_reasons`
+and returns an empty `recommended_next_step`, so an agent following the
+explanation's `next=` pointer reaches the same stop (#14133).
 
 #### Repo scope owner opt-outs (#14139)
 
