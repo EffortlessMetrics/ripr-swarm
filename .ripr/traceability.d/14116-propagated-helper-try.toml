@@ -1,0 +1,10 @@
+# A check helper with `?` lends its assertion when every eager call propagates the error (#14116).
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_fallible_helper_whose_errors_fail_the_test_lends_its_assertion",
+  "crates/ripr/tests/owner_pin_execution/propagated_helper_try.rs::a_propagated_fallible_helper_lends_its_assertion",
+]
+code = [
+  "crates/ripr/src/analysis/syntax/owner_pin.rs",
+]

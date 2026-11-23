@@ -100,6 +100,75 @@ fn an_eagerly_called_local_check_helper_lends_its_assertion() -> Result<(), Stri
     Ok(())
 }
 
+/// #14116: a fallible check helper (`fn check(..) -> Result<..> { x?;
+/// assert_eq!(..); Ok(()) }`) lends its assertion when every eager call is
+/// `check(..)?` in a `Result` test. An error that skips the assertion then
+/// fails the test, so the assertion cannot be skipped while the test passes.
+#[test]
+fn a_fallible_helper_whose_errors_fail_the_test_lends_its_assertion() -> Result<(), String> {
+    let result_test = |helper: &str, body: &str| {
+        module(helper, body).replace(
+            "fn tip_is_added() {",
+            "fn tip_is_added() -> Result<(), String> {",
+        )
+    };
+    let fallible = |early: &str| {
+        format!(
+            "    fn check_tip(b: u64, t: u64, want: u64) -> Result<(), String> {{\n        {early}\n        assert_eq!(with_tip(b, t), want);\n        Ok(())\n    }}\n"
+        )
+    };
+    let helper = fallible("Ok::<(), String>(())?;");
+    let propagated = "check_tip(40, 6, 46)?;\n        check_tip(10, 0, 10)?;\n        Ok(())";
+    assert_eq!(
+        helper_assertion_admitted(&result_test(&helper, propagated))?,
+        (true, true)
+    );
+    for body in [
+        // A loop over a non-empty array still runs each propagated call.
+        "for (b, t, w) in [(40, 6, 46)] { check_tip(b, t, w)?; }\n        Ok(())",
+        // A deferred call that discards the error lends nothing and refuses
+        // nothing.
+        "check_tip(40, 6, 46)?;\n        if false { let _ = check_tip(1, 1, 3); }\n        Ok(())",
+    ] {
+        assert_eq!(
+            helper_assertion_admitted(&result_test(&helper, body))?,
+            (true, true),
+            "{body}"
+        );
+    }
+    // An eager call whose error does not leave the test refuses the loan:
+    // the helper's `?` could skip the assertion there and the test still
+    // pass. A call whose result feeds a method or another call is not eager
+    // and lends nothing, as for any helper.
+    for body in [
+        "let _ = check_tip(40, 6, 46);\n        check_tip(10, 0, 10)?;\n        Ok(())",
+        "check_tip(40, 6, 46);\n        check_tip(10, 0, 10)?;\n        Ok(())",
+        "check_tip(40, 6, 46).ok();\n        Ok(())",
+        "check_tip(40, 6, 46).unwrap_or(());\n        Ok(())",
+        "(check_tip(40, 6, 46))?;\n        Ok(())",
+        "drop(check_tip(40, 6, 46));\n        Ok(())",
+    ] {
+        assert_eq!(
+            helper_assertion_admitted(&result_test(&helper, body))?,
+            (false, false),
+            "{body}"
+        );
+    }
+    // A `return` skips the assertion without an error, and a closure's `?`
+    // leaves only the closure: both still refuse, even when propagated.
+    for early in [
+        "if b == 40 { return Ok(()); }",
+        "let _ = (|| -> Result<(), String> { Err(String::new())?; Ok(()) })();",
+    ] {
+        assert_eq!(
+            helper_assertion_admitted(&result_test(&fallible(early), propagated))?,
+            (false, false),
+            "{early}"
+        );
+    }
+    Ok(())
+}
+
 /// #6578 review: rstest fills a fixture parameter from a `#[fixture]`
 /// outside the test, which may call the owner. Passed to the helper, it
 /// becomes the helper's expected value, which the test's own expected-value
