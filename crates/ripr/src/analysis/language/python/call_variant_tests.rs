@@ -5,7 +5,7 @@ use super::call_variant::{CallVariant, call_variant, elements_agree, variant_agr
 use super::owners_tests::{extract_owners, extract_tests};
 use super::*;
 
-const SOURCE: &str = "def clean(s):\n    return s.strip()\n\n\ndef money(x):\n    return round(x, 2)\n\n\ndef top(xs):\n    return sorted(xs)[0]\n";
+const SOURCE: &str = "def clean(s):\n    return s.strip()\n\n\ndef money(x):\n    return round(x, 2)\n\n\ndef top(xs):\n    return sorted(xs)[0]\n\n\ndef low(xs):\n    xs.append(9)\n    return sorted(xs)[0]\n";
 
 fn classify(line: usize, old: &str, new: &str, test_source: &str) -> Result<Finding, String> {
     let owners = extract_owners(Path::new("src/text.py"), SOURCE);
@@ -235,6 +235,19 @@ fn a_list_with_different_elements_keeps_a_sort_direction_flip_exposed() -> Resul
 fn an_unread_list_keeps_a_sort_direction_flip_exposed() -> Result<(), String> {
     let finding = classify_top(
         "from src.text import top\n\nNUMS = [4, 1]\n\n\ndef test_top():\n    assert top([4]) == 4\n    assert top(NUMS) == 1\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_list_the_body_changes_before_the_sort_keeps_its_reading() -> Result<(), String> {
+    // `low([4])` sorts `[4, 9]`, where the direction decides the result.
+    let finding = classify(
+        15,
+        "    return sorted(xs)[0]",
+        "    return sorted(xs, reverse=True)[0]",
+        "from src.text import low\n\n\ndef test_low():\n    assert low([4]) == 4\n",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
     Ok(())

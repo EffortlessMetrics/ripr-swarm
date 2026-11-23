@@ -90,9 +90,24 @@ pub(super) struct PythonTermFacts {
     /// or a coroutine/wrapper the call returns before the body runs). Textual
     /// and over-approximate: a nested or bare `return` makes it false.
     returns_no_value: bool,
+    /// The start line of the first top-level body statement that mentions
+    /// each parameter as code. A parameter no statement mentions is absent,
+    /// and facts read from an older cache carry none.
+    #[serde(default)]
+    first_mention_lines: Vec<(String, usize)>,
 }
 
 impl PythonTermFacts {
+    /// The start line of the first top-level body statement that mentions
+    /// `name`: before it, the body cannot have changed the object the caller
+    /// passed (#16203).
+    pub(super) fn first_mention_line(&self, name: &str) -> Option<usize> {
+        self.first_mention_lines
+            .iter()
+            .find(|(parameter, _)| parameter == name)
+            .map(|(_, line)| *line)
+    }
+
     pub(super) fn returns_no_value(&self) -> bool {
         self.returns_no_value
     }
@@ -163,6 +178,17 @@ pub(super) fn term_facts(
         }
         _ => None,
     };
+    let first_mention_lines = parameters
+        .iter()
+        .filter_map(|parameter| {
+            let statement = body.iter().find(|statement| {
+                code_mentions(&text_for_range(source, statement.range()), &parameter.name)
+            })?;
+            let start = usize::from(statement.range().start());
+            let line = source.get(..start)?.matches('\n').count() + 1;
+            Some((parameter.name.clone(), line))
+        })
+        .collect();
     PythonTermFacts {
         may_yield: super::mentions_python_name(owner_text, "yield"),
         guarded_return: (!wrapped)
@@ -179,6 +205,7 @@ pub(super) fn term_facts(
         calls_own_name: false,
         returns_no_value: code_mention_count(owner_text, "return") == 0
             && code_mention_count(owner_text, "yield") == 0,
+        first_mention_lines,
     }
 }
 
@@ -189,7 +216,7 @@ fn code_mentions(text: &str, token: &str) -> bool {
 }
 
 /// How many times `text` holds `token` as code (see `code_mentions`).
-fn code_mention_count(text: &str, token: &str) -> usize {
+pub(super) fn code_mention_count(text: &str, token: &str) -> usize {
     let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
     let word = token.chars().all(is_word);
     let mut hidden = PythonHiddenCode::new(text);

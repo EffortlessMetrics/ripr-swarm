@@ -22,6 +22,7 @@ use super::assertion_selection::PythonAssertionFocus;
 use super::boundary::{literals_equal, strong_owner_call_values};
 use super::discriminators::python_string_literal_value;
 use super::related_tests::PythonRelatedCandidate;
+use super::term_activation::code_mention_count;
 use crate::domain::OwnerKind;
 use rustpython_parser::{Mode, Tok, lexer::lex};
 
@@ -213,6 +214,7 @@ fn sort_variant(old: &[Token], new: &[Token]) -> Option<CallVariant> {
 pub(super) fn python_call_variant_evidence(
     old_line: &str,
     new_line: &str,
+    line: usize,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
@@ -234,6 +236,15 @@ pub(super) fn python_call_variant_evidence(
         .iter()
         .any(|parameter| &parameter.name == param)
         || !owner.term_facts.is_stable_parameter(param)
+    {
+        return None;
+    }
+    // A list is mutable: the body must not reach it before the changed line,
+    // and the line must name it once, so the sort sees the list the test
+    // passed.
+    if matches!(variant, CallVariant::Sort { .. })
+        && (owner.term_facts.first_mention_line(param) != Some(line)
+            || code_mention_count(new_line, param) != 1)
     {
         return None;
     }

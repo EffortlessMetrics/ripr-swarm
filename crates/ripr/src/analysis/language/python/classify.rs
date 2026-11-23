@@ -1182,12 +1182,14 @@ fn classify_change_for_owner_inner<'a>(
             &focus,
         )
     });
-    // A strip side or `round` digit count edit (#16203) differs only for an
-    // argument with whitespace on the dropped side or more decimal places.
+    // A strip side, `round` digit count or sort direction edit (#16203)
+    // differs only for an argument with whitespace on the dropped side, more
+    // decimal places, or two different elements.
     let call_variant_gap = old_line_text.and_then(|old| {
         super::call_variant::python_call_variant_evidence(
             old,
             line_text,
+            line,
             owner,
             &related_candidates,
             &focus,
