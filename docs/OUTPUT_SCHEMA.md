@@ -4219,6 +4219,10 @@ the same run's `owner_opt_outs`, for example
 Agent output names the owner, scope and reason in its `stop=` record.
 `explain --from <artifact>` uses the recorded opt-out in both formats.
 Agent explanations and human artifact replay offer no repair for a withheld finding.
+`ripr context` on a withheld finding, on a fresh run or with `--from`, keeps
+the probe, stages and evidence, adds `owner_mutants_skip` to `stop_reasons`
+and returns an empty `recommended_next_step`, so an agent following the
+explanation's `next=` pointer reaches the same stop (#14133).
 
 #### Repo scope owner opt-outs (#14139)
 
@@ -4704,6 +4708,12 @@ Reserved wire values (RIPR-SPEC-0411, #5514): `max_depth_reached`,
 human glosses and next-step guidance, but no production classifier on current
 main pushes them onto a finding. A future spec slice must name the trigger
 before any emitter lands.
+
+The `ripr context` packet's `stop_reasons` may also carry
+`owner_mutants_skip`, the owner opt-out reason (RIPR-SPEC-0450, #14133),
+when the selected finding is withheld by `#[mutants::skip]`. It is not a
+`StopReason` variant and never appears on a `ripr check` finding's
+`stop_reasons`, which states the withholding as `withheld_by`.
 
 `agent_card_refusal_kind` values:
 

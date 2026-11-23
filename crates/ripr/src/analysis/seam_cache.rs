@@ -785,8 +785,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// package reads as an unknown oracle (#10150).
 /// `1.193`: an assertion whose every owner call sits inside an untrusted inner
 /// macro reads as an unknown oracle for that owner (#16188).
+/// `1.194`: a `for` over any non-empty array runs its assertion, not only a
+/// constant-row table (#14116).
 /// `1.195`: an owner result bound to a local that only an untrusted inner macro
-/// uses reads as an unknown oracle for that owner (#16192); 1.194 is left for #13041.
+/// uses reads as an unknown oracle for that owner (#16192).
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.195";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
@@ -1018,6 +1020,7 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.195";
 /// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
 /// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
 /// `0.195`: same macro-held owner call as full `1.193` (#16188).
+/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
 /// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
 const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
 
@@ -1252,6 +1255,7 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
 /// `0.193`: same env!-reading wrapper forwarding as full `1.191` (#10357).
 /// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
 /// `0.195`: same macro-held owner call as full `1.193` (#16188).
+/// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
 /// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
 pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
 
@@ -5854,7 +5858,8 @@ mod tests {
         // 1.190 / 0.192 is left for #13041.
         // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150); 1.190 is left for #13041.
         // 1.192 -> 1.193: owner calls only an untrusted inner macro holds read unknown (#16188).
-        // 1.193 -> 1.195: owner-result locals only an untrusted inner macro uses read unknown (#16192); 1.194 / 0.196 is left for #13041.
+        // 1.193 -> 1.194: a for over any non-empty array runs its assertion (#14116).
+        // 1.194 -> 1.195: owner-result locals only an untrusted inner macro uses read unknown (#16192).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.195");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
@@ -6026,7 +6031,8 @@ mod tests {
         // 0.191 -> 0.193: same env!-reading wrapper forwarding as full 1.191 (#10357).
         // 0.193 -> 0.194: same manifest-rebound assertion root as full 1.192 (#10150).
         // 0.194 -> 0.195: same macro-held owner call as full 1.193 (#16188).
-        // 0.195 -> 0.197: same macro-held owner-result local as full 1.195 (#16192).
+        // 0.195 -> 0.196: same non-empty array loop execution as full 1.194 (#14116).
+        // 0.196 -> 0.197: same macro-held owner-result local as full 1.195 (#16192).
         assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.197");
         assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.197");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).

@@ -7740,12 +7740,15 @@ fn eager_path(
                 return Err("a `loop` after a `break` or `continue` that can skip it");
             }
         } else if let Some(table) = ast::ForExpr::cast(parent.clone()) {
-            // A `for` over a non-empty table of constant rows runs its body
-            // at least once, like `loop` above (RIPR-SPEC-0197 rule 8). Any
-            // other iterable may be empty and stays refused.
+            // A `for` over a non-empty array runs its body at least once,
+            // like `loop` above (RIPR-SPEC-0197 rule 8), unless a row exits
+            // the process first ([`rows_reach_the_loop`]). Any other iterable
+            // may be empty and stays refused. This admits execution only: an
+            // expected value read from rows that are not constant is refused
+            // through [`opaque_row_names`] (#14116).
             if table.loop_body().is_none_or(|body| body.syntax() != &node)
                 || table.label().is_some()
-                || !constant_row_table(&table, function)
+                || row_array(&table, function, rows_reach_the_loop).is_none()
             {
                 return Err(conditional_construct(&parent));
             }
@@ -7799,18 +7802,22 @@ fn conditional_construct(node: &SyntaxNode) -> &'static str {
     }
 }
 
-/// Whether `table` iterates a non-empty array of constant rows, written
-/// inline (`for row in [..]`, `&[..]`) or bound once by a plain `let` in the
-/// statement list that holds the loop and named nowhere else in the test.
+/// The non-empty array of constant rows `table` iterates, per [`row_array`].
 /// A row is constant when every leaf is a literal, a variant or tuple-struct
 /// constructor, or `vec![..]` of literal tokens: it cannot call the owner,
 /// so an expected value in the row is never the owner's own output.
-fn constant_row_table(table: &ast::ForExpr, function: &ast::Fn) -> bool {
-    constant_row_array(table, function).is_some()
+fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::ArrayExpr> {
+    row_array(table, function, constant_rows)
 }
 
-/// The constant-row array `table` iterates, per [`constant_row_table`].
-fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::ArrayExpr> {
+/// The array `table` iterates when `rows_hold` accepts it: written inline
+/// (`for row in [..]`, `&[..]`) or bound once by a plain `let` in the
+/// statement list that holds the loop and named nowhere else in the test.
+fn row_array(
+    table: &ast::ForExpr,
+    function: &ast::Fn,
+    rows_hold: fn(&ast::ArrayExpr) -> bool,
+) -> Option<ast::ArrayExpr> {
     let mut iterable = table.iterable()?;
     while let ast::Expr::RefExpr(reference) = &iterable {
         if reference.mut_token().is_some() || reference.raw_token().is_some() {
@@ -7819,7 +7826,7 @@ fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::A
         iterable = reference.expr()?;
     }
     match iterable {
-        ast::Expr::ArrayExpr(rows) => constant_rows(&rows).then_some(rows),
+        ast::Expr::ArrayExpr(rows) => rows_hold(&rows).then_some(rows),
         ast::Expr::PathExpr(path) => {
             let name = path
                 .path()
@@ -7827,16 +7834,17 @@ fn constant_row_array(table: &ast::ForExpr, function: &ast::Fn) -> Option<ast::A
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
                 .map(|name| name.text().to_string())?;
-            bound_constant_rows(table, function, &name)
+            bound_rows(table, function, &name, rows_hold)
         }
         _ => None,
     }
 }
 
-fn bound_constant_rows(
+fn bound_rows(
     table: &ast::ForExpr,
     function: &ast::Fn,
     name: &str,
+    rows_hold: fn(&ast::ArrayExpr) -> bool,
 ) -> Option<ast::ArrayExpr> {
     let scope = table
         .syntax()
@@ -7875,7 +7883,7 @@ fn bound_constant_rows(
                 )
         })
         .find_map(|binding| match binding.initializer() {
-            Some(ast::Expr::ArrayExpr(rows)) if constant_rows(&rows) => Some(rows),
+            Some(ast::Expr::ArrayExpr(rows)) if rows_hold(&rows) => Some(rows),
             _ => None,
         })
 }
@@ -8266,15 +8274,97 @@ fn skip_list(source: &str, name: &str) -> Option<Vec<String>> {
 }
 
 fn constant_rows(rows: &ast::ArrayExpr) -> bool {
-    // `[#[cfg(any())] (4, 0)]` is an empty array: an attribute anywhere in
-    // the rows may remove one, so none is allowed.
+    non_empty_rows(rows) && rows.exprs().all(|row| constant_value(&row))
+}
+
+/// Whether `rows` is a non-empty list array whose rows reach the loop: no
+/// row holds a loop or a call that names a process exit (`exit`, `abort`
+/// or any path through `process`, as `std::process::exit(0)` ends the test
+/// before the loop starts). Other calls are admitted as they are in a
+/// statement before the assertion: a call that panics fails the test, and
+/// the expected-value check keeps a row holding the owner's own output from
+/// counting as a discriminator ([`opaque_row_names`]). An alias of a
+/// process exit in a row is not recognised, as in a `let` initializer.
+fn rows_reach_the_loop(rows: &ast::ArrayExpr) -> bool {
+    non_empty_rows(rows)
+        && !rows.syntax().descendants().any(|node| {
+            ast::LoopExpr::can_cast(node.kind())
+                || ast::WhileExpr::can_cast(node.kind())
+                || ast::ForExpr::can_cast(node.kind())
+                || ast::CallExpr::cast(node)
+                    .and_then(|call| call.expr())
+                    .is_some_and(|callee| {
+                        let path: String = callee
+                            .syntax()
+                            .text()
+                            .to_string()
+                            .split_whitespace()
+                            .collect();
+                        let leaf = path.rsplit("::").next().unwrap_or(&path);
+                        matches!(leaf, "exit" | "abort")
+                            || path.split("::").any(|segment| segment == "process")
+                    })
+        })
+}
+
+/// The names a test binds from loop rows that are not constant: every name
+/// in the pattern of a `for` whose body [`eager_path`] admits over rows
+/// that are not constant, and every name a `let` inside such
+/// a loop's body binds. A row may hold the owner's own output (`const
+/// EXPECTED: u32 = weight(4);` in `for want in [EXPECTED]`), so the
+/// owner-return pin refuses an expected operand naming one of them; a
+/// constant-row table's names stay readable (#14116).
+pub(crate) fn opaque_row_names(fn_text: &str) -> Vec<String> {
+    if !fn_text.contains("for") {
+        return Vec::new();
+    }
+    let Some(parse) = parse_clean_source_file(fn_text) else {
+        return Vec::new();
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    for table in function
+        .syntax()
+        .descendants()
+        .filter_map(ast::ForExpr::cast)
+    {
+        if row_array(&table, &function, rows_reach_the_loop).is_none()
+            || row_array(&table, &function, constant_rows).is_some()
+        {
+            continue;
+        }
+        let pattern = table.pat().map(|pat| pat.syntax().clone());
+        let lets = table
+            .loop_body()
+            .into_iter()
+            .flat_map(|body| body.syntax().descendants().filter_map(ast::LetStmt::cast))
+            .filter_map(|binding| binding.pat().map(|pat| pat.syntax().clone()));
+        for scope in pattern.into_iter().chain(lets) {
+            names.extend(
+                scope
+                    .descendants()
+                    .filter_map(ast::IdentPat::cast)
+                    .filter_map(|ident| ident.name())
+                    .map(|name| name.text().trim_start_matches("r#").to_string()),
+            );
+        }
+    }
+    names
+}
+
+/// Whether `rows` is a list array with at least one element that no
+/// attribute can remove: `[#[cfg(any())] (4, 0)]` is an empty array, so an
+/// attribute anywhere in the rows refuses, as does a repeat array
+/// (`[r; n]`, whose count may be zero).
+fn non_empty_rows(rows: &ast::ArrayExpr) -> bool {
     !rows
         .syntax()
         .descendants()
         .any(|node| ast::Attr::can_cast(node.kind()))
         && rows.semicolon_token().is_none()
         && rows.exprs().next().is_some()
-        && rows.exprs().all(|row| constant_value(&row))
 }
 
 fn constant_value(value: &ast::Expr) -> bool {
