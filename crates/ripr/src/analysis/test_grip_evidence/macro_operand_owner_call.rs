@@ -221,8 +221,12 @@ fn placeholder_reads(placeholder: &str, name: &str) -> bool {
     let (argument, spec) = placeholder.split_once(':').unwrap_or((placeholder, ""));
     argument == name
         || spec.match_indices(name).any(|(at, _)| {
+            // A zero-pad flag may precede the width name (`{:0name$}`);
+            // other identifier characters before it make a longer name.
             spec[at + name.len()..].starts_with('$')
-                && !spec[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_')
+                && !spec[..at]
+                    .trim_end_matches(|c: char| c.is_ascii_digit())
+                    .ends_with(|c: char| c.is_alphanumeric() || c == '_')
         })
 }
 
@@ -400,7 +404,7 @@ fn walk(
                 // A local shadows a same-named owner function (`let pick =
                 // pick(0)`), so an unqualified name it binds reads the local.
                 let local = locals.iter().position(|local| local.name == token.text());
-                if unqualified && label && local.is_some() {
+                if unqualified && label {
                     // A struct field label (`Holder { r: .. }`) reads nothing.
                 } else if let (true, Some(at)) = (unqualified, local) {
                     if inside_untrusted {
@@ -721,7 +725,22 @@ mod tests {
             ),
             (
                 "let r = pick(0);",
+                "assert_eq!(format!(\"{:0r$}{}\", \"x\", check_ok!(r)), \"x\")",
+                false,
+            ),
+            (
+                "let r = pick(0);",
                 "assert_eq!(format!(\"{:pr$}{}\", \"x\", check_ok!(r)), \"x\")",
+                true,
+            ),
+            (
+                "let r = pick(0);",
+                "assert_eq!(format!(\"{:p1r$}{}\", \"x\", check_ok!(r)), \"x\")",
+                true,
+            ),
+            (
+                "",
+                "assert_eq!(check_ok!(pick(0)), Holder { pick: 1 })",
                 true,
             ),
             (
