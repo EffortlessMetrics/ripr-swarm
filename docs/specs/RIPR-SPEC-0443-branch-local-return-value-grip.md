@@ -356,11 +356,14 @@ pin above never applied.
 
 The name now reaches the return sink (`bare_name_returned_tail` in
 `classify/flow.rs`) when the owner declares a non-unit return type, the probe
-is one identifier before and after the edit, and the parser places that
+is one identifier before and after the edit that the owner binds itself (a
+parameter or a `let` pattern in its body), and the parser places that
 identifier, once on its line, at a position whose value the owner returns:
 the body's tail, or the tail of a plain block or of either `if` branch in
 such a position. `self`, paths, generics, labelled or `async`/`unsafe`
-blocks, `match` arms, loops, closures and a `let` initializer add no sink.
+blocks, `match` arms, loops, closures and a `let` initializer add no sink,
+and neither does a constant, static, unit struct or imported item spelled as
+one identifier.
 Only the sink moves; credit still comes from the reached-tail pin (or the
 other existing readers).
 
@@ -431,6 +434,7 @@ pin both sides in the evidence-promotion honesty corpus.
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_pin_of_the_other_branch_or_a_far_input_is_not_credited`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_test_binding_named_like_the_tail_does_not_confirm_it`
 - `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_whose_value_is_not_returned_gets_no_return_sink`
+- `crates/ripr/tests/computed_return_tail/bare_name_tail.rs::only_a_name_the_owner_binds_gets_the_return_sink`
 
 ## Implementation Mapping
 

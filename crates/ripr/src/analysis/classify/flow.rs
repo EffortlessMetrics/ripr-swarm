@@ -952,8 +952,9 @@ fn predicate_as_owner_tail(
 /// returns: the body's tail, or, recursively, the tail of a plain block or of
 /// either branch of an `if` in such a position. Fails closed unless the owner
 /// declares a non-unit return type, the probe (before and after the edit) is
-/// one identifier, and its line holds that identifier once, at a returned
-/// position. `self`, paths, generics, labelled or `async`/`unsafe` blocks,
+/// one identifier the owner binds (a parameter or a `let` pattern), and its
+/// line holds that identifier once, at a returned position. A constant or
+/// other item spelled as one identifier is not read here. `self`, paths, generics, labelled or `async`/`unsafe` blocks,
 /// `match` arms, loops and closures add no sink here.
 fn bare_name_returned_tail(
     probe: &Probe,
@@ -1033,6 +1034,34 @@ fn bare_name_returned_tail(
     {
         return None;
     }
+    // The name must be bound by the owner itself: a parameter or a `let`
+    // pattern in its body. A constant, static, unit struct or imported item
+    // spelled as one identifier is not read here (#16162 review).
+    let binds_name = |pat: Option<ast::Pat>| {
+        pat.is_some_and(|pat| {
+            std::iter::once(pat.syntax().clone())
+                .chain(pat.syntax().descendants())
+                .filter_map(ast::IdentPat::cast)
+                .any(|ident| {
+                    ident
+                        .name()
+                        .is_some_and(|bound| bound.text() == name.as_str())
+                })
+        })
+    };
+    let body = function.body()?;
+    let parameter = function
+        .param_list()?
+        .params()
+        .any(|param| binds_name(param.pat()));
+    let local = body
+        .syntax()
+        .descendants()
+        .filter_map(ast::LetStmt::cast)
+        .any(|statement| binds_name(statement.pat()));
+    if !parameter && !local {
+        return None;
+    }
     let line_of = |node: &ra_ap_syntax::SyntaxNode| {
         let start = usize::from(node.text_range().start());
         owner
@@ -1041,7 +1070,7 @@ fn bare_name_returned_tail(
             .map(|before| owner.start_line + before.bytes().filter(|byte| *byte == b'\n').count())
     };
     let mut returned = Vec::new();
-    returned_names(function.body()?.tail_expr()?, &mut returned);
+    returned_names(body.tail_expr()?, &mut returned);
     let mut at_probe = returned.iter().filter(|path| {
         line_of(path.syntax()) == Some(probe.location.line)
             && path.path().is_some_and(|path| {

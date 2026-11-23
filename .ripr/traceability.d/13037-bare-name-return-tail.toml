@@ -8,6 +8,7 @@ tests = [
   "crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_pin_of_the_other_branch_or_a_far_input_is_not_credited",
   "crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_test_binding_named_like_the_tail_does_not_confirm_it",
   "crates/ripr/tests/computed_return_tail/bare_name_tail.rs::a_bare_name_whose_value_is_not_returned_gets_no_return_sink",
+  "crates/ripr/tests/computed_return_tail/bare_name_tail.rs::only_a_name_the_owner_binds_gets_the_return_sink",
 ]
 fixtures = [
   "fixtures/rust_bare_name_return_tail_reached",
