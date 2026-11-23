@@ -2508,11 +2508,13 @@ fn analyze_related_assertions(
     // is spelled only by that name, so a test that names it names its own
     // binding (`let amount = discounted(100, true)`), whichever branch the
     // call took. Such a name confirms nothing even in an owner-bound
-    // assertion; the branch-reading pins (#14950) still can.
+    // assertion; the branch-reading pins (#14950) still can. A numeric
+    // literal tail (`105`) keeps its token credit: it names the value, not a
+    // binding.
     let bare_owner_name_tail = matches!(probe.family, ProbeFamily::ReturnValue)
-        && owner_scoped_tokens
-            .iter()
-            .any(|token| token == probe.expression.trim());
+        && owner_scoped_tokens.iter().any(|token| {
+            token == probe.expression.trim() && !token.starts_with(|ch: char| ch.is_ascii_digit())
+        });
     // #12110: the error variant an `error_path` change replaced, when the
     // paired old text names a different one.
     let removed_variant = matches!(probe.family, ProbeFamily::ErrorPath)

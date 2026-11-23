@@ -312,3 +312,25 @@ pub fn price(amount: u32, member: bool) -> u32 {
     assert!(!returns_name(&findings, "fallback"), "{findings:?}");
     Ok(())
 }
+
+#[test]
+fn a_numeric_literal_tail_keeps_its_owner_bound_token_credit() -> Result<(), String> {
+    // The tail-name refusal covers names only: a literal tail (`105`) that an
+    // owner-bound assertion spells still confirms (#5830), even when the call
+    // takes a local argument that the branch-reading pin does not fold.
+    let source = "pub fn fee(amount: u32) -> u32 {
+    if amount > 50 {
+        7
+    } else {
+        105
+    }
+}";
+    let found = finding(
+        source,
+        "104",
+        "105",
+        "let amount = 10;\n        assert_eq!(fee(amount), 105);",
+    )?;
+    assert_eq!(found.class, ExposureClass::Exposed);
+    Ok(())
+}
