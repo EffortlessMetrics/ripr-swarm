@@ -5092,6 +5092,12 @@ fn local_helper_assertions(
             if !propagated {
                 unpropagated.insert(name.clone());
             }
+            // An argument runs before the helper is entered, so a `return`,
+            // `break`, `continue` or `yield` there can leave without calling
+            // it. `eager_path` reads only exits that start before the call.
+            if arguments_may_leave(&call) {
+                continue;
+            }
             let line = lines.line(call.syntax().text_range().start());
             if lines.line(call.syntax().text_range().end()) == line {
                 eager_called.entry(name.clone()).or_default().push(line);
@@ -5209,6 +5215,20 @@ fn plain_parameter_names(helper: &ast::Fn) -> Vec<String> {
             .any(|name| names.iter().any(|param| name.text() == param.as_str()))
     });
     if rebound { Vec::new() } else { names }
+}
+
+/// Whether an argument of `call` holds a `return`, `break`, `continue` or
+/// `yield`, which may leave before the call is made. Fails closed: one in
+/// a closure argument counts too.
+fn arguments_may_leave(call: &ast::CallExpr) -> bool {
+    call.arg_list().is_some_and(|arguments| {
+        arguments.syntax().descendants().any(|node| {
+            ast::ReturnExpr::can_cast(node.kind())
+                || ast::BreakExpr::can_cast(node.kind())
+                || ast::ContinueExpr::can_cast(node.kind())
+                || ast::YieldExpr::can_cast(node.kind())
+        })
+    })
 }
 
 /// Whether `call`'s value is the operand of a `?` (`check(..)?`), so an

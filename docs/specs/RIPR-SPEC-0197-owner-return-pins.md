@@ -1348,9 +1348,14 @@ general combinator, callback or mutation adequacy.
      (`check(..)?;` in a `Result` test, #14116): an error that skips the
      borrowed assertion then leaves the test and fails it, as a `?` in a
      root test does. One eager call that discards the result (`let _ =
-     check(..)`, `check(..).ok()`, `drop(check(..))`, `(check(..))?`)
-     refuses the helper; a `?` inside a closure in the helper still
-     refuses under the escape gate. It passes the same escape gate as a test
+     check(..)`, a bare `check(..);`) refuses the helper. A call whose
+     result feeds a method or another call (`check(..).ok()`,
+     `drop(check(..))`, `(check(..))?`) is not eager, so like any deferred
+     call it neither lends nor refuses. A `?` inside a closure in the
+     helper still refuses under the escape gate. A call whose arguments
+     hold a `return`, `break`, `continue` or `yield` lends nothing, since
+     an argument runs before the helper is entered and may leave first
+     (#16215 review); this applies to every helper call, not only `?`. It passes the same escape gate as a test
      (only the trusted standard macros, no `break`, `continue` or `yield`) and
      the same item-context and cfg gates, and the macros it invokes join the
      workspace macro-binding check of rule 4. A scoped binding (a

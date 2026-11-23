@@ -154,6 +154,28 @@ fn a_fallible_helper_whose_errors_fail_the_test_lends_its_assertion() -> Result<
             "{body}"
         );
     }
+    // An argument runs before the helper is entered: a `return` there
+    // leaves the test without calling it, for a plain helper too.
+    for (helper, body) in [
+        (
+            helper.as_str(),
+            "check_tip(match Some(40) { Some(b) => b, None => return Ok(()) }, 6, 46)?;\n        Ok(())",
+        ),
+        (
+            HELPER,
+            "check_tip(match Some(40) { Some(b) => b, None => return Ok(()) }, 6, 46);\n        Ok(())",
+        ),
+        (
+            HELPER,
+            "for b in [40] { check_tip(if b > 0 { b } else { continue }, 6, 46); }\n        Ok(())",
+        ),
+    ] {
+        assert_eq!(
+            helper_assertion_admitted(&result_test(helper, body))?,
+            (false, false),
+            "{body}"
+        );
+    }
     // A `return` skips the assertion without an error, and a closure's `?`
     // leaves only the closure: both still refuse, even when propagated.
     for early in [

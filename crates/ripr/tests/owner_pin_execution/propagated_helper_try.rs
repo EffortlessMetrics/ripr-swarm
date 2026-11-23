@@ -37,6 +37,15 @@ const CASES: &[(&str, &str, &str, ExposureClass, bool)] = &[
         ExposureClass::Exposed,
         true,
     ),
+    // An argument leaves the test before the helper is entered: the test
+    // passes on the changed body without running the assertion.
+    (
+        "argument_returns_first",
+        CHECKED,
+        "check(match None::<i32> { Some(x) => x, None => return Ok(()) }, 12)?;\n        Ok(())",
+        ExposureClass::StaticUnknown,
+        false,
+    ),
     // The result is discarded: the assertion runs here, but nothing static
     // tells this helper from the refusing one below, so neither is credited.
     (
