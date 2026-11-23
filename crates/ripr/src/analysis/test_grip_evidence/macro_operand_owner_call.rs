@@ -18,7 +18,12 @@
 //! qualified by another type (`Other::new(..)` for the owner
 //! `impl Widget::new`) is not a call of the owner and is not counted.
 
-use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxNode, SyntaxToken, ast};
+use std::collections::BTreeSet;
+
+use ra_ap_syntax::{
+    AstNode, NodeOrToken, SyntaxKind, SyntaxNode, SyntaxToken,
+    ast::{self, HasName},
+};
 
 use crate::domain::{OracleKind, OracleStrength};
 
@@ -117,9 +122,13 @@ pub(super) fn owner_call_only_inside_untrusted_macro(
     let Some(tree) = outer.token_tree() else {
         return false;
     };
+    // The file is parsed only when a standard name needs the shadow check.
+    let shadowed = std::cell::OnceCell::new();
     let trusted = |name: &str| {
         EVALUATING_STD_MACROS.contains(&name)
-            && !file_source.is_some_and(|source| defines_macro_rules(source, name))
+            && !shadowed
+                .get_or_init(|| file_source.map(local_macro_rules_names).unwrap_or_default())
+                .contains(name)
     };
     let mut held = 0usize;
     let mut free = 0usize;
@@ -214,17 +223,23 @@ fn qualifier(children: &[NodeOrToken<SyntaxNode, SyntaxToken>], position: usize)
     }
 }
 
-/// Whether `source` holds a `macro_rules! name` definition.
-fn defines_macro_rules(source: &str, name: &str) -> bool {
-    source.match_indices("macro_rules!").any(|(at, keyword)| {
-        let rest = source[at + keyword.len()..].trim_start();
-        rest.strip_prefix(name).is_some_and(|after| {
-            !after
-                .chars()
-                .next()
-                .is_some_and(|next| next.is_alphanumeric() || next == '_')
-        })
-    })
+/// Names of the `macro_rules!` items the parsed `source` declares. Comments
+/// and strings that mention `macro_rules!` declare nothing, and trivia inside
+/// a declaration (`macro_rules /* .. */ ! vec`) does not hide it. A file
+/// that does not parse cleanly (or exceeds the nesting budget) declares
+/// nothing here, which keeps the standard names trusted, as before the pass.
+fn local_macro_rules_names(source: &str) -> BTreeSet<String> {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(source) else {
+        return BTreeSet::new();
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroRules::cast)
+        .filter_map(|rules| rules.name())
+        .map(|name| name.text().to_string())
+        .collect()
 }
 
 /// Whether any assertion of `test` holds an owner call only inside an
@@ -250,12 +265,14 @@ pub(super) fn demoted_view(
     owner: &OwnerName<'_>,
     file_source: Option<&str>,
 ) -> Option<Vec<OracleFact>> {
+    let first = test.assertions.iter().position(|oracle| {
+        owner_call_only_inside_untrusted_macro(&oracle.text, owner, file_source)
+    })?;
     let mut assertions = test.assertions.clone();
-    let mut changed = false;
-    for oracle in &mut assertions {
-        changed |= demote_macro_held_owner_call(oracle, owner, file_source);
+    for oracle in &mut assertions[first..] {
+        demote_macro_held_owner_call(oracle, owner, file_source);
     }
-    changed.then_some(assertions)
+    Some(assertions)
 }
 
 #[cfg(test)]
@@ -341,13 +358,25 @@ mod tests {
     }
 
     #[test]
-    fn macro_rules_definitions_match_whole_names() {
-        assert!(defines_macro_rules("macro_rules! vec { () => {} }", "vec"));
-        assert!(defines_macro_rules("macro_rules!vec{}", "vec"));
-        assert!(!defines_macro_rules(
-            "macro_rules! vec2 { () => {} }",
-            "vec"
-        ));
-        assert!(!defines_macro_rules("let vec = 1;", "vec"));
+    fn macro_rules_declarations_come_from_syntax() {
+        let names = |source: &str| {
+            local_macro_rules_names(source)
+                .into_iter()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names("macro_rules! vec { () => {} }"), ["vec"]);
+        assert_eq!(names("macro_rules!vec{}"), ["vec"]);
+        assert_eq!(
+            names("macro_rules /* shadow */ ! vec { () => {} }"),
+            ["vec"]
+        );
+        assert_eq!(
+            names("mod t { fn f() { macro_rules! vec { () => {} } } }"),
+            ["vec"]
+        );
+        assert_eq!(names("macro_rules! vec2 { () => {} }"), ["vec2"]);
+        assert!(names("// macro_rules! vec is not needed\nfn f() {}").is_empty());
+        assert!(names("const S: &str = \"macro_rules! vec {}\";").is_empty());
+        assert!(names("let vec = 1;").is_empty());
     }
 }

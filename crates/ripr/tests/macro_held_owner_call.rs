@@ -156,6 +156,20 @@ fn an_owner_call_only_an_untrusted_macro_holds_gives_no_exact_credit() -> Result
             "unknown",
         ),
         (
+            "a shadowing vec! declared with trivia before the bang",
+            "macro_rules /* shadow */ ! vec { ($($t:tt)*) => { 0 }; }",
+            "assert_eq!(vec![pick(0)], vec![Ok(Mode::A)]);",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "a comment that only mentions macro_rules! vec",
+            "// macro_rules! vec is not needed here",
+            "assert_eq!(vec![pick(0)], vec![Ok(Mode::A)]);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
             "plain owner call",
             "",
             "assert_eq!(pick(0), Ok(Mode::A));",
