@@ -125,8 +125,19 @@ LABELLED_STATE_FIELD = (
     + r")\b"
 )
 STATE_LINE = re.compile(
-    STATE_LINE_PREFIX + r"(?:disposition[ \t*_`]*:|(?:" + STATE_TOKEN.pattern + r")\b)"
-    r"|" + STATE_LINE_PREFIX + r"(?:" + STATE_TOKEN.pattern + r")[ \t*_`.:!]*$"
+    STATE_LINE_PREFIX
+    + r"(?:disposition[ \t*_`]*:|(?:"
+    + STATE_TOKEN.pattern
+    + r"|"
+    + BARE_STATE_TOKEN.pattern
+    + r")\b)"
+    r"|"
+    + STATE_LINE_PREFIX
+    + r"(?:"
+    + STATE_TOKEN.pattern
+    + r"|"
+    + BARE_STATE_TOKEN.pattern
+    + r")[ \t*_`.:!]*$"
     r"|^.*?\bdisposition[ \t*_`]*[:|]"
     r"|^[ \t]*\|(?:.*\|)?[ \t*_`]*(?:" + STATE_TOKEN.pattern + r")[ \t*_`.]*\|"
     r"|" + LABELLED_STATE_FIELD,
@@ -1855,6 +1866,16 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\n```\nblock\n```", True),
         ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", False),
         ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", False),
+        # #15980: a bare BLOCK/INCOMPLETE line is a disposition, whatever the markup.
+        ("SOURCE_REVIEW_READY\nBLOCK", False),
+        ("SOURCE_REVIEW_READY\nBLOCK.", False),
+        ("SOURCE_REVIEW_READY\n**BLOCK**", False),
+        ("SOURCE_REVIEW_READY\n> BLOCK", False),
+        ("SOURCE_REVIEW_READY\n- BLOCK", False),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE.", False),
+        ("SOURCE_REVIEW_READY\n**INCOMPLETE**", False),
+        ("SOURCE_REVIEW_READY\nBLOCK\nNo blocker found.", False),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE\nNo blocker found.", False),
         # #15980: the Rust carrier's changed row, mirrored here.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",

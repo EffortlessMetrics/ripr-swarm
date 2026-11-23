@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 41] = [
+    let cases: [(&str, bool); 50] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -861,6 +861,16 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\n```\nblock\n```", true),
         ("SOURCE_REVIEW_READY\nNo blocker found. BLOCK.", false),
         ("SOURCE_REVIEW_READY\nNo blocker found. INCOMPLETE.", false),
+        // A bare BLOCK/INCOMPLETE line is a disposition, whatever the markup.
+        ("SOURCE_REVIEW_READY\nBLOCK", false),
+        ("SOURCE_REVIEW_READY\nBLOCK.", false),
+        ("SOURCE_REVIEW_READY\n**BLOCK**", false),
+        ("SOURCE_REVIEW_READY\n> BLOCK", false),
+        ("SOURCE_REVIEW_READY\n- BLOCK", false),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE.", false),
+        ("SOURCE_REVIEW_READY\n**INCOMPLETE**", false),
+        ("SOURCE_REVIEW_READY\nBLOCK\nNo blocker found.", false),
+        ("SOURCE_REVIEW_READY\nINCOMPLETE\nNo blocker found.", false),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
