@@ -245,9 +245,12 @@ REMAINDER_DEFECT = re.compile(
     r"|\b(?:fails?|failing|failed|breaks?|broke|hangs?|stalls?|times?[ \t]+out"
     r"|crashes?|crashing|crashed|errors?|panics?|aborts?|segfaults?|deadlocks?|regresses?"
     r"|leaks?|throws?|rejects?|prevents?|stops?|halts?|freezes?|corrupts?)\b"
-    r"|\b(?:is|are|was|were|remains?|becomes?|stays?|looks?|seems?)\b[ \t]+(?:still[ \t]+)?not[ \t]+(?:yet[ \t]+)?"
+    r"|\b(?:is|are|was|were|remains?|becomes?|stays?|looks?|seems?)\b[ \t]+(?:still[ \t]+)?not[ \t]+(?:yet[ \t]+|fully[ \t]+|quite[ \t]+|actually[ \t]+)?"
     r"(?:ready|green|passing|complete|done|finished|merged|approved|mergeable"
-    r"|working|functional|operational|available|reachable|responsive)\b",
+    r"|working|functional|operational|available|reachable|responsive)\b"
+    r"|\b(?:has|have|had|did|do|does|is|are|was|were)(?:n't| not)(?:[ \t]+(?:yet|still|fully|quite|actually))?[ \t]+"
+    r"(?:passed|pass|run|finished|completed|succeeded|been green|gone green|been passing"
+    r"|been complete|been done|been merged|been approved|been mergeable)\b",
     re.IGNORECASE,
 )
 # #15980 review: three homographs are benign in context. "down to" is a
@@ -257,7 +260,11 @@ REMAINDER_DEFECT = re.compile(
 BENIGN_REMAINDER = re.compile(
     r"\bdown[ \t]+to\b"
     r"|\b(?:queue|backlog)\b[^.;\n]*\bis[ \t]+empty\b"
-    r"|\breported[ \t]+in[ \t]+the[ \t]+run[ \t]+log\b",
+    r"|\breported[ \t]+in[ \t]+the[ \t]+run[ \t]+log\b"
+    # #15980: the #15525 witness says the hosted lane has not run on this head,
+    # which is a fact about coverage, not a defect. The bare "tests have not
+    # run" still refuses.
+    r"|\bhas[ \t]+not[ \t]+run[ \t]+on[ \t]+this[ \t]+head\b",
     re.IGNORECASE,
 )
 # #14355: a negated change/repair phrase is not a blocker. "no code change needed"
@@ -2077,6 +2084,17 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.", False),
         ("SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.", False),
         ("SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.", False),
+        # #15980: auxiliary negation, has/have/had/did/do/does/is/are/was/were + not.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not fully green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not passed.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build did not pass.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build didn't pass.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests have not run.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane has not finished.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.", False),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)

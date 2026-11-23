@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 138] = [
+    let cases: [(&str, bool); 148] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -1005,6 +1005,17 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is empty.", false),
         ("SOURCE_REVIEW_READY\nNo blocker found. The diff is empty.", false),
         ("SOURCE_REVIEW_READY\nNo blocker found. The gap is still reported.", false),
+        // Auxiliary negation: has/have/had/did/do/does/is/are/was/were + not.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not fully green.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not been green.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build has not passed.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build did not pass.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build didn't pass.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests have not run.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane has not finished.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet green.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet passing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is not yet done.", false),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
