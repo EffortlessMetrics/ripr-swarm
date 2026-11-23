@@ -183,6 +183,13 @@ fn an_owner_call_only_an_untrusted_macro_holds_gives_no_exact_credit() -> Result
             "strongly_gripped",
             "exact_value",
         ),
+        (
+            "the owner passed as a function value outside the local macro",
+            CHECK_OK,
+            "assert_eq!(check_ok!(pick(0)), [0u32].map(pick)[0]);",
+            "strongly_gripped",
+            "exact_value",
+        ),
     ];
     for (label, macros, assertion, grip, oracle) in cases {
         let workspace = Workspace::create(macros, assertion)?;

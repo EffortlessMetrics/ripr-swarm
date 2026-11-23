@@ -14,9 +14,11 @@
 //! [`EVALUATING_STD_MACROS`], or one the test's file defines with
 //! `macro_rules!`. The macro may still evaluate the call, so the reading is
 //! `unknown`, not absent. An owner call outside every such macro, or an
-//! assertion that names no owner call, keeps its parsed reading.
+//! assertion that names no owner call, keeps its parsed reading. A call
+//! qualified by another type (`Other::new(..)` for the owner
+//! `impl Widget::new`) is not a call of the owner and is not counted.
 
-use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxNode, ast};
+use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxNode, SyntaxToken, ast};
 
 use crate::domain::{OracleKind, OracleStrength};
 
@@ -38,12 +40,44 @@ const EVALUATING_STD_MACROS: &[&str] = &[
     "vec",
 ];
 
+/// The owner a call must name: its function name, plus the self type and
+/// trait of an impl owner, which a type-qualified call may spell.
+pub(super) struct OwnerName<'a> {
+    pub(super) name: &'a str,
+    pub(super) types: Vec<String>,
+}
+
+impl<'a> OwnerName<'a> {
+    pub(super) fn of(owner: &'a super::FunctionSummary) -> Self {
+        let id = owner.id.0.as_str();
+        let types = [
+            crate::analysis::classify::impl_self_type_name(id),
+            crate::analysis::classify::owner_trait_name(id),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        Self {
+            name: &owner.name,
+            types,
+        }
+    }
+
+    /// Whether a call qualified by `qualifier` (`Q::name(..)`) may be a call
+    /// of this owner: a lowercase module path, `Self`, or one of its types.
+    fn admits_qualifier(&self, qualifier: &str) -> bool {
+        qualifier == "Self"
+            || !qualifier.starts_with(|first: char| first.is_ascii_uppercase())
+            || self.types.iter().any(|known| known == qualifier)
+    }
+}
+
 /// Marks `oracle` unknown when `owner` is called in it only inside untrusted
 /// inner macros. `file_source` is the test file's text, read for local
 /// `macro_rules!` definitions that shadow a standard name.
 pub(super) fn demote_macro_held_owner_call(
     oracle: &mut OracleFact,
-    owner: &str,
+    owner: &OwnerName<'_>,
     file_source: Option<&str>,
 ) -> bool {
     if !owner_call_only_inside_untrusted_macro(&oracle.text, owner, file_source) {
@@ -59,10 +93,10 @@ pub(super) fn demote_macro_held_owner_call(
 /// call sits inside an untrusted inner macro's token tree.
 pub(super) fn owner_call_only_inside_untrusted_macro(
     text: &str,
-    owner: &str,
+    owner: &OwnerName<'_>,
     file_source: Option<&str>,
 ) -> bool {
-    if owner.is_empty() || !text.contains(owner) || text.matches('!').count() < 2 {
+    if owner.name.is_empty() || !text.contains(owner.name) || text.matches('!').count() < 2 {
         return false;
     }
     let wrapped = format!(
@@ -94,12 +128,15 @@ pub(super) fn owner_call_only_inside_untrusted_macro(
 }
 
 /// Counts owner calls in `tree`, split by whether an untrusted inner macro
-/// holds them. A call is the owner identifier directly followed by a
-/// parenthesized group. A turbofish call (`pick::<u8>(0)`) is not counted,
-/// which can only leave the parsed reading in place.
+/// holds them, unless a type the owner does not belong to qualifies the name.
+/// Inside an untrusted macro only the owner identifier directly followed by a
+/// parenthesized group counts as a held call. Outside every untrusted macro
+/// any occurrence of the name counts as free, so a turbofish call
+/// (`pick::<u8>(1)`) or a function value (`map(pick)`) keeps the parsed
+/// reading.
 fn walk(
     tree: &SyntaxNode,
-    owner: &str,
+    owner: &OwnerName<'_>,
     inside_untrusted: bool,
     trusted: &dyn Fn(&str) -> bool,
     held: &mut usize,
@@ -126,17 +163,22 @@ fn walk(
                     position += 3;
                     continue;
                 }
-                if token.text() == owner
-                    && let Some(NodeOrToken::Node(group)) = next
-                    && group.kind() == SyntaxKind::TOKEN_TREE
-                    && group
-                        .first_token()
-                        .is_some_and(|open| open.kind() == SyntaxKind::L_PAREN)
+                if token.text() == owner.name
+                    && qualifier(&children, position)
+                        .is_none_or(|qualifier| owner.admits_qualifier(&qualifier))
                 {
-                    if inside_untrusted {
-                        *held += 1;
-                    } else {
+                    let paren_call = matches!(
+                        next,
+                        Some(NodeOrToken::Node(group))
+                            if group.kind() == SyntaxKind::TOKEN_TREE
+                                && group
+                                    .first_token()
+                                    .is_some_and(|open| open.kind() == SyntaxKind::L_PAREN)
+                    );
+                    if !inside_untrusted {
                         *free += 1;
+                    } else if paren_call {
+                        *held += 1;
                     }
                 }
             }
@@ -146,6 +188,29 @@ fn walk(
             _ => {}
         }
         position += 1;
+    }
+}
+
+/// The path segment before `children[position]` when a `::` precedes it:
+/// `Widget` in `Widget::new`.
+fn qualifier(children: &[NodeOrToken<SyntaxNode, SyntaxToken>], position: usize) -> Option<String> {
+    let before = |back: usize| position.checked_sub(back).and_then(|at| children.get(at));
+    let (segment_at, separated) = match before(1).map(|child| child.kind()) {
+        Some(SyntaxKind::COLON2) => (2, true),
+        Some(SyntaxKind::COLON) => (
+            3,
+            before(2).is_some_and(|colon| colon.kind() == SyntaxKind::COLON),
+        ),
+        _ => (0, false),
+    };
+    if !separated {
+        return None;
+    }
+    match before(segment_at) {
+        Some(NodeOrToken::Token(segment)) if segment.kind() == SyntaxKind::IDENT => {
+            Some(segment.text().to_string())
+        }
+        _ => None,
     }
 }
 
@@ -166,7 +231,7 @@ fn defines_macro_rules(source: &str, name: &str) -> bool {
 /// untrusted inner macro.
 pub(super) fn test_has_macro_held_owner_call(
     test: &TestSummary,
-    owner: &str,
+    owner: &OwnerName<'_>,
     index: &super::RustIndex,
 ) -> bool {
     let source = index
@@ -182,7 +247,7 @@ pub(super) fn test_has_macro_held_owner_call(
 /// owner call of marked unknown; `None` when nothing changes.
 pub(super) fn demoted_view(
     test: &TestSummary,
-    owner: &str,
+    owner: &OwnerName<'_>,
     file_source: Option<&str>,
 ) -> Option<Vec<OracleFact>> {
     let mut assertions = test.assertions.clone();
@@ -217,6 +282,21 @@ mod tests {
                 false,
             ),
             (
+                "assert_eq!(check_ok!(pick(0)), pick::<u8>(1))",
+                Some(local),
+                false,
+            ),
+            (
+                "assert_eq!(check_ok!(pick(0)), [0].map(pick))",
+                Some(local),
+                false,
+            ),
+            (
+                "assert_eq!(check_ok!(pick::<u8>(0)), Mode::A)",
+                Some(local),
+                false,
+            ),
+            (
                 "assert_eq!(check_ok!(other(0)), Mode::A)",
                 Some(local),
                 false,
@@ -224,9 +304,36 @@ mod tests {
             ("assert_eq!(vec![check_ok!(pick(0))], v)", Some(local), true),
             ("assert!(picked)", None, false),
         ];
+        let pick = OwnerName {
+            name: "pick",
+            types: Vec::new(),
+        };
         for (text, source, expected) in cases {
             assert_eq!(
-                owner_call_only_inside_untrusted_macro(text, "pick", *source),
+                owner_call_only_inside_untrusted_macro(text, &pick, *source),
+                *expected,
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_call_qualified_by_another_type_is_not_the_owner() {
+        let new = OwnerName {
+            name: "new",
+            types: vec!["Widget".to_string()],
+        };
+        let cases: &[(&str, bool)] = &[
+            ("assert_eq!(mystery!(Widget::new()), w)", true),
+            ("assert_eq!(mystery!(Self::new()), w)", true),
+            ("assert_eq!(mystery!(widgets::new()), w)", true),
+            ("assert_eq!(mystery!(Other::new()), w)", false),
+            ("assert_eq!(mystery!(Other::new()), Widget::new())", false),
+            ("assert_eq!(mystery!(Widget::new()), Other::new())", true),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(
+                owner_call_only_inside_untrusted_macro(text, &new, None),
                 *expected,
                 "{text}"
             );

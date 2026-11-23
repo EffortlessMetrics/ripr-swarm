@@ -909,10 +909,11 @@ pub(super) fn sort_related_tests_for_seam<'a>(
     // #16188: an owner call only an untrusted inner macro holds is read
     // through the credited view too, so the published row agrees.
     let macro_held = owner_fn.is_some_and(|owner| {
+        let owner = super::macro_operand_owner_call::OwnerName::of(owner);
         related.iter().any(|(indexed, _)| {
             super::macro_operand_owner_call::test_has_macro_held_owner_call(
                 indexed.test,
-                &owner.name,
+                &owner,
                 context.index,
             )
         })

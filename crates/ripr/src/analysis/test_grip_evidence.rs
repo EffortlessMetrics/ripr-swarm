@@ -1153,9 +1153,11 @@ fn credited_related_tests<'a>(
                     .files()
                     .get(&test.file)
                     .map(|facts| facts.data().source.as_ref());
-                if let Some(assertions) =
-                    macro_operand_owner_call::demoted_view(&view, &owner.name, source)
-                {
+                if let Some(assertions) = macro_operand_owner_call::demoted_view(
+                    &view,
+                    &macro_operand_owner_call::OwnerName::of(owner),
+                    source,
+                ) {
                     view.to_mut().assertions = assertions;
                 }
             }
