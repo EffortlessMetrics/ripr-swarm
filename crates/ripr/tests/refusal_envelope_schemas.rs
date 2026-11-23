@@ -301,8 +301,8 @@ fn refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated() -> Re
         expected["properties"]["schema_version"]["const"] = json!(derived.version);
         expected["properties"]["analysis_scope"]["properties"]["scope"]["const"] =
             json!(derived.scope);
-        // The context parser accepts an explicitly empty root. A missing
-        // artifact still produces a typed refusal echoing that exact spelling.
+        // The context parser accepts an explicitly empty root, and the root
+        // refusal echoes that exact spelling.
         if derived.path == CONTEXT_REFUSAL_SCHEMA {
             expected["properties"]["root"] = json!({"type": "string"});
             // A context refusal cannot carry positive optional summary counts.
@@ -382,7 +382,7 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
                 "--format",
                 format,
             ];
-            let refusals = root_and_config_refusals("context", "analysis_failed", &args)?;
+            let refusals = root_and_config_refusals("context", "repository_root_unusable", &args)?;
             check_refusals(CONTEXT_REFUSAL_SCHEMA, &refusals)?;
             for (identity, document) in &refusals {
                 if document.get("mode").and_then(Value::as_str) != Some("ready")
@@ -429,9 +429,12 @@ fn context_json_refusals_conform_to_the_published_schema() -> Result<(), String>
                     "{format} refused to echo the explicitly empty root"
                 ));
             }
+            // An empty root is the shared root refusal, as for check, diff,
+            // rerun and the agent commands; it is refused before the
+            // artifact is read.
             check_refusals(
                 CONTEXT_REFUSAL_SCHEMA,
-                &[("check_artifact_unusable", empty_root)],
+                &[("repository_root_unusable", empty_root)],
             )?;
             let mut modeless = document.clone();
             if let Some(object) = modeless.as_object_mut() {
