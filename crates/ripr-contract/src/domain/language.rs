@@ -383,8 +383,9 @@ pub enum OwnerKind {
     /// A method on a class. In Python, a function defined in a class body
     /// without a `classmethod` or `staticmethod` decorator.
     Method,
-    /// A method bound to the class itself: a `static` method in TypeScript, or
-    /// a `classmethod` or `staticmethod` in Python.
+    /// A class-level method in the adapter's syntactic classification: a
+    /// `static` method in TypeScript, or a method with a `classmethod` or
+    /// `staticmethod` decorator in Python.
     ClassMethod,
     /// An arrow function bound to a name.
     ArrowFunction,
@@ -421,30 +422,34 @@ impl OwnerKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StaticLimitKind {
-    /// The changed code calls through a dynamic dispatch shape, such as
-    /// `getattr(...)` or a registry lookup, that syntax alone cannot resolve.
+    /// A call goes through a dynamic shape, such as `getattr(...)` or a
+    /// registry lookup, so syntax alone cannot resolve which behavior runs.
     DynamicDispatch,
-    /// The changed code uses metaprogramming, so its behavior is created at
-    /// runtime.
+    /// Metaprogramming, such as runtime-created behavior, that the adapter does
+    /// not infer.
     Metaprogramming,
-    /// Reaching the changed code needs an import graph the adapter does not
-    /// build, such as a dynamic import.
+    /// Resolving the behavior needs an import graph the adapter does not build,
+    /// such as for a dynamic import.
     MissingImportGraph,
-    /// The changed code is reached through a decorator or framework wrapper
-    /// that static analysis cannot follow.
+    /// A decorator, route registration or framework wrapper stands between the
+    /// tests and the changed code, or controls whether a related test runs, so
+    /// reach or activation could not be established. It does not show that the
+    /// changed code was reached.
     DecoratorIndirection,
-    /// A related test mocks, reloads or rebinds the module the changed code
-    /// lives in, so which object the test reads is not resolved.
+    /// A related test mocks, reloads or rebinds a module, so which object the
+    /// test reads is not resolved.
     MockedModule,
-    /// A related test checks the result through a custom assertion helper whose
-    /// body is not analyzed.
+    /// A related test checks the result through a helper whose assertions are
+    /// not analyzed.
     OpaqueCustomAssertionHelper,
     /// A related test is property-based, so its inputs come from a generator.
     PropertyBasedTest,
     /// A related pytest test takes values from a fixture, and static analysis
     /// cannot tell what the fixture supplies.
     UnresolvedPytestFixture,
-    /// The changed code uses syntax the adapter does not support.
+    /// The changed code or a related test's oracle uses a shape the adapter
+    /// does not model, such as a Python `approx` tolerance band or a `caplog`
+    /// read, or the source could not be parsed.
     UnsupportedSyntax,
     /// The changed Rust seam owner is FFI/binding-exposed; whether an
     /// external-language (e.g. TypeScript) test oracle discriminates this
