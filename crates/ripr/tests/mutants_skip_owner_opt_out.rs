@@ -74,6 +74,11 @@ fn one_line_diff(line: usize, before: &str, after: &str) -> String {
     )
 }
 
+/// The tested `ripr` binary.
+fn ripr_binary() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+}
+
 struct Repo {
     base: PathBuf,
     root: PathBuf,
@@ -102,7 +107,7 @@ impl Repo {
 
     /// `ripr <command> --mode draft --root <root> --diff <diff> <extra..>`.
     fn ripr(&self, command: &str, extra: &[&str]) -> Result<String, String> {
-        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        let output = ripr_binary()
             .args([command, "--mode", "draft", "--root"])
             .arg(&self.root)
             .arg("--diff")
@@ -1213,7 +1218,7 @@ impl Repo {
         }
         let foreign = self.base.join("elsewhere");
         fs::create_dir_all(&foreign).map_err(|e| e.to_string())?;
-        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+        let output = ripr_binary()
             .args(args)
             .current_dir(&foreign)
             .env("RIPR_CACHE_DIR", self.base.join("cache"))
