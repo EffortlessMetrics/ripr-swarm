@@ -1,5 +1,17 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.195 for macro-held owner-result locals (#16192)
+
+A plain local bound to an owner call whose only uses sit inside an inner
+macro the analyzer does not trust (`let r = pick(0); assert_eq!(check_ok!(r),
+..)`) now makes that assertion read as an unknown oracle for the owner, which
+bumps the analyzer cache schema to 1.195 (1.194 is left for #13041). Move the
+portable unchanged-attempt snapshots to 1.195, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.193 for macro-held owner calls (#16188)
 
 An assertion whose every call of the owner sits inside an inner macro the

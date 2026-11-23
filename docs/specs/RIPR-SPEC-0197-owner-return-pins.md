@@ -2832,6 +2832,15 @@ evaluating standard macros (`assert*`, `debug_assert*`, `dbg`, `format`,
 macro, or once more outside the untrusted macro keeps the parsed reading, as
 does an assertion that spells no call of the owner.
 
+A plain local bound directly to an owner call reaches the macro the same way
+(#16192): `let r = pick(0); assert_eq!(check_ok!(r), Ok(Mode::A))` reads as an
+`unknown` oracle for `pick`. The local counts only when it is declared once
+with a plain or `mut` identifier pattern, its initializer is exactly one call
+of the owner, and every use of it in the test body sits inside this
+assertion's untrusted macros. A use anywhere else (another assertion, a
+clone, a helper argument) may observe the result, so the assertion keeps its
+parsed reading.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`

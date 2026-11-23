@@ -231,3 +231,54 @@ fn an_owner_call_only_an_untrusted_macro_holds_gives_no_exact_credit() -> Result
     }
     Ok(())
 }
+
+#[test]
+fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() -> Result<(), String>
+{
+    // (label, test-local macros, test body, expected grip class, oracle kind)
+    let cases: &[(&str, &str, &str, &str, &str)] = &[
+        (
+            "the owner result is bound, then only the local macro uses it",
+            CHECK_OK,
+            "let r = pick(0);\n        assert_eq!(check_ok!(r), Ok(Mode::A));",
+            "propagation_unknown",
+            "unknown",
+        ),
+        (
+            "the bound result is asserted plainly",
+            CHECK_OK,
+            "let r = pick(0);\n        assert_eq!(r, Ok(Mode::A));",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
+            "the bound result is also asserted outside the local macro",
+            CHECK_OK,
+            "let r = pick(0);\n        assert_eq!(check_ok!(r), Ok(Mode::A));\n        assert_eq!(r, Ok(Mode::A));",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
+            "the standard vec! evaluates the bound result",
+            "",
+            "let r = pick(0);\n        assert_eq!(vec![r], vec![Ok(Mode::A)]);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+    ];
+    for (label, macros, body, grip, oracle) in cases {
+        let workspace = Workspace::create(macros, body)?;
+        let (observed_grip, observed_oracle, relation) = workspace.ok_seam()?;
+        if relation != "direct_owner_call" {
+            return Err(format!(
+                "{label}: premise: `picks_a` calls pick directly, got {relation}"
+            ));
+        }
+        if (observed_grip.as_str(), observed_oracle.as_str()) != (*grip, *oracle) {
+            return Err(format!(
+                "{label}: expected ({grip}, {oracle}), got ({observed_grip}, {observed_oracle})"
+            ));
+        }
+    }
+    Ok(())
+}
