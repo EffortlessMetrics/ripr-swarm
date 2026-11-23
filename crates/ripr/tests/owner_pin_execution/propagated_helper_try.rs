@@ -46,6 +46,22 @@ const CASES: &[(&str, &str, &str, ExposureClass, bool)] = &[
         ExposureClass::StaticUnknown,
         false,
     ),
+    // A `break` or `continue` in an argument leaves the enclosing loop
+    // before the helper is entered.
+    (
+        "argument_breaks_loop_first",
+        CHECKED,
+        "let skip = true;\n        loop { check(if skip { break } else { 4 }, 12)?; break; }\n        Ok(())",
+        ExposureClass::StaticUnknown,
+        false,
+    ),
+    (
+        "argument_continues_array_loop",
+        CHECKED,
+        "for skip in [true] { check(if skip { continue } else { 4 }, 12)?; }\n        Ok(())",
+        ExposureClass::StaticUnknown,
+        false,
+    ),
     // The result is discarded: the assertion runs here, but nothing static
     // tells this helper from the refusing one below, so neither is credited.
     (
