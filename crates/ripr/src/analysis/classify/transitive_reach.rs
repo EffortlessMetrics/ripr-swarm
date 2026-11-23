@@ -4665,9 +4665,20 @@ fn blanket_impl_entry_reaches_owner<'f>(
 /// sorted, deduplicated names of those entries, built in one pass over the
 /// functions. Used only as a conservative related-test candidate prefilter:
 /// an owner absent from the map has no blanket entry that could reach it.
+/// The map is cached on the index, so a run with many withheld findings pays
+/// for the scan once (#13041 review).
 pub(in crate::analysis) fn blanket_proxy_call_names_by_owner(
     index: &RustIndex,
 ) -> BTreeMap<String, Vec<String>> {
+    if let Some(cached) = index.blanket_proxy_call_names.get() {
+        return cached.clone();
+    }
+    let map = build_blanket_proxy_call_names(index);
+    let _ = index.blanket_proxy_call_names.set(map.clone());
+    map
+}
+
+fn build_blanket_proxy_call_names(index: &RustIndex) -> BTreeMap<String, Vec<String>> {
     let mut by_owner: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for entry in index.functions() {
         let Some(header) = blanket_impl_header(entry) else {
