@@ -164,7 +164,9 @@ A negated blocker phrase is a resolved finding too: `No source blocker found.`
 and `no source blockers remain` admit, while `Blocker found.` and a later
 blocker sentence such as `No source blocker found. The build is red.` still
 refuse; the cue set is closed, and a refutation after the phrase — including an
-italicized `*That is false.*` — still refuses (#15980).
+italicized `*That is false.*` — still refuses (#15980). The remainder scan is
+best-effort, not complete: a defect phrasing outside the closed vocabulary still
+admits, so the gate is a strong filter rather than a proof.
 Both carriers screen later lines the same way, so a residual written as plain
 narration (`Residual: the hosted lane on this head has not run.`) admits under
 either, while a retraction word used as narration (`the withdrawn attribution`)
