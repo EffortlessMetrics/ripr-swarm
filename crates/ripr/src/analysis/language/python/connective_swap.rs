@@ -313,11 +313,29 @@ pub(super) fn compare(left: &str, operator: &str, right: &str) -> Option<bool> {
             _ => return None,
         });
     }
-    // An int beyond 2**53 has no exact float, so a mixed comparison with it
-    // is not read.
-    let exact = |value: &str| integer(value).is_none_or(|number| number.unsigned_abs() <= 1 << 53);
+    // An int beyond 2**53 has no exact float, so a mixed comparison with it,
+    // or any comparison with an int too large for `i128`, is not read.
+    let exact = |value: &str| {
+        let text = value.replace('_', "");
+        let digits = text.strip_prefix('-').unwrap_or(&text);
+        let int_spelling = !digits.is_empty() && digits.chars().all(|ch| ch.is_ascii_digit());
+        !int_spelling || integer(value).is_some_and(|number| number.unsigned_abs() <= 1 << 53)
+    };
     if !exact(left) || !exact(right) {
         return None;
+    }
+    // Numbers compare by the float each literal denotes, as Python does
+    // (`0.10000000000000001 == 0.1`); other literals by `literals_equal`.
+    if let (Some(left), Some(right)) = (decimal(left), decimal(right)) {
+        return Some(match operator {
+            "==" => left == right,
+            "!=" => left != right,
+            "<" => left < right,
+            "<=" => left <= right,
+            ">" => left > right,
+            ">=" => left >= right,
+            _ => return None,
+        });
     }
     match operator {
         "==" => literals_equal(left, right),

@@ -195,6 +195,17 @@ fn operand_values_follow_python_comparison_and_truth() {
         None
     );
     assert_eq!(compare("2", ">=", "1.5"), Some(true));
+    assert_eq!(
+        compare(
+            "170141183460469231731687303715884105729",
+            ">",
+            "170141183460469231731687303715884105728"
+        ),
+        None
+    );
+    // Floats compare by the value each spelling denotes.
+    assert_eq!(compare("0.10000000000000001", "==", "0.1"), Some(true));
+    assert_eq!(compare("1.0", "!=", "1"), Some(false));
     // Strings with escapes or prefixes are not read.
     assert_eq!(compare("\"\\n\"", "==", "\"\\x0a\""), None);
     assert_eq!(compare("\"a\"", "==", "'a'"), Some(true));
@@ -204,4 +215,28 @@ fn operand_values_follow_python_comparison_and_truth() {
     assert_eq!(truthy("b''"), None);
     assert_eq!(truthy("0.000"), Some(false));
     assert_eq!(truthy("-0.5"), Some(true));
+}
+
+#[test]
+fn a_return_of_bare_operands_keeps_its_reading() -> Result<(), String> {
+    // `1 and 2` is 2 and `1 or 2` is 1, so an exact assertion on a truthy
+    // pair still tells the swap apart.
+    let source = "def pick(a, b):\n    return a and b\n";
+    let owners = extract_owners(Path::new("src/pick.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_pick.py"),
+        "from src.pick import pick\n\n\ndef test_pick():\n    assert pick(1, 2) == 2\n",
+    );
+    let finding = classify_change_with_old(
+        Path::new("src/pick.py"),
+        2,
+        "    return a or b",
+        Some("    return a and b"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "a return change should classify".to_string())?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.ripr.infect.state, StageState::Weak);
+    Ok(())
 }
