@@ -625,6 +625,28 @@ fill in the old stub first. Human output also escapes control and bidi
 characters in the stub text and in the `Inputs`, `Receiver:` and `Fill in:`
 lines, since they carry repository text.
 
+A boundary stub on a string's length writes a string whose length sits on the
+boundary instead of a labelled `todo!()` for that `&str` parameter (#8361), for
+example `s = "xxx"` for `n <= MIN_LEN` after `let n = s.chars().count();` with
+`const MIN_LEN: usize = 3;`, or `a = "ab"`, `b = "cd"` for `a.len() > b.len()`.
+The string is `x` repeated (so its byte length and char count agree), and is
+written only when:
+
+- one side of the changed comparison is `p.len()` or `p.chars().count()` for
+  a `&str` parameter `p`, or a local the body binds exactly once, by an
+  immutable top-level `let` before the comparison, to one of those and never
+  assigns;
+- the other side is a non-negative integer literal, a file-root `const` of
+  integer type whose value is such a literal (for an owner outside any inline
+  module, with no other item, import, rename or item macro of that name), or
+  the length of a different `&str` parameter, which gets the same length and
+  other text;
+- the length is at most 64;
+- the parameter is not declared `mut`, and nothing before the comparison
+  rebinds it, assigns it or names it inside a macro call;
+- a local or `const` bound is read only when the owner's body calls no macro,
+  since a macro may bind a local or define a `const` of any name.
+
 A match-arm stub writes the input the changed arm's own pattern names instead
 of a labelled `todo!()` for that parameter (#8361), for example `ev =
 Event::Fail` for `(State::Running, Event::Fail) => ..` on `match (self.state,

@@ -2887,3 +2887,143 @@ fn expected_fill_in_names_what_the_changed_code_returns() -> Result<(), String> 
     }
     Ok(())
 }
+
+#[test]
+fn length_boundary_writes_a_string_of_the_boundary_length() -> Result<(), String> {
+    let module = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    let longest = format!("let s: &str = \"{}\";", "x".repeat(64));
+    // (source, changed comparison, written lines; empty = stays a fill-in)
+    let cases: Vec<(String, &str, Vec<&str>)> = vec![
+        // Two parameters' lengths: equal lengths, different text.
+        (
+            format!(
+                "pub fn longest<'a>(a: &'a str, b: &'a str) -> &'a str {{\n    if a.len() > b.len() {{ a }} else {{ b }}\n}}\n{module}"
+            ),
+            "a.len() > b.len()",
+            vec!["let a: &'_ str = \"ab\";", "let b: &'_ str = \"cd\";"],
+        ),
+        // A local bound once from `.chars().count()`, against a file-root const.
+        (
+            format!(
+                "pub const MIN_LEN: usize = 3;\npub fn long_enough(s: &str) -> bool {{\n    let n = s.chars().count();\n    if n <= MIN_LEN {{\n        return false;\n    }}\n    true\n}}\n{module}"
+            ),
+            "n <= MIN_LEN",
+            vec!["let s: &str = \"xxx\";"],
+        ),
+        // A literal bound.
+        (
+            format!("pub fn short(s: &str) -> bool {{\n    s.len() < 4\n}}\n{module}"),
+            "s.len() < 4",
+            vec!["let s: &str = \"xxxx\";"],
+        ),
+        // A local that is reassigned is not the length.
+        (
+            format!(
+                "pub fn f(s: &str) -> bool {{\n    let mut n = s.len();\n    n += 1;\n    n > 3\n}}\n{module}"
+            ),
+            "n > 3",
+            vec![],
+        ),
+        // A body-local const shadows the file-root one.
+        (
+            format!(
+                "pub const LIMIT: usize = 3;\npub fn f(s: &str) -> bool {{\n    const LIMIT: usize = 9;\n    s.len() > LIMIT\n}}\n{module}"
+            ),
+            "s.len() > LIMIT",
+            vec![],
+        ),
+        // Too long to write out.
+        (
+            format!("pub fn f(s: &str) -> bool {{\n    s.len() > 100\n}}\n{module}"),
+            "s.len() > 100",
+            vec![],
+        ),
+        // An owned `String` is not a `&str` literal.
+        (
+            format!("pub fn f(s: String) -> bool {{\n    s.len() > 3\n}}\n{module}"),
+            "s.len() > 3",
+            vec![],
+        ),
+        // The parameter is rebound before the comparison.
+        (
+            format!(
+                "pub fn f(s: &str) -> bool {{\n    let s = s.trim();\n    s.len() > 3\n}}\n{module}"
+            ),
+            "s.len() > 3",
+            vec![],
+        ),
+        // The longest string written, and one past it.
+        (
+            format!("pub fn f(s: &str) -> bool {{\n    s.len() > 64\n}}\n{module}"),
+            "s.len() > 64",
+            vec![longest.as_str()],
+        ),
+        (
+            format!("pub fn f(s: &str) -> bool {{\n    s.len() > 65\n}}\n{module}"),
+            "s.len() > 65",
+            vec![],
+        ),
+        // A macro may rebind the local (`let $x = 0;` is not hygienic for a
+        // passed identifier).
+        (
+            format!(
+                "macro_rules! zero {{ ($x:ident) => {{ let $x = 0usize; }} }}\npub fn f(s: &str) -> bool {{\n    let n = s.len();\n    zero!(n);\n    n > 3\n}}\n{module}"
+            ),
+            "n > 3",
+            vec![],
+        ),
+        // A macro in the body may define a `const` that shadows the root one.
+        (
+            format!(
+                "pub const LIMIT: usize = 3;\npub fn f(s: &str) -> bool {{\n    limits!();\n    s.len() > LIMIT\n}}\n{module}"
+            ),
+            "s.len() > LIMIT",
+            vec![],
+        ),
+        // A const inside an inline module is not the bare name's meaning
+        // for an owner there.
+        (
+            "pub const LIMIT: usize = 3;\npub mod inner {\n    use super::LIMIT;\n    pub fn f(s: &str) -> bool {\n        s.len() > LIMIT\n    }\n    #[cfg(test)]\n    mod tests {\n        use super::*;\n    }\n}\n"
+                .to_string(),
+            "s.len() > LIMIT",
+            vec![],
+        ),
+        // A `mut` parameter may hold another string at the comparison.
+        (
+            format!(
+                "pub fn f(mut s: &str) -> bool {{\n    s = \"\";\n    s.len() > 3\n}}\n{module}"
+            ),
+            "s.len() > 3",
+            vec![],
+        ),
+        // A byte count of something else (`s.bytes().count()`) is not read.
+        (
+            format!("pub fn f(s: &str) -> bool {{\n    s.bytes().count() > 3\n}}\n{module}"),
+            "s.bytes().count() > 3",
+            vec![],
+        ),
+    ];
+    for (source, needle, written) in cases {
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            needle,
+            SeamKind::PredicateBoundary,
+            boundary(needle),
+        )?;
+        let stub =
+            rust_test_stub(&seam, None, &source, None).map_err(|r| r.reason().to_string())?;
+        let choose = stub.fill_ins.iter().any(|f| f.starts_with("ripr: choose"));
+        if written.is_empty() {
+            assert!(choose, "{needle}: {:?}\n{}", stub.fill_ins, stub.text);
+        } else {
+            assert!(!choose, "{needle}: {:?}\n{}", stub.fill_ins, stub.text);
+            for line in written {
+                assert!(stub.text.contains(line), "{needle}: {line}\n{}", stub.text);
+            }
+            // The value stays the reader's to write.
+            assert!(stub.text.contains("= todo!("), "{needle}: {}", stub.text);
+        }
+    }
+    Ok(())
+}

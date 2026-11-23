@@ -312,6 +312,17 @@ pub fn tier(qty: u32) -> (u32, &'static str) {
     if qty > 30 { (20, "bulk") } else { (0, "retail") }
 }
 
+pub const MIN_NAME: usize = 3;
+
+pub fn name_ok(s: &str) -> bool {
+    let n = s.chars().count();
+    n > MIN_NAME
+}
+
+pub fn longer<'a>(a: &'a str, b: &'a str) -> &'a str {
+    if a.len() > b.len() { a } else { b }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum State {
     Idle,
@@ -499,6 +510,14 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 r#"the changed code returns (0, \"retail\"); with `>=` it returns (20, \"bulk\")"#,
             ),
         ),
+        // A boundary on a `&str` length writes a string of that length,
+        // through a local bound from `.chars().count()` or between two
+        // parameters (#8361).
+        (
+            "n > MIN_NAME",
+            Expect::WritesInput("let s: &str = \"xxx\";"),
+        ),
+        ("a.len() > b.len()", Expect::WritesInput("= \"cd\";")),
         // A match arm's own pattern names the event that reaches it.
         (
             "(State::Running, Event::Fail) =>",
