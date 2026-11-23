@@ -787,7 +787,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// macro reads as an unknown oracle for that owner (#16188).
 /// `1.194`: a `for` over any non-empty array runs its assertion, not only a
 /// constant-row table (#14116).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.194";
+/// `1.195`: an owner result bound to a local that only an untrusted inner macro
+/// uses reads as an unknown oracle for that owner (#16192).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.195";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -1019,7 +1021,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.194";
 /// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
 /// `0.195`: same macro-held owner call as full `1.193` (#16188).
 /// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.196";
+/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1253,7 +1256,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.196";
 /// `0.194`: same manifest-rebound assertion root as full `1.192` (#10150).
 /// `0.195`: same macro-held owner call as full `1.193` (#16188).
 /// `0.196`: same non-empty array loop execution as full `1.194` (#14116).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.196";
+/// `0.197`: same macro-held owner-result local as full `1.195` (#16192).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.197";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5854,8 +5858,9 @@ mod tests {
         // 1.190 / 0.192 is left for #13041.
         // 1.191 -> 1.192: manifest-rebound std/core assertion roots read unknown (#10150); 1.190 is left for #13041.
         // 1.192 -> 1.193: owner calls only an untrusted inner macro holds read unknown (#16188).
-        // 1.193 -> 1.194: a `for` over any non-empty array runs its assertion (#14116).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.194");
+        // 1.193 -> 1.194: a for over any non-empty array runs its assertion (#14116).
+        // 1.194 -> 1.195: owner-result locals only an untrusted inner macro uses read unknown (#16192).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.195");
         // 1.168 -> 1.169: plain `assert_eq!` literal withhold in the audit (#13005).
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
@@ -6027,8 +6032,9 @@ mod tests {
         // 0.193 -> 0.194: same manifest-rebound assertion root as full 1.192 (#10150).
         // 0.194 -> 0.195: same macro-held owner call as full 1.193 (#16188).
         // 0.195 -> 0.196: same non-empty array loop execution as full 1.194 (#14116).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.196");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.196");
+        // 0.196 -> 0.197: same macro-held owner-result local as full 1.195 (#16192).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.197");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.197");
         // 0.170 -> 0.171: same plain `assert_eq!` literal withhold as full 1.169 (#13005).
     }
 
