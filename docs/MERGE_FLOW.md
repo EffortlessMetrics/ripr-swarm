@@ -168,6 +168,26 @@ The call is:
 gh api -X PUT repos/EffortlessMetrics/ripr-swarm/pulls/<n>/ccr/auto_merge -f merge_method=squash
 ```
 
+A session with GraphQL access, such as a local `gh api graphql`, uses the
+native mutation instead. It takes the pull request's node id
+(`gh pr view <n> --json id --jq .id`) and binds the entry to the reviewed head:
+
+```graphql
+mutation($id: ID!, $head: GitObjectID!) {
+  enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $head}) {
+    mergeQueueEntry { id position state enqueuedAt }
+  }
+}
+```
+
+On November 23, 2026 a local session signed in as the repository owner found
+both REST auto-merge paths answering `404 Not Found`: the one above and the
+public `pulls/<n>/auto-merge`. The PR stayed unarmed and no
+`added_to_merge_queue` event appeared, so there was nothing to disarm. The
+mutation above enqueued that PR (#15773), which then landed through the queue.
+The cause of the 404 was not established. The readbacks below apply to either
+call.
+
 The call is an enqueue, never an armed wait. Read all of these back on the
 exact reviewed head immediately before issuing it:
 
