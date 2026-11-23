@@ -3290,9 +3290,10 @@ mod tests {
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings. #14461: the instructions state each
         // route once and safety boundaries the annotations and instructions
-        // already carry are not repeated per read tool. #15361: the
-        // instructions say gap evidence reads the changed code (+100).
-        assert_eq!(total, 10773);
+        // already carry are not repeated per read tool. #15983: the refresh
+        // tool's description grew by 100 bytes. #15361: the instructions say
+        // gap evidence reads the changed code (+100). The two deltas add.
+        assert_eq!(total, 10873);
         Ok(())
     }
 
