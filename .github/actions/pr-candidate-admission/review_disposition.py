@@ -229,6 +229,23 @@ NEGATION = re.compile(
     r"|^\W*(?:wait|hold|stop|stale|blocked|revoked|superseded|reject(?:ed)?|nack)\b",
     re.IGNORECASE | re.MULTILINE,
 )
+# #15980 review: the remainder of a stripped negated-blocker phrase must be
+# scanned subject-agnostically. NEGATION is a closed enumeration tied to a few
+# subjects ("build", "ci", "tests"), so "The suite is incomplete." or "The lane
+# fails." slipped through. This predicate matches any subject: a copula plus a
+# defect, a bare defect verb, or "is not <positive>". It is used only by
+# strip_negated_blocker, so the other NEGATION consumers are unchanged.
+REMAINDER_DEFECT = re.compile(
+    r"\b(?:is|are|was|were|remains?|becomes?|stays?|looks?|seems?|continues?[ \t]+to[ \t]+be)\b"
+    r"[ \t]+(?:still[ \t]+|now[ \t]+|also[ \t]+)?"
+    r"(?:red|broken|failing|failed|incomplete|unreadable|reported|missing|absent|empty"
+    r"|stuck|stalled|hung|dead|down|unavailable|unreachable|stale|outdated|revoked"
+    r"|rejected|nacked|flaky|unstable|blocked|wrong)\b"
+    r"|\b(?:fails?|failing|failed|breaks?|broke|hangs?|stalls?|times?[ \t]+out)\b"
+    r"|\b(?:is|are|was|were|remains?|becomes?|stays?|looks?|seems?)\b[ \t]+not[ \t]+"
+    r"(?:ready|green|passing|complete|done|finished|merged|approved|mergeable)\b",
+    re.IGNORECASE,
+)
 # #14355: a negated change/repair phrase is not a blocker. "no code change needed"
 # and "no changes needed" describe resolved work, not a required repair. The
 # filler set is closed so an unrelated "no findings and code change needed" is
@@ -680,14 +697,15 @@ def strip_negated_blocker(line: str) -> str:
             return match.group(0)
         before_clause = before.rsplit(",", 1)[-1]
         # #15980 review: the property form. Strip the negated phrase only when
-        # the rest of the sentence carries no NEGATION predicate at all, so a
-        # live defect in any form keeps the phrase and refuses. This closes the
-        # class instead of enumerating each "still"/"remains" shape.
+        # the rest of the sentence carries no defect predicate at all, so a
+        # live defect in any form keeps the phrase and refuses. REMAINDER_DEFECT
+        # is subject-agnostic, so "The suite is incomplete." and "The lane
+        # fails." are caught as well as the build/CI forms.
         if (
             NEGATED_CHANGE_TAIL.match(after)
             and not REFUTES_NEGATION.search(before_clause)
             and not REFUTATION_AFTER.search(after)
-            and not NEGATION.search(after)
+            and not REMAINDER_DEFECT.search(after)
         ):
             return " "
         return match.group(0)
@@ -1961,6 +1979,68 @@ def self_test() -> None:
             "SOURCE_REVIEW_READY\nNo source blocker found. The fixture is still wrong.",
             False,
         ),
+        # #15980: subject-agnostic remainder predicate, any subject plus a defect.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is incomplete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is unreadable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The gap is reported.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is broken.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is red.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is failing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane fails.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The run is broken.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The run is red.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The check is failing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The check fails.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job is broken.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job is red.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job fails.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The test is failing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests are failing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests are red.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is incomplete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is unreadable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is reported.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is incomplete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is unreadable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is reported.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is incomplete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is unreadable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is missing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is absent.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stuck.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stalled.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is hung.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is dead.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is down.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is unavailable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is unreachable.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is missing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is absent.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is empty.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stale.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is outdated.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is revoked.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is rejected.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is nacked.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not green.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not passing.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not complete.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not done.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not finished.", False),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not merged.", False),
+        # #15980: must-admit controls for the subject-agnostic predicate.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates current main; the hosted lane has not run on this head.",
+            True,
+        ),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The block layout is unchanged.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is green.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. All checks pass.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests pass.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is complete.", True),
+        ("SOURCE_REVIEW_READY\nNo blocker found. No changes needed.", True),
+        ("SOURCE_REVIEW_READY\nNo source blocker found.", True),
+        ("SOURCE_REVIEW_READY\nNo code change needed.", True),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)

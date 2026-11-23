@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 64] = [
+    let cases: [(&str, bool); 121] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -923,6 +923,68 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
             "SOURCE_REVIEW_READY\nNo code change needed. The BLOCK was cleared.",
             false,
         ),
+        // Subject-agnostic remainder predicate: any subject plus a defect.
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is incomplete.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is unreadable.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The gap is reported.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is broken.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is red.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is failing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane fails.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The run is broken.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The run is red.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The check is failing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The check fails.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job is broken.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job is red.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The job fails.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The test is failing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests are failing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests are red.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is incomplete.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is unreadable.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is reported.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is incomplete.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is unreadable.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The CI is reported.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is incomplete.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is unreadable.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is missing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The evidence is absent.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stuck.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stalled.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is hung.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is dead.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is down.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is unavailable.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is unreachable.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is missing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is absent.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is empty.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is stale.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is outdated.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is revoked.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is rejected.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is nacked.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not green.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not passing.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not complete.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not done.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not finished.", false),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The lane is not merged.", false),
+        // Must-admit controls for the subject-agnostic predicate.
+        (
+            "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates current main; the hosted lane has not run on this head.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The block layout is unchanged.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The build is green.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. All checks pass.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The tests pass.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. The suite is complete.", true),
+        ("SOURCE_REVIEW_READY\nNo blocker found. No changes needed.", true),
+        ("SOURCE_REVIEW_READY\nNo source blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo code change needed.", true),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
