@@ -642,7 +642,8 @@ tests = [
   "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::composed_recovery_preserves_unstaged_analysis_and_explicit_sources",
   "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::composed_recovery_preserves_staged_analysis_and_explicit_sources",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
-  "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"
+  "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes",
+  "crates/ripr/tests/context_json_schema.rs::context_json_conforms_for_every_finding_of_the_covering_fixtures"
 ]
 code = [
   "crates/ripr/src/app.rs",
