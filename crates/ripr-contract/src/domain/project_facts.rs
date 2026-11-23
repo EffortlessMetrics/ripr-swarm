@@ -100,7 +100,8 @@ pub struct ProjectFactsV1 {
     /// Working directory for repository-wide commands, relative to the
     /// repository root.
     pub repository_root_cwd: String,
-    /// The packages in the repository.
+    /// The packages that own at least one source row, not every package in the
+    /// repository.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub package_ids: Vec<String>,
     /// One row per source file.
@@ -115,7 +116,8 @@ pub struct ProjectFactsV1 {
     /// Limitations that apply to the whole record.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limitations: Vec<String>,
-    /// Digest over every field except this one and `repository_root_cwd`,
-    /// computed after the lists are sorted.
+    /// Digest over every field except this one and `repository_root_cwd`.
+    /// Package ids, source rows and environment rows are sorted first;
+    /// `limitations` keep their order, so reordering them changes the digest.
     pub semantic_digest: String,
 }
