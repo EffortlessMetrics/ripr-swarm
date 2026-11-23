@@ -392,8 +392,9 @@ pub enum OwnerKind {
     /// starts with an uppercase letter and whose body looks like it returns
     /// JSX.
     Component,
-    /// A module-level TypeScript binding whose value is not a function, such as
-    /// a `const` value.
+    /// A module-level TypeScript binding whose initializer is not a function
+    /// or arrow function expression, such as a `const` value or a call result.
+    /// Despite the name, the bound value is not known to be a function.
     ModuleFunction,
 }
 
