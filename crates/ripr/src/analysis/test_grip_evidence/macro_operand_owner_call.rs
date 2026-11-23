@@ -102,8 +102,8 @@ pub(super) struct OwnerResultLocal {
 }
 
 /// Locals of the test `body` declared once as `let name = <owner call>;`
-/// (a plain or `mut` identifier pattern, the initializer exactly one call of
-/// the owner). A body that does not parse cleanly yields none, which keeps
+/// (a plain or `mut` identifier pattern, the initializer one call of the
+/// owner, possibly unwrapped or chained: `pick(0).unwrap()`, `pick(0)?`). A body that does not parse cleanly yields none, which keeps
 /// the parsed reading.
 fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLocal> {
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(body) else {
@@ -127,7 +127,7 @@ fn owner_result_locals(body: &str, owner: &OwnerName<'_>) -> Vec<OwnerResultLoca
         let (Some(name), Some(initializer)) = (pattern.name(), statement.initializer()) else {
             continue;
         };
-        if statement.let_else().is_some() || !is_owner_call(&initializer, owner) {
+        if statement.let_else().is_some() || !owner_rooted(&initializer, owner) {
             continue;
         }
         let declared_at = name.syntax().text_range();
@@ -228,6 +228,31 @@ fn placeholder_reads(placeholder: &str, name: &str) -> bool {
                     .trim_end_matches(|c: char| c.is_ascii_digit())
                     .ends_with(|c: char| c.is_alphanumeric() || c == '_')
         })
+}
+
+/// Whether `expression` is a call of the owner, possibly followed by method
+/// calls, `?`, `.await` or parentheses that take it as their receiver
+/// (`pick(0).unwrap()`, `(pick(0))?`). The value then derives only from that
+/// call; a chain rooted anywhere else (`x.pick(0)` for a free function,
+/// `other(pick(0))`) is not the owner's result.
+fn owner_rooted(expression: &ast::Expr, owner: &OwnerName<'_>) -> bool {
+    let mut current = expression.clone();
+    loop {
+        if is_owner_call(&current, owner) {
+            return true;
+        }
+        let next = match &current {
+            ast::Expr::MethodCallExpr(call) => call.receiver(),
+            ast::Expr::TryExpr(tried) => tried.expr(),
+            ast::Expr::AwaitExpr(awaited) => awaited.expr(),
+            ast::Expr::ParenExpr(inner) => inner.expr(),
+            _ => None,
+        };
+        let Some(next) = next else {
+            return false;
+        };
+        current = next;
+    }
 }
 
 /// Whether `expression` is exactly one call of the owner: `owner(..)`,
@@ -675,6 +700,26 @@ mod tests {
             ),
             (
                 "let r = pick(0).unwrap();",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let r = (pick(0))?.clone();",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                true,
+            ),
+            (
+                "let r = pick(0).unwrap();",
+                "assert_eq!(check_ok!(r), r)",
+                false,
+            ),
+            (
+                "let r = other(pick(0));",
+                "assert_eq!(check_ok!(r), Mode::A)",
+                false,
+            ),
+            (
+                "let r = x.pick(0).unwrap();",
                 "assert_eq!(check_ok!(r), Mode::A)",
                 false,
             ),

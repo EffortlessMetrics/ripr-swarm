@@ -2868,6 +2868,13 @@ assertion's untrusted macros. A use anywhere else (another assertion, a
 clone, a helper argument) may observe the result, so the assertion keeps its
 parsed reading.
 
+The initializer may also unwrap or chain the call (#16219): `let r =
+pick(0).unwrap();` or `let r = pick(0)?;` counts the same way when the owner
+call is the root receiver of method calls, `?`, `.await` or parentheses. A
+chain rooted anywhere else (`other(pick(0))`, `x.pick(0)` for a free
+function) does not. Only the macro-held assertion loses its reading; an
+`.unwrap()` in the initializer still runs and keeps its own smoke oracle.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`

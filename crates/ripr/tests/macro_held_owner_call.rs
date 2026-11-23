@@ -253,6 +253,20 @@ fn an_owner_result_local_only_an_untrusted_macro_uses_gives_no_exact_credit() ->
             "unknown",
         ),
         (
+            "an unwrapped local only the local macro uses leaves only the unwrap smoke",
+            CHECK_OK,
+            "let r = pick(0).unwrap();\n        assert_eq!(check_ok!(r), Ok(Mode::A));",
+            "weakly_gripped",
+            "smoke_only",
+        ),
+        (
+            "the unwrapped local is asserted plainly",
+            CHECK_OK,
+            "let r = pick(0).unwrap();\n        assert_eq!(r, Mode::A);",
+            "strongly_gripped",
+            "exact_value",
+        ),
+        (
             "the bound result is asserted plainly",
             CHECK_OK,
             "let r = pick(0);\n        assert_eq!(r, Ok(Mode::A));",
