@@ -475,6 +475,56 @@ mod tests {
         ));
     }
 
+    /// #14133: a withheld finding's packet is the ordinary packet with the
+    /// opt-out reason appended to `stop_reasons` and an empty next step;
+    /// every other field, including the probe and evidence, is unchanged.
+    #[test]
+    fn withheld_packet_differs_from_the_ordinary_one_only_by_its_stop() -> Result<(), String> {
+        use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason, OwnerOptOutScope};
+        let finding = sample_finding();
+        let opt_out = OwnerOptOut {
+            finding_id: finding.id.clone(),
+            owner: "sample".to_string(),
+            reason: OwnerOptOutReason::MutantsSkip,
+            scope: OwnerOptOutScope::Fn,
+            scope_label: String::new(),
+        };
+        let render = |opt_out| {
+            render_selected_context_packet(
+                &finding,
+                5,
+                &test_config(),
+                None,
+                Path::new("."),
+                opt_out,
+            )
+        };
+        let parse = |text: &str| -> Result<serde_json::Value, String> {
+            serde_json::from_str(text).map_err(|err| format!("{err}: {text}"))
+        };
+        let ordinary_text = render(None);
+        assert_eq!(
+            ordinary_text,
+            render_context_packet(&finding, 5, &test_config(), Path::new(".")),
+            "without a decision the packet is the existing render"
+        );
+        let mut ordinary = parse(&ordinary_text)?;
+        let withheld = parse(&render(Some(&opt_out)))?;
+        assert!(
+            ordinary["recommended_next_step"]
+                .as_str()
+                .is_some_and(|step| !step.is_empty()),
+            "premise: the ordinary packet offers a next step: {ordinary}"
+        );
+        let stops = ordinary["stop_reasons"]
+            .as_array_mut()
+            .ok_or("stop_reasons is an array")?;
+        stops.push(serde_json::Value::from("owner_mutants_skip"));
+        ordinary["recommended_next_step"] = serde_json::Value::from("");
+        assert_eq!(withheld, ordinary);
+        Ok(())
+    }
+
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,

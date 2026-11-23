@@ -1321,13 +1321,23 @@ fn context_followed_from_explain_keeps_the_owner_opt_out_stop() -> Result<(), St
 
     let (_, edited_held) = repo.follow_context(&fresh_held)?;
     assert!(!packet_stops_for_owner(&edited_held), "{edited_held}");
-    assert_ne!(edited_held["recommended_next_step"], "", "{edited_held}");
+    assert!(
+        edited_held["recommended_next_step"]
+            .as_str()
+            .is_some_and(|step| !step.is_empty()),
+        "{edited_held}"
+    );
 
     assert!(
         !packet_stops_for_owner(&ordinary_packet),
         "{ordinary_packet}"
     );
-    assert_ne!(ordinary_packet["recommended_next_step"], "");
+    assert!(
+        ordinary_packet["recommended_next_step"]
+            .as_str()
+            .is_some_and(|step| !step.is_empty()),
+        "{ordinary_packet}"
+    );
     let (edited_ordinary_text, _) = repo.follow_context(&fresh_ordinary)?;
     assert_eq!(ordinary_text, edited_ordinary_text);
     Ok(())
