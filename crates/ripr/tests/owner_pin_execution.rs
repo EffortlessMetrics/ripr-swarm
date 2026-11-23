@@ -33,6 +33,8 @@ mod effect_assertion_sweep;
 mod effect_assertions;
 #[path = "owner_pin_execution/function_pointer.rs"]
 mod function_pointer;
+#[path = "owner_pin_execution/non_empty_array_loop.rs"]
+mod non_empty_array_loop;
 #[path = "owner_pin_execution/path_value.rs"]
 mod path_value;
 

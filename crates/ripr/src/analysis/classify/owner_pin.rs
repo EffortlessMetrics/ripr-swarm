@@ -15271,7 +15271,9 @@ fn owner_file_keeps_integer_names(owner: &FunctionSummary, index: &RustIndex) ->
 /// Whether the expected operand of `assertion` in `test` reaches the owner
 /// `name`: it names the owner, or names a test binding whose initializer
 /// does (`assert_eq!(f(4), f(2) + f(2))`, `let e = f(4); assert_eq!(f(4),
-/// e)`), so the assertion compares the owner with itself. Shared by the
+/// e)`), or names a value bound from loop rows that are not constant
+/// (`for want in [EXPECTED]`), so the assertion may compare the owner with
+/// itself. Shared by the
 /// owner-return pin and RIPR-SPEC-0265 element pairing.
 pub(in crate::analysis::classify) fn expected_reaches_owner(
     test: &TestSummary,
@@ -15279,9 +15281,15 @@ pub(in crate::analysis::classify) fn expected_reaches_owner(
     expected: &str,
     name: &str,
 ) -> bool {
-    contains_as_whole_word(&mask_comments_and_strings(expected), name)
+    let masked = mask_comments_and_strings(expected);
+    contains_as_whole_word(&masked, name)
         || (owner_named_outside(test, assertion, name)
             && expected_binding_calls_owner(test, expected, name))
+        // #14116: a name bound from loop rows that are not constant
+        // (`for want in [EXPECTED]`) may hold the owner's own output.
+        || crate::analysis::syntax::opaque_row_names(&test.body)
+            .iter()
+            .any(|row_name| contains_as_whole_word(&masked, row_name))
 }
 
 /// RIPR-SPEC-0035, reveal side: the value the expected `operand` stands
