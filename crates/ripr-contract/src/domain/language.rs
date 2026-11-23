@@ -60,10 +60,16 @@ pub fn pytest_verify_interpreter(command: &str) -> Option<&'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LanguageId {
+    /// Rust, the reference language.
     Rust,
+    /// TypeScript, analyzed by the TypeScript-family adapter.
     TypeScript,
+    /// JavaScript, analyzed by the TypeScript-family adapter and labeled
+    /// separately in output.
     JavaScript,
+    /// Python, a preview adapter.
     Python,
+    /// Perl, a preview adapter.
     Perl,
 }
 
@@ -121,6 +127,9 @@ impl LanguageId {
         }
     }
 
+    /// Whether this build compiled the adapter for this language. It reads this
+    /// crate's `lang-*` Cargo features, which `ripr` forwards; JavaScript
+    /// shares the `lang-typescript` feature.
     pub fn is_available(self) -> bool {
         match self {
             LanguageId::Rust => cfg!(feature = "lang-rust"),
@@ -131,6 +140,7 @@ impl LanguageId {
         }
     }
 
+    /// The Cargo feature that compiles this language's adapter.
     pub fn required_feature(self) -> &'static str {
         match self {
             LanguageId::Rust => "lang-rust",
@@ -342,7 +352,9 @@ pub fn format_languages_enabled_toml(languages: &[&str]) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LanguageStatus {
+    /// The reference implementation. Only Rust uses it.
     Stable,
+    /// A preview adapter.
     Preview,
 }
 
@@ -365,11 +377,23 @@ impl LanguageStatus {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerKind {
+    /// A free function declaration. The TypeScript adapter also uses it for a
+    /// function expression bound to a name.
     Function,
+    /// A method on a class. In Python, a function defined in a class body
+    /// without a `classmethod` or `staticmethod` decorator.
     Method,
+    /// A method bound to the class itself: a `static` method in TypeScript, or
+    /// a `classmethod` or `staticmethod` in Python.
     ClassMethod,
+    /// An arrow function bound to a name.
     ArrowFunction,
+    /// A function or arrow function in a `.tsx` or `.jsx` file whose name
+    /// starts with an uppercase letter and whose body looks like it returns
+    /// JSX.
     Component,
+    /// A module-level TypeScript binding whose value is not a function, such as
+    /// a `const` value.
     ModuleFunction,
 }
 
@@ -396,14 +420,30 @@ impl OwnerKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StaticLimitKind {
+    /// The changed code calls through a dynamic dispatch shape, such as
+    /// `getattr(...)` or a registry lookup, that syntax alone cannot resolve.
     DynamicDispatch,
+    /// The changed code uses metaprogramming, so its behavior is created at
+    /// runtime.
     Metaprogramming,
+    /// Reaching the changed code needs an import graph the adapter does not
+    /// build, such as a dynamic import.
     MissingImportGraph,
+    /// The changed code is reached through a decorator or framework wrapper
+    /// that static analysis cannot follow.
     DecoratorIndirection,
+    /// A related test mocks, reloads or rebinds the module the changed code
+    /// lives in, so which object the test reads is not resolved.
     MockedModule,
+    /// A related test checks the result through a custom assertion helper whose
+    /// body is not analyzed.
     OpaqueCustomAssertionHelper,
+    /// A related test is property-based, so its inputs come from a generator.
     PropertyBasedTest,
+    /// A related pytest test takes values from a fixture, and static analysis
+    /// cannot tell what the fixture supplies.
     UnresolvedPytestFixture,
+    /// The changed code uses syntax the adapter does not support.
     UnsupportedSyntax,
     /// The changed Rust seam owner is FFI/binding-exposed; whether an
     /// external-language (e.g. TypeScript) test oracle discriminates this
