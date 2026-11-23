@@ -750,6 +750,14 @@ Fallback, negotiated from capabilities only (never the client name):
 - `pull` — client answers `workspace/configuration`; behavior above.
 - `push_fallback` — no pull support, but the client advertises
   `workspace/didChangeConfiguration`; pushed values keep applying as today.
+  A pushed value ripr ignores (wrong type, unknown literal, a non-object
+  `ripr` section, or a payload that is not an object of ripr settings) is
+  reported in the log with the key, its accepted values and the value
+  received, and also on screen for clients without the `riprEditor`
+  integration. A rejected value falls back to its repository or default
+  value and is named once until a push repairs or clears it. A malformed
+  payload changes no setting; a malformed `ripr` section changes no setting
+  itself, while flat settings beside it still apply.
 - `initialization_only` — neither transport; only `initializationOptions`
   apply.
 

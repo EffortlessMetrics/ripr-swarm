@@ -900,6 +900,12 @@ fn stub_body(
         });
     }
 
+    // #8361: a boundary on a `&str` parameter's length writes a string of
+    // exactly that length (a literal, so it holds in either test scope).
+    if boundary.is_empty() {
+        boundary = length_inputs::length_inputs(seam, signature, source);
+    }
+
     // #8361: a match-arm stub writes the value the changed arm's own pattern
     // names (`Event::Fail`, `2`) for each parameter it decides.
     // The receiver state the arm also needs is named on the receiver line.
@@ -2031,6 +2037,7 @@ fn escape(text: &str) -> String {
 }
 
 mod expected_value;
+mod length_inputs;
 mod match_inputs;
 mod receiver;
 

@@ -14,7 +14,10 @@ use super::capabilities::{
     workspace_folder_set_from_initialize_params,
 };
 use super::client_features::ClientFeatureProfile;
-use super::config::{LspAnalysisConfig, pulled_options_or_rejections, pulled_rejection_summary};
+use super::config::{
+    LspAnalysisConfig, PushedSettingRejection, pulled_options_or_rejections,
+    pulled_rejection_summary, unannounced_pushed_rejections,
+};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
     WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
@@ -83,6 +86,7 @@ use crate::output::gap_decision_ledger::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -263,6 +267,11 @@ pub(super) struct Backend {
     /// input context resets. An attempt in flight leaves it latched, so pull
     /// and push agree while a retry runs.
     base_withdrawal: Mutex<Option<AnalysisFailure>>,
+    /// Fingerprint of the malformed payload or section in the last pushed
+    /// notification (#15312), so a client re-pushing the same malformed
+    /// shape is not warned twice. Rejected values need no memory here: the
+    /// retained session layer holds them until they are repaired.
+    last_pushed_settings_warning: Mutex<Option<u64>>,
     /// Languages whose "adapter not enabled" notice a generic client has
     /// already been shown (#8585). A language is shown once while it stays
     /// unavailable; leaving the set (adapter enabled, or its files no longer
@@ -413,6 +422,7 @@ impl Backend {
             pull_delivery_disclosure_logged_for: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
             base_withdrawal: Mutex::new(None),
+            last_pushed_settings_warning: Mutex::new(None),
             unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
             refresh_scheduler: Arc::new(RefreshScheduler::default()),
@@ -3692,27 +3702,63 @@ impl Backend {
     }
 
     async fn apply_session_configuration_change(&self, settings: &LSPAny) {
-        if !LspAnalysisConfig::has_session_option_changes(settings) {
-            return;
+        // #15312: the push path is lenient, so an ignored pushed value falls
+        // back silently. Name every ignored part of this notification that
+        // has not been named already. A rejected value stays in the retained
+        // session layer until a push repairs or clears it, so the owner skips
+        // values that layer already holds (`unannounced_pushed_rejections`).
+        let current = self.analysis_config();
+        let mut rejections = unannounced_pushed_rejections(settings, current.as_ref());
+        // A malformed payload or section is not retained, so a client that
+        // re-pushes it verbatim on every settings change is recognized only
+        // by consecutive notifications. Compare the exact malformed subjects,
+        // not the clipped display text.
+        let shape_fingerprint = rejections
+            .iter()
+            .any(PushedSettingRejection::is_shape)
+            .then(|| {
+                let mut hasher = std::hash::DefaultHasher::new();
+                for rejection in rejections.iter().filter(|part| part.is_shape()) {
+                    rejection.subject.to_string().hash(&mut hasher);
+                }
+                hasher.finish()
+            });
+        let shape_repeated = self
+            .last_pushed_settings_warning
+            .lock()
+            .map(|mut last| std::mem::replace(&mut *last, shape_fingerprint) == shape_fingerprint)
+            .unwrap_or(false);
+        if shape_repeated {
+            rejections.retain(|part| !part.is_shape());
         }
-        let Some(current) = self.analysis_config() else {
-            return;
-        };
-        let Some(next) = current.with_changed_session_options(settings) else {
-            return;
-        };
-        if next == current {
-            return;
+        let warning = (!rejections.is_empty()).then(|| {
+            let listed = rejections
+                .iter()
+                .map(|rejection| bounded_failure_message(&rejection.line))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!("ripr ignored pushed ripr settings: {listed}.")
+        });
+        // Commit the settings before any client I/O. The judgment above and
+        // this merge read the same layer with no await between them, so a
+        // newer notification cannot commit in between; awaiting the warning
+        // first would let an older push, suspended on a slow client, resume
+        // and overwrite a newer repair of the same key.
+        let mut committed = false;
+        if LspAnalysisConfig::has_session_option_changes(settings)
+            && let Some(current) = current
+            && let Some(next) = current.with_changed_session_options(settings)
+            && next != current
+        {
+            self.set_analysis_config(next);
+            committed = true;
         }
-        let previous_warnings = current.ignored_initialization_option_warnings();
-        let new_warnings: Vec<String> = next
-            .ignored_initialization_option_warnings()
-            .into_iter()
-            .filter(|warning| !previous_warnings.contains(warning))
-            .collect();
-        self.set_analysis_config(next);
-        for warning in new_warnings {
-            self.client.log_message(MessageType::WARNING, warning).await;
+        if let Some(warning) = warning {
+            self.disclose_configuration_reload_failure(warning.clone(), warning)
+                .await;
+        }
+        if !committed {
+            return;
         }
         if self.configuration_failure().is_some() {
             // Keep the config_invalid signal visible while repository
@@ -3783,6 +3829,13 @@ impl Backend {
         if let Ok(mut features) = self.client_features.lock() {
             *features = profile;
         }
+    }
+
+    /// Drives the push-path settings change directly, so a test can hold
+    /// client egress and observe what was committed before it (#15312).
+    #[cfg(test)]
+    pub(super) async fn apply_session_configuration_change_for_test(&self, settings: &LSPAny) {
+        self.apply_session_configuration_change(settings).await;
     }
 
     /// Poison the profile store so tests can exercise the fail-closed

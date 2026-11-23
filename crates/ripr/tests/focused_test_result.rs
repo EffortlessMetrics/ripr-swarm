@@ -2999,7 +2999,9 @@ fn a_proposal_attempt_names_the_focused_result_up_front() -> Result<(), String> 
 /// (`proposal_fixture`), while its only default member is `alpha`: with no
 /// package named, Cargo would build `alpha` from the root manifest. The
 /// lockfile is committed in Cargo's own spelling so a focused run writes
-/// nothing inside the checkout.
+/// nothing inside the checkout. Compiled only on unix, with its one caller
+/// (#16186): where that test is compiled out the helper would be dead code.
+#[cfg(unix)]
 fn member_fixture(label: &str) -> Result<Fixture, String> {
     let fixture = fixture(label)?;
     let root = &fixture.root;
