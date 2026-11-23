@@ -565,6 +565,41 @@ fn spreads_computed_keys_and_accessors_are_unreadable_literals() -> Result<(), S
                 "expect(title({ get name() { return 'Bob'; } })).toBe('Bob');",
                 "weakly_exposed",
             ),
+            // The prototype supplies `name`: `Bob` on both versions.
+            (
+                "proto-entry",
+                "expect(title({ __proto__: { name: 'Bob' } })).toBe('Bob');",
+                "weakly_exposed",
+            ),
+            (
+                "quoted-proto-entry",
+                "expect(title({ '__proto__': { name: 'Bob' } })).toBe('Bob');",
+                "weakly_exposed",
+            ),
+            // Controls: an own empty value and a plain missing key still read.
+            (
+                "own-empty",
+                "expect(title({ name: '' })).toBe('untitled');",
+                "exposed",
+            ),
+            (
+                "own-missing",
+                "expect(title({})).toBe('untitled');",
+                "exposed",
+            ),
         ],
+    )?;
+    // `{}` inherits a non-null `constructor`; a fallback on it never fires.
+    let inherited = "export function make(opts: { constructor?: unknown }): unknown {\n  return opts.constructor ?? 'none';\n}\n";
+    assert_rows(
+        "make",
+        inherited,
+        (2, "  return opts.constructor;"),
+        "opts.constructor",
+        &[(
+            "inherited-member",
+            "expect(make({})).toBe(Object);",
+            "weakly_exposed",
+        )],
     )
 }

@@ -2976,6 +2976,11 @@ fn ts_input_class_literal_unreadable(argument: &str, target: &TsInputClassTarget
     if target.field.is_none() && target.position.is_none() {
         return false;
     }
+    // A `__proto__` entry (bare or quoted) sets the prototype, so a field the
+    // literal does not own can still read a value through it.
+    if target.field.is_some() && argument.contains("__proto__") {
+        return true;
+    }
     let masked = ts_mask_literals_and_comments(argument.trim());
     let masked = masked.trim();
     let Some(inner) = masked
@@ -3006,6 +3011,29 @@ fn ts_input_class_literal_unreadable(argument: &str, target: &TsInputClassTarget
 /// the key, or an array literal shorter than the position. A spread, a
 /// computed key, an accessor, or a non-literal argument is unreadable.
 fn ts_input_class_slot_absent(argument: &str, target: &TsInputClassTarget) -> bool {
+    // An object literal inherits `Object.prototype`, so a missing own key
+    // with one of its names still reads a non-nullish value.
+    const OBJECT_PROTOTYPE_MEMBERS: [&str; 12] = [
+        "constructor",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toLocaleString",
+        "toString",
+        "valueOf",
+        "__proto__",
+        "__defineGetter__",
+        "__defineSetter__",
+        "__lookupGetter__",
+        "__lookupSetter__",
+    ];
+    if target
+        .field
+        .as_deref()
+        .is_some_and(|field| OBJECT_PROTOTYPE_MEMBERS.contains(&field))
+    {
+        return false;
+    }
     let argument = argument.trim();
     let entries_of = |open: char, close: char| -> Option<Vec<String>> {
         let inner = argument.strip_prefix(open)?.strip_suffix(close)?;
