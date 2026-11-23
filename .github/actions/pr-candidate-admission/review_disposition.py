@@ -230,7 +230,7 @@ NEGATED_CHANGE_TAIL = re.compile(r"^[ \t]*(?:[.!;]|$)")
 # wrong") still refuses.
 NEGATED_BLOCKER = re.compile(
     r"\b(?:no|without)\b[ \t]+"
-    r"(?:(?:a|an|any|further|source|code|production|open|remaining|unresolved)[ \t]+){0,3}"
+    r"(?:(?:a|an|any|new|further|other|additional|source|code|production|open|remaining|unresolved|known|outstanding)[ \t]+){0,3}"
     r"(?:blockers?|blocking[ \t]+findings?)\b[ \t]+"
     r"(?:found|remain|remains|remaining|open|exists?)\b",
     re.IGNORECASE,
@@ -575,6 +575,22 @@ def comment_body_verdict_negative(body: str) -> bool:
     return verdict is not None and verdict[0] == "block"
 
 
+# #15980 review: a quoted claim is a citation, not the reviewer's own resolved
+# finding. A phrase that sits inside a quotation (or on a blockquote line) is
+# never stripped, so a refutation of the quoted claim still refuses. The check
+# is deliberately conservative: it looks only at the character before the
+# phrase, so an unbalanced quote and an apostrophe form also refuse, matching
+# main's current reading.
+QUOTE_CHARS = "'\"`\u2018\u2019\u201c\u201d"
+
+
+def _quoted_or_blockquoted(before: str) -> bool:
+    stripped = before.rstrip()
+    if stripped and stripped[-1] in QUOTE_CHARS:
+        return True
+    return before.lstrip().startswith(">")
+
+
 def strip_negated_change(line: str) -> str:
     """Remove a negated change/repair phrase only when it is resolved work.
 
@@ -587,6 +603,15 @@ def strip_negated_change(line: str) -> str:
     def replace(match: re.Match[str]) -> str:
         before = line[: match.start()]
         after = line[match.end() :]
+        # #15980 review: a quoted or blockquoted phrase is a citation, not the
+        # reviewer's own resolved finding, so it is never stripped.
+        if _quoted_or_blockquoted(before):
+            return match.group(0)
+        # #15980 review: a state token later on the same line is a disposition,
+        # not a resolved finding. Stripping the phrase would hide it from the
+        # line-anchored state scan, so keep the phrase in place.
+        if STATE_TOKEN.search(after):
+            return match.group(0)
         # #14355: a cue only refutes the phrase in its own clause. A comma
         # resets the clause, so "The Devin thread was a false positive, no code
         # change needed." is resolved work, not a refutation.
@@ -616,6 +641,15 @@ def strip_negated_blocker(line: str) -> str:
     def replace(match: re.Match[str]) -> str:
         before = line[: match.start()]
         after = line[match.end() :]
+        # #15980 review: a quoted or blockquoted phrase is a citation, not the
+        # reviewer's own resolved finding, so it is never stripped.
+        if _quoted_or_blockquoted(before):
+            return match.group(0)
+        # #15980 review: a state token later on the same line is a disposition,
+        # not a resolved finding. Stripping the phrase would hide it from the
+        # line-anchored state scan, so keep the phrase in place.
+        if STATE_TOKEN.search(after):
+            return match.group(0)
         before_clause = before.rsplit(",", 1)[-1]
         if (
             NEGATED_CHANGE_TAIL.match(after)
@@ -1749,6 +1783,38 @@ def self_test() -> None:
         ("SOURCE_REVIEW_READY\n| Verdict | APPROVE 1cc13d3d | BLOCK", False),
         ("SOURCE_REVIEW_READY\n| Verdict | BLOCK | approve |", False),
         ("SOURCE_REVIEW_READY\nThe earlier verdict: BLOCK was cleared.", True),
+        # #15980: the five filler words the closed set omitted.
+        ("SOURCE_REVIEW_READY\nNo new source blocker found.", True),
+        (
+            "SOURCE_REVIEW_READY\nNo new source blocker found; all three previous threads were resolved at readback.",
+            True,
+        ),
+        ("SOURCE_REVIEW_READY\nNo other blocker found.", True),
+        ("SOURCE_REVIEW_READY\nNo additional blocker found.", True),
+        ("SOURCE_REVIEW_READY\nNo known blocker found.", True),
+        ("SOURCE_REVIEW_READY\nNo outstanding blocker found.", True),
+        # #15980: a quoted or blockquoted phrase is a citation, not a claim.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.' That is false.",
+            False,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.'",
+            False,
+        ),
+        ("SOURCE_REVIEW_READY\n> No blocker found.\n> That is false.", False),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No new source blocker found.' That is false.",
+            False,
+        ),
+        # #15980: the widened filler must not hide a real blocker.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is red.",
+            False,
+        ),
+        # #15980: a same-line state token after a stripped phrase still refuses.
+        ("SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.", False),
+        ("SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.", False),
     ]
     for body, expected in cases:
         actual = comment_body_ready(body)

@@ -722,7 +722,7 @@ fn issue_14355_negated_change_phrase_is_not_a_blocker() -> Result<(), String> {
 fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
     let head = "a".repeat(40);
     let at = "2026-11-21T21:52:20Z";
-    let cases: [(&str, bool); 19] = [
+    let cases: [(&str, bool); 32] = [
         // The strip-exercising witness: this admits only because the strip ran.
         (
             "SOURCE_REVIEW_READY\nNo source blocker found. The old hosted result predates \
@@ -803,6 +803,39 @@ fn issue_15980_negated_blocker_phrase_is_not_a_blocker() -> Result<(), String> {
         // behind the same markers. NEGATION still catches the phrase itself.
         ("SOURCE_REVIEW_READY\n*Blocker found.*", false),
         ("SOURCE_REVIEW_READY\n> Blocker found.", false),
+        // Filler widening: the 5 words the PR's set omits.
+        ("SOURCE_REVIEW_READY\nNo new source blocker found.", true),
+        (
+            "SOURCE_REVIEW_READY\nNo new source blocker found; all three previous threads were resolved at readback.",
+            true,
+        ),
+        ("SOURCE_REVIEW_READY\nNo other blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo additional blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo known blocker found.", true),
+        ("SOURCE_REVIEW_READY\nNo outstanding blocker found.", true),
+        // Quotation guard: a quoted phrase is not a claim.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.' That is false.",
+            false,
+        ),
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No blocker found.'",
+            false,
+        ),
+        ("SOURCE_REVIEW_READY\n> No blocker found.\n> That is false.", false),
+        // The interaction: the widened filler must not open a new quoted fail-open.
+        (
+            "SOURCE_REVIEW_READY\nThe earlier review said 'No new source blocker found.' That is false.",
+            false,
+        ),
+        // Reverse risk: the widened filler must not hide a real blocker.
+        (
+            "SOURCE_REVIEW_READY\nNo new blocker found. The build is red.",
+            false,
+        ),
+        // Same-line state token after a stripped phrase: the PR head admits this, main refuses.
+        ("SOURCE_REVIEW_READY\nNo blocker found. REPAIR_REQUIRED.", false),
+        ("SOURCE_REVIEW_READY\nNo change is needed. REPAIR_REQUIRED.", false),
     ];
     for (body, admit) in cases {
         let reviews = serde_json::json!([review("author", "COMMENTED", &head, at, body)]);
