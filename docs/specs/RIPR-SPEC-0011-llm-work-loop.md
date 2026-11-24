@@ -854,7 +854,12 @@ same start, and the repair card's next action runs the route. The card reads
 the seam flip for this finding instead of the check witness, which names no fix
 site for a function no test calls. A no-path finding whose owner other
 workspace code calls, any unknown class, and any named static limitation stay
-no-start, with the refusal reasons above. Start eligibility is separate from
+no-start, with the refusal reasons above. When the current change binds such a
+no-path finding to an exact seam and the inventory independently finds no test
+path, both `ripr repair <id>` and `ripr agent repair --seam-id <id> --phase before`
+refuse before writing a workflow or attempt. The inspection card still names
+an admitted proposed test target. The facade uses the same comparison base
+for selection and Start admission. Start eligibility is separate from
 what check knows about reach: wording and ranking that speak to reach
 (`finding_reads_unreached_or_limited`) still read the unreferenced finding as
 unreached. On a seam the inventory reads as gripped, a reached gap leads it, and
@@ -891,12 +896,10 @@ generated or vendored, wrong package, private owner, colliding file, stale
 source, cross-language, path escape) still has no proposal and refuses as
 before; a proposal without an identity or one the evidence does not hold keeps
 the no-target text. `ripr check` and `ripr repair` read the same gate; a
-`no path` (static-limited) finding keeps the F3 rule (#12888) and prints no
-runnable repair line even where bare `ripr repair <id>` starts the
-proposal-only seam, so the F3 silence is unchanged (superseded for a function
-nothing in the workspace calls by the #15926 decision above, where check prints
-the start). Starting does not create the
-proposed file, generate a test body or grant production-source permission.
+`no path` (static-limited) finding bound to an unreached seam keeps the F3 rule
+(#12888) and offers no Start even with an admitted proposal. The #15926 decision
+above allows the unreferenced case, where check prints the start. Starting does
+not create the proposed file, generate a test body or grant production-source permission.
 
 ## Amendment (#13203 A): an attempt binds the proposal it follows
 

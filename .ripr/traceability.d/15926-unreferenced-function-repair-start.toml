@@ -3,6 +3,8 @@ id = "RIPR-SPEC-0011"
 tests = [
   "crates/ripr/tests/repair_check_recommended_start.rs::an_unreferenced_new_function_starts_on_every_surface",
   "crates/ripr/tests/repair_check_recommended_start.rs::a_called_but_unreached_new_function_refuses_with_the_no_path_reason",
+  "crates/ripr/tests/repair_check_recommended_start.rs::an_explicit_base_is_used_by_selection_and_before_phase",
+  "crates/ripr/tests/packaged_repair_cli/no_path_start.rs::direct_id_start_requires_more_than_a_proposed_target",
   "crates/ripr/tests/repair_check_recommended_start.rs::an_inline_proposal_starts_from_checks_repair_line",
   "crates/ripr/src/app/gap_bound_repair.rs::tests::an_unreferenced_no_path_owner_is_not_static_limited",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::an_unreferenced_function_fact_does_not_open_a_seam_that_fails_the_flip",
@@ -13,6 +15,7 @@ code = [
   "crates/ripr/src/app/gap_bound_repair.rs::finding_is_static_limited",
   "crates/ripr/src/app/gap_bound_repair.rs::finding_reads_unreached_or_limited",
   "crates/ripr/src/app/task_first.rs::check_reading_from_findings",
+  "crates/ripr/src/app/task_first.rs::changed_seam_no_path_start_refusal",
   "crates/ripr/src/app/repair_card_handoff.rs::assemble_repair_card",
   "crates/ripr/src/app/repair_card_handoff.rs::bound_finding_is_unreferenced_new_function",
 ]

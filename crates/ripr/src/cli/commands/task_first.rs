@@ -610,9 +610,14 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // `cli_refusal` document, so it must leave stdout empty — a refusal
     // preceded by a success document would hand an orchestrator
     // success-shaped output on a retry that already started (#7032).
-    let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-        facade_before_options(&options.root, &seam_id, options.json, options.quiet),
-    )?;
+    let (attempt_id, before_stdout) =
+        crate::cli::drive_before_phase_deferring_stdout(facade_before_options(
+            &options.root,
+            &seam_id,
+            options.base.as_deref(),
+            options.json,
+            options.quiet,
+        ))?;
     // `--json` (#11584): the packet envelope with `repair_attempt` is the
     // whole document; the human card is not appended to it.
     if options.json {
@@ -755,6 +760,7 @@ fn resume_awaiting_attempt(
 fn facade_before_options(
     root: &std::path::Path,
     seam_id: &str,
+    base: Option<&str>,
     json: bool,
     quiet: bool,
 ) -> AgentRepairOptions {
@@ -763,7 +769,7 @@ fn facade_before_options(
         root_explicit: true,
         seam_id: Some(seam_id.to_string()),
         gap_id: None,
-        base: None,
+        base: base.map(str::to_owned),
         attempt_id: None,
         phase: AgentRepairPhase::Before,
         python_repair_trust: None,
@@ -2114,7 +2120,7 @@ mod tests {
         // The start holds its document: it comes back as a value, so
         // nothing reaches stdout before the card has rendered.
         let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-            facade_before_options(&root, FIXTURE_SEAM, false, false),
+            facade_before_options(&root, FIXTURE_SEAM, None, false, false),
         )
         .map_err(|error| error.to_string())?;
         if before_stdout.trim().is_empty() {
