@@ -28,8 +28,9 @@
 //! - each copied literal fits its parameter's declared type as written, so
 //!   the stub compiles even if a macro this file cannot see changed what the
 //!   test's call meant;
-//! - with the written and copied inputs, the owner reaches the statement
-//!   holding the changed comparison (see `reaches_seam`).
+//! - the copied values do not steer the owner away from the statement
+//!   holding the changed comparison (see `reaches_seam`); an earlier guard
+//!   on the written inputs alone is outside this check.
 //!
 //! The copied values are setup, not evidence: the stub says which test they
 //! came from, and the expected value stays a `todo!()`.
@@ -54,6 +55,11 @@ const PLAIN_TEST_ATTRIBUTES: [&str; 6] = ["test", "allow", "expect", "warn", "de
 /// `derive` of standard traits. An attribute or derive macro of any other
 /// name may emit a function of the owner's name.
 const MODULE_ATTRIBUTES: [&str; 4] = ["cfg", "should_panic", "ignore", "derive"];
+
+/// The primitive integer types.
+const INTEGER_TYPES: [&str; 12] = [
+    "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+];
 
 /// The standard derives, which emit only trait impls.
 const STANDARD_DERIVES: [&str; 9] = [
@@ -214,7 +220,12 @@ pub(super) fn reused_inputs(
             let mut inputs = written.to_vec();
             inputs.extend(values.iter().cloned());
             let copied: Vec<String> = values.iter().map(|(binding, _)| binding.clone()).collect();
-            if !reaches_seam(&file, &owner, seam_offset, &copied, &inputs) {
+            let typed: Vec<(String, String)> = bindings
+                .iter()
+                .zip(&signature.params)
+                .map(|(binding, param)| (binding.clone(), param.ty.trim().to_string()))
+                .collect();
+            if !reaches_seam(&file, &owner, seam_offset, &copied, &inputs, &typed) {
                 return None;
             }
             Some((values, test))
@@ -475,17 +486,14 @@ pub(super) fn literal_fits(ty_text: &str, literal: &str) -> bool {
         Some(rest) => (true, rest.trim_start()),
         None => (false, literal),
     };
-    const INTEGERS: [&str; 12] = [
-        "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
-    ];
     let numeric = body.starts_with(|c: char| c.is_ascii_digit());
-    if INTEGERS.contains(&ty.as_str()) {
+    if INTEGER_TYPES.contains(&ty.as_str()) {
         if !numeric || (negative && ty.starts_with('u')) {
             return false;
         }
         // `usize` and `isize` contain an `e`; look for an exponent only
         // before the suffix.
-        let digits = INTEGERS
+        let digits = INTEGER_TYPES
             .iter()
             .find_map(|suffix| body.strip_suffix(*suffix))
             .unwrap_or(body);
@@ -494,7 +502,7 @@ pub(super) fn literal_fits(ty_text: &str, literal: &str) -> bool {
                 || digits.contains(['e', 'E'])
                 || body.ends_with("f32")
                 || body.ends_with("f64"));
-        let suffix = INTEGERS.iter().find(|suffix| body.ends_with(*suffix));
+        let suffix = INTEGER_TYPES.iter().find(|suffix| body.ends_with(*suffix));
         // In range for the type, so `overflowing_literals` (deny by
         // default) cannot reject the stub's `let`. `isize`/`usize` use the
         // 32-bit range, which holds on every target.
@@ -535,7 +543,7 @@ pub(super) fn literal_fits(ty_text: &str, literal: &str) -> bool {
             && !body.starts_with("0b")
             && !body.starts_with("0o")
             && !body.ends_with(other)
-            && !INTEGERS.iter().any(|suffix| body.ends_with(suffix));
+            && !INTEGER_TYPES.iter().any(|suffix| body.ends_with(suffix));
     }
     if negative {
         return false;
@@ -551,8 +559,9 @@ pub(super) fn literal_fits(ty_text: &str, literal: &str) -> bool {
     }
 }
 
-/// Whether the owner, given `inputs`, runs the statement holding the changed
-/// comparison without reading a copied value on the way into it. Every
+/// Whether the copied values leave the owner on its way to the statement
+/// holding the changed comparison, reading none of them on the way into it
+/// (a guard naming only written inputs is not checked). Every
 /// earlier statement of the owner's body that names a copied parameter (as
 /// an identifier, or as `{name` inside a string a format macro may capture)
 /// must be an `if` without `else` whose condition evaluates to false; no
@@ -566,6 +575,7 @@ fn reaches_seam(
     seam_offset: usize,
     copied: &[String],
     inputs: &[(String, String)],
+    typed: &[(String, String)],
 ) -> bool {
     let Ok(offset) = TextSize::try_from(seam_offset) else {
         return false;
@@ -593,15 +603,24 @@ fn reaches_seam(
                 })
             })
     };
+    let is_input = |text: &str| inputs.iter().any(|(name, _)| unraw(name) == unraw(text));
+    // A pattern binding an input's name, or a macro handed that name, which
+    // may expand to a `let` of it.
     let binds_input = |node: &SyntaxNode| {
         node.descendants()
             .filter_map(ast::IdentPat::cast)
             .filter_map(|ident| ident.name())
-            .any(|bound| {
-                inputs
-                    .iter()
-                    .any(|(name, _)| unraw(name) == unraw(bound.text()))
-            })
+            .any(|bound| is_input(bound.text()))
+            || node
+                .descendants()
+                .filter_map(ast::MacroCall::cast)
+                .filter_map(|call| call.token_tree())
+                .any(|tree| {
+                    tree.syntax()
+                        .descendants_with_tokens()
+                        .filter_map(|element| element.into_token())
+                        .any(|token| token.kind() == SyntaxKind::IDENT && is_input(token.text()))
+                })
     };
     let nodes = list
         .statements()
@@ -642,6 +661,8 @@ fn reaches_seam(
                 .syntax()
                 .ancestors()
                 .take_while(|ancestor| ancestor != &node)
+                // The statement itself, when it is a tail assignment.
+                .chain(std::iter::once(node.clone()))
                 .chain(
                     ast::ExprStmt::cast(node.clone())
                         .and_then(|stmt| stmt.expr())
@@ -656,7 +677,11 @@ fn reaches_seam(
                 .filter(|inner| {
                     inner.text_range().end() <= comparison.syntax().text_range().start()
                 })
-                .any(|inner| ast::IdentPat::can_cast(inner.kind()) && binds_input(&inner));
+                .any(|inner| {
+                    (ast::IdentPat::can_cast(inner.kind())
+                        || ast::MacroCall::can_cast(inner.kind()))
+                        && binds_input(&inner)
+                });
             return !assignment
                 && !rebinds_before
                 && !ast::LetStmt::can_cast(node.kind())
@@ -678,7 +703,29 @@ fn reaches_seam(
         let Some(condition) = guard.condition() else {
             return false;
         };
-        if condition_value(file, &condition, inputs) != Some(false) {
+        // The evaluator compares integers untyped, so every integer literal
+        // in the guard must fit each integer parameter it names, or a lint
+        // allowance elsewhere may let the literal wrap.
+        let named: Vec<&str> = condition
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| token.kind() == SyntaxKind::IDENT)
+            .filter_map(|token| {
+                typed
+                    .iter()
+                    .find(|(name, _)| unraw(name) == unraw(token.text()))
+                    .map(|(_, ty)| ty.as_str())
+            })
+            .filter(|ty| INTEGER_TYPES.contains(ty))
+            .collect();
+        let literals_fit = condition
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| token.kind() == SyntaxKind::INT_NUMBER)
+            .all(|literal| named.iter().all(|ty| literal_fits(ty, literal.text())));
+        if !literals_fit || condition_value(file, &condition, inputs) != Some(false) {
             return false;
         }
     }

@@ -3259,6 +3259,51 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // A comparison in a tail assignment's place runs after its value.
+        (
+            module_for(
+                &owner.replace(
+                    "    if rate >= 10_000 {\n        return Err(2);\n    }\n    Ok(amount)",
+                    "    let mut hit = [false; 2];\n    hit[usize::from(rate >= 10_000)] = {\n        if amount > 5 {\n            return Err(3);\n        }\n        false\n    }",
+                ),
+                "    #[test]\n    fn computes() {\n        let _ = tax(7, 825);\n    }\n",
+            ),
+            None,
+        ),
+        // A macro handed an input's name may rebind it.
+        (
+            module_for(
+                &format!(
+                    "macro_rules! zero {{ ($name:ident) => {{ let $name = 0; }}; }}\n{}",
+                    owner.replace(
+                        "    if amount < 0 {",
+                        "    zero!(rate);\n    if rate == 0 && amount == 7 {\n        return Err(3);\n    }\n    if amount < 0 {",
+                    )
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A guard literal that does not fit the parameter's type may wrap.
+        (
+            module_for(
+                &owner
+                    .replace("amount: i64", "amount: u8")
+                    .replace("    if amount < 0 {", "    if amount == 263 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // An in-range guard literal still evaluates.
+        (
+            module_for(
+                &owner
+                    .replace("amount: i64", "amount: u8")
+                    .replace("    if amount < 0 {", "    if amount == 8 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            Some(("7", "computes")),
+        ),
         // A standard derive does not.
         (
             module(
@@ -3415,7 +3460,10 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
         match copied {
             Some((amount, test)) => {
                 assert!(
-                    stub.text.contains(&format!("let amount: i64 = {amount};")),
+                    stub.text.lines().any(|line| {
+                        line.trim_start().starts_with("let amount: ")
+                            && line.ends_with(&format!(" = {amount};"))
+                    }),
                     "{source}\n{}",
                     stub.text
                 );
