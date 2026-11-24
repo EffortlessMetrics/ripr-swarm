@@ -912,3 +912,14 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — mixed_rust_typescript_preview (43)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless mixed_rust_typescript_preview --reason "..."`
+
+Updated:
+- `expected/human.txt`

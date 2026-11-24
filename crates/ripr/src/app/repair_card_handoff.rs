@@ -2104,6 +2104,7 @@ pub(crate) mod tests {
                 normalized_discriminator: "amount==discount_threshold".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:predicate:4036edfa".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 5),
                 owner: Some(SymbolId("src/lib.rs::pricing::discounted_total".to_string())),
@@ -2200,6 +2201,7 @@ pub(crate) mod tests {
                 normalized_discriminator: "amount==discount_threshold".to_string(),
             }),
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation::new(file, 2, 5),
                 owner: None,

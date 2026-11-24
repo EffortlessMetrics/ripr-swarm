@@ -43,6 +43,7 @@ pub(crate) use facts::cfg_predicates::{attribute_is_plain_test_gate, outer_attri
 // refreshes; one-shot commands leave this off.
 pub(crate) use facts::enable_process_fact_memo;
 pub(crate) use pipeline::capture_disclosures;
+pub(crate) use pipeline::is_excluded_from_diff_and_workspace_index;
 pub(crate) use pipeline::is_rust_excluded_by_config_detail;
 pub(crate) use pipeline::names_parsed_file_limitation;
 pub(crate) use pipeline::{
@@ -114,12 +115,12 @@ pub use diff::records::{
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
     artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head,
-    base_is_checked_out_head_with_parent, default_base_unresolved_message, is_shallow_repository,
-    load_diff, load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
-    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
-    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
-    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
+    base_is_checked_out_head_with_parent, default_base_unresolved_message, git_operation_advisory,
+    is_shallow_repository, load_diff, load_diff_core,
+    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
+    load_worktree_diff, load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
+    parse_unified_diff, probe_head_ref_state, probe_working_tree_tracked_changes_within,
+    resolve_base_commit, resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
     untrack_artifacts_command, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
@@ -154,6 +155,7 @@ pub(crate) use language::{
 };
 #[cfg(feature = "lang-typescript")]
 pub(crate) use probes::normalize_expression;
+pub(crate) use probes::{before_is_whole_line_over_condition, old_condition_of_whole_line};
 pub(crate) use probes::{
     fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
 };
@@ -204,14 +206,17 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_seam_at_with_config, inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_with_optional_prepared,
     inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
-    inventory_seams_at_with_config, inventory_stub_choices, locate_seam_file_at_with_config,
-    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
-    scoped_file_seams, seam_kind_for_probe_family,
-    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
+    inventory_repair_seams_report, inventory_seams_at_with_config, inventory_stub_choices,
+    locate_seam_file_at_with_config, prepare_diff_scoped_classified_workspace,
+    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
+    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
+    workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 #[cfg(test)]
-pub(crate) use seam_inventory::{SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES};
+pub(crate) use seam_inventory::{
+    SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES, WORKSPACE_SEAMS_CLASSIFIED,
+};
 pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator, match_arm_seam_result};
 pub(crate) use syntax::fn_signature::{
@@ -681,9 +686,34 @@ pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead>
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
-/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
+/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8, and
+/// that a literal Unix backslash is spelled `%5C` (#15908): it is a file-name
+/// byte there, so folding it to `/` gave `src/a\b.rs` the path and gap id of
+/// `src/a/b.rs`. On Windows a backslash is a separator and renders as `/`.
 pub(crate) fn stable_path_text(path: &Path) -> String {
+    stable_source_path_text(path)
+}
+
+/// Reader-facing slash spelling of a path: [`stable_path_text`] with every
+/// backslash shown as `/` on every host, so prose and reports about a path
+/// that was recorded with Windows separators read the same everywhere. It is
+/// for prose only and never an identity or a path in a machine artifact: on
+/// Unix it shows `src/a\b.rs` and `src/a/b.rs` alike.
+pub(crate) fn stable_display_path_text(path: &Path) -> String {
     stable_native_path_text(path).replace('\\', "/")
+}
+
+/// [`stable_path_text`] with the separator rule taken from `windows` instead
+/// of the host, for renderers whose platform flag makes Windows behavior
+/// testable on every host. With `windows` set a backslash is a separator and
+/// renders as `/`; otherwise this is the host encoder (on Unix a literal
+/// backslash stays `%5C`, #15908).
+pub(crate) fn stable_path_text_on(path: &Path, windows: bool) -> String {
+    if windows {
+        stable_display_path_text(path)
+    } else {
+        stable_path_text(path)
+    }
 }
 
 /// Retain native source identity before display normalization. On Unix a
@@ -844,8 +874,11 @@ fn render_finding_location_text(
                 .any(|component| matches!(component, Component::ParentDir))
         });
     match relative {
-        Some(relative) => format!("{relative_prefix}{}", stable_path_text(relative)),
-        None => stable_path_text(&file),
+        Some(relative) => format!(
+            "{relative_prefix}{}",
+            stable_path_text_on(relative, windows)
+        ),
+        None => stable_path_text_on(&file, windows),
     }
 }
 
@@ -1680,10 +1713,16 @@ mod tests {
             stable_source_path_text(Path::new(r"src/odd\receipt.rs")),
             stable_source_path_text(Path::new("src/odd/receipt.rs"))
         );
+        // #15908: the identity encoder is the same lossless encoder, so a
+        // finding in `src/odd\receipt.rs` never borrows the path and gap id
+        // of `src/odd/receipt.rs`.
         assert_eq!(
             stable_path_text(Path::new(r"src/odd\receipt.rs")),
-            stable_path_text(Path::new("src/odd/receipt.rs")),
-            "display normalization still collapses backslashes for stable_path_text"
+            "src/odd%5Creceipt.rs"
+        );
+        assert_ne!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_path_text(Path::new("src/odd/receipt.rs"))
         );
     }
 
@@ -1908,7 +1947,13 @@ mod tests {
                 Path::new(r"\\?\F:\repo\src\main.rs"),
                 false
             ),
-            r"//?/F:/repo/src/main.rs"
+            // On Unix the backslashes are file-name bytes, spelled `%5C`
+            // (#15908); a Windows host still reads them as separators.
+            if cfg!(unix) {
+                r"%5C%5C?%5CF:%5Crepo%5Csrc%5Cmain.rs"
+            } else {
+                r"//?/F:/repo/src/main.rs"
+            }
         );
     }
 

@@ -96,6 +96,7 @@ pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {
     role_composition::compose_index_source_roles(index, root);
 }
 mod quickcheck_generator;
+mod rebound_assertion_roots;
 pub(crate) use quickcheck_generator::is_generator_subject;
 #[cfg(test)]
 mod quickcheck_generator_tests;
@@ -192,6 +193,9 @@ pub fn build_index_with_test_harnesses(
     index_phase("index_test_helper_credit", || {
         test_helpers::credit_same_file_assertion_helpers(&mut index);
         test_helpers::credit_same_file_assertion_macros(&mut index);
+        // #10150: after crediting, so a helper's or macro's qualified
+        // assertion faces the same manifest check as a written one.
+        rebound_assertion_roots::mark_rebound_root_assertions_unknown(&mut index);
         Ok(())
     })?;
     index.finalize()?;
@@ -572,6 +576,9 @@ fn post_process_cached_index(
     index_phase("index_test_helper_credit", || {
         test_helpers::credit_same_file_assertion_helpers(&mut cached.index);
         test_helpers::credit_same_file_assertion_macros(&mut cached.index);
+        // #10150: after crediting, so a helper's or macro's qualified
+        // assertion faces the same manifest check as a written one.
+        rebound_assertion_roots::mark_rebound_root_assertions_unknown(&mut cached.index);
         Ok(())
     })?;
     cached.index.finalize()?;

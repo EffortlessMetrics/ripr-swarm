@@ -111,7 +111,7 @@ fn scan_local_operand_parameter_index(
 /// `a == 0 .. else if a == N` chain compares a different literal, so
 /// without this every arm was a fresh memo key and a full body scan
 /// (#15189); a `Some(17)` literal pattern is also no alias.
-pub(super) fn is_numeric_literal(operand: &str) -> bool {
+pub(in crate::analysis) fn is_numeric_literal(operand: &str) -> bool {
     let operand = operand.trim();
     operand
         .strip_prefix('-')

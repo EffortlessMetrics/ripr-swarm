@@ -66,11 +66,14 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
     Ok(())
 }
 
+mod glob_prelude_macros;
 mod nested_json_pass_through;
 mod shared_macro_scan;
 mod shared_target_context;
 mod standalone_proptest_wrapper;
+mod standard_pin_pass_through;
 mod standard_wrapper_disclosure;
+mod tokio_select_pass_through;
 mod tuple_projection;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
@@ -461,6 +464,7 @@ fn module_edge(
 
 fn return_probe(owner: &FunctionSummary, expression: &str) -> Probe {
     Probe {
+        before_condition: None,
         id: ProbeId("probe".to_string()),
         location: SourceLocation::new(owner.file.clone(), owner.start_line + 1, 1),
         owner: Some(SymbolId(owner.id.0.clone())),
@@ -3741,6 +3745,11 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
         // An import in a function body or a sibling module binds nothing here.
         "mod a { use my_macros::skip_body as test; }",
         "fn helper() { use my_macros::skip_body as test; }",
+        // A glob cannot rebind `test` or `assert_eq` silently: rustc rejects a
+        // name both a glob and the prelude supply (E0659, #16060). The std
+        // prelude glob brings the standard items themselves.
+        "use skipper::*;",
+        "use std::prelude::v1::*;",
     ] {
         let tests = format!(
             "use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
@@ -3754,10 +3763,6 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
         "use skipper::test;",
         "use skipper::{serial as test, other};",
         "use std::prelude::v1::test;",
-        // A glob of a crate outside the workspace may bring one, and so may
-        // a prelude glob of std.
-        "use skipper::*;",
-        "use std::prelude::v1::*;",
         "extern crate skipper as test;",
     ] {
         let tests = format!(
@@ -3796,7 +3801,8 @@ fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
     // `super::*` reaches the enclosing module's private imports.
     for (outer, admitted) in [
         ("use skipper::serial as test;", false),
-        ("use skipper::*;", false),
+        // A glob cannot rebind `test` or `assert_eq` (E0659, #16060).
+        ("use skipper::*;", true),
         ("use skipper::serial;", true),
     ] {
         let tests = format!(
@@ -5457,7 +5463,6 @@ fn owner_pin_requires_unambiguous_standard_assert_eq() {
             "use other::ignore as assert_eq;",
             "assert_eq!(weight(4), 12);",
         ),
-        ("use other::*;", "assert_eq!(weight(4), 12);"),
         (
             "#[macro_use] extern crate other;",
             "assert_eq!(weight(4), 12);",
@@ -5466,6 +5471,11 @@ fn owner_pin_requires_unambiguous_standard_assert_eq() {
         let tests = format!("{prelude}\nuse demo::weight;\n#[test]\nfn weighs() {{ {body} }}\n");
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
+    // A glob cannot rebind a bare `assert_eq!`: rustc rejects a name both a
+    // glob and the macro prelude supply (E0659, #16060).
+    let tests =
+        "use other::*;\nuse demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    assert_eq!(weight_admitted(tests).len(), 1);
 }
 
 #[test]
@@ -5482,7 +5492,6 @@ fn owner_pin_macro_ambiguity_in_other_files_and_run_memo() {
     for other in [
         "macro_rules! assert_eq { ($a:expr, $b:expr) => {} }",
         "#[macro_use] extern crate other;",
-        "use other::{nested::*};",
         "make!(assert_eq);",
     ] {
         let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests), ("src/other.rs", other)]);
@@ -5491,6 +5500,14 @@ fn owner_pin_macro_ambiguity_in_other_files_and_run_memo() {
         let Some(pin) = pin else { return };
         assert!(admitted_texts(&index, &pin).is_empty(), "{other}");
     }
+    // A glob in another file cannot rebind a bare `assert_eq!` (#16060).
+    let globbed = index(&[
+        (LIB, WEIGHT_LIB),
+        (TESTS, tests),
+        ("src/other.rs", "use other::{nested::*};"),
+    ]);
+    let pin = establish(&globbed, "weight", "x * 3");
+    assert!(pin.is_some_and(|pin| admitted_texts(&globbed, &pin).len() == 1));
     let tests = tests.replace("use demo::weight;", "use demo::*;\n// macro_rules! assert_eq; macro_use\nconst NOTE: &str = \"assert_eq macro_use\";\nuse std::fs::write;\nmacro_rules! helper { () => { assert_eq!(1, 1); }; }");
     let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
     let Some(pin) = establish(&index, "weight", "x * 3") else {
@@ -6103,11 +6120,19 @@ fn a_withheld_crate_roots_private_glob_is_routed_by_root() {
         &Default::default()
     ));
     assert!(withheld.trusted.is_empty() && !withheld.any_name);
+    // A glob cannot rebind a core prelude macro (#16060), so it routes the
+    // names it can bind, `vec` among them, and not `assert_eq`.
     assert!(
         withheld
             .by_root
             .get(root)
-            .is_some_and(|names| names.contains("assert_eq"))
+            .is_some_and(|names| !names.contains("assert_eq"))
+    );
+    assert!(
+        withheld
+            .by_root
+            .get(root)
+            .is_some_and(|names| names.contains("vec"))
     );
     // A glob may shadow any name, so a test file's local empty macros stay
     // ambiguous in named mode, as the full scan's empty-macro check is not
@@ -6130,11 +6155,11 @@ fn a_withheld_unparsable_sibling_disables_crate_root_routing() {
         withheld
             .by_root
             .get(root)
-            .is_some_and(|names| names.contains("assert_eq"))
+            .is_some_and(|names| names.contains("vec"))
     );
     withheld.disable_crate_root_routing();
     assert!(withheld.by_root.is_empty());
-    assert!(withheld.trusted.contains("assert_eq"));
+    assert!(withheld.trusted.contains("vec"));
 }
 
 #[test]
@@ -6149,13 +6174,13 @@ fn a_withheld_first_glob_cannot_certify_field_macro_safety() {
         &Default::default(),
     ));
     assert!(matches!(
-        withheld.sites.get("assert_eq").map(|(_, site)| &site.kind),
+        withheld.sites.get("vec").map(|(_, site)| &site.kind),
         Some(MacroBindingKind::ForeignGlob(_))
     ));
     let syntax = OwnerPinSyntax::default().with_withheld(withheld);
     assert!(
         syntax
-            .field_blocking_macro_site(index.tests().at(0), 3, "assert_eq", &index)
+            .field_blocking_macro_site(index.tests().at(0), 3, "vec", &index)
             .is_some()
     );
 }
@@ -6826,6 +6851,8 @@ fn a_private_import_confined_to_an_inline_module_refuses_only_tests_inside_it() 
         "mod tests { use proptest::prelude::*; }".to_string(),
         "fn helper() { use similar::assert_eq; }".to_string(),
         "mod a { mod tests { use other::assert_eq as assert_eq; } }".to_string(),
+        // A glob cannot rebind a bare `assert_eq!` wherever it reaches (#16060).
+        "mod tests { use proptest::prelude::*; mod child; }".to_string(),
     ] {
         assert_eq!(
             weight_refusal(outside, &[("src/other.rs", &other)]),
@@ -6840,7 +6867,6 @@ fn a_private_import_confined_to_an_inline_module_refuses_only_tests_inside_it() 
         "mod tests { pub use similar::assert_eq; }".to_string(),
         "mod tests { pub(crate) use similar::assert_eq; }".to_string(),
         "mod tests { use similar::assert_eq; mod child; }".to_string(),
-        "mod tests { use proptest::prelude::*; mod child; }".to_string(),
     ] {
         assert!(
             matches!(
@@ -7354,7 +7380,7 @@ fn each_refusal_names_the_gate_that_failed() {
 }
 
 #[test]
-fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
+fn a_for_loop_over_a_non_empty_array_runs_its_assertion() {
     let refusal = |body: &str| {
         weight_refusal(
             &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
@@ -7375,6 +7401,21 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
         format!("for (x, want) in [(&[4], vec![12]), (&[], vec![])] {{ {pin} }}"),
         format!("for (x, want) in [(4, Ok(12)), (0, Err(Kind::Empty))] {{ {pin} }}"),
         format!("for (x, want) in [(4, 12)] {{ {pin} if x > 9 {{ break; }} }}"),
+        // A non-empty array runs its body whatever its rows hold; whether a
+        // row's value proves anything is the oracle rules' question
+        // (`opaque_row_names`).
+        format!("for (x, want) in [(4, EXPECTED)] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Twelve)] {{ {pin} }}"),
+        format!("for (x, want) in &[(FOUR, (12))] {{ {pin} }}"),
+        format!("let four = 4;\nfor (x, want) in [(four, 12), (5, 15)] {{ {pin} }}"),
+        format!("let cases = [(FOUR, 12)];\nfor (x, want) in cases {{ {pin} }}"),
+        format!("for (x, want) in [(&[4][..], 12), (&[4, 4][..], 12)] {{ {pin} }}"),
+        // A row that calls code runs before the loop, as a call in a
+        // statement before the assertion does; a panic fails the test.
+        format!("for (x, want) in [(four(), 12), (5, 15)] {{ {pin} }}"),
+        format!("for (x, want) in [(4, weight(4))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, Wrap::of(12))] {{ {pin} }}"),
+        format!("for (x, want) in [({{ 4 }}, 12), (FOUR + 1, 15), (ROWS[0], 12)] {{ {pin} }}"),
     ] {
         assert_eq!(refusal(&admitted), None, "{admitted}");
     }
@@ -7385,19 +7426,21 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
         format!("for (x, want) in [(4, 12); 0] {{ {pin} }}"),
         format!("for (x, want) in rows() {{ {pin} }}"),
         format!("for x in 0..4 {{ let want = x * 3; {pin} }}"),
-        // A row could hold the owner's own output.
-        format!("for (x, want) in [(4, weight(4))] {{ {pin} }}"),
-        format!("for (x, want) in [(4, EXPECTED)] {{ {pin} }}"),
-        format!("for (x, want) in [(4, Wrap::of(12))] {{ {pin} }}"),
-        format!("for (x, want) in [(4, Expected(4))] {{ {pin} }}"),
-        format!("for (x, want) in [(4, Twelve)] {{ {pin} }}"),
+        format!("for (x, want) in vec![(4, 12)] {{ {pin} }}"),
+        format!("for (x, want) in [(4, 12)].iter().skip(1) {{ {pin} }}"),
+        format!("for (x, want) in [] {{ {pin} }}"),
+        // A row that exits the process ends the test before the loop starts.
+        format!("for (x, want) in [(4, std::process::exit(0))] {{ {pin} }}"),
+        format!("let rows = [(4, std::process::exit(0))];\nfor (x, want) in rows {{ {pin} }}"),
+        format!("for (x, want) in [(4, process::abort())] {{ {pin} }}"),
+        format!("for (x, want) in [(4, exit(1))] {{ {pin} }}"),
+        format!("for (x, want) in [(4, loop {{}})] {{ {pin} }}"),
         // A `cfg` may remove every row.
         format!("for (x, want) in [#[cfg(any())] (4, 0)] {{ {pin} }}"),
         format!(
             "let cases: [(u32, u32); 0] = [#[cfg(any())] (4, 0)];\nfor (x, want) in cases {{ {pin} }}"
         ),
         format!("for (x, want) in [(4, #[cfg(any())] 0)] {{ {pin} }}"),
-        format!("for (x, want) in [(4, vec![weight(4)])] {{ {pin} }}"),
         // The bound rows may change or are not the ones iterated.
         format!("let mut cases = [(4, 12)];\ncases[0].1 = 0;\nfor (x, want) in cases {{ {pin} }}"),
         format!(
@@ -7421,6 +7464,13 @@ fn a_for_loop_over_a_constant_row_table_runs_its_assertion() {
     );
     // Only the loop body is admitted; the iterable is not on its path.
     assert!(refusal("for _ in [assert_eq!(weight(4), 12)] {}").is_some());
+    // A row that leaves the loop before the body still skips it.
+    assert!(
+        refusal(&format!(
+            "for (x, want) in [(4, 12), (return, 0)] {{ {pin} }}"
+        ))
+        .is_some()
+    );
 }
 
 #[test]
@@ -7512,15 +7562,27 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
     };
     let shadowing = "macro_rules! assert_eq { ($($tokens:tt)*) => {} }\n";
     for (files, saturated, assert_eq_ambiguous) in [
-        // A foreign glob saturates the set before the defining file is read.
+        // An unindexed `#[macro_use]` crate saturates the set before the
+        // defining file is read.
         (
             vec![
-                ("src/a.rs", "use rayon::prelude::*;\n"),
+                ("src/a.rs", "#[macro_use]\nextern crate rayon;\n"),
                 ("src/b.rs", shadowing),
             ],
             true,
             true,
         ),
+        // A foreign glob leaves the core prelude names to later files
+        // (#16060), so the definition still counts.
+        (
+            vec![
+                ("src/a.rs", "use rayon::prelude::*;\n"),
+                ("src/b.rs", shadowing),
+            ],
+            false,
+            true,
+        ),
+        (vec![("src/a.rs", "use rayon::prelude::*;\n")], false, false),
         // Workspace-owned globs do not saturate it, so the later file counts.
         (
             vec![
@@ -7594,15 +7656,15 @@ fn convergence_index() -> RustIndex {
         ),
         (
             LIB,
-            "macro_rules! matches { ($($tokens:tt)*) => {} }\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n",
+            "macro_rules! vec { ($($tokens:tt)*) => {} }\npub fn gate(value: u32) -> bool {\n    10 <= value\n}\n",
         ),
         (
             TESTS,
-            "use demo::gate;\n\n#[test]\nfn pins() {\n    assert_eq!(gate(10), true);\n}\n",
+            "use demo::gate;\n\n#[test]\nfn pins() {\n    let _ = vec![0u8];\n    assert_eq!(gate(10), true);\n}\n",
         ),
         (
             CONVERGENCE_OTHER_TESTS,
-            "use demo::gate;\n\n#[test]\nfn pins_elsewhere() {\n    assert_eq!(gate(11), true);\n}\n",
+            "use demo::gate;\n\n#[test]\nfn pins_elsewhere() {\n    let _ = vec![0u8];\n    assert_eq!(gate(11), true);\n}\n",
         ),
     ])
 }
@@ -7636,12 +7698,12 @@ fn a_refusal_site_lookup_matches_the_replaced_scan_for_every_name_and_root() {
         }
     }
     // A rebinding outranks a may-rebind site wherever each sits: the
-    // crate-local `matches` definition in src/lib.rs beats the earlier
+    // crate-local `vec` definition in src/lib.rs beats the earlier
     // foreign glob for a test with no recognized root, while a test root
     // sees only the glob.
     let site = |test_root: Option<&Path>| {
         syntax
-            .workspace_macro_site("matches", test_root, &index)
+            .workspace_macro_site("vec", test_root, &index)
             .map(|(path, site)| (path, site.kind))
     };
     assert_eq!(
@@ -7729,7 +7791,7 @@ fn refusal_site_lookups_pay_at_most_two_full_index_passes() {
             matches!(
                 &refusal,
                 Some(AssertionRefusal::MacroBinding { name, site: Some((path, _)), .. })
-                    if name == "assert_eq" && path.as_path() == Path::new(CONVERGENCE_GLOB)
+                    if name == "vec" && path.as_path() == Path::new(CONVERGENCE_GLOB)
             ),
             "{tests_path}: {refusal:?}"
         );
@@ -9387,9 +9449,10 @@ fn a_feature_gated_test_is_refused_for_its_attribute_not_a_macro_rebinding() {
     let plain = format!("{prelude}#[test]\n{body}");
     assert_eq!(weight_refusal(&plain, &[]), None);
     assert_eq!(weight_refusal_nth(&plain, &[], None, 1), None);
-    // Fail closed: a glob of a foreign crate still refuses the ungated test,
-    // for the `assert_eq!` oracle as well as the first assertion.
-    let foreign = format!("use rayon::prelude::*;\n{plain}");
+    // Fail closed: macros imported from code ripr did not index still refuse
+    // the ungated test, for the `assert_eq!` oracle as well as the first
+    // assertion.
+    let foreign = format!("#[macro_use]\nextern crate other;\n{plain}");
     for nth in 0..2 {
         assert!(
             matches!(
@@ -9832,10 +9895,37 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
         // glob keeps its dedicated rule.
         ("mod global;\npub use global::prelude::*;\n", false),
         ("mod global;\npub use global::{self, *};\n", false),
-        // The standard roots keep their dedicated rules.
-        ("mod std;\nuse std::*;\n", false),
+        // #14116: a module declared under a standard crate's name shadows the
+        // extern prelude, so the glob reads the local module like any other.
+        ("mod std;\nuse std::*;\n", true),
+        ("mod core;\nuse core::*;\n", true),
+        ("mod alloc;\npub use alloc::*;\n", true),
+        // Every other standard-root spelling keeps the standard-root rule,
+        // which this widest context (no verified standard crate) refuses.
+        ("use core::*;\n", false),
+        ("mod core {}\nuse core::*;\n", false),
+        ("mod core;\nuse ::core::*;\n", false),
+        ("mod core;\nuse core::prelude::*;\n", false),
+        ("mod core;\nuse core::{self, *};\n", false),
+        ("mod core;\nextern crate core;\nuse core::*;\n", false),
+        ("mod core;\nuse dep::core;\nuse core::*;\n", false),
+        ("#[path = \"x.rs\"]\nmod core;\nuse core::*;\n", false),
+        ("mod outer { mod core; use core::*; }\n", false),
+        // A gated declaration can be compiled out, leaving the glob to read
+        // whatever holds the standard name (a renamed dependency included).
+        (
+            "#[cfg(feature = \"local\")]\nmod core;\nuse core::*;\n",
+            false,
+        ),
+        (
+            "#[cfg_attr(docsrs, cfg(feature = \"local\"))]\nmod core;\nuse core::*;\n",
+            false,
+        ),
+        // Other names keep the #14031 reading under a gate.
+        ("#[cfg(test)]\nmod global;\nuse global::*;\n", true),
     ] {
-        let sites = sites_in_widest_context(source, &["assert_eq"]);
+        // `vec`: a foreign glob cannot rebind a core prelude name (#16060).
+        let sites = sites_in_widest_context(source, &["vec"]);
         let candidates = stored_candidates(source)?;
         assert_eq!(
             sites.is_empty(),
@@ -9843,7 +9933,7 @@ fn a_root_glob_of_a_module_the_file_declares_is_not_a_foreign_glob() -> Result<(
             "scan {source:?} reported {sites:?}"
         );
         assert_eq!(
-            candidates.may_bind("assert_eq"),
+            candidates.may_bind("vec"),
             !local,
             "candidates {source:?} gave {candidates:?}"
         );
@@ -11950,12 +12040,18 @@ fn a_path_that_may_leave_the_owners_crate_is_not_a_pin() {
         "assert_eq!(crate::fast::weight(4), 12);",
     );
     assert!(path_admitted(&lib, "x * 3", None).is_empty());
-    // A foreign glob in the owner's crate stays refused by the shared
-    // foreign-glob gate.
+    // A foreign glob in the owner's crate cannot shadow the crate's own
+    // `weight` or rebind a bare `assert_eq!` (#16060), so the path still
+    // pins. A macro import from code ripr did not index refuses it.
     for prelude in ["use fastweight::*;\n\n", "#[cfg(test)]\nuse heavy::*;\n\n"] {
         let lib = unit_tests(prelude, "assert_eq!(crate::weight(4), 12);");
-        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{prelude}");
+        assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{prelude}");
     }
+    let lib = unit_tests(
+        "#[macro_use]\nextern crate heavy;\n\n",
+        "assert_eq!(crate::weight(4), 12);",
+    );
+    assert!(path_admitted(&lib, "x * 3", None).is_empty());
     // An import of another `weight` in another module cannot capture a
     // path to the owner's own module, so `crate::weight` still pins and
     // `crate::fast::weight` does not.
@@ -12006,9 +12102,9 @@ fn the_owners_library_name_roots_a_path_from_another_crate() -> Result<(), Strin
     };
     let call = "#[test]\nfn weighs() {\n    assert_eq!(demo_lib::weight(4), 12);\n}\n";
     let pinned = admitted(lib, call);
-    // Another crate name, a rename to the library's name, and a foreign
-    // glob re-exported from the library all refuse; a private foreign glob
-    // in the library is out of another crate's reach.
+    // Another crate name and a rename to the library's name refuse. A
+    // foreign glob in the library, re-exported or private, cannot shadow its
+    // own `weight` or rebind a bare `assert_eq!` (#16060).
     let other = admitted(
         lib,
         "#[test]\nfn weighs() {\n    assert_eq!(demo::weight(4), 12);\n}\n",
@@ -12020,7 +12116,7 @@ fn the_owners_library_name_roots_a_path_from_another_crate() -> Result<(), Strin
     assert!(pinned, "`demo_lib::weight(..)` must pin the owner");
     assert!(!other);
     assert!(!renamed);
-    assert!(!reexport);
+    assert!(reexport);
     assert!(private);
     Ok(())
 }
@@ -14326,42 +14422,44 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     ] {
         assert!(rebound(refusal_beside(sibling)), "{sibling}");
     }
-    // Still not credited: any glob that is not rooted at the standard
-    // crates, and a standard root a local module or alias takes. (A
-    // workspace package's own glob is scanned as workspace-owned code.)
+    // Credited too: a glob that is not rooted at the standard crates, or
+    // whose standard root a local module or alias takes. Whatever it brings,
+    // rustc rejects a bare `assert_eq!` that both a glob and the macro
+    // prelude supply (E0659, #16060).
     for sibling in [
         "use rayon::prelude::*;\n",
         "use stdx::prelude::*;\n",
         "use ::rayon::prelude::*;\n",
         "mod core {}\nuse core::simd::prelude::*;\n",
+        "use other as core;\nuse core::simd::prelude::*;\n",
+        "mod lib {\n    mod core {\n        mod std {}\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        use other as std;\n        pub use std::*;\n    }\n}\n",
+        "mod lib {\n    mod core {\n        mod core {}\n        pub use core::*;\n    }\n}\n",
+        "use other::std;\nuse std::io::prelude::*;\n",
+        "use other::std::{self};\nuse std::io::prelude::*;\n",
+        "use alloc::vec::*;\n",
+        "mod lib {\n    mod core {\n        emit!();\n        pub use core::*;\n    }\n}\n",
+    ] {
+        assert_eq!(refusal_beside(sibling), None, "{sibling}");
+    }
+    // Still not credited: a standard root an alias takes.
+    for sibling in [
         "extern crate other as std;\nuse std::io::prelude::*;\n",
         "extern crate other as std;\n",
         // `alloc` has no manifest proof, so its alias stays foreign too.
         "extern crate alloc as std;\n",
         // `#[macro_use]` keeps its own refusal whatever the alias names.
         "#[macro_use]\nextern crate core as std;\n",
-        "use other as core;\nuse core::simd::prelude::*;\n",
-        // The module-local admission still refuses a binding in the glob's own
-        // module, and an item-position macro that may emit one.
-        "mod lib {\n    mod core {\n        mod std {}\n        pub use std::*;\n    }\n}\n",
-        "mod lib {\n    mod core {\n        use other as std;\n        pub use std::*;\n    }\n}\n",
-        "mod lib {\n    mod core {\n        mod core {}\n        pub use core::*;\n    }\n}\n",
-        "mod lib {\n    mod core {\n        emit!();\n        pub use core::*;\n    }\n}\n",
-        // A plain import that binds the root name, by path or by `{self}`,
-        // takes it over for the module.
-        "use other::std;\nuse std::io::prelude::*;\n",
-        "use other::std::{self};\nuse std::io::prelude::*;\n",
-        // `alloc` has no manifest proof, so it stays a foreign glob.
-        "use alloc::vec::*;\n",
     ] {
         assert!(rebound(refusal_beside(sibling)), "{sibling}");
     }
-    // A Cargo rename of the root, and a crate-root alias in a file the glob
-    // is not in, both rebind it.
-    assert!(rebound(refusal_under(
-        &renamed,
-        "use core::simd::prelude::*;\n"
-    )));
+    // A glob of a Cargo-renamed root is foreign, and still cannot rebind a
+    // bare `assert_eq!` (#16060); a crate-root alias in a file the glob is
+    // not in rebinds it.
+    assert_eq!(
+        refusal_under(&renamed, "use core::simd::prelude::*;\n"),
+        None
+    );
     // A manifest-renamed `core` is foreign, so its alias rebinds `std`.
     assert!(rebound(refusal_under(
         &renamed,
@@ -14418,7 +14516,9 @@ fn prelude_refusal(
     let manifest = format!(
         "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}"
     );
-    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    // `vec!` is a name a glob can bind; a glob cannot rebind the bare
+    // `assert_eq!` (#16060).
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    let _ = vec![0u8];\n    assert_eq!(weight(4), 12);\n}\n";
     let mut files = vec![("Cargo.toml", manifest.as_str())];
     if let Some(lock) = lock {
         files.push(("Cargo.lock", lock));
@@ -15095,8 +15195,20 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
         .map_err(|e| e.to_string())?;
     // The scan is shared per index (#11509), so the control and the primed
     // run each get their own index to pay their own scan.
-    let index = convergence_index();
-    let primed_index = convergence_index();
+    // An unindexed `#[macro_use]` crate saturates the ambiguity pass, which
+    // a foreign glob alone no longer does (#16060).
+    let saturated = || {
+        let mut index = convergence_index();
+        let path = PathBuf::from("src/macro_use.rs");
+        let facts = summarize_file(
+            path.clone(),
+            "#[macro_use]\nextern crate other;\n".to_string(),
+        );
+        index.insert_file_only(path, facts);
+        index
+    };
+    let index = saturated();
+    let primed_index = saturated();
     let lookup_all = |syntax: &OwnerPinSyntax, index: &RustIndex| {
         for name in assertion_context_macros() {
             for test_root in [None, Some(Path::new(TESTS))] {
@@ -15179,9 +15291,12 @@ fn the_matches_site_scan_skips_ruled_out_files_and_is_shared_per_index() {
     ];
     let mut index = index(&files);
     // A file with no stored candidates (as a lexical fallback leaves it)
-    // must still be scanned: its glob import may bind every name.
+    // must still be scanned: its `#[macro_use]` may bind every name.
     let unparsed = PathBuf::from("src/unparsed.rs");
-    let mut facts = summarize_file(unparsed.clone(), "use another::*;\n".to_string());
+    let mut facts = summarize_file(
+        unparsed.clone(),
+        "#[macro_use]\nextern crate another;\n".to_string(),
+    );
     facts.macro_candidates = None;
     index.insert_file_only(unparsed.clone(), facts);
     let candidates = |path: &str| {
@@ -15218,12 +15333,19 @@ fn the_matches_site_scan_skips_ruled_out_files_and_is_shared_per_index() {
         .collect();
     let sites = OwnerPinSyntax::matches_binding_sites(&index).to_vec();
     assert_eq!(sites, unfiltered, "the prefilter drops no site");
-    for file in ["src/rebind.rs", "src/glob.rs", "src/unparsed.rs"] {
+    for file in ["src/rebind.rs", "src/unparsed.rs"] {
         assert!(
             sites.iter().any(|(path, _)| path == Path::new(file)),
             "{file} must report a matches site: {sites:?}"
         );
     }
+    // A glob cannot rebind a bare `matches!` (#16060).
+    assert!(
+        !sites
+            .iter()
+            .any(|(path, _)| path == Path::new("src/glob.rs")),
+        "{sites:?}"
+    );
 
     // Shared per index: the memo is the index's, and a second instance
     // reads the same slice instead of scanning again.
@@ -15757,4 +15879,16 @@ fn a_standard_macro_import_by_path_does_not_rebind_it() -> Result<(), String> {
     )?));
     assert_eq!(refusal_under(&alloc_dependency, "use std::vec;")?, None);
     Ok(())
+}
+
+#[test]
+fn the_include_pair_stays_unbounded_in_owner_code() {
+    // The owner-side return scan reads spellings without a binding check
+    // (#14116), so a rebound `include_str!` there could hide a `return`.
+    assert!(!has_unbounded_macro("let n = env!(\"N\"); n.len()"));
+    assert!(has_unbounded_macro("let n = include_str!(\"n\"); n.len()"));
+    assert!(has_unbounded_macro(
+        "let n = include_bytes!(\"n\"); n.len()"
+    ));
+    assert!(assertion_context_macros().contains(&"include_str"));
 }

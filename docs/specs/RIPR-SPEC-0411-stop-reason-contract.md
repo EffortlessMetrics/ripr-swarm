@@ -42,6 +42,11 @@ Heuristic annotations and unknown-class backfills **do not** change
 Python static-limit mappings **may** withhold or move class as their owning
 specs already state.
 
+The `ripr context` packet's `stop_reasons` may additionally carry
+`owner_mutants_skip` for a finding withheld by an owner opt-out. That token is
+the RIPR-SPEC-0450 opt-out reason, not a finding stop reason, and never
+appears in a finding's own `stop_reasons`.
+
 | Wire value | Role | Changes class? | Trigger (current main) | Owning spec |
 | --- | --- | --- | --- | --- |
 | `max_depth_reached` | reserved wire | no | not emitted | RIPR-SPEC-0411 |
@@ -54,7 +59,7 @@ specs already state.
 | `async_boundary_opaque` | heuristic annotation | no | a name segment of the probe expression is `async`, `spawn`, `await` or `asyncio` (strings and comments ignored) | RIPR-SPEC-0411 |
 | `proc_macro_opaque` | heuristic annotation | no | probe expression contains a `name!(` invocation (not `!=`) | RIPR-SPEC-0411 |
 | `no_changed_rust_line` | heuristic annotation | no | changed line has no owning Rust function and is not a compile-time assertion | RIPR-SPEC-0411 |
-| `compile_time_invariant` | compile-time shape | no | changed line is a compile-time assertion (`const_assert!`, etc.), a continuation line of one, or a const that a top-level assertion in the same file names, without an owner function (#12040); or, inside a function, a line of an inline const block holding only an assertion macro, on one line (`const { assert!(N <= 249) };`) or split by rustfmt over several (#14181) | RIPR-SPEC-0411 |
+| `compile_time_invariant` | compile-time shape | no | changed line is a compile-time assertion (`const_assert!`, etc.), a continuation line of one, or a const that a top-level assertion in the same file names, without an owner function (#12040); or, inside a function, a line of an inline const block holding only an assertion macro, on one line (`const { assert!(N <= 249) };`) or split by rustfmt over several (#14181); or a line of one `compile_error!(..)` invocation, bare or under `core::`/`std::`, on one line or split over several, with no code or literal after it on its last line (#15933) | RIPR-SPEC-0411 |
 | `unsafe_obligation` | unsafe obligation | no | `static_unknown` probe labels `unsafe fn` or unchecked-assumption block | RIPR-SPEC-0168 |
 | `transitive_reach_unresolved` | reach limitation | yes | bounded reach walk stops at an unresolved internal edge | RIPR-SPEC-0114 |
 | `macro_reach_unresolved` | reach limitation | yes | reach candidate stops at an unexpanded same-repo macro | RIPR-SPEC-0117 |
@@ -120,6 +125,8 @@ slice does not remove tokens.
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::reserved_wire_stop_reasons_have_no_production_push_sites`
 - `crates/ripr/src/analysis/classify/stop_reason_contract.rs::tests::stop_reason_contract_spec_documents_every_wire_value`
 - `crates/ripr/src/analysis/classify/decision.rs::tests::async_boundary_signals_match_whole_name_segments`
+- `crates/ripr/tests/compile_error_probe_family.rs::a_changed_compile_error_is_one_build_time_finding` (#15933)
+- `crates/ripr/tests/compile_error_probe_family.rs::a_changed_message_line_of_a_split_compile_error_is_build_time` (#15933)
 
 ## Implementation Mapping
 

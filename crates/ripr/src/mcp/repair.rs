@@ -3424,8 +3424,23 @@ pub(super) mod tests {
             .map_err(|error| error.to_string())?
             .display()
             .to_string();
+        // Compare against serialized JSON in its escaped form: a Windows root
+        // (drive letter, backslash separators) serializes with doubled
+        // backslashes, so the raw spelling never occurs in the document text
+        // (#16105). On Windows that made the positive control fail and both
+        // leak checks vacuous.
+        let json_spelling = |text: &str| -> String {
+            let quoted = Value::String(text.to_string()).to_string();
+            quoted
+                .strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+                .unwrap_or(&quoted)
+                .to_string()
+        };
+        let root_json = json_spelling(&root_text);
+        let canonical_json = json_spelling(&canonical_text);
         assert!(
-            receipt.to_string().contains(&root_text),
+            receipt.to_string().contains(&root_json),
             "{} positive control: the on-disk receipt spells the root",
             case.label,
         );
@@ -3435,12 +3450,12 @@ pub(super) mod tests {
             case.label,
         );
         assert!(
-            !document.to_string().contains(&canonical_text),
+            !document.to_string().contains(&canonical_json),
             "{} MCP receipt status leaked the canonical root",
             case.label,
         );
         assert!(
-            !document.to_string().contains(&root_text),
+            !document.to_string().contains(&root_json),
             "{} MCP receipt status leaked the host-local root: {document}",
             case.label,
         );
@@ -3451,15 +3466,36 @@ pub(super) mod tests {
         );
         // Non-path fields survive the projection: the MCP document equals the
         // on-disk receipt after an independent naive rewrite that only
-        // replaces the exact root prefix in strings and keys (`<root>/` with
+        // replaces the exact root prefix in strings and keys (`<root>/`, and
+        // on Windows `<root>\` since `root.join` adds a backslash, with
         // nothing, then a remaining bare `<root>` with `.`).
         let mut fixture_roots = vec![root_text.clone(), canonical_text.clone()];
+        if cfg!(windows) {
+            // The repair-attempt binding records the root with `/` separators
+            // (the bound-root display rule, #4287), so the naive rewrite
+            // matches that spelling too (#16105).
+            let forward: Vec<String> = fixture_roots
+                .iter()
+                .map(|spelling| spelling.replace('\\', "/"))
+                .collect();
+            for spelling in &forward {
+                assert!(
+                    !document.to_string().contains(spelling.as_str()),
+                    "{} MCP receipt status leaked the forward-slash root {spelling}",
+                    case.label,
+                );
+            }
+            fixture_roots.extend(forward);
+        }
         fixture_roots.sort_by_key(|spelling| std::cmp::Reverse(spelling.len()));
         fixture_roots.dedup();
         let naive = |text: &str| -> String {
             let mut text = text.to_string();
             for spelling in &fixture_roots {
                 text = text.replace(&format!("{spelling}/"), "");
+                if cfg!(windows) {
+                    text = text.replace(&format!("{spelling}\\"), "");
+                }
                 text = text.replace(spelling.as_str(), ".");
             }
             text

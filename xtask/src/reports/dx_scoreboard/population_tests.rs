@@ -1402,11 +1402,12 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
         // Only value, status, source and samples moved, except that #12766 moved
         // the total abstention bar (and its title) when the avoidable rate took
         // the 0.2 bar, and again when `[abstain]`-marked spec examples grew the
-        // spec-required share to 0.0452 (0.2 + 0.0452, rounded down);
-        // scoreboards.toml is the source of both.
+        // spec-required share to 0.0452 (0.2 + 0.0452, rounded down), and
+        // again when the avoidable bar moved to 0.28 (0.28 + 39/871, rounded
+        // down to 0.32); scoreboards.toml is the source of both.
         let config_moved = id == "trust.verdict_corpus_abstention";
         if config_moved {
-            assert_eq!(metric["target"].as_f64(), Some(0.24), "{id} target");
+            assert_eq!(metric["target"].as_f64(), Some(0.32), "{id} target");
             assert_eq!(
                 metric["title"],
                 "Hand-checked edits where ripr gives no specific verdict (including abstentions a spec asks for)"
@@ -1661,6 +1662,17 @@ fn operational_baseline_refreshes_only_the_five_rust_rates_with_provenance() -> 
             "verdict-corpus:fixtures/rust-verdict-corpus#avoidable_abstention_rate"
         );
         assert_eq!(avoidable["runner_dependent"], false);
+        // The avoidable bar moved from 0.20 to 0.28 on measured evidence
+        // (RIPR-SPEC-0219, #12766) and only ratchets down from here: it is
+        // lowered when landed slices pass it, never raised to absorb a
+        // regression; see [`AVOIDABLE_ABSTENTION_BAR`].
+        let target = avoidable["target"]
+            .as_f64()
+            .ok_or("avoidable target missing")?;
+        assert!(
+            (target - AVOIDABLE_ABSTENTION_BAR).abs() < 1e-9,
+            "avoidable abstention target {target} differs from the pinned bar {AVOIDABLE_ABSTENTION_BAR}"
+        );
         let samples = avoidable["samples"].as_array().ok_or("samples missing")?;
         assert_eq!(samples.len(), 1);
         let population: Population = serde_json::from_value(samples[0]["population"].clone())
@@ -1698,5 +1710,31 @@ fn avoidable_abstention_population_sums_to_the_report_and_stays_under_the_total(
     assert_eq!(avoidable.1, total.1);
     // The committed corpus has rows a spec example asks to abstain.
     assert!(avoidable.0 < total.0, "{avoidable:?} vs {total:?}");
+    Ok(())
+}
+
+/// The avoidable-abstention bar (RIPR-SPEC-0219, #12766): 0.20 until
+/// 2026-11-22, then 0.28 on measured evidence. It only ratchets down: lowering
+/// it lowers this constant in the same change, and raising it means raising
+/// this constant with a dated reason in this comment, so every move, in either
+/// direction, is a reviewed edit here. Both `scoreboards.toml` and the baseline
+/// copy must equal it.
+const AVOIDABLE_ABSTENTION_BAR: f64 = 0.28;
+
+#[test]
+fn avoidable_abstention_bar_only_ratchets_down() -> Result<(), String> {
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let metric = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "trust.verdict_corpus_avoidable_abstention")
+        .ok_or("trust.verdict_corpus_avoidable_abstention missing from scoreboards.toml")?;
+    assert!(
+        (metric.target - AVOIDABLE_ABSTENTION_BAR).abs() < 1e-9,
+        "avoidable abstention target {} differs from the pinned bar {AVOIDABLE_ABSTENTION_BAR}",
+        metric.target
+    );
     Ok(())
 }

@@ -18,6 +18,7 @@ fn finding(id: &str, class: ExposureClass, line: usize) -> Finding {
         id: id.to_string(),
         canonical_gap: None,
         probe: Probe {
+            before_condition: None,
             id: ProbeId(id.to_string()),
             location: SourceLocation::new("src/lib.rs", line, 1),
             owner: None,

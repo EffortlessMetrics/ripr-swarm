@@ -228,7 +228,7 @@ fn validate_snapshot_path(root: &Path, path: &Path, flag: &str) -> Result<PathBu
 }
 
 fn read_snapshot(path: &Path, label: &str) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read agent receipt {label} snapshot {} failed: {err}",
             output::outcome::display_path(path)

@@ -199,6 +199,7 @@ mod tests {
             probe_family: "test".to_string(),
             changed_expression: "expr".to_string(),
             before: None,
+            before_condition: None,
             after: None,
             expected_sink: None,
             missing_discriminators: Vec::new(),

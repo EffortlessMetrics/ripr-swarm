@@ -45,6 +45,20 @@ fn near_miss_values_name_the_accepted_value() -> Result<(), String> {
             "[perl]\nproducer = \"perl_ripr_facts\"\n",
             "perl.producer `perl_ripr_facts` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perl-ripr-facts`?)",
         ),
+        // One edit from both `perllsp` and `perl-lsp`: the separator decides.
+        (
+            "[perl]\nproducer = \"perl_lsp\"\n",
+            "perl.producer `perl_lsp` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perl-lsp`?)",
+        ),
+        (
+            "[perl]\nproducer = \"Perl LSP\"\n",
+            "perl.producer `Perl LSP` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perl-lsp`?)",
+        ),
+        // No separator typed: the unseparated spelling stays the nearest.
+        (
+            "[perl]\nproducer = \"perlsp\"\n",
+            "perl.producer `perlsp` is not supported; expected perl-ripr-facts, perllsp, or perl-lsp (did you mean `perllsp`?)",
+        ),
         (
             "[severity.seams]\nopaque = \"Off\"\n",
             "severity.seams.opaque `Off` is not supported; expected info, warning, note, or off (did you mean `off`?)",

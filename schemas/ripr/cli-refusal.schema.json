@@ -40,6 +40,7 @@
             "no_current_attempt",
             "attempt_baseline_blocked",
             "unanchored_root",
+            "subdirectory_root",
             "ambiguous_attempts",
             "attempt_ended_without_receipt",
             "attempt_completion_unconfirmed",

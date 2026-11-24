@@ -77,6 +77,8 @@ mod discarded_matches;
 mod doctor_subdirectory_root;
 #[path = "cli_smoke/duplicate_root_refusal.rs"]
 mod duplicate_root_refusal;
+#[path = "cli_smoke/error_next_steps.rs"]
+mod error_next_steps;
 #[path = "cli_smoke/explicit_input_refusals.rs"]
 mod explicit_input_refusals;
 #[path = "cli_smoke/findings_byte_budget.rs"]
@@ -20056,8 +20058,10 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     );
     std::fs::write(root.join("src/lib.rs"), lib)?;
     // Keep the expanded inventory in the baseline so an inventory cap cannot
-    // be erased by current-change supplementation (#6943).
-    commit_repair_fixture(&root, &["-qam", "expanded pilot fixture"])?;
+    // be erased by current-change supplementation (#6943). Amend the root
+    // commit: with a parent, pilot on this clean default branch would follow
+    // check's last-commit rescope (#16082) and supplement the new seams.
+    commit_repair_fixture(&root, &["-q", "--amend", "-am", "expanded pilot fixture"])?;
 
     let pilot = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
@@ -20550,7 +20554,10 @@ assert_eq!(c(11),1); }
 "#;
     std::fs::write(root.join("src/lib.rs"), source)?;
     run_git(&root, &["rm", "tests/pricing.rs"])?;
-    commit_repair_fixture(&root, &["-qam", "strongly gripped fixture"])?;
+    // Amend the root commit so pilot reads no current change: with a parent,
+    // it would follow check's last-commit rescope (#16082) and fold the
+    // changed seams in past the caps.
+    commit_repair_fixture(&root, &["-q", "--amend", "-am", "strongly gripped fixture"])?;
     let output = run_command_with_env(
         env!("CARGO_BIN_EXE_ripr"),
         &root,
@@ -36916,7 +36923,8 @@ fn feedback_export_out_refuses_to_replace_a_special_node() -> Result<(), std::io
 /// the same unvalidated root. A missing path and a file path must both be
 /// refused by the shared root validator, and nothing may be created.
 /// #14624 adds `policy preview-promote`, which wrote its default reports
-/// under the CWD instead of refusing.
+/// under the CWD instead of refusing; #14623 adds `policy operations`,
+/// `policy history` and `policy promote`, which did the same.
 #[test]
 fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let scratch = unique_temp_workspace("mistyped-root");
@@ -36924,7 +36932,7 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let missing = scratch.join("nope").join("deep");
     let file = scratch.join("a-file");
     std::fs::write(&file, "not a directory\n")?;
-    let commands: [(&str, &[&str]); 9] = [
+    let commands: [(&str, &[&str]); 12] = [
         ("reports ci-packet", &["reports", "ci-packet"]),
         ("feedback export", &["feedback", "export"]),
         (
@@ -36949,6 +36957,30 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
                 "python",
                 "--class",
                 "behavioral",
+            ],
+        ),
+        (
+            "policy operations",
+            &[
+                "policy",
+                "operations",
+                "--policy-readiness",
+                "policy-readiness.json",
+            ],
+        ),
+        (
+            "policy history",
+            &["policy", "history", "--current", "policy-operations.json"],
+        ),
+        (
+            "policy promote",
+            &[
+                "policy",
+                "promote",
+                "--to",
+                "visible-only",
+                "--operations",
+                "policy-operations.json",
             ],
         ),
         ("pr-comments plan", &["pr-comments", "plan"]),
@@ -36999,6 +37031,76 @@ fn mistyped_root_is_refused_and_not_created() -> Result<(), std::io::Error> {
     let _ = std::fs::remove_dir_all(&scratch);
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     assert_eq!(file_kept, "not a directory\n");
+    Ok(())
+}
+
+/// #14623: the refusal matrix cannot catch a gate that refuses every root.
+/// With a valid `--root`, `policy operations`, `policy history` and
+/// `policy promote` must still succeed and write their default reports.
+#[test]
+fn policy_report_commands_accept_a_valid_root() -> Result<(), std::io::Error> {
+    let root = unique_temp_workspace("policy-reports-valid-root");
+    std::fs::create_dir_all(&root)?;
+    let root_text = root.display().to_string();
+    // The cases name the same inputs as the refusal matrix. An input a flag
+    // names must exist and hold valid JSON (#15254), or its command writes the
+    // report and then exits 2 for that reason, not for the root.
+    std::fs::create_dir_all(root.join("target/ripr/reports"))?;
+    for input in [
+        "target/ripr/reports/policy-readiness.json",
+        "target/ripr/reports/policy-operations.json",
+    ] {
+        std::fs::write(root.join(input), "{}")?;
+    }
+    let cases: [(&[&str], &str); 3] = [
+        (
+            &[
+                "policy",
+                "operations",
+                "--policy-readiness",
+                "target/ripr/reports/policy-readiness.json",
+            ],
+            "target/ripr/reports/policy-operations.json",
+        ),
+        (
+            &[
+                "policy",
+                "history",
+                "--current",
+                "target/ripr/reports/policy-operations.json",
+            ],
+            "target/ripr/reports/policy-history.json",
+        ),
+        (
+            &[
+                "policy",
+                "promote",
+                "--to",
+                "visible-only",
+                "--operations",
+                "target/ripr/reports/policy-operations.json",
+            ],
+            "target/ripr/reports/policy-promotion-visible-only.json",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (argv, report) in cases {
+        let mut args = argv.to_vec();
+        args.extend(["--root", root_text.as_str()]);
+        let output = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)?;
+        if output.status.code() != Some(0) || !root.join(report).is_file() {
+            failures.push(format!(
+                "{}: exit {:?}, {report} written: {}\nstdout: {}\nstderr: {}",
+                argv.join(" "),
+                output.status.code(),
+                root.join(report).is_file(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }
 

@@ -3,9 +3,4 @@ crates/ripr/src/output/first_pr.rs|failed to resolve current directory: {err}
 crates/ripr/src/output/first_pr.rs|failed to run git diff: {err}
 crates/ripr/src/output/first_pr.rs|failed to run git: {err}
 crates/ripr/src/output/first_pr.rs|failed to serialize first-pr packet: {err}
-crates/ripr/src/output/first_pr.rs|first-pr --check: no-action source kind is unavailable; recompose before relying on the packet
-crates/ripr/src/output/first_pr.rs|first-pr --check: no-action source ledger is unavailable; recompose before relying on the packet
-crates/ripr/src/output/first_pr.rs|first-pr --check: source_currentness_unavailable; this historical no-action packet cannot establish current so
-crates/ripr/src/output/first_pr.rs|first-pr --check: source_currentness_unavailable; this historical no-action packet does not bind its source le
-crates/ripr/src/output/first_pr.rs|first-pr --check: stale_evidence; the no-action source ledger differs from the bytes used to compose the packe
 crates/ripr/src/output/first_pr.rs|git diff failed without stderr

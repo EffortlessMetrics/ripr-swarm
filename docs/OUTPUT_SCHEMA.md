@@ -107,6 +107,7 @@ map is:
 | `ripr check --format missed-txt` | none (plain text) | one `path:line:col: <classification> <probe family>: <expression> -> <missing discriminator>` line per gap; see "missed-txt" below (#13626) |
 | `ripr check --format json-terse` | `schema_version` | `0.2` (the `json` findings with repeated evidence prose coded against an `evidence_legend`; see "json-terse" below) |
 | `ripr context --json` (`context_packet`; versions via top-level `version` key) | `version` | `1.1` |
+| `ripr context` operational refusal (JSON or compact JSON) | `schema_version` | `1.1` |
 | `ripr check --format json` refusal envelope, `analysis_timeout` with input context (RIPR-SPEC-0241 amendment #10796) | `schema_version` | `0.3` |
 | `ripr check --output-dir DIR` manifest | `schema_version` | `ripr-native-diff-output-set-v1` |
 | `ripr check --format sarif` | `version` | `2.1.0` (standard SARIF envelope) |
@@ -181,8 +182,12 @@ records that distinction.
 | `schemas/ripr/rerun.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs` (`TARGETED_RERUN_SCHEMA_VERSION`); targeted rerun report (`ripr rerun --json`) |
 | `schemas/ripr/rerun-refusal.schema.json` | `ripr-targeted-rerun-v1` | `crates/ripr/src/cli/rerun.rs`; the refusal envelope `ripr rerun --json` writes when it cannot produce a targeted rerun report, keyed with that report's version |
 | `schemas/ripr/agent-brief-refusal.schema.json` | `0.2` | `crates/ripr/src/output/agent_brief.rs`; the refusal envelope `ripr agent brief --json` writes when it cannot produce a brief, keyed with the brief's version |
-| `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document and the `agent-seam-packets-json` check format are not covered yet |
+| `schemas/ripr/context.schema.json` | `1.1` | `crates/ripr/src/output/json/context_packet.rs` (`CONTEXT_PACKET_VERSION_CONTRACT`, pinned under the packet's top-level `version` key); the one-finding packet (`ripr context --json`) |
+| `schemas/ripr/agent-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the one-seam packet document (`ripr agent packet --seam-id <id> --json`); the `--gap-ledger` document has its own schema |
+| `schemas/ripr/agent-seam-packets.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the repository-wide packet document (`ripr check --format agent-seam-packets-json`), sharing the packet definitions of `agent-packet.schema.json` |
+| `schemas/ripr/agent-gap-packet.schema.json` | `0.5` | `crates/ripr/src/app.rs` (`AGENT_SEAM_PACKET_SCHEMA_VERSION`); the GapRecord-backed packet document (`ripr agent packet --gap-ledger <path> --gap-id <id> --json`), advisory or blocked |
 | `schemas/ripr/agent-packet-refusal.schema.json` | `0.5` | `crates/ripr/src/app.rs`; the refusal envelope `ripr agent packet --json` writes when it cannot produce a seam packet, keyed with the packet's version |
+| `schemas/ripr/context-refusal.schema.json` | `1.1` | `crates/ripr/src/cli/commands/context.rs` operational refusal, including an unusable root or check artifact |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr-contract/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/muse-plugin-eval.schema.json` | `muse-plugin-eval-v1` | `xtask/src/reports/dx_scoreboard/muse_plugin.rs`; canonical Muse evaluation record with optional structured observations; [contract](verification/muse-plugin-eval.md) |
@@ -717,6 +722,17 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
   Human output prints the same strings. Serving a strongly_gripped seam as
   a scaffold remains `state: ready` / exit 0; the warning is disclosure,
   not a refusal.
+  When the live diff touches a `strongly_gripped` seam, the stub asks the
+  same default `ripr check` what it reads for the changed code there
+  (#15278). If check reads a gap or a limit, `classification` carries
+  check's class (for example `weakly_exposed`) while `grip_class` stays
+  `strongly_gripped`, and the warning becomes `seam <id> is
+  strongly_gripped when ripr reads the whole spot, but `ripr check` reads
+  your changed code there as weak (weakly_exposed): existing tests do not
+  clearly notice the change, so this stub is for that gap`. If check could
+  not run, `classification` is `null` and the warning says ripr could not
+  confirm that existing tests notice the changed code. When check reads the
+  change as exposed, or the diff does not touch the seam, nothing changes.
 - `already_present` — `true` when the placement already holds the identical
   test function ripr would write (a second run for the same seam recomputes
   byte-identical text). A repeated `--write` then reports the stub as already
@@ -1393,6 +1409,10 @@ header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
+When every finding is on removed code, the block also prints a
+`Removed code` list of up to three rows (current-file location, removed code,
+probe kind and what the class says about the old line), then an
+`N more: rerun with --format human-full` row for the rest.
 Each listed hidden finding includes its probe kind and bounded explanatory
 reason alongside location, exposure class, and any currentness label. When
 `--at FILE:LINE --kind FAMILY` is ambiguous, check prints explicit
@@ -1913,11 +1933,14 @@ command's output:
 [`schemas/ripr/agent-brief-refusal.schema.json`](../schemas/ripr/agent-brief-refusal.schema.json)
 and
 [`schemas/ripr/agent-packet-refusal.schema.json`](../schemas/ripr/agent-packet-refusal.schema.json).
-The last three are the diff refusal schema with the command's own version and
-scope and without the fields it never writes (`mode`, and `base` except on
-agent brief), and `crates/ripr/tests/refusal_envelope_schemas.rs` holds them
-to exactly that difference. The `ripr context` refusal has no published schema
-yet.
+The [context operational refusal](../schemas/ripr/context-refusal.schema.json)
+carries `schema_version: "1.1"`, a diff scope, the effective mode and a base
+when one was supplied. An explicitly empty `--root` is echoed as the empty
+string. Both JSON presentations use this schema. A successful
+context packet uses its top-level `version` field. An explicit JSON selector
+miss uses the `cli_refusal` contract described below.
+`crates/ripr/tests/refusal_envelope_schemas.rs` checks each sibling against
+the shared diff refusal definitions and the fields its command accepts.
 
 For `ripr check`, the machine-readable formats also carry their own refusal
 document on stdout instead of zero bytes (#7332), each parseable as its own
@@ -4201,6 +4224,10 @@ the same run's `owner_opt_outs`, for example
 Agent output names the owner, scope and reason in its `stop=` record.
 `explain --from <artifact>` uses the recorded opt-out in both formats.
 Agent explanations and human artifact replay offer no repair for a withheld finding.
+`ripr context` on a withheld finding, on a fresh run or with `--from`, keeps
+the probe, stages and evidence, adds `owner_mutants_skip` to `stop_reasons`
+and returns an empty `recommended_next_step`, so an agent following the
+explanation's `next=` pointer reaches the same stop (#14133).
 
 #### Repo scope owner opt-outs (#14139)
 
@@ -4686,6 +4713,12 @@ Reserved wire values (RIPR-SPEC-0411, #5514): `max_depth_reached`,
 human glosses and next-step guidance, but no production classifier on current
 main pushes them onto a finding. A future spec slice must name the trigger
 before any emitter lands.
+
+The `ripr context` packet's `stop_reasons` may also carry
+`owner_mutants_skip`, the owner opt-out reason (RIPR-SPEC-0450, #14133),
+when the selected finding is withheld by `#[mutants::skip]`. It is not a
+`StopReason` variant and never appears on a `ripr check` finding's
+`stop_reasons`, which states the withholding as `withheld_by`.
 
 `agent_card_refusal_kind` values:
 
@@ -5316,6 +5349,21 @@ ambient configuration; no packet field or schema version changes (#10720).
 }
 ```
 
+The packet has a published schema,
+[`schemas/ripr/context.schema.json`](../schemas/ripr/context.schema.json),
+tested against every finding's packet over a set of committed fixtures that
+reaches every classification
+(`crates/ripr/tests/context_json_schema.rs`). Objects are closed: a field
+added to the packet is added to the schema in the same change. Two shapes are
+worth knowing. The top-level `missing_discriminators[]` entries are the
+`ripr check --json` finding's entries field for field: `value`, `reason` and
+`flow_sink` (`{kind, text, line}` or `null`; #10516). The test compares
+every packet's array with its check finding's. `witness.missing_discriminators[]`
+entries are the full fact, whose `flow_sink` also names its `owner` and which
+adds `shape`. `flow_sink` is optional in the schema only so packets written
+before #10516 still conform; this additive field kept packet version `1.1`.
+And `witness` may be `null` only when `classification` is `exposed`.
+
 The context packet contract versions through the top-level `version` key, not
 `schema_version` (#5081). Producers pin the live value in
 `CONTEXT_PACKET_VERSION_CONTRACT`
@@ -5362,6 +5410,28 @@ rejected. Unknown witness properties are accepted and ignored by the typed
 reader, so typed reserialization does not preserve those properties. Consumers
 that need to forward unknown properties must retain the complete JSON value.
 `witness.confidence.value` is rendered at the contract's two-decimal precision, matching SARIF `properties.confidence` and the finding `confidence` (#10717).
+`witness.before_condition` (#15420, additive, optional) is the old line's
+`if`/`while` condition for a Rust predicate whose `before` is the whole old
+line while `after` is only the new condition. That pairing happens when the
+same line also changed outside the condition
+(`if total >= 100 { total - 10 } else { total }` to
+`if total > 200 { total - 25 } else { total }`): `before` stays the whole old
+line, `before_condition` is `total >= 100` and `after` is `total > 200`. It is
+display evidence at the granularity of `after`; `before` is unchanged. The
+probe producer reads it from the old and new lines together, and renderers
+only carry it. The field is absent for every other language, when `before` is
+already the old condition, and when the pairing is not established: a second
+`if`/`while` head anywhere on either line (also one nested in a call
+argument), an `if let` or `while let`, a match guard, a block expression
+inside the condition, a comparison or boolean operator elsewhere on the line,
+a changed predicate that is not the new line's head condition (a comparison
+the branch body gained while the guard stayed), an old condition equal to
+`after` (only the branch bodies changed), or an old condition that does not
+start with the identifier `after` starts with. MCP `ripr_get_gap` and `ripr_prepare_repair` carry the same
+value as `changed_behavior.before_condition` (present only when read), and
+the MCP gap brief's `changed:` line pairs it with `after`. The editor hover
+prints it as `old condition`, and human `ripr explain` prints an
+`old condition:` row under `before:`.
 Renderers must not infer evidence from paths, lines, classes, or prose.
 `probe.owner_signature` (#7796) carries the changed
 function's observed call shape — the same producer-owned signature `ripr
@@ -17723,9 +17793,21 @@ suggested test command, a non-empty edit surface and the top-level `next`
 block. `crates/ripr/tests/agent_packet_json_schema.rs` validates the real
 command's bytes for every seam of a fixture crate and pins the documents the
 schema rejects. The `--gap-ledger` document below has a different packet shape
-(`source`, `status`, `inputs`, `source_currentness`) and is not covered by this
-schema yet; neither is the multi-seam `agent-seam-packets-json` check format
-(#3920).
+(`source`, `status`, `inputs`, `source_currentness`) and its own schema.
+
+The `ripr check --format agent-seam-packets-json` document is published as
+[`schemas/ripr/agent-seam-packets.schema.json`](../schemas/ripr/agent-seam-packets.schema.json),
+which shares every packet definition with the `--seam-id` schema; a test holds
+the two equal apart from the canonical-delta fields (`delta_attribution`,
+`base_state`, `head_state`, `attribution_basis`, `comparison_confidence`) a
+check-format packet carries when a canonical delta artifact is present. Its
+`next` block has no `analysis_outcome_command`, and `receipt_after_verify` is
+a command only when the document holds exactly one packet, because a receipt
+names one seam; otherwise it is `null`. `analysis_outcome_status` is
+`not_applicable` without a diff selector and `missing` (with an
+`analysis_outcome_error`) when `--base` or `--diff` is passed. A run refused
+before analysis writes `run_status: "refused"` with one `limitations[]` entry
+and no packets.
 
 `ripr agent packet --root . --gap-ledger <path> --gap-id <id> --json` emits
 the same packet envelope from one explicit `GapRecord`, matched by `gap_id` or
@@ -17736,6 +17818,25 @@ projectability from raw classifications. The selected record must have
 or a path-like `repair_route.related_test` fallback. Records that are already observed, waived,
 suppressed, preview-gating ineligible, or otherwise not agent-packet eligible
 return an actionable error instead of a repair packet.
+
+The `--gap-ledger` document is published as
+[`schemas/ripr/agent-gap-packet.schema.json`](../schemas/ripr/agent-gap-packet.schema.json)
+(`agent-gap-packet.schema.json`). Its `status` is `advisory` only when the
+ledger's repo-exposure source still matches the checkout
+(`source_currentness.status` `current`, `queue_state` `queued`): the document
+then holds exactly one packet with `assignment.eligible: true`, its verify and
+receipt routes, and `analysis_outcome_status: "not_applicable"`, plus
+`causal_comparison` when a canonical delta artifact is present, and the
+packet's canonical-delta fields only when that artifact holds a delta for the
+record's canonical gap. Otherwise `status` is `blocked` (`stale` for a dirty
+checkout or a historical HEAD, `not_evaluated` for a source with no live
+snapshot authority, such as a `--records` ledger): `packets` is empty and a
+review-only `blocked_candidate` carries the record's identity, its currentness
+and `refresh_commands`, with no edit, verify or receipt command, beside a fixed
+three-entry `must_not_infer` list. An ineligible record is refused with the
+`agent-packet-refusal.schema.json` envelope (exit 2). The command and
+canonical-delta definitions are copied from
+`agent-seam-packets.schema.json`, and a test holds them equal.
 
 When the gap ledger was derived from check JSON, actionable Python
 `python_repair_card` findings become preview-language GapRecords with
@@ -18359,7 +18460,8 @@ Field contract:
   `--attempt` value), `manifest_path` (the durable attempt manifest the
   after phase consumes), `next_command` (the exact `ripr agent repair …
   --phase after` command to run after the focused test edit, including
-  the authorization placeholder suffix for trust-bound attempts), and
+  the authorization placeholder suffix for trust-bound attempts and
+  ` --test-result FILE` for an attempt that follows a new-test proposal), and
   `packet_path` (the root-resolved workflow packet path the document was
   rendered from, ending in `target/ripr/workflow/agent-packet.json`).
   `baseline_ambiguous` is an additive member present only when `true`
@@ -18373,6 +18475,14 @@ Field contract:
   before the after phase, while Vitest caches written after `continue` do not
   stale the receipt; it recommends recording native test results separately
   after successful continuation and does not claim a test was recorded in the receipt.
+  `focused_result_requirement` is an additive string present only for an
+  attempt that follows a new-test proposal (#16164): it states that the after
+  phase finishes only with a focused `--test-result FILE` and how to produce
+  FILE, in the finish gate's own words. Where the proposed Rust integration
+  file's package manifest and cargo target resolve, it names that exact
+  command (`cargo +nightly test --manifest-path M -p P --test T -- -Z
+  unstable-options --format json`) in place of the generic placeholders
+  (#16186).
   Without `--json`, stdout is a short prose summary whose
   final line names the same next command — or, for such an ambiguous
   baseline, the ambiguity warning and the clean-state restart route, with
@@ -20174,7 +20284,7 @@ JSON shape:
     "cases": [
       {
         "name": "generated-pr-ci-review-workflow",
-        "command": "cargo run --quiet -p ripr -- init --ci github --dry-run && cargo run --quiet -p ripr -- reports ci-summary --root <generated-ci-cockpit-fixture> --base-ref main",
+        "command": "cargo run --quiet -p ripr -- init --ci github --dry-run && cargo run --quiet -p ripr -- reports ci-summary --full --root <generated-ci-cockpit-fixture> --base-ref main",
         "duration_ms": 123,
         "start_here": true,
         "repair_commands": 4,
@@ -20998,7 +21108,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.189",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.196",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -21789,7 +21899,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.64",
+    "schema_version": "1.66",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -21802,7 +21912,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.189",
+      "schema_version": "1.196",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

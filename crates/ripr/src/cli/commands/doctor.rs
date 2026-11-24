@@ -720,6 +720,10 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
         lines.push(compact_tilde_line(evidence));
     }
+    if let Some(check) = check_named(report, "git_operation") {
+        let evidence = check.evidence.as_deref().unwrap_or(check.name.as_str());
+        lines.push(compact_tilde_line(evidence));
+    }
     if let Some(advisory) = generated_workflow_advisory(root) {
         lines.push(compact_tilde_line(&format!(
             "Generated workflow: {advisory}"
@@ -1830,29 +1834,13 @@ fn preview_languages_to_enable(
     // `ripr check` analyzes that Rust, and a list without `rust` stops it.
     let keep_rust = detected.contains(&LanguageId::Rust)
         || crate::domain::enablement_tip_keeps_rust(root)
-        || languages_enabled_is_explicit(config);
+        || crate::config::languages_enabled_is_explicit(config);
     let suggestion = crate::domain::enablement_tip_languages(
         &enabled,
         keep_rust,
         gaps.iter().map(|gap| gap.entry),
     );
     Some(PreviewEnablement { gaps, suggestion })
-}
-
-/// Whether the loaded `ripr.toml` sets `[languages].enabled` itself, rather
-/// than leaving the built-in default in place. Reads the exact text the
-/// config was parsed from, so a config-free run and a `[languages]` table
-/// without `enabled` both read as the default.
-fn languages_enabled_is_explicit(config: &RiprConfig) -> bool {
-    config
-        .source_text()
-        .and_then(|text| toml::from_str::<toml::Value>(text).ok())
-        .is_some_and(|document| {
-            document
-                .get("languages")
-                .and_then(|languages| languages.get("enabled"))
-                .is_some()
-        })
 }
 
 /// The `[languages].enabled` entries a doctor tip may add, each paired with the

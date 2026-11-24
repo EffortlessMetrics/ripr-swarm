@@ -174,6 +174,9 @@ async fn fatal_output_limit_wakes_receive_while_input_remains_open() -> Result<(
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     };
     let sending = transport.send(ServerJsonRpcMessage::error(
@@ -220,6 +223,9 @@ async fn oversized_frame_error_carries_explicit_null_id() -> Result<(), String> 
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     };
     if transport.receive().await.is_some() {
@@ -263,6 +269,9 @@ async fn oversized_request_id_is_rejected_with_null_id_and_the_session_continues
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     };
     let message = transport
@@ -321,6 +330,9 @@ async fn oversized_id_on_a_shape_invalid_request_is_not_echoed() -> Result<(), S
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     };
     if transport.receive().await.is_some() {
@@ -357,6 +369,9 @@ async fn syntax_error_and_typed_shape_error_are_each_answered_then_next_request_
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     };
     let message = transport
@@ -400,6 +415,9 @@ async fn error_frames_for(input: &[u8]) -> Result<Vec<Value>, String> {
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     };
     if transport.receive().await.is_some() {
@@ -574,6 +592,9 @@ async fn typed_shape_error_keeps_a_recoverable_request_id() -> Result<(), String
             admission: Arc::new(Admission::default()),
             pending_protocol_error: None,
             writer_needs_drain: false,
+            held: None,
+            attempt_running: Arc::new(AtomicBool::new(false)),
+            input_closed: Arc::new(AtomicBool::new(false)),
             idle_interrupt: None,
         };
         if transport.receive().await.is_some() {
@@ -616,6 +637,9 @@ async fn typed_shape_error_with_an_oversized_id_uses_null_and_the_session_contin
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     };
     let message = transport.receive().await.ok_or_else(|| {
@@ -688,6 +712,9 @@ async fn consumed_protocol_error_survives_receive_cancellation_behind_busy_write
         admission: Arc::new(Admission::default()),
         pending_protocol_error: None,
         writer_needs_drain: false,
+        held: None,
+        attempt_running: Arc::new(AtomicBool::new(false)),
+        input_closed: Arc::new(AtomicBool::new(false)),
         idle_interrupt: None,
     };
     {
