@@ -1809,10 +1809,10 @@ pub(crate) fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
 pub(crate) enum BareHead {
     /// `HEAD` names a commit, which a new work tree checks out.
     Resolves,
-    /// `HEAD` names nothing and no branch exists: the repository has no commit.
+    /// `HEAD` names nothing and no ref exists: the repository has no commit.
     Empty,
-    /// `HEAD` names a branch with no commit while another branch has one,
-    /// which is the first such branch Git lists.
+    /// `HEAD` names nothing while a ref holds a commit, which is the first
+    /// such ref Git lists: a branch, a tag or a remote-tracking ref.
     Headless(String),
     /// Git did not answer, so none of the above can be claimed.
     Unconfirmed,
@@ -1831,20 +1831,16 @@ fn bare_head(root: &Path) -> BareHead {
         Ok(output) if output.status.code() == Some(1) => {}
         Ok(_) | Err(_) => return BareHead::Unconfirmed,
     }
-    // `HEAD` names nothing. That is an empty repository only when no branch
-    // has a commit: a bare repository can hold pushed branches while `HEAD`
-    // still names the branch it was created with.
-    let branches = crate::git::run_git_output_with_deadline(
+    // `HEAD` names nothing. That is an empty repository only when no ref at
+    // all holds a commit: a bare repository can hold pushed branches while
+    // `HEAD` still names the branch it was created with, and it can hold its
+    // commit under a tag or a remote-tracking ref alone.
+    let refs = crate::git::run_git_output_with_deadline(
         root,
-        &[
-            "for-each-ref",
-            "--count=1",
-            "--format=%(refname:short)",
-            "refs/heads",
-        ],
+        &["for-each-ref", "--count=1", "--format=%(refname:short)"],
         Some(DOCTOR_TOOL_TIMEOUT),
     );
-    match branches {
+    match refs {
         Ok(output) if output.status.success() => {
             let first = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if first.is_empty() {
@@ -1863,7 +1859,7 @@ fn bare_head(root: &Path) -> BareHead {
 /// repository the caller stands in. A repository whose `HEAD` resolves lends
 /// a work tree through `--git-dir`; one with no commit has nothing to check
 /// out, so the route is a clone, a first commit and a push; one whose `HEAD`
-/// names an unborn branch is asked for a branch that has a commit. `<path>`
+/// names no commit while another ref holds one is asked for that ref. `<path>`
 /// is the new work-tree directory the user chooses. `Err` when the root
 /// cannot be bound to one shell argument.
 pub(crate) fn bare_root_work_tree_route(root: &Path) -> Result<String, String> {
@@ -1885,12 +1881,11 @@ pub(crate) fn bare_root_work_tree_route(root: &Path) -> Result<String, String> {
              clone it with `git clone {repository} <path>`, make the first commit there and \
              push it"
         )),
-        BareHead::Headless(branch) => Ok(format!(
-            "This bare repository's `HEAD` names a branch with no commit, so a new work tree \
-             has nothing to check out until `HEAD` does: check out a branch that has one with \
-             `{add} {}` (`<path>` is the new work-tree directory; the command works from any \
-             directory)",
-            shell_arg(&branch)
+        BareHead::Headless(reference) => Ok(format!(
+            "This bare repository's `HEAD` names no commit, so a new work tree has nothing to \
+             check out until it does: check out a commit that exists with `{add} {}` (`<path>` \
+             is the new work-tree directory; the command works from any directory)",
+            shell_arg(&reference)
         )),
         BareHead::Unconfirmed => Ok(format!(
             "Check out a work tree from it with `{add}` (`<path>` is the new work-tree \
@@ -7586,7 +7581,47 @@ mod tests {
             !route.contains("This bare repository has no commits yet"),
             "{route}"
         );
-        assert!(!route.contains("names a branch with no commit"), "{route}");
+        assert!(!route.contains("names no commit"), "{route}");
+
+        // A bare repository whose commit sits under a tag alone, or under a
+        // remote-tracking ref alone: not empty, and the route names that ref.
+        let tagged = create("bare-route-tagged")?;
+        git_in(&tagged, &["init", "--bare", "-q", "-b", "main", "."])?;
+        git_in(
+            &seed,
+            &[
+                "push",
+                "-q",
+                &tagged.display().to_string(),
+                "main:refs/tags/v1",
+            ],
+        )?;
+        assert_eq!(bare_head(&tagged), BareHead::Headless("v1".to_owned()));
+        let route = bare_root_work_tree_route(&tagged)?;
+        assert!(
+            route.contains(&format!(
+                "`git --git-dir={} worktree add <path> v1`",
+                bound(&tagged)?
+            )),
+            "{route}"
+        );
+        assert!(!route.contains("has no commits yet"), "{route}");
+
+        let remote_only = create("bare-route-remote-only")?;
+        git_in(&remote_only, &["init", "--bare", "-q", "-b", "main", "."])?;
+        git_in(
+            &seed,
+            &[
+                "push",
+                "-q",
+                &remote_only.display().to_string(),
+                "main:refs/remotes/origin/main",
+            ],
+        )?;
+        assert_eq!(
+            bare_head(&remote_only),
+            BareHead::Headless("origin/main".to_owned())
+        );
 
         // A spaced path stays one shell argument in the command.
         let spaced = create("bare route spaced")?;
@@ -7598,7 +7633,15 @@ mod tests {
         );
         assert!(bound(&spaced)?.starts_with('"'), "a spaced path is quoted");
 
-        for dir in [empty, seed, misdirected, refused, spaced] {
+        for dir in [
+            empty,
+            seed,
+            misdirected,
+            tagged,
+            remote_only,
+            refused,
+            spaced,
+        ] {
             let _ = std::fs::remove_dir_all(&dir);
         }
         Ok(())

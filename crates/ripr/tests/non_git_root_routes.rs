@@ -339,6 +339,34 @@ fn bare_repository_route_is_bound_to_the_repository_and_runs_from_an_unrelated_d
     let head = std::fs::read_to_string(git_dir.join("HEAD"))
         .map_err(|error| format!("read the work tree's HEAD: {error}"))?;
     assert_eq!(head.trim(), "ref: refs/heads/feature", "{command}");
+
+    // A bare repository whose commit sits under a tag alone is not empty
+    // either: the route names the tag, and the work tree checks it out
+    // detached.
+    let tagged = scratch("bare-route-tagged")?;
+    git(&tagged.0, &["init", "--bare", "-q", "-b", "main", "."])?;
+    let tagged_name = tagged
+        .0
+        .file_name()
+        .ok_or("the tagged scratch directory has no name")?
+        .to_string_lossy()
+        .into_owned();
+    git(
+        &seed.0,
+        &[
+            "push",
+            "-q",
+            &format!("../{tagged_name}"),
+            "main:refs/tags/v1",
+        ],
+    )?;
+    let tagged_root = native_absolute(&tagged.0)?;
+    let (_tagged_work_tree, command) =
+        run_printed_work_tree_route(&unrelated.0, &tagged_root, "bare-route-tag")?;
+    assert!(
+        command.ends_with(" worktree add <path> v1"),
+        "the route names the tag that holds the commit: {command}"
+    );
     Ok(())
 }
 
