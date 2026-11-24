@@ -708,6 +708,12 @@ struct PythonOwner {
     /// parameters and names it rebinds. Used only to relate a test that calls
     /// a same-module caller of a changed helper (`helper_owner_call`, #4568).
     module_callees: Vec<String>,
+    /// Names a routed handler's own scope calls as bare `name(` calls: the
+    /// same reading as `module_callees`, with nested `def` blocks and
+    /// `lambda` tails removed. The route-helper relation (#14150) claims the
+    /// handler calls the helper itself, so a call that runs only if the
+    /// handler invokes a nested scope does not count. Empty for other owners.
+    route_scope_callees: Vec<String>,
     /// Dotted path of the enclosing classes of a method owner, outermost
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.

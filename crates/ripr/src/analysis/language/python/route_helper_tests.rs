@@ -362,3 +362,85 @@ fn given_a_handler_default_that_calls_the_helper_then_no_route_reach() -> Result
     );
     Ok(())
 }
+
+fn assert_no_route_reach(handler: &str, label: &str) -> Result<(), String> {
+    let files = [
+        ("routepkg/rules.py", RULES),
+        ("routepkg/ages.py", handler),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", ROUTE_TEST),
+    ];
+    let finding = classify_files(&files)?;
+    // The generic cross-module link reads every call in the handler's span
+    // and may still relate the test; the route relation must not be the one
+    // that does, and nothing may read weakly exposed.
+    assert_ne!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{label}: {finding:?}"
+    );
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{label}: {finding:?}"
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|test| test.oracle.is_none()),
+        "{label}: {finding:?}"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("route_helper_call")),
+        "{label}: {:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+/// The route-helper relation claims the handler itself calls the helper.
+/// `module_callees` counts a call anywhere in the handler's span, including
+/// inside a nested `def`, so the relation reads the handler's own scope
+/// instead (#14150 review).
+#[test]
+fn given_a_helper_called_only_inside_a_nested_function_then_no_route_reach() -> Result<(), String> {
+    let unused = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    def unused(value):\n        return is_adult(value)\n    return {\"adult\": True}\n";
+    assert_no_route_reach(unused, "an unused nested function")?;
+
+    // Invoking the nested function does not make its call the handler's own.
+    let invoked = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    def check(value):\n        return is_adult(value)\n    return {\"adult\": check(30)}\n";
+    assert_no_route_reach(invoked, "an invoked nested function")?;
+    Ok(())
+}
+
+#[test]
+fn given_a_helper_called_only_inside_a_lambda_then_no_route_reach() -> Result<(), String> {
+    let inline = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    return {\"adult\": sorted([30], key=lambda value: is_adult(value)) == [30]}\n";
+    assert_no_route_reach(inline, "a single-line lambda")?;
+
+    // The lambda's body continues on the next line, inside its own brackets.
+    let continued = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    adults = list(map(lambda value: bool(\n        is_adult(value),\n    ), ()))\n    return {\"adult\": bool(adults)}\n";
+    assert_no_route_reach(continued, "a lambda whose body continues on the next line")?;
+    Ok(())
+}
+
+/// Control for the two negatives above: a nested function does not hide a
+/// helper the handler calls itself.
+#[test]
+fn given_a_handler_with_a_nested_function_that_also_calls_the_helper_then_reach_only()
+-> Result<(), String> {
+    let handler = "from routepkg.rules import is_adult\n\napp = object()\n\n@app.get(\"/age/30\")\ndef age():\n    def unused(value):\n        return False\n    return {\"adult\": is_adult(30)}\n";
+    let files = [
+        ("routepkg/rules.py", RULES),
+        ("routepkg/ages.py", handler),
+        ("tests/conftest.py", CONFTEST),
+        ("tests/test_ages.py", ROUTE_TEST),
+    ];
+    let finding = classify_files(&files)?;
+    assert_reach_only(&finding, "a nested function beside the handler's own call");
+    Ok(())
+}

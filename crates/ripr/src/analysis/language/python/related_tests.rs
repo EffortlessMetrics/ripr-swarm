@@ -641,16 +641,22 @@ fn helper_candidates_from_callers<'a>(
 /// Whether `caller` calls `owner` itself, under the name its own module
 /// binds the owner to: the bare name in the owner's file, or the exact
 /// `from <owner module> import <name>` binding elsewhere (#14150, #12955).
+/// Reads the caller's own scope, so a call inside a nested `def` or `lambda`
+/// body, which runs only if the caller invokes it, is not a direct call.
 fn caller_directly_calls_owner(
     caller: &PythonOwner,
     owner: &PythonOwner,
     owners: &[PythonOwner],
 ) -> bool {
     if caller.file == owner.file {
-        return caller.module_callees.contains(&owner.name);
+        return caller.route_scope_callees.contains(&owner.name);
     }
-    cross_module_owner_binding(caller, owner, owners)
-        .is_some_and(|local| caller.module_callees.iter().any(|callee| callee == local))
+    cross_module_owner_binding(caller, owner, owners).is_some_and(|local| {
+        caller
+            .route_scope_callees
+            .iter()
+            .any(|callee| callee == local)
+    })
 }
 
 fn top_level_function(candidate: &PythonOwner) -> bool {

@@ -57,6 +57,98 @@ pub(super) fn bare_callees(owner_text: &str, parameters: &[PythonParameter]) -> 
     callees
 }
 
+/// Sorted, de-duplicated names the owner's own scope calls as bare `name(`
+/// calls: [`bare_callees`] over [`own_scope_text`]. The route-helper relation
+/// (#14150) reads this, because it claims the handler itself calls the
+/// helper; the relations that fed [`bare_callees`] before keep that reading.
+pub(super) fn own_scope_callees(owner_text: &str, parameters: &[PythonParameter]) -> Vec<String> {
+    bare_callees(&own_scope_text(owner_text), parameters)
+}
+
+/// `owner_text` with the bodies of nested `def` and `async def` lines, and
+/// everything from a `lambda` on its line, removed. Textual, like the rest of
+/// this module. A `def ` opening a line at any indentation ends at the next
+/// line indented no deeper. A `lambda` outside strings and comments cuts its
+/// line; when the line still has an open bracket, the lines that close it are
+/// dropped too, because a lambda body may continue inside them. A helper the
+/// handler calls only through a nested function is therefore not credited
+/// even when the handler invokes that function. Both rules only withhold a
+/// weak relation, never grant one.
+fn own_scope_text(owner_text: &str) -> String {
+    let lines: Vec<&str> = owner_text.split('\n').collect();
+    // The owner text starts at its first statement, so the first line has no
+    // indentation; its real one is the shallowest the following lines show.
+    let base_indent = lines
+        .iter()
+        .skip(1)
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start_matches([' ', '\t']).len())
+        .min()
+        .unwrap_or(0);
+    let mut kept: Vec<&str> = Vec::new();
+    let mut nested_def_indent: Option<usize> = None;
+    let mut open_brackets: i64 = 0;
+    for (index, line) in lines.iter().enumerate() {
+        let body = line.trim_start_matches([' ', '\t']);
+        let indent = if index == 0 {
+            base_indent
+        } else {
+            line.len() - body.len()
+        };
+        if open_brackets > 0 {
+            open_brackets += bracket_delta(line);
+            continue;
+        }
+        if let Some(def_indent) = nested_def_indent {
+            if body.is_empty() || indent > def_indent {
+                continue;
+            }
+            nested_def_indent = None;
+        }
+        if body.starts_with("def ") || body.starts_with("async def ") {
+            nested_def_indent = Some(indent);
+            continue;
+        }
+        match lambda_at(line) {
+            Some(at) => {
+                open_brackets = bracket_delta(line).max(0);
+                kept.push(&line[..at]);
+            }
+            None => kept.push(line),
+        }
+    }
+    kept.join("\n")
+}
+
+/// Byte index of the `lambda` keyword on the line, outside strings, comments
+/// and docstrings, or `None`.
+fn lambda_at(line: &str) -> Option<usize> {
+    line.match_indices("lambda").find_map(|(at, _)| {
+        let after = line[at + "lambda".len()..].chars().next();
+        (super::static_limits::python_callee_start_has_boundary(line, at)
+            && !code_is_hidden(line, at)
+            && after.is_none_or(|ch| !is_python_identifier_char(ch)))
+        .then_some(at)
+    })
+}
+
+/// Open minus closed brackets on the line, outside strings and comments.
+fn bracket_delta(text: &str) -> i64 {
+    text.char_indices()
+        .filter(|(at, _)| !code_is_hidden(text, *at))
+        .map(|(_, ch)| match ch {
+            '(' | '[' | '{' => 1,
+            ')' | ']' | '}' => -1,
+            _ => 0,
+        })
+        .sum()
+}
+
+fn code_is_hidden(text: &str, at: usize) -> bool {
+    super::related_tests::line_prefix_looks_like_comment_or_string(text, at)
+        || super::related_tests::python_text_hides_code(text, at)
+}
+
 /// Whether `owner_text` calls `name` anywhere other than its own `def name(`
 /// header: `name(`, `self.name(` or `mod.name(`. Textual, so a mention in a
 /// string or comment also counts; the claim it guards fails closed.
