@@ -1014,13 +1014,16 @@ Candidates come from the first non-empty tier:
    the module-wide scan; every mention outside it must be an allowlisted read
    and, when the building function's parsed body holds any block or arrow
    (a class, a method, a nested function or a block statement whose code
-   may run later), a construction that goes straight into one of its own
-   method calls, `new X(...).method(` (not `constructor`, `valueOf`,
-   `toString`, `toLocaleString` or `__proto__`), with no text outside it,
+   may run later), a construction that goes straight into a member call,
+   `new X(...).member(` (not `constructor`, `valueOf`, `toString`,
+   `toLocaleString` or `__proto__`), with no text outside it,
    literals and comments included, naming `prototype`, `__proto__`,
    `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect`, and no
-   `this` in the body other than `this.x`, `this?.x`, `this[...]` or the
-   receiver of `.call(` / `.apply(` (an allowlisted read such as
+   `this` in the body other than `this.x`, `this?.x`, `this[...]`, a call
+   `this.x(` of a member the body declares (`this.valueOf()` hands the
+   instance back), or the receiver of `NAME.call(` / `NAME.apply(` where the
+   body binds `NAME` from `this` (`const h = this["$" + t]; h.call(this, v)`)
+   (an allowlisted read such as
    `patch(X.prototype)`, a kept instance, `new X()["__proto__"]`, or a method
    that returns `this` or hands it to other code, could replace a method
    every later instance runs). A top-level name the building function also declares as
@@ -1040,10 +1043,11 @@ Candidates come from the first non-empty tier:
    class is one node, so a method no entry calls is reached with the rest of
    the class, and so is a function only a method the building function itself
    replaces calls (static text reach, as for the bare-call graph); a
-   function the body runs with `.call(this` / `.apply(this` is trusted not
-   to keep the instance (any prototype word it names outside the building
-   function still refuses the value); the receiver of the array method is
-   not typed.
+   member reached through a computed `this[...]` is trusted not to hand the
+   instance back, and a prototype key built at run time
+   (`o["__pro" + "to__"]`) is not seen; every guard reads the shared
+   literal and comment mask, so text that desynchronizes it is a limit of
+   all masked checks; the receiver of the array method is not typed.
    **Methods of a module-private class (#15928).** A top-level `class X`
    declaration that is not exported has one node per plain instance method,
    `X.method`, in the same graph under the same hop bound. A function or
@@ -1061,8 +1065,10 @@ Candidates come from the first non-empty tier:
    a module function only such a method calls. Fail-closed: the class has no
    `extends`, no decorator (on the class, a member or a parameter: any `@`
    in the class's code, outside comments and literals, refuses it; a JSDoc
-   `@param` does not), no computed member and no `return` in its
-   constructor; its name is declared once
+   `@param` does not), no computed member and no `return` in a constructor
+   spelled `constructor` or `"constructor"`, no method read other than as a
+   call or a call argument (`[this.m] = ...`, `({ k: this.m } = ...)` and
+   `for (this.m of ...)` replace it); its name is declared once
    in the file and every other mention outside the declaration is a
    construction `new X(...)` (a property of the same name `o.X`, which
    text cannot tell from the binding after `1.` and a line break, an alias,

@@ -1061,9 +1061,9 @@ fn built_value_stays_inside(
     if !body_masked.contains('{') && !body_masked.contains("=>") {
         return true;
     }
-    // A method may hand the instance back (`return this`) or give it to code
-    // outside (`helper(this)`). Only member access on `this` and handing it to
-    // `.call(` / `.apply(` as the receiver are allowed.
+    // A method may hand the instance back (`return this`,
+    // `this.valueOf()`) or give it to code outside (`helper(this)`,
+    // `helper.call(this)`).
     if hands_this_out(&body_masked) {
         return false;
     }
@@ -1146,20 +1146,51 @@ fn balanced_paren_close(text: &str) -> Option<usize> {
     None
 }
 
-/// Whether masked code uses `this` other than as `this.x`, `this?.x`,
-/// `this[...]`, or the first argument of `.call(` / `.apply(`.
+/// Whether masked code may hand the instance on: any `this` other than
+/// `this.x`, `this?.x` or `this[...]`, a call `this.x(` of a member the body
+/// does not declare (`this.valueOf()` returns the instance), or a receiver
+/// `NAME.call(this` / `NAME.apply(this` unless the body binds `NAME` from
+/// `this` (`const handler = this["$" + type]`).
 fn hands_this_out(code: &str) -> bool {
     code.match_indices("this").any(|(idx, _)| {
         if !word_at(code, idx, "this") || code[..idx].ends_with('.') {
             return false;
         }
         let after = code[idx + 4..].trim_start();
-        let member = after.starts_with('.') || after.starts_with("?.") || after.starts_with('[');
-        let receiver = {
-            let before = code[..idx].trim_end();
-            before.ends_with(".call(") || before.ends_with(".apply(")
+        if let Some(member) = after.strip_prefix("?.").or_else(|| after.strip_prefix('.')) {
+            let member = member.trim_start();
+            let end = member
+                .find(|ch: char| !is_javascript_identifier_char(ch))
+                .unwrap_or(member.len());
+            let name = &member[..end];
+            let called = past_type_arguments(member[end..].trim_start()).starts_with('(');
+            return name.is_empty() || (called && !declares_member_named(code, name));
+        }
+        if after.starts_with('[') {
+            return false;
+        }
+        let before = code[..idx].trim_end();
+        let Some(callee) = before
+            .strip_suffix(".call(")
+            .or_else(|| before.strip_suffix(".apply("))
+        else {
+            return true;
         };
-        !(member || receiver)
+        let start = callee
+            .rfind(|ch: char| !is_javascript_identifier_char(ch))
+            .map_or(0, |offset| offset + 1);
+        let callee = &callee[start..];
+        callee.is_empty()
+            || callee.starts_with(|ch: char| ch.is_ascii_digit())
+            || !code.match_indices(callee).any(|(at, _)| {
+                word_at(code, at, callee)
+                    && code[at + callee.len()..]
+                        .trim_start()
+                        .strip_prefix('=')
+                        .is_some_and(|rest| {
+                            !rest.starts_with(['=', '>']) && rest.trim_start().starts_with("this")
+                        })
+            })
     })
 }
 

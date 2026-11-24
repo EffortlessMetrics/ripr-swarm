@@ -216,6 +216,16 @@ fn building_function_that_may_hand_the_instance_out_is_not_followed() {
             "      keep(this);\n      return compareStrings(a, b);",
         ),
         (
+            "instance handed back through an undeclared method",
+            "    compare(a: any, b: any): number {",
+            "    self(): any {\n      return this.valueOf();\n    }\n    compare(a: any, b: any): number {",
+        ),
+        (
+            "instance handed to an outside function's call",
+            "      return compareStrings(a, b);",
+            "      keep.call(this, a);\n      return compareStrings(a, b);",
+        ),
+        (
             "brace in a default parameter literal",
             "const Serializer = /*@__PURE__*/ (function () {",
             "const Serializer = /*@__PURE__*/ (function (open = `{`) {",
@@ -232,6 +242,18 @@ fn building_function_that_may_hand_the_instance_out_is_not_followed() {
         assert!(entry_names(&source, "Serializer").is_empty(), "{label}");
         assert!(entry_names(&source, "compareStrings").is_empty(), "{label}");
     }
+}
+
+#[test]
+fn method_run_on_this_through_call_keeps_the_built_value() {
+    // ohash dispatches `const handler = this["$" + type]; handler.call(this, v)`.
+    let source = SRC.replacen(
+        "      return compareStrings(a, b);",
+        "      const handler = this[\"$\" + a];\n      if (handler) {\n        return handler.call(this, b);\n      }\n      return this.serialize(compareStrings(a, b));",
+        1,
+    );
+    assert_ne!(source, SRC);
+    assert_eq!(entry_names(&source, "Serializer"), ["serialize"]);
 }
 
 #[test]

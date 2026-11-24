@@ -379,6 +379,22 @@ fn a_class_whose_this_escapes_has_no_method_node() {
         ),
         ("member decorator", "  @patch\n  helper(): void {}\n"),
         (
+            "array destructuring onto a method",
+            "  constructor() {\n    [this.order] = [(keys: string[]) => keys];\n  }\n",
+        ),
+        (
+            "object destructuring onto a method",
+            "  constructor() {\n    ({ k: this.order } = { k: (keys: string[]) => keys });\n  }\n",
+        ),
+        (
+            "for-of onto a method",
+            "  constructor() {\n    for (this.order of [(keys: string[]) => keys]);\n  }\n",
+        ),
+        (
+            "for-in onto a method",
+            "  constructor() {\n    for (this.order in { a: 1 });\n  }\n",
+        ),
+        (
             "super",
             "  constructor(o?: any) {\n    Object.assign(super.valueOf(), o);\n  }\n",
         ),
@@ -473,6 +489,23 @@ fn class_whose_constructor_returns_is_not_followed() {
     assert_ne!(source, SRC);
     for owner in ["write", "order", "compareKeys"] {
         assert!(entry_hops(&source, owner).is_empty(), "{owner}");
+    }
+}
+
+#[test]
+fn class_whose_quoted_constructor_returns_is_not_followed() {
+    for quote in ["\"", "'"] {
+        let source = SRC.replacen(
+            "  describe(keys: string[]): string {",
+            &format!(
+                "  {quote}constructor{quote}() {{\n    return {{ write: (r: any) => String(r) }};\n  }}\n  describe(keys: string[]): string {{"
+            ),
+            1,
+        );
+        assert_ne!(source, SRC);
+        for owner in ["write", "order", "compareKeys"] {
+            assert!(entry_hops(&source, owner).is_empty(), "{quote}: {owner}");
+        }
     }
 }
 

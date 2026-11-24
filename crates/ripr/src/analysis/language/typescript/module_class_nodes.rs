@@ -111,6 +111,14 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
         if computed {
             return None;
         }
+        // A constructor that returns hands `new` another object, whether it
+        // is spelled `constructor` or `"constructor"`.
+        if let ClassElement::MethodDefinition(method) = element
+            && method.kind == MethodDefinitionKind::Constructor
+            && span_text(source, method.span).contains("return")
+        {
+            return None;
+        }
         if let (ClassElement::MethodDefinition(method), PropertyKey::PrivateIdentifier(name)) =
             (element, key)
             && method.kind == MethodDefinitionKind::Method
@@ -129,12 +137,6 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
             // An overload signature carries no body and is not a member.
             if method.value.body.is_none() {
                 continue;
-            }
-            // A constructor that returns hands `new` another object.
-            if method.kind == MethodDefinitionKind::Constructor
-                && span_text(source, method.span).contains("return")
-            {
-                return None;
             }
             if method.kind == MethodDefinitionKind::Method {
                 callable.insert(name.to_string());
@@ -246,22 +248,40 @@ fn this_escapes(text: &str, members: &BTreeSet<&str>, callable: &BTreeSet<String
     if word_at_any(text, "super") || text.contains("new.target") {
         return true;
     }
-    let accesses: Vec<Option<ThisAccess<'_>>> = text
+    let accesses: Vec<Option<(&str, ThisAccess<'_>)>> = text
         .match_indices("this")
         .filter(|&(idx, _)| bounded(text, idx, "this") && !text[..idx].ends_with('.'))
-        .map(|(idx, _)| this_member_access(&text[idx + 4..]))
+        .map(|(idx, _)| {
+            this_member_access(&text[idx + 4..]).map(|access| (text[..idx].trim_end(), access))
+        })
         .collect();
     let assigned: BTreeSet<&str> = accesses
         .iter()
         .flatten()
-        .filter(|access| access.assigns)
-        .map(|access| access.name)
+        .filter(|(_, access)| access.assigns)
+        .map(|(_, access)| access.name)
         .collect();
     accesses.iter().any(|access| {
-        !access.as_ref().is_some_and(|access| {
+        !access.as_ref().is_some_and(|(before, access)| {
             let name = access.name;
+            // `for (this.m of xs)` / `for (this.m in o)` assigns the member.
+            let loop_target = ["of", "in"].iter().any(|word| {
+                access
+                    .next
+                    .strip_prefix(word)
+                    .is_some_and(|rest| !rest.starts_with(is_javascript_identifier_char))
+            });
+            if loop_target {
+                return false;
+            }
             if access.calls {
                 return callable.contains(name);
+            }
+            // A method read without a call is only an argument (`.sort(this.m)`),
+            // never a destructuring or `for (... of` target that replaces it
+            // (`[this.m] = ...`, `({ k: this.m } = ...)`, `for (this.m of ...)`).
+            if callable.contains(name) {
+                return before.ends_with('(') && access.next.starts_with([')', ',']);
             }
             name.starts_with('#')
                 || (!matches!(name, "constructor" | "__proto__" | "prototype")
@@ -277,6 +297,8 @@ struct ThisAccess<'t> {
     assigns: bool,
     /// Called: `(`, `?.(`, a tagged template, or type arguments then `(`.
     calls: bool,
+    /// The code after the name.
+    next: &'t str,
 }
 
 /// The access when `after` (the text after a `this` keyword) is a plain
@@ -312,6 +334,7 @@ fn this_member_access(after: &str) -> Option<ThisAccess<'_>> {
         name,
         assigns,
         calls,
+        next,
     })
 }
 
