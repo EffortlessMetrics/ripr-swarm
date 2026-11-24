@@ -829,6 +829,16 @@ leaves the change open (and keeps the outside counts), and one that check reads
 as noticed ends on the nothing-to-do outcome with the gripped spots named
 directly and, as in the shortcut, no spot outside the change listed.
 
+## Amendment (#15926): check's open gaps lead, and no-path reads as no-path
+
+Among the rows about the change, the spots `ripr check` itself leaves open
+(it offers no start for them) come first. When check's top gap (the finding
+its human triage selects) is one of them, it leads, so the cap does not hide
+it; the others follow check's report order. A spot check reads as `no_static_path` says that no test
+reaches the changed code and points to `ripr check` for the detail and a stub
+command when it can draft one, instead of the unknown wording ("cannot tell
+from reading the code").
+
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
 A start publishes an attempt and then renders the handoff card, which names the

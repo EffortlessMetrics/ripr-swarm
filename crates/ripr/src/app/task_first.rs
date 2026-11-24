@@ -1346,6 +1346,10 @@ pub(crate) fn resolve_repair_start(
             let before = candidates.len();
             let mut left_open = false;
             let mut kept = Vec::new();
+            // Rows check leaves open: check's top gap first, then report
+            // order; the lone-survivor row (below) trails them.
+            let mut open_rows: Vec<(usize, String)> = Vec::new();
+            let check_top = crate::output::human::selected_triage_finding(output, &config);
             for (id, note) in std::mem::take(&mut candidates) {
                 let closed = classified
                     .iter()
@@ -1362,18 +1366,38 @@ pub(crate) fn resolve_repair_start(
                     })
                     .and_then(|(entry, finding)| {
                         if finding.class == crate::domain::ExposureClass::Exposed {
-                            Some(format!("{}: {CHECK_NOTICED_REASON}", seam_label(entry)))
+                            Some((
+                                None,
+                                format!("{}: {CHECK_NOTICED_REASON}", seam_label(entry)),
+                            ))
                         } else if super::gap_bound_repair::finding_is_static_limited(finding) {
-                            Some(format!("{}: {CHECK_UNKNOWN_REASON}", seam_label(entry)))
+                            // #15926: check's top gap (the finding its human
+                            // triage selects), when it is a changed candidate
+                            // check closes, leads the open rows so the cap
+                            // does not hide it; the rest follow report order.
+                            let rank = if check_top.is_some_and(|top| std::ptr::eq(top, finding)) {
+                                0
+                            } else {
+                                output
+                                    .findings
+                                    .iter()
+                                    .position(|candidate| std::ptr::eq(candidate, finding))
+                                    .map_or(usize::MAX - 1, |position| position + 1)
+                            };
+                            Some((
+                                Some(rank),
+                                format!("{}: {}", seam_label(entry), check_limited_reason(finding)),
+                            ))
                         } else {
                             None
                         }
                     });
                 match closed {
-                    Some(reason) => {
-                        left_open |= reason.ends_with(CHECK_UNKNOWN_REASON);
-                        changed_reasons.push(reason);
+                    Some((Some(rank), reason)) => {
+                        left_open = true;
+                        open_rows.push((rank, reason));
                     }
+                    Some((None, reason)) => changed_reasons.push(reason),
                     None => kept.push((id, note)),
                 }
             }
@@ -1383,11 +1407,18 @@ pub(crate) fn resolve_repair_start(
             if kept.len() == 1 && kept.len() < before {
                 let (_, note) = kept.remove(0);
                 left_open = true;
-                changed_reasons.push(format!(
-                    "the code at {} `{}`: `ripr check` recommends no repair start for this change; to repair it anyway, run `{}`",
-                    note.location, note.code, note.command
+                open_rows.push((
+                    usize::MAX,
+                    format!(
+                        "the code at {} `{}`: `ripr check` recommends no repair start for this change; to repair it anyway, run `{}`",
+                        note.location, note.code, note.command
+                    ),
                 ));
             }
+            // #15926: what check leaves open on the change leads the changed
+            // rows (check's top gap first), ahead of the repair-only states.
+            open_rows.sort_by_key(|(rank, _)| *rank);
+            changed_reasons.splice(0..0, open_rows.into_iter().map(|(_, reason)| reason));
             candidates = kept;
             change = change_after_closure(change, !candidates.is_empty(), left_open, before > 0);
         }
@@ -1574,6 +1605,23 @@ fn recommended_seam(
 /// (#12849): check offers none for a static-limited finding.
 const CHECK_UNKNOWN_REASON: &str = "`ripr check` cannot tell from reading the code whether tests would notice this and offers no repair start for it, so inspect it by hand before adding a test";
 
+/// Why a changed spot check reads as `no_static_path` is no start (#15926):
+/// check does tell here, no test reaches the code, so the unknown sentence
+/// ("cannot tell ... inspect it by hand") would misdescribe it.
+const CHECK_NO_PATH_REASON: &str = "`ripr check` finds no test that reaches this changed code and offers no repair start for it, so write a new test for it by hand (`ripr check` shows the detail, and a stub command when it can draft one)";
+
+/// The check-limited reason for a finding check offers no start for: the
+/// no-path sentence for `no_static_path`, the unknown sentence otherwise.
+fn check_limited_reason(finding: &crate::domain::Finding) -> &'static str {
+    if finding.class == crate::domain::ExposureClass::NoStaticPath
+        && finding.static_limit_kind.is_none()
+    {
+        CHECK_NO_PATH_REASON
+    } else {
+        CHECK_UNKNOWN_REASON
+    }
+}
+
 /// Why a changed spot needs no repair when `ripr check` already reads it as
 /// noticed by a test (#11401). It speaks to the changed code itself, unlike
 /// [`GRIPPED_SPOT_REASON`].
@@ -1650,7 +1698,7 @@ fn notice_what_check_notices<'a>(
 /// open: `ripr check` does not read the changed line as noticed (#15278).
 fn check_reads_open_reason(finding: &crate::domain::Finding) -> String {
     if super::gap_bound_repair::finding_is_static_limited(finding) {
-        CHECK_UNKNOWN_REASON.to_string()
+        check_limited_reason(finding).to_string()
     } else {
         format!(
             "`ripr check` reads this changed code as {} (tests reach it but do not clearly notice it), and the existing tests that grip the spot elsewhere do not close that: write or strengthen the test by hand",
