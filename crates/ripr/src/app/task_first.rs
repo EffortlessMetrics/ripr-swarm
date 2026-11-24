@@ -1608,12 +1608,18 @@ const CHECK_UNKNOWN_REASON: &str = "`ripr check` cannot tell from reading the co
 /// Why a changed spot check reads as `no_static_path` is no start (#15926):
 /// check does tell here, no test reaches the code, so the unknown sentence
 /// ("cannot tell ... inspect it by hand") would misdescribe it.
+/// The reason for a no-path finding whose owner nothing in the workspace calls
+/// (#15926). Check can offer a start for it, so the reason does not say it
+/// offers none.
+const CHECK_UNREFERENCED_REASON: &str = "`ripr check` finds no test that reaches this changed code, and nothing in the workspace calls it: write a new test that calls it (`ripr check` prints the repair start when it can offer one)";
 const CHECK_NO_PATH_REASON: &str = "`ripr check` finds no test that reaches this changed code and offers no repair start for it, so write a new test for it by hand (`ripr check` shows the detail, and a stub command when it can draft one)";
 
 /// The check-limited reason for a finding check offers no start for: the
 /// no-path sentence for `no_static_path`, the unknown sentence otherwise.
 fn check_limited_reason(finding: &crate::domain::Finding) -> &'static str {
-    if finding.class == crate::domain::ExposureClass::NoStaticPath
+    if finding.is_unreferenced_no_static_path() {
+        CHECK_UNREFERENCED_REASON
+    } else if finding.class == crate::domain::ExposureClass::NoStaticPath
         && finding.static_limit_kind.is_none()
     {
         CHECK_NO_PATH_REASON
@@ -1697,7 +1703,7 @@ fn notice_what_check_notices<'a>(
 /// Why a changed spot whose whole seam the inventory reads as gripped is still
 /// open: `ripr check` does not read the changed line as noticed (#15278).
 fn check_reads_open_reason(finding: &crate::domain::Finding) -> String {
-    if super::gap_bound_repair::finding_is_static_limited(finding) {
+    if super::gap_bound_repair::finding_reads_unreached_or_limited(finding) {
         check_limited_reason(finding).to_string()
     } else {
         format!(
@@ -2551,7 +2557,7 @@ fn check_reading_from_findings(
         .collect();
     let lead = open
         .iter()
-        .find(|finding| !super::gap_bound_repair::finding_is_static_limited(finding))
+        .find(|finding| !super::gap_bound_repair::finding_reads_unreached_or_limited(finding))
         .or_else(|| open.first());
     match lead {
         Some(finding) => CheckReadingOfGrippedSeam::Open {
@@ -4880,6 +4886,100 @@ fn held_inline_target(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// A changed finding bound by location to one strongly gripped seam at
+    /// line 88 (#15926 gripped-seam reading).
+    fn gripped_reading_fixture() -> crate::analysis::ClassifiedSeam {
+        let mut entry = crate::app::repair_card_handoff::tests::spanned_twin_boundary_entry(
+            10,
+            88,
+            crate::analysis::seams::SeamSpan {
+                start_line: 88,
+                end_line: 88,
+                start_column: 1,
+                end_column: 10,
+            },
+        );
+        entry.class = crate::analysis::seams::SeamGripClass::StronglyGripped;
+        entry
+    }
+
+    fn located_finding(id: &str, reached: bool) -> crate::domain::Finding {
+        let mut finding = crate::app::repair_card_handoff::tests::producer_gap_finding(
+            id,
+            "gap:rust:src/pricing.rs:pricing::discounted_total:predicate_boundary:predicate",
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            "predicate",
+        );
+        finding.probe.location.line = 88;
+        if !reached {
+            finding.class = crate::domain::ExposureClass::NoStaticPath;
+            finding.ripr.reach.state = crate::domain::StageState::No;
+            finding.ripr.reach.summary = format!(
+                "No static test path found for the changed owner {}",
+                crate::domain::UNREFERENCED_IN_WORKSPACE
+            );
+            finding.related_tests.clear();
+        }
+        finding
+    }
+
+    fn open_reading(
+        findings: &[crate::domain::Finding],
+    ) -> Result<(crate::domain::ExposureClass, String), String> {
+        let entry = gripped_reading_fixture();
+        match super::check_reading_from_findings(findings, &entry, std::slice::from_ref(&entry)) {
+            super::CheckReadingOfGrippedSeam::Open { class, reason } => Ok((class, reason)),
+            _ => Err("the bound finding must open the gripped seam".to_string()),
+        }
+    }
+
+    /// #15926: an unreferenced no-path finding is start-eligible, but the
+    /// gripped-seam reading still says no test reaches it, and does not say
+    /// check offers no start.
+    #[test]
+    fn a_gripped_seam_read_as_unreferenced_says_no_test_reaches_it() -> Result<(), String> {
+        let finding = located_finding("finding:unref", false);
+        if !finding.is_unreferenced_no_static_path() {
+            return Err("fixture: the finding must read as unreferenced".to_string());
+        }
+        let (class, reason) = open_reading(std::slice::from_ref(&finding))?;
+        if class != crate::domain::ExposureClass::NoStaticPath {
+            return Err(format!(
+                "the reading must keep the no-path class: {class:?}"
+            ));
+        }
+        if !reason.contains("finds no test that reaches this changed code")
+            || reason.contains("tests reach it")
+            || reason.contains("offers no repair start")
+        {
+            return Err(format!(
+                "wrong reason for an unreferenced finding: {reason}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #15926: with a reached gap and an unreferenced no-path finding on the
+    /// same seam, the reached gap leads in either report order.
+    #[test]
+    fn a_reached_gap_leads_an_unreferenced_reading_in_either_order() -> Result<(), String> {
+        let reached = located_finding("finding:reached", true);
+        let unreferenced = located_finding("finding:unref", false);
+        for findings in [
+            vec![reached.clone(), unreferenced.clone()],
+            vec![unreferenced.clone(), reached.clone()],
+        ] {
+            let (class, reason) = open_reading(&findings)?;
+            if class != reached.class
+                || !reason.contains("tests reach it but do not clearly notice it")
+            {
+                return Err(format!("the reached gap must lead: {class:?}: {reason}"));
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn build_output_refusal_is_decided_by_variant_not_wording() {
         use crate::edit_cage::BuildOutputPreconditionError::{Inspection, NotIgnored};

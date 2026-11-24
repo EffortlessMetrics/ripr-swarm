@@ -1455,7 +1455,7 @@ pub(crate) mod tests {
     }
 
     /// #7179: a weakly-gripped predicate boundary carrying an explicit span.
-    fn spanned_twin_boundary_entry(
+    pub(crate) fn spanned_twin_boundary_entry(
         byte_offset: usize,
         display_line: usize,
         span: crate::analysis::seams::SeamSpan,

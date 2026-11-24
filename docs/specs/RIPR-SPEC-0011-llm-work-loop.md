@@ -854,7 +854,12 @@ same start, and the repair card's next action runs the route. The card reads
 the seam flip for this finding instead of the check witness, which names no fix
 site for a function no test calls. A no-path finding whose owner other
 workspace code calls, any unknown class, and any named static limitation stay
-no-start, with the refusal reasons above.
+no-start, with the refusal reasons above. Start eligibility is separate from
+what check knows about reach: wording and ranking that speak to reach
+(`finding_reads_unreached_or_limited`) still read the unreferenced finding as
+unreached. On a seam the inventory reads as gripped, a reached gap leads it, and
+its own reason says no test reaches the code and that check prints the repair
+start when it can offer one, never that check offers none.
 
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
