@@ -210,7 +210,7 @@ fn method_an_instance_member_may_replace_is_no_node() {
         ("field", "  order = (k: string[]) => k;\n"),
         (
             "constructor assignment",
-            "  constructor() {\n    (this as any).order = (k: string[]) => k;\n  }\n",
+            "  constructor() {\n    this.order = (k: string[]) => k;\n  }\n",
         ),
         (
             "accessor",
@@ -218,10 +218,6 @@ fn method_an_instance_member_may_replace_is_no_node() {
         ),
         // A quoted key names the same property at runtime.
         ("quoted field", "  \"order\" = (k: string[]) => k;\n"),
-        (
-            "bracket constructor assignment",
-            "  constructor() {\n    (this as any)[\"order\"] = (k: string[]) => k;\n  }\n",
-        ),
     ] {
         let source = SRC.replacen(
             "  describe(keys: string[]): string {",
@@ -243,6 +239,54 @@ fn method_an_instance_member_may_replace_is_no_node() {
     assert!(
         entry_hops(&assigned, "compareKeys").is_empty(),
         "member assigned"
+    );
+}
+
+#[test]
+fn a_class_whose_this_escapes_has_no_method_node() {
+    // `this` other than a plain member access can replace any method on the
+    // instance the entry calls, so no method of the class is followed.
+    for (label, member) in [
+        (
+            "assign",
+            "  constructor(o?: any) {\n    Object.assign(this, o);\n  }\n",
+        ),
+        (
+            "dynamic key",
+            "  constructor() {\n    const k = \"order\";\n    (this as any)[k] = (x: any) => x;\n  }\n",
+        ),
+        (
+            "literal key",
+            "  constructor() {\n    (this as any)[\"order\"] = (k: string[]) => k;\n  }\n",
+        ),
+        (
+            "cast",
+            "  constructor() {\n    (this as any).order = (k: string[]) => k;\n  }\n",
+        ),
+        (
+            "alias",
+            "  constructor() {\n    const self = this;\n    void self;\n  }\n",
+        ),
+    ] {
+        let source = SRC.replacen(
+            "  describe(keys: string[]): string {",
+            &format!("{member}  describe(keys: string[]): string {{"),
+            1,
+        );
+        assert_ne!(source, SRC, "{label}: fixture not rewritten");
+        assert!(entry_hops(&source, "write").is_empty(), "{label}");
+        assert!(entry_hops(&source, "order").is_empty(), "{label}");
+        assert!(entry_hops(&source, "compareKeys").is_empty(), "{label}");
+    }
+    // A private field read is a plain member access.
+    let private = SRC.replacen(
+        "  describe(keys: string[]): string {",
+        "  #n = 0;\n  count(): number {\n    return this.#n;\n  }\n  describe(keys: string[]): string {",
+        1,
+    );
+    assert_eq!(
+        entry_hops(&private, "compareKeys"),
+        [("serialize".to_string(), 3)]
     );
 }
 

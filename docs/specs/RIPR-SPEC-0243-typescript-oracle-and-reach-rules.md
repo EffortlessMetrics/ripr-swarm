@@ -1017,8 +1017,8 @@ Candidates come from the first non-empty tier:
    followed by `:` (a conditional arm reads like a return type). A function
    passed by reference as the whole first argument of a synchronous array
    callback method (`keys.sort(compare)`, `values.reduce(add, 0)`) is a call
-   of it when the function is declared in this module and the reference is
-   code, not a comment or a literal; an imported binding passed by reference
+   of it when the function is declared in this module, the module never
+   reassigns it, and the reference is code, not a comment or a literal; an imported binding passed by reference
    is no edge, so cross-module reach stays bare calls only. An explicit type
    argument list and whitespace before the argument list are read through
    (`new Box<string>()`, `new Box ()`, `values.map<string>(format)`); `new
@@ -1040,12 +1040,19 @@ Candidates come from the first non-empty tier:
    a module function only such a method calls. Fail-closed: the class has no
    `extends`, no decorator, no computed member and no `return` in its
    constructor; its name is declared once
-   in the file and every mention outside the declaration is `new X(...)`
-   (an alias, a type position, a re-export, a subclass, a prototype write or
-   any other mention refuses the whole class); a method is a node only when
+   in the file and every other mention outside the declaration is a
+   construction `new X(...)` or a read the value-read allowlist accepts (an
+   alias, a type position, a re-export, a subclass, a prototype write or any
+   other mention refuses the whole class); the class text uses `this` only
+   as a plain member access `this.name` / `this.#name`
+   (`Object.assign(this, o)`, `this[key] = f`, `(this as any).name` or
+   `const self = this` refuses every method, since any of them can replace
+   a method on the instance the entry calls); a method is a node only when
    no other member of the class has its name (a field, an accessor, a
-   static), it is not a generator, and nothing in the module assigns a
-   member of that name on any receiver. Limits: an instance kept in a
+   static, or a member whose key is the same name quoted, `"write" = ...`),
+   it is not a generator, nothing in the module assigns a member of that
+   name on any receiver, and no literal bracket key of that name
+   (`["write"]`) appears anywhere in the module, even as a read. Limits: an instance kept in a
    variable (`const s = new X(); s.method()`) is not followed, and neither
    is a class expression, a static method, an accessor or a constructor body.
    **Cross-module continuation (#13592).** The same chain continues across an

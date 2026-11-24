@@ -22,9 +22,11 @@
 //! with no `extends`, no decorator, no computed member and no `return` in its
 //! constructor, its name is declared once and never written, aliased, exported or used as anything but
 //! `new Class(...)` in the module, and the calling scope mentions the name
-//! only as a construction. A method is a node only when its name is the only
-//! member of that name in the class and nothing in the module assigns a member
-//! of that name. An instance kept in a variable (`const s = new Class();
+//! only as a construction, and the class uses `this` only as a plain member
+//! access (`this.name`). A method is a node only when its name is the only
+//! member of that name in the class (quoted keys included), nothing in the
+//! module assigns a member of that name, and no literal bracket key of that
+//! name (`["name"]`) appears in the module. An instance kept in a variable (`const s = new Class();
 //! s.method()`) is not followed.
 
 use super::class_entries::{executed_this_source, rebinds_this_member, runs_this_method_reference};
@@ -64,9 +66,9 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
     // Every member name, so a method that shares its name with a field, an
     // accessor, a static or an overload implementation is no node.
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    // Names of members keyed by a string, number or private name: never a
-    // node themselves, but a quoted `"write" = ...` field still replaces
-    // `write` on every instance.
+    // Names of members keyed by a string or number: never a node
+    // themselves, but a quoted `"write" = ...` field still replaces `write`
+    // on every instance.
     let mut other_keys: Vec<String> = Vec::new();
     let mut methods = Vec::new();
     for element in &class.body.body {
@@ -140,6 +142,7 @@ pub(super) fn method_nodes<'s>(
             || taken(class.name)
             || !constructs(masked, class.name)
             || !never_mutated_in_module(source, masked, class.name, Some(class.decl_start), None)
+            || this_escapes(class.text)
         {
             continue;
         }
@@ -161,6 +164,36 @@ pub(super) fn method_nodes<'s>(
         }
     }
     nodes
+}
+
+/// Whether the class text uses `this` other than as a plain member access
+/// `this.NAME` / `this?.NAME` / `this.#name`. Any other use (`Object.assign(this, o)`,
+/// `this[key] = f`, `const self = this`, `(this as any).NAME`, `helper(this)`)
+/// may replace a method on the very instance the entry calls, so no method of
+/// the class is a node.
+fn this_escapes(text: &str) -> bool {
+    text.match_indices("this").any(|(idx, _)| {
+        let before = text[..idx].chars().next_back();
+        let after_word = &text[idx + 4..];
+        if before.is_some_and(|ch| is_javascript_identifier_char(ch) || ch == '.')
+            || after_word
+                .chars()
+                .next()
+                .is_some_and(is_javascript_identifier_char)
+        {
+            return false;
+        }
+        let rest = after_word.trim_start();
+        let member = rest
+            .strip_prefix("?.")
+            .or_else(|| rest.strip_prefix('.'))
+            .map(str::trim_start);
+        !member.is_some_and(|tail| {
+            tail.chars().next().is_some_and(|ch| {
+                ch == '#' || (is_javascript_identifier_char(ch) && !ch.is_ascii_digit())
+            })
+        })
+    })
 }
 
 /// `["NAME"]`, `['NAME']` or `` [`NAME`] `` anywhere in the module: a
