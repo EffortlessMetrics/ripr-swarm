@@ -2199,45 +2199,58 @@ Tests: `connective_swap_tests.rs::agreeing_operands_do_not_expose_an_and_or_swap
 
 A one-line edit whose only change picks another `strip`, `lstrip` or `rstrip`
 on a parameter with no arguments, or another literal digit count in
-`round(<parameter>, <int>)`, or flips the literal `reverse` flag alone on one
-`sorted(<parameter>)` or `<parameter>.sort()` call with no other argument
-(#16203), changes the result only for a string with whitespace on a side one
-version keeps, a number with more decimal places than the smaller count, or a
-collection holding two different elements. The parameter must be one the body
-never rebinds; for a sort, the changed line must also be the start of the first
+`round(<parameter>, <int>)` (a negative count rounds to tens and coarser), or
+flips the literal `reverse` flag alone on one `sorted(<parameter>)` or
+`<parameter>.sort()` call with no other argument (#16203), changes the result
+only for a string with whitespace on a side one version keeps, a number the
+two counts round differently (read as exact decimal half-to-even rounding
+within 15 significant digits, spellings of 48 digits and counts within ±20;
+the binary rounding of a `float` is not simulated), or a collection holding
+two different elements, where two scalars agree only as Python compares them:
+above `2^53` a float spelling is the nearest representable double, so
+`9007199254740993` and `9007199254740993.0` are unequal while
+`9007199254740994.0` is exact. The parameter must be one the body never
+rebinds; for a sort, the changed line must also be the start of the first
 top-level body statement that names the parameter, and name it once, so the
-sort sees the collection the test passed; because Python normalizes
-identifiers, a non-ASCII parameter or statement before that line leaves the
-reading alone. A bare `round` or `sorted` must name
-the builtin (nothing in the owner's file rebinds it), the owner must not call
-itself, and a line inside a multiline string is never read as a call. When
-every strong related call binds the parameter to a plain literal the rule
-evaluates (a quoted string without escapes, an int or decimal float, or a list,
-tuple or set display the call itself spells, not a parametrize case value the
-test may change in place) and both versions give the same result, the edit
-reads `weakly_exposed` and the missing discriminator names the separating
-input. List elements agree only when they share a spelling or are plain strings
-or ints of equal value. A call the reader cannot resolve, or no resolved call
-at all, leaves the reading to the other rules.
+sort sees the collection the test passed. A body statement holding a
+non-ASCII character in code, outside strings and comments, may spell the
+parameter under Python's NFKC normalization or a confusable, so the
+first-mention scan abstains for that parameter and the sort gate does not
+fire (#16221). The gate does not read a recursive owner (its own call can
+hand it an argument no test passes), a module that defines `round` or
+`sorted` at top level (the bare call may be that local function), or a
+changed line inside a multi-line string (its text is data). When every
+strong related call binds the parameter to a plain literal the rule
+evaluates (a quoted string without escapes, an int or decimal float within
+the bounds above, or a list, tuple or set display of such scalars) and both
+versions give the same result, the edit reads `weakly_exposed` and the
+missing discriminator names the separating input; the messages say only that
+no related call is seen to pass it, not that the versions agree on every
+input. A call the reader cannot resolve, an unreadable literal, or no
+resolved call at all, leaves the reading to the other rules.
 
 Tests: `call_variant_tests.rs::inputs_without_trailing_whitespace_do_not_expose_strip_to_lstrip`,
 `call_variant_tests.rs::an_input_with_trailing_whitespace_keeps_strip_to_lstrip_exposed`,
 `call_variant_tests.rs::inputs_within_the_smaller_digit_count_do_not_expose_a_round_change`,
+`call_variant_tests.rs::a_literal_both_counts_round_alike_does_not_expose_a_round_change`,
 `call_variant_tests.rs::an_input_with_more_decimals_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::a_negative_count_agreeing_input_does_not_expose_a_round_change`,
+`call_variant_tests.rs::a_negative_count_off_grid_input_keeps_a_round_change_exposed`,
+`call_variant_tests.rs::a_recursive_owner_keeps_the_entry_rows_from_reading_agreement`,
+`call_variant_tests.rs::a_line_inside_a_multiline_string_is_not_read_as_a_call`,
+`call_variant_tests.rs::an_unrelated_non_ascii_string_does_not_block_the_sort_reading`,
 `call_variant_tests.rs::an_unread_argument_keeps_its_reading`,
 `call_variant_tests.rs::only_a_strip_side_or_round_digits_edit_on_a_name_is_read`,
 `call_variant_tests.rs::agreement_follows_python_strip_and_round`,
 `call_variant_tests.rs::lists_without_two_different_elements_do_not_expose_a_sort_direction_flip`,
 `call_variant_tests.rs::a_list_with_different_elements_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_list_python_compares_unequal_keeps_a_sort_direction_flip_exposed`,
+`call_variant_tests.rs::a_list_python_compares_equal_does_not_expose_a_sort_direction_flip`,
 `call_variant_tests.rs::an_unread_list_keeps_a_sort_direction_flip_exposed`,
 `call_variant_tests.rs::a_list_the_body_changes_before_the_sort_keeps_its_reading`,
 `call_variant_tests.rs::only_a_lone_reverse_flag_flip_on_a_named_sort_is_read`,
 `call_variant_tests.rs::sorting_agrees_only_without_two_different_elements`,
-`call_variant_tests.rs::a_module_round_or_sorted_keeps_its_reading`,
-`call_variant_tests.rs::a_parametrized_list_keeps_a_sort_direction_flip_exposed`,
-`call_variant_tests.rs::a_recursive_owner_keeps_its_reading`,
-`call_variant_tests.rs::a_call_shaped_line_inside_a_multiline_string_is_not_read_as_a_call`,
-`call_variant_tests.rs::a_prior_use_spelled_with_a_normalized_identifier_keeps_the_sort_exposed`.
+`boundary.rs::an_int_spelling_its_float_spelling_above_two_to_the_53rd`.
 
 ## Changed Range Header Amendment (#12948)
 
