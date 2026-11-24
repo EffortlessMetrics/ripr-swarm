@@ -1036,6 +1036,29 @@ pub(crate) fn bound_finding_is_unreferenced_new_function(
         .is_some_and(crate::domain::Finding::is_unreferenced_no_static_path)
 }
 
+/// A bound candidate-current no-path finding can veto a suggested start
+/// even when the seam packet has a usable test target (#4668). Use the
+/// full occurrence join, including the most-specific claimant, before
+/// applying the same unreferenced-owner exception as `ripr check`.
+pub(crate) fn bound_no_path_start_refusal<'a>(
+    findings: &'a [crate::domain::Finding],
+    entry: &ClassifiedSeam,
+    candidate_seams: &[ClassifiedSeam],
+) -> Option<&'a crate::domain::Finding> {
+    let eligibility = repair_packet_eligibility(entry);
+    let finding = finding_for_seam(
+        findings,
+        entry,
+        eligibility.readiness.canonical_gap_id.as_deref(),
+        candidate_seams,
+    )?;
+    (finding.class == crate::domain::ExposureClass::NoStaticPath
+        && finding.is_candidate_actionable()
+        && super::gap_bound_repair::finding_is_static_limited(finding)
+        && finding_names_seam_by_location(finding, entry, candidate_seams))
+    .then_some(finding)
+}
+
 /// Project the witness for the finding that names this seam's canonical gap
 /// from an already-completed finding set: the shared [`finding_for_seam`]
 /// join, then the witness projection. Projection can still refuse a bound

@@ -880,6 +880,27 @@ fn gap_identities_overlap(left: &Value, right: &Value) -> bool {
     false
 }
 
+/// A saved-workspace finding may withhold a start the classified seam could
+/// otherwise format. This ceiling leaves the packet and card readable and
+/// lets code actions, hover, and the standard context packet agree.
+pub(super) fn seam_repair_start_command(
+    entry: &ClassifiedSeam,
+    snapshot: &AnalysisSnapshot,
+    root: &str,
+) -> Option<String> {
+    if let Some(candidate_seams) = snapshot.repair_card_candidate_seams.as_deref()
+        && crate::app::repair_card_handoff::bound_no_path_start_refusal(
+            &snapshot.findings,
+            entry,
+            candidate_seams,
+        )
+        .is_some()
+    {
+        return None;
+    }
+    repair_start_command_for(entry, root)
+}
+
 fn push_seam_actions(
     actions: &mut CodeActionResponse,
     params: &CodeActionParams,
@@ -962,7 +983,7 @@ fn push_seam_actions(
     // payload's `root` field stays the portable role (`COMMAND_ROOT`).
     let root = loop_commands::bound_root(&context.snapshot.root.to_string_lossy());
     if !instruction_blocks_repair
-        && let Some(command) = repair_start_command_for(context.seam, &root)
+        && let Some(command) = seam_repair_start_command(context.seam, context.snapshot, &root)
     {
         // #13636: `ripr agent repair` refuses a dirty production premise
         // ("commit first ... Nothing was started"). Ask its own preflight so

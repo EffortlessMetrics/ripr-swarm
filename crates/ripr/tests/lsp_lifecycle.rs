@@ -3493,3 +3493,212 @@ fn real_seam_diagnostic_names_the_commit_step_on_an_uncommitted_change() -> Resu
     }
     shutdown_exit_and_wait(&mut session)
 }
+
+#[cfg(feature = "lang-rust")]
+#[path = "common/repair_start_fixture.rs"]
+mod repair_start_fixture;
+
+/// The inspection card can retain a proposed target on an unreached seam.
+/// Starting a repair from the editor requires the stronger producer fact.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn no_test_path_start_uses_the_saved_workspace_finding_over_stdio() -> Result<(), String> {
+    use repair_start_fixture::{CALLED_BASE, CALLED_NEW, LOYALTY_BASE, LOYALTY_NEW, LOYALTY_TEST};
+    use serde_json::{Value, json};
+
+    const CANONICAL_GAP: &str =
+        "gap:rust:src/lib.rs:loyalty_price:predicate_boundary:predicate:member_years==5";
+
+    for (base, changed, line, mode, startable) in [
+        (LOYALTY_BASE, LOYALTY_NEW, 6, "deep", true),
+        (CALLED_BASE, CALLED_NEW, 10, "deep", false),
+        (LOYALTY_BASE, LOYALTY_NEW, 6, "instant", false),
+    ] {
+        let fixture = unique_compat_fixture_root("repair-start")?;
+        let root = &fixture.path;
+        fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(root.join("tests")).map_err(|e| e.to_string())?;
+        for (file, source) in [
+            (
+                "Cargo.toml",
+                "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            ),
+            (".gitignore", "/target/\n"),
+            ("src/lib.rs", base),
+            ("tests/t.rs", LOYALTY_TEST),
+        ] {
+            fs::write(root.join(file), source).map_err(|e| e.to_string())?;
+        }
+        run_compat_git(root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+        run_compat_git(root, &["add", "."])?;
+        run_compat_git(
+            root,
+            &[
+                "-c",
+                "user.name=RIPR fixture",
+                "-c",
+                "user.email=fixture@ripr.invalid",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qm",
+                "base",
+            ],
+        )?;
+        run_compat_git(root, &["checkout", "-qb", "feature"])?;
+        fs::write(root.join("src/lib.rs"), changed).map_err(|e| e.to_string())?;
+        run_compat_git(root, &["add", "."])?;
+        run_compat_git(
+            root,
+            &[
+                "-c",
+                "user.name=RIPR fixture",
+                "-c",
+                "user.email=fixture@ripr.invalid",
+                "-c",
+                "commit.gpgSign=false",
+                "commit",
+                "-qm",
+                "change",
+            ],
+        )?;
+
+        let uri = editor_file_uri(&root.join("src/lib.rs"))?;
+        let mut session = LspSession::spawn()?;
+        let initialize = session.request("initialize", json!({
+            "rootUri": editor_file_uri(root)?,
+            "initializationOptions": {"baseRef":"main", "checkMode":mode, "diagnosticProfile":"full"},
+            "capabilities": {
+                "textDocument":{"codeAction":{"disabledSupport":true,
+                    "codeActionLiteralSupport":{"codeActionKind":{"valueSet":["quickfix"]}}}},
+                "experimental":{"riprEditor":{"version":"0.10.0","commands":[
+                    "ripr.copyContext","ripr.copyAgentRepairCommand"], "guardedTestEdit":false}}
+            }
+        }))?;
+        expect_result(&initialize, "initialize")?;
+        session.notify("initialized", Some(json!({})))?;
+        let refresh = fire(
+            &mut session,
+            "workspace/executeCommand",
+            json!({
+                "command":"ripr.refresh", "arguments":[]
+            }),
+        )?;
+        let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+        let mut diagnostic = None;
+        let mut refreshed = false;
+        while !refreshed || diagnostic.is_none() {
+            let message = session.await_message(deadline, "repair-start seam diagnostics")?;
+            if message["id"].as_u64() == Some(refresh) {
+                expect_result(&message, "ripr.refresh")?;
+                refreshed = true;
+            }
+            if message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri
+                && let Some(entries) = message
+                    .pointer("/params/diagnostics")
+                    .and_then(Value::as_array)
+                && let Some(seam) = entries.iter().find(|entry| {
+                    entry["code"] == "ripr-seam-ungripped"
+                        && entry.pointer("/range/start/line").and_then(Value::as_u64)
+                            == Some(line - 1)
+                        && entry["data"]["seam_kind"] == "predicate_boundary"
+                })
+            {
+                diagnostic = Some(seam.clone());
+            }
+        }
+        let diagnostic = diagnostic.ok_or("missing current seam")?;
+        assert_eq!(diagnostic["data"]["evidence"]["reach"], "no");
+        let seam = diagnostic["data"]["seam_id"]
+            .as_str()
+            .ok_or("missing seam id")?;
+        let reply = session.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument":{"uri":uri}, "range":diagnostic["range"],
+                "context":{"diagnostics":[diagnostic]}
+            }),
+        )?;
+        let actions = expect_result(&reply, "textDocument/codeAction")?
+            .as_array()
+            .ok_or("missing code action array")?;
+        let card_action = actions
+            .iter()
+            .find(|action| {
+                action["command"]["command"] == "ripr.copyContext"
+                    && action
+                        .pointer("/command/arguments/0/label")
+                        .and_then(Value::as_str)
+                        == Some("repair_card")
+            })
+            .ok_or("missing direct-copy RepairCard")?;
+        assert_eq!(
+            card_action["data"]["evidence_identity"],
+            diagnostic["data"]["evidence_identity"]
+        );
+        let card: Value = serde_json::from_str(
+            card_action
+                .pointer("/command/arguments/0/packet")
+                .and_then(Value::as_str)
+                .ok_or("missing card payload")?,
+        )
+        .map_err(|e| e.to_string())?;
+        assert_eq!(card["subject"]["seam_id"], seam);
+        assert_eq!(card["subject"]["canonical_gap_id"], CANONICAL_GAP);
+        assert_eq!(card["snapshot"]["currentness"], "current");
+        assert_eq!(card["selected_target"]["file"], "tests/loyalty_price.rs");
+        let start = actions.iter().find(|action| {
+            action["command"]["command"] == "ripr.copyAgentRepairCommand"
+                && action["disabled"].is_null()
+        });
+        assert_eq!(
+            start.is_some(),
+            startable,
+            "{mode} seam at line {line}: unexpected Start repair"
+        );
+        if let Some(start) = start {
+            let command = start
+                .pointer("/command/arguments/0/command")
+                .and_then(Value::as_str)
+                .ok_or("missing start command")?;
+            assert!(command.starts_with("ripr agent repair --root "));
+            assert!(command.ends_with(&format!(" --seam-id {seam} --phase before")));
+            assert_eq!(
+                start["data"]["evidence_identity"],
+                diagnostic["data"]["evidence_identity"]
+            );
+            assert_eq!(card["canonical_next_action"]["action_class"], "run_command");
+            assert_eq!(
+                card["canonical_next_action"]["command"]["role"],
+                "inspection"
+            );
+        } else {
+            assert_eq!(card["instruction"]["state"], "static_limitation");
+            assert!(card["next_action"].is_null(), "{card}");
+        }
+        let hover = session.request(
+            "textDocument/hover",
+            json!({
+                "textDocument":{"uri":uri}, "position":diagnostic["range"]["start"]
+            }),
+        )?;
+        let contents = expect_result(&hover, "textDocument/hover")?
+            .pointer("/contents/value")
+            .and_then(Value::as_str)
+            .ok_or("missing seam hover")?;
+        assert!(
+            contents.contains("## Handoff, verify, and receipt commands"),
+            "{contents}"
+        );
+        assert_eq!(
+            contents.contains("repair (start here)"),
+            startable,
+            "{contents}"
+        );
+        shutdown_exit_and_wait(&mut session)?;
+        assert!(!root.join("tests/loyalty_price.rs").exists());
+        assert!(!root.join("target/ripr/repair-attempts").exists());
+    }
+    Ok(())
+}

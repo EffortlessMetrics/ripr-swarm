@@ -15600,6 +15600,7 @@ id = "RIPR-SPEC-0198"
 name = "repair card lsp projection"
 spec = "docs/specs/RIPR-SPEC-0198-repair-card-lsp-projection.md"
 tests = [
+  "crates/ripr/tests/lsp_lifecycle.rs::no_test_path_start_uses_the_saved_workspace_finding_over_stdio",
   "crates/ripr/src/lsp/repair_card.rs::tests::hover_lines_project_identity_state_next_action_and_detail_counts",
   "crates/ripr/src/lsp/repair_card.rs::tests::unavailable_instruction_projects_no_route_and_no_next_action",
   "crates/ripr/src/lsp/repair_card.rs::tests::limited_route_gate_projects_closed_next_action_without_strengthening",
@@ -17361,6 +17362,7 @@ id = "RIPR-SPEC-0215"
 name = "MCP repair card projection"
 spec = "docs/specs/RIPR-SPEC-0215-repair-card-mcp-projection.md"
 tests = [
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::called_unreached_proposal_cannot_prepare_a_repair_over_stdio",
   "crates/ripr/tests/mcp_cli_repair_parity.rs::repair_card_next_step_tracks_live_attempt_state_over_stdio",
   "crates/ripr/src/mcp/repair_card.rs::tests::repair_card_resource_uri_parsing_is_strict",
   "crates/ripr/src/mcp/repair_card.rs::tests::card_read_fails_closed_on_every_missing_producer_fact",

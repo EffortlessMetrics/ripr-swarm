@@ -97,6 +97,13 @@ and the builder independently rejects one the gate would not expose. The
 wire card keeps `next_action: null` with an unavailable instruction exactly
 like the CLI surface.
 
+For a bound no-static-path finding, the seam's Start repair action, hover
+and context packet withhold the start unless the saved-workspace producer
+established that the changed owner is unreferenced in the workspace. An
+instant check can preserve a proposed test target and its inspection card
+while lacking that workspace-wide fact. The bounded card keeps its own
+inspection route gate.
+
 `witness_from_findings`, `workspace_identity_for`, and `latest_attempt_for_seam`
 are raised from private to `pub(crate)` in `app/repair_card_handoff.rs` with
 the CLI gather path refactored onto `witness_from_findings`, so exactly one

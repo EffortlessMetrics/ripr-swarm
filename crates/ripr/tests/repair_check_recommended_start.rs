@@ -3,6 +3,10 @@
 //! of asking the user to repeat check's choice. Real-binary tests on feature
 //! branches (so the change is scoped), with discriminating negatives.
 
+#[path = "common/repair_start_fixture.rs"]
+mod repair_start_fixture;
+
+use repair_start_fixture::{CALLED_BASE, CALLED_NEW, LOYALTY_BASE, LOYALTY_NEW, LOYALTY_TEST};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -509,11 +513,6 @@ fn a_gripped_spot_beside_a_noticed_candidate_is_already_checked() -> Result<(), 
     Ok(())
 }
 
-const LOYALTY_BASE: &str = "pub fn doubled(x: u64) -> u64 {\n    x * 2\n}\n";
-const LOYALTY_NEW: &str = "pub fn doubled(x: u64) -> u64 {\n    x * 2\n}\n\npub fn loyalty_price(amount: u64, member_years: u32) -> u64 {\n    if member_years >= 5 {\n        amount - amount * 5 / 100\n    } else {\n        amount\n    }\n}\n";
-const LOYALTY_TEST: &str =
-    "use fx::doubled;\n\n#[test]\nfn doubles() {\n    assert_eq!(doubled(2), 4);\n}\n";
-
 /// #15926: a new function no workspace code calls. `ripr check` prints its
 /// `ripr repair <id>` line, and every other surface agrees that it is a repair
 /// start: the repair card's next action runs a command, `ripr pilot` prints the
@@ -546,9 +545,6 @@ fn an_unreferenced_new_function_starts_on_every_surface() -> Result<(), String> 
 /// A new function that other workspace code calls, but no test reaches, stays
 /// a refusal: only a function nothing in the workspace calls is admitted. Its
 /// reason says no test reaches the code instead of "cannot tell from reading".
-const CALLED_BASE: &str = "pub fn doubled(x: u64) -> u64 {\n    x * 2\n}\n\npub fn checkout(amount: u64) -> u64 {\n    amount\n}\n";
-const CALLED_NEW: &str = "pub fn doubled(x: u64) -> u64 {\n    x * 2\n}\n\npub fn checkout(amount: u64) -> u64 {\n    loyalty_price(amount, 6)\n}\n\npub fn loyalty_price(amount: u64, member_years: u32) -> u64 {\n    if member_years >= 5 {\n        amount - amount * 5 / 100\n    } else {\n        amount\n    }\n}\n";
-
 #[test]
 fn a_called_but_unreached_new_function_refuses_with_the_no_path_reason() -> Result<(), String> {
     let repo = repo(
