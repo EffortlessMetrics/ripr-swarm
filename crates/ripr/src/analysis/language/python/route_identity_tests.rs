@@ -612,6 +612,50 @@ fn an_exit_the_reader_cannot_use_fails_the_chain_closed() -> Result<(), String> 
     Ok(())
 }
 
+/// #14141 review: Python parses `return[other]` as an exit. A reader that
+/// required whitespace after the keyword skipped such an exit and read a
+/// later plain `return app` as the only one, so the client was given an
+/// application its fixture does not always supply. Any exit the reader cannot
+/// use now fails the chain closed, whatever follows the keyword.
+#[test]
+fn an_exit_whose_value_starts_with_punctuation_fails_the_chain_closed() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    for (label, items_app) in [
+        (
+            "a list",
+            "def items_app(flag, other):\n    if flag: return[other]\n    return app\n",
+        ),
+        (
+            "a dict",
+            "def items_app(flag, other):\n    if flag: return{0: other}\n    return app\n",
+        ),
+        (
+            "a signed value",
+            "def items_app(flag, other):\n    if flag: return+other\n    return app\n",
+        ),
+        (
+            "a yield of a list",
+            "def items_app(flag, other):\n    if flag: yield[other]\n    yield app\n",
+        ),
+    ] {
+        let source = format!(
+            "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\n{items_app}\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+        );
+        assert_eq!(fixture_relation(&source)?, unidentified, "{label}");
+    }
+    // Identifier boundary: a name that merely starts with the keyword is
+    // not an exit, so the plain return is still the only one.
+    let named = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    returns = 1\n    yielded = returns\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(
+        fixture_relation(&named)?,
+        Some(PythonRelationKind::ApiClientRouteCall),
+        "a name that starts with the keyword is not an exit"
+    );
+    Ok(())
+}
+
 #[test]
 fn a_shadowed_application_name_is_not_the_import_it_spells() -> Result<(), String> {
     let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);

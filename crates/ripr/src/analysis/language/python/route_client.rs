@@ -620,9 +620,12 @@ pub(super) fn client_app_name(body_text: &str, receiver: &str) -> Option<String>
 /// The value an exit statement carries: `Some(Some(value))` for
 /// `return value` / `yield value` under any spacing Python allows
 /// (`return\tvalue`, `return(value)`), `Some(None)` for a bare exit, and
-/// `None` when the line is not an exit. Every exit counts, so one the
-/// reader cannot use fails the whole read closed instead of being skipped
-/// while another branch's application is accepted.
+/// `None` when the line is not an exit. Whatever follows the keyword begins
+/// the value, punctuation included (`return[other]`, `yield{0: other}`,
+/// `yield+x`); only an identifier character makes the word a name such as
+/// `returns`, not the keyword. Every exit counts, so one the reader cannot
+/// use fails the whole read closed instead of being skipped while another
+/// branch's application is accepted.
 fn exit_value(line: &str) -> Option<Option<&str>> {
     for keyword in ["return", "yield"] {
         let Some(rest) = line.strip_prefix(keyword) else {
@@ -631,10 +634,11 @@ fn exit_value(line: &str) -> Option<Option<&str>> {
         if rest.is_empty() {
             return Some(None);
         }
-        if rest.starts_with(|ch: char| ch.is_whitespace()) || rest.starts_with('(') {
-            let value = rest.trim();
-            return Some((!value.is_empty()).then_some(value));
+        if rest.starts_with(is_python_identifier_char) {
+            continue;
         }
+        let value = rest.trim();
+        return Some((!value.is_empty()).then_some(value));
     }
     None
 }
@@ -717,8 +721,13 @@ fn exit_statement(line: &str) -> &str {
                     .chars()
                     .next_back()
                     .is_some_and(|before| before == ':' || before.is_whitespace());
-                let after = line[at + keyword.len()..].chars().next();
-                let after_ok = after.is_none_or(|ch| ch.is_whitespace() || ch == '(');
+                // An identifier character after the word makes it a name
+                // (`returns = ...`), not an exit; anything else is the start
+                // of the exit's value, punctuation included.
+                let after_ok = line[at + keyword.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_python_identifier_char(ch));
                 before_ok && after_ok
             })
         })
