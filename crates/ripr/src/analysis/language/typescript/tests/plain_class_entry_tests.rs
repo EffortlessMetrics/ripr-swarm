@@ -256,12 +256,16 @@ fn a_class_whose_this_escapes_has_no_method_node() {
             "  constructor() {\n    const k = \"order\";\n    (this as any)[k] = (x: any) => x;\n  }\n",
         ),
         (
-            "literal key",
-            "  constructor() {\n    (this as any)[\"order\"] = (k: string[]) => k;\n  }\n",
+            "prototype through constructor",
+            "  constructor(o?: any) {\n    Object.assign(this.constructor.prototype, o);\n  }\n",
         ),
         (
-            "cast",
-            "  constructor() {\n    (this as any).order = (k: string[]) => k;\n  }\n",
+            "prototype through __proto__",
+            "  constructor(o?: any) {\n    Object.assign(this.__proto__, o);\n  }\n",
+        ),
+        (
+            "instance through valueOf",
+            "  constructor(o?: any) {\n    Object.assign(this?.valueOf(), o);\n  }\n",
         ),
         (
             "alias",
@@ -278,10 +282,31 @@ fn a_class_whose_this_escapes_has_no_method_node() {
         assert!(entry_hops(&source, "order").is_empty(), "{label}");
         assert!(entry_hops(&source, "compareKeys").is_empty(), "{label}");
     }
-    // A private field read is a plain member access.
+    // Bracket and cast writes are refused by the member-write guards even
+    // where `this` alone would not be.
+    for (label, member) in [
+        (
+            "literal key",
+            "  constructor() {\n    (this as any)[\"order\"] = (k: string[]) => k;\n  }\n",
+        ),
+        (
+            "cast",
+            "  constructor() {\n    (this as any).order = (k: string[]) => k;\n  }\n",
+        ),
+    ] {
+        let source = SRC.replacen(
+            "  describe(keys: string[]): string {",
+            &format!("{member}  describe(keys: string[]): string {{"),
+            1,
+        );
+        assert_ne!(source, SRC, "{label}: fixture not rewritten");
+        assert!(entry_hops(&source, "order").is_empty(), "{label}");
+    }
+    // A private field read and an optional member read are plain member
+    // accesses.
     let private = SRC.replacen(
         "  describe(keys: string[]): string {",
-        "  #n = 0;\n  count(): number {\n    return this.#n;\n  }\n  describe(keys: string[]): string {",
+        "  #n = 0;\n  count(): number {\n    return this.#n + (this?.constructorCount ?? 0);\n  }\n  constructorCount = 0;\n  describe(keys: string[]): string {",
         1,
     );
     assert_eq!(

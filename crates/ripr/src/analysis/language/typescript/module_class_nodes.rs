@@ -23,7 +23,8 @@
 //! constructor, its name is declared once and never written, aliased, exported or used as anything but
 //! `new Class(...)` in the module, and the calling scope mentions the name
 //! only as a construction, and the class uses `this` only as a plain member
-//! access (`this.name`). A method is a node only when its name is the only
+//! access (`this.name` or `this?.name`) to a member other than `constructor`,
+//! `__proto__` or `valueOf`, which hand back the instance or its prototype. A method is a node only when its name is the only
 //! member of that name in the class (quoted keys included), nothing in the
 //! module assigns a member of that name, and no literal bracket key of that
 //! name (`["name"]`) appears in the module. An instance kept in a variable (`const s = new Class();
@@ -170,7 +171,9 @@ pub(super) fn method_nodes<'s>(
 /// `this.NAME` / `this?.NAME` / `this.#name`. Any other use (`Object.assign(this, o)`,
 /// `this[key] = f`, `const self = this`, `(this as any).NAME`, `helper(this)`)
 /// may replace a method on the very instance the entry calls, so no method of
-/// the class is a node.
+/// the class is a node. A member that hands back the instance or its prototype
+/// (`this.constructor`, `this.__proto__`, `this.valueOf`) escapes the same way:
+/// `Object.assign(this.constructor.prototype, o)` replaces every method.
 fn this_escapes(text: &str) -> bool {
     text.match_indices("this").any(|(idx, _)| {
         let before = text[..idx].chars().next_back();
@@ -189,9 +192,16 @@ fn this_escapes(text: &str) -> bool {
             .or_else(|| rest.strip_prefix('.'))
             .map(str::trim_start);
         !member.is_some_and(|tail| {
-            tail.chars().next().is_some_and(|ch| {
-                ch == '#' || (is_javascript_identifier_char(ch) && !ch.is_ascii_digit())
-            })
+            let name_end = tail
+                .char_indices()
+                .find(|&(offset, ch)| {
+                    !(is_javascript_identifier_char(ch) || (offset == 0 && ch == '#'))
+                })
+                .map_or(tail.len(), |(offset, _)| offset);
+            let name = &tail[..name_end];
+            !name.is_empty()
+                && !name.starts_with(|ch: char| ch.is_ascii_digit())
+                && !matches!(name, "constructor" | "__proto__" | "valueOf")
         })
     })
 }
