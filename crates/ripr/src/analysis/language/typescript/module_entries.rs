@@ -312,7 +312,14 @@ pub(crate) fn module_entries_and_outbound<'a>(
                 name,
                 decl_starts.get(name).copied(),
                 built.get(name).and_then(|value| value.shadow.as_ref()),
-            )
+            ) && built.get(name).is_none_or(|value| {
+                built_value_stays_inside(
+                    &masked_source,
+                    name,
+                    decl_starts.get(name).copied(),
+                    value,
+                )
+            })
         });
         let classes: &[ModuleClass<'_>] = if runs_dynamic_or_escaped_code(&masked_source) {
             &[]
@@ -997,21 +1004,84 @@ fn built_value<'a>(
     })
 }
 
-/// `eval`, `Function` as a word, or a `\\` in code (outside comments and
-/// literals, so a unicode-escaped identifier) anywhere in `masked`.
+/// `eval`, `Function` as a word (other than `Function.prototype.toString.call(`,
+/// which only reads a function's source), or a `\\` in code (outside comments and literals, so a
+/// unicode-escaped identifier) anywhere in `masked`.
 fn runs_dynamic_or_escaped_code(masked: &str) -> bool {
     masked.contains('\\')
         || ["eval", "Function"].iter().any(|word| {
             masked.match_indices(word).any(|(idx, _)| {
-                !masked[..idx]
-                    .chars()
-                    .next_back()
-                    .is_some_and(is_javascript_identifier_char)
-                    && !masked[idx + word.len()..]
-                        .chars()
-                        .next()
-                        .is_some_and(is_javascript_identifier_char)
+                word_at(masked, idx, word)
+                    && !(*word == "Function"
+                        && masked[idx + word.len()..].starts_with(".prototype.toString.call("))
             })
+        })
+}
+
+fn word_at(text: &str, idx: usize, word: &str) -> bool {
+    !text[..idx]
+        .chars()
+        .next_back()
+        .is_some_and(is_javascript_identifier_char)
+        && !text[idx + word.len()..]
+            .chars()
+            .next()
+            .is_some_and(is_javascript_identifier_char)
+}
+
+/// Whether module code outside the function that builds `name` only
+/// constructs it and never reaches a prototype. The allowlisted value reads
+/// admit `NAME.prototype` and passing it on (`patch(NAME.prototype)`), and an
+/// instance a method hands back reaches the same prototype
+/// (`Object.getPrototypeOf(new NAME().self())`): either can replace a method
+/// every later instance runs. So outside the building function every mention
+/// of `name` is `new NAME(`, and no code names `prototype`, `__proto__`,
+/// `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect`.
+fn built_value_stays_inside(
+    masked: &str,
+    name: &str,
+    declaration: Option<usize>,
+    value: &BuiltValue<'_>,
+) -> bool {
+    // A value whose building function body has no block (so no class,
+    // nested function, method or arrow body) made all its calls at load
+    // time; nothing a later write does can undo them.
+    let body = value
+        .text
+        .find('{')
+        .map_or("", |brace| &value.text[brace + 1..]);
+    let body_masked = ts_mask_literals_and_comments(body);
+    if !body_masked.contains('{') && !body_masked.contains("=>") {
+        return true;
+    }
+    let outside = |idx: usize| {
+        value
+            .shadow
+            .as_ref()
+            .is_none_or(|range| !range.contains(&idx))
+    };
+    let only_constructed = masked.match_indices(name).all(|(idx, _)| {
+        !outside(idx)
+            || declaration == Some(idx)
+            || !word_at(masked, idx, name)
+            || (masked[..idx].trim_end().ends_with("new")
+                && super::module_value_reads::past_type_arguments(&masked[idx + name.len()..])
+                    .starts_with('('))
+    });
+    only_constructed
+        && [
+            "prototype",
+            "__proto__",
+            "constructor",
+            "getPrototypeOf",
+            "setPrototypeOf",
+            "Reflect",
+        ]
+        .iter()
+        .all(|word| {
+            masked
+                .match_indices(word)
+                .all(|(idx, _)| !outside(idx) || !word_at(masked, idx, word))
         })
 }
 

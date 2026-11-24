@@ -167,11 +167,35 @@ fn module_level_write_to_the_built_value_disables_it() {
             "Serializ\\u0065r.prototype.serialize = () => \"\";\n",
         ),
         ("dynamic code", "eval(\"0\");\n"),
+        (
+            "dynamic function",
+            "export const run = Function(\"return 1\");\n",
+        ),
+        (
+            "prototype passed on",
+            "export function patch(o: any): void {\n  o(Serializer.prototype);\n}\n",
+        ),
+        (
+            "prototype of a handed-back instance",
+            "export function proto(): any {\n  return Object.getPrototypeOf(new Serializer().serialize({}));\n}\n",
+        ),
     ] {
         let source = format!("{SRC}{tail}");
         assert!(entry_names(&source, "Serializer").is_empty(), "{label}");
         assert!(entry_names(&source, "compareStrings").is_empty(), "{label}");
     }
+}
+
+#[test]
+fn function_source_read_keeps_the_built_value() {
+    // ohash reads `Function.prototype.toString` inside the building function.
+    let source = SRC.replacen(
+        "      return compareStrings(a, b);",
+        "      return compareStrings(Function.prototype.toString.call(a), b);",
+        1,
+    );
+    assert_ne!(source, SRC);
+    assert_eq!(entry_names(&source, "Serializer"), ["serialize"]);
 }
 
 #[test]

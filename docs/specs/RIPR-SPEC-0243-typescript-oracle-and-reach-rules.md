@@ -1011,8 +1011,14 @@ Candidates come from the first non-empty tier:
    entry that constructs the class reaches the module functions the class's
    code calls. When the building function declares the binding's own name,
    mentions of the name inside it are the inner binding and are left out of
-   the module-wide scan; every mention outside it must still be an
-   allowlisted read. A top-level name the building function also declares as
+   the module-wide scan; every mention outside it must be an allowlisted read
+   and, when the building function's body holds any block (a class, a
+   method, a nested function or a block statement whose code may run
+   later), a construction `new X(...)`, with no code outside it naming `prototype`, `__proto__`,
+   `constructor`, `getPrototypeOf`, `setPrototypeOf` or `Reflect` (an
+   allowlisted read such as `patch(X.prototype)`, or the prototype of an
+   instance a method hands back, could replace a method every later instance
+   runs). A top-level name the building function also declares as
    a member (`compare(a, b) { ... }`) is no edge, and neither is a call
    followed by `:` (a conditional arm reads like a return type). A function
    passed by reference as the whole first argument of a synchronous array
@@ -1027,7 +1033,9 @@ Candidates come from the first non-empty tier:
    `setTimeout`, `then`, an event listener) leaves no call edge; the
    closure edges below may still read it as value-passing reach. Limits: the
    class is one node, so a method no entry calls is reached with the rest of
-   the class; the receiver of the array method is not typed.
+   the class, and so is a function only a method the building function itself
+   replaces calls (static text reach, as for the bare-call graph); the
+   receiver of the array method is not typed.
    **Methods of a module-private class (#15928).** A top-level `class X`
    declaration that is not exported has one node per plain instance method,
    `X.method`, in the same graph under the same hop bound. A function or
@@ -1082,7 +1090,8 @@ Candidates come from the first non-empty tier:
    variable (`const s = new X(); s.method()`) refuses the whole class, and neither
    is a class expression, a static method, an accessor or a constructor body.
    A module whose code (outside comments and literals) names `eval` or
-   `Function`, or holds a `\` (an identifier spelled with a unicode escape),
+   `Function` (other than `Function.prototype.toString.call(`, which only
+   reads a function's source), or holds a `\` (an identifier spelled with a unicode escape),
    follows no module value, built value or class, since either can write one
    under a spelling the scan cannot see; and a mention after `.` reads as
    another binding only when the `.` does not follow a digit, which may end a
