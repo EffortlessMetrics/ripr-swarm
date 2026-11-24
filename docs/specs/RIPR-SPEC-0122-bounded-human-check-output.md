@@ -651,6 +651,66 @@ written only when:
   from the test build) and no generic parameter of the owner or an enclosing
   impl or trait that could shadow it.
 
+A boundary stub that writes the inputs its comparison reads copies the owner's
+other parameters from an existing test instead of leaving them as labelled
+`todo!()`s (#8361), for example `amount = 10_000` from `assert_eq!(tax_cents(10_000,
+825), Ok(825))` beside `rate_bps = 10_000` for `rate_bps >= 10_000`. A comment
+above the inputs and an `Other inputs:` line name the test they came from, and
+the expected value stays a `todo!()`. The values are copied only when:
+
+- the owner is a free function and the stub goes into an existing inline test
+  module;
+- the call is the first one in that module, in source order, that meets
+  every condition here: it goes through the owner's bare name with one
+  literal argument per parameter, and it is authored at the top level of the
+  test's own body, as a statement or `let` initializer or as an asserted
+  operand (not a message argument) of a statement `assert!`, `assert_eq!` or
+  `assert_ne!`;
+- it sits in a `#[test]` function that is not `should_panic`, `ignore` or a
+  ripr stub and carries only plain attributes (`test`, lint levels, `doc`),
+  outside closures, `async` blocks and `cfg`, with no `return` or `?` before
+  it in the test (an earlier macro's tokens included) or inside the
+  assertion holding it;
+- the owner and any module around it carry only plain attributes (lint
+  levels, `doc`, `inline`, `must_use`, `cfg`), since an attribute macro may
+  rewrite the body;
+- the owner has no `mut` parameter and the file never names
+  `overflowing_literals`, so no input is reassigned and no literal wraps;
+- each copied literal fits its parameter's declared type as written: an
+  in-range integer literal for an integer type, a float literal for `f32` or
+  `f64` that stays finite, `true`/`false`, a char literal, a string literal for `&str`, a byte
+  string for `&[u8]` (an alias or any other type takes no copy), and no name
+  the file declares or imports shadows that primitive type, or the primitive
+  of any other parameter, since a guard reads each parameter as its primitive;
+- the copied values do not steer the owner away from the statement holding
+  the changed comparison (an earlier guard on the written inputs alone is
+  outside this check, as it is for any boundary stub): each earlier statement that names a copied
+  parameter (including a `{name}` or `{:name$}` format capture, read after escapes are decoded) is an `if` without `else`
+  whose condition evaluates to false with every integer literal in it
+  fitting each integer type in play (a parameter it names or a literal's
+  suffix, plus `i32` when a literal is unsuffixed), no earlier statement binds the
+  name of a written or copied input, nothing before the
+  comparison calls `include!` or a macro other than a standard one (which
+  may read a copied value without naming it), and the comparison's own statement is not a
+  `let`, does not hold the comparison inside an assignment (a tail one included), a closure or an
+  `async` block, and names a copied value only after the comparison;
+- nothing in the module declares, binds, imports or renames another item of
+  the owner's name (a local inside a test ripr wrote cannot reach another
+  test's call, so it does not count);
+- the module calls only standard macros (`assert_eq!`, `vec!`, `println!` and
+  the like), since another macro or `include!` may emit a function of the
+  owner's name, and the file defines, imports or `#[macro_use]`s no macro of
+  a standard macro's name;
+- the test module, on it or inside it, carries no attribute other than the plain ones, `cfg`,
+  `should_panic`, `ignore` and standard `derive`s (and no import or rename
+  takes a standard macro, derive or attribute name such as `test`), since an attribute or
+  derive macro may emit a function of the owner's name; macros defined in
+  another file (a crate-root `#[macro_use]` or `macro_rules!`) are not seen,
+  and the type check above still keeps the stub compiling.
+
+The JSON document changes only in the stub `text` and `fill_ins`; the copied
+values appear on the human `Other inputs:` line.
+
 A match-arm stub writes the input the changed arm's own pattern names instead
 of a labelled `todo!()` for that parameter (#8361), for example `ev =
 Event::Fail` for `(State::Running, Event::Fail) => ..` on `match (self.state,
