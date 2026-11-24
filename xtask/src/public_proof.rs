@@ -436,7 +436,9 @@ impl Rate {
         // up as in the canonical receipt. The receipt's decimal is already rounded.
         let scaled = u128::from(self.numerator) * 1_000;
         let Some(tenths) = (scaled + denominator / 2).checked_div(denominator) else {
-            return "n/a".to_string();
+            // The parser rejects the canonical empty-population marker ("n/a").
+            // Preserve the legacy display for a zero denominator with a numeric rate.
+            return percent(self.rate);
         };
         format!("{}.{}%", tenths / 10, tenths % 10)
     }
@@ -2875,6 +2877,31 @@ mod tests {
         let receipt =
             serde_json::json!({"tie": {"numerator": 1, "denominator": 16, "rate": "0.0625"}});
         assert_eq!(req_rate(&receipt, "tie", "test")?.display_percent(), "6.3%");
+        Ok(())
+    }
+
+    #[test]
+    fn verdict_zero_denominator_preserves_existing_receipt_behavior() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        receipts.verdicts["abstention_rate"] =
+            serde_json::json!({"numerator": 0, "denominator": 0, "rate": "n/a"});
+
+        let mut page = Page(String::new());
+        let result = verdict_section(&mut page, &receipts.verdicts);
+        assert_eq!(
+            result,
+            Err("verdict-corpus: `abstention_rate` has no rate".to_string())
+        );
+
+        receipts.verdicts["abstention_rate"]["rate"] = Value::from("0.0000");
+        let mut page = Page(String::new());
+        verdict_section(&mut page, &receipts.verdicts)?;
+        let row = page
+            .0
+            .lines()
+            .find(|line| line.starts_with("| Abstained ("))
+            .ok_or("missing verdict table abstention row")?;
+        assert!(row.contains("| 0/0 (0.0%) |"), "{row}");
         Ok(())
     }
 
