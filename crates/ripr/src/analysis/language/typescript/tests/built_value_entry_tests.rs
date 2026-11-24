@@ -249,7 +249,12 @@ fn method_run_on_this_through_call_keeps_the_built_value() {
     // ohash dispatches `const handler = this["$" + type]; handler.call(this, v)`.
     let source = SRC.replacen(
         "      return compareStrings(a, b);",
-        "      const handler = this[\"$\" + a];\n      if (handler) {\n        return handler.call(this, b);\n      }\n      return this.serialize(compareStrings(a, b));",
+        "      this.#seen.add(a);\n      const handler = this[\"$\" + a];\n      if (handler) {\n        return handler.call(this, b);\n      }\n      return this.serialize(compareStrings(a, b));",
+        1,
+    )
+    .replacen(
+        "  class Serializer {\n",
+        "  class Serializer {\n    #seen = new Set<any>();\n",
         1,
     );
     assert_ne!(source, SRC);

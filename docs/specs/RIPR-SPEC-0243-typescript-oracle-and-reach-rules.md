@@ -1046,7 +1046,7 @@ Candidates come from the first non-empty tier:
    member reached through a computed `this[...]` is trusted not to hand the
    instance back, and a prototype key built at run time
    (`o["__pro" + "to__"]`) is not seen; every guard reads the shared
-   literal and comment mask, so text that desynchronizes it is a limit of
+   literal and comment mask, so text that desynchronizes it (#16244) is a limit of
    all masked checks; the receiver of the array method is not typed.
    **Methods of a module-private class (#15928).** A top-level `class X`
    declaration that is not exported has one node per plain instance method,

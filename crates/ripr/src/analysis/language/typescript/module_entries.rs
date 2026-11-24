@@ -1159,10 +1159,17 @@ fn hands_this_out(code: &str) -> bool {
         let after = code[idx + 4..].trim_start();
         if let Some(member) = after.strip_prefix("?.").or_else(|| after.strip_prefix('.')) {
             let member = member.trim_start();
+            // `this.#name` is a private member.
             let end = member
-                .find(|ch: char| !is_javascript_identifier_char(ch))
-                .unwrap_or(member.len());
+                .char_indices()
+                .find(|&(offset, ch)| {
+                    !(is_javascript_identifier_char(ch) || (offset == 0 && ch == '#'))
+                })
+                .map_or(member.len(), |(offset, _)| offset);
             let name = &member[..end];
+            if name == "#" {
+                return true;
+            }
             let called = past_type_arguments(member[end..].trim_start()).starts_with('(');
             return name.is_empty() || (called && !declares_member_named(code, name));
         }
