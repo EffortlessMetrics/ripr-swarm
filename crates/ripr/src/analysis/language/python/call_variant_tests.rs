@@ -208,12 +208,12 @@ fn a_negative_count_off_grid_input_keeps_a_round_change_exposed() -> Result<(), 
 fn a_recursive_owner_keeps_the_entry_rows_from_reading_agreement() -> Result<(), String> {
     // The recursive call hands `clean` an argument no test passes, so the
     // entry rows do not cover what the versions see (#16221).
-    let source = "def clean(s):\n    if \" \" in s:\n        return clean(s.replace(\" \", \"\"))\n    return s.strip()\n";
+    let source = "def clean(text):\n    if \" \" in text:\n        return clean(text.replace(\" \", \"\"))\n    return text.strip()\n";
     let finding = classify_source(
         source,
         4,
-        "    return s.strip()",
-        "    return s.lstrip()",
+        "    return text.strip()",
+        "    return text.lstrip()",
         "from src.text import clean\n\n\ndef test_clean():\n    assert clean(\"a\") == \"a\"\n",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);

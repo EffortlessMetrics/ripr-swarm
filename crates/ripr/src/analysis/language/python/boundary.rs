@@ -2464,7 +2464,11 @@ fn decimal_spellings_equal(
         (true, true) => {
             let left: f64 = left.parse().ok()?;
             let right: f64 = right.parse().ok()?;
-            Some(left.is_finite() && right.is_finite() && left == right)
+            if !left.is_finite() || !right.is_finite() {
+                return None;
+            }
+            // Compared as doubles, as Python compares them, not by a margin.
+            Some(left.partial_cmp(&right) == Some(std::cmp::Ordering::Equal))
         }
         (true, false) => int_equals_float(right, left),
         (false, true) => int_equals_float(left, right),
@@ -2605,11 +2609,19 @@ mod literals_equal_tests {
         );
         assert_eq!(literals_equal("4", "4.5"), Some(false));
         assert_eq!(literals_equal("0", "-0.0"), Some(true));
-        // Two float spellings of one double are equal.
+        // Two float spellings of one double are equal, and two doubles are
+        // not. A float spelling past the last double is not compared, whether
+        // the two differ or are spelled alike: each names the same double,
+        // infinity.
+        let beyond = |digit: char| format!("1{}{digit}.0", "0".repeat(308));
+        assert_eq!(literals_equal(&beyond('1'), &beyond('2')), None);
+        assert_eq!(literals_equal(&beyond('1'), &beyond('1')), None);
         assert_eq!(
             literals_equal("0.1", "0.1000000000000000055511151231257827"),
             Some(true)
         );
+        assert_eq!(literals_equal("-0.0", "0.0"), Some(true));
+        assert_eq!(literals_equal("0.1", "0.2"), Some(false));
         // Past every `u128`, the double is still compared exactly.
         assert_eq!(
             literals_equal(
