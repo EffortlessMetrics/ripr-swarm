@@ -204,6 +204,14 @@ fn class_that_may_be_replaced_or_aliased_is_not_followed() {
             "const proto = Serializer.prototype;\nObject.assign(proto, { order: (k: string[]) => k });\n",
         ),
         (
+            "binding after a numeric literal",
+            "export const ratio = 1.\nSerializer.prototype[\"wr\" + \"ite\" as \"write\"] = (v: any) => v;\n",
+        ),
+        (
+            "property of the same name",
+            "export const other = { Serializer: 1 }.Serializer;\n",
+        ),
+        (
             "bracket-called mutator",
             "Object[\"assign\"](Serializer.prototype, { order: (k: string[]) => k });\n",
         ),

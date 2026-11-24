@@ -385,14 +385,12 @@ fn mentions_literal_key(source: &str, name: &str) -> bool {
 /// a construction `new NAME(`. A value read such as `NAME.prototype` can be
 /// aliased (`const p = NAME.prototype; Object.assign(p, o)`) or passed to a
 /// mutating call the value-read allowlist cannot see, and a type position
-/// shares the spelling, so any other mention refuses the class.
+/// shares the spelling, so any other mention refuses the class. A mention
+/// after `.` is refused too: text cannot tell a property `o.NAME` from the
+/// binding after a numeric literal and a line break (`1.\nNAME.prototype`).
 fn only_constructed(masked: &str, name: &str, decl_start: usize) -> bool {
     masked.match_indices(name).all(|(idx, _)| {
-        let before = masked[..idx].trim_end();
-        idx == decl_start
-            || !bounded(masked, idx, name)
-            || (before.ends_with('.') && !before.ends_with("..."))
-            || is_construction_at(masked, idx, name)
+        idx == decl_start || !bounded(masked, idx, name) || is_construction_at(masked, idx, name)
     })
 }
 

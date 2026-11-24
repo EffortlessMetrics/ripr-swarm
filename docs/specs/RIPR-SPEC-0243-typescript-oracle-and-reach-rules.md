@@ -1047,7 +1047,9 @@ Candidates come from the first non-empty tier:
    in the class text refuses it), no computed member and no `return` in its
    constructor; its name is declared once
    in the file and every other mention outside the declaration is a
-   construction `new X(...)` (an alias, a read such as `X.prototype` even
+   construction `new X(...)` (a property of the same name `o.X`, which
+   text cannot tell from the binding after `1.` and a line break, an alias,
+   a read such as `X.prototype` even
    when nothing writes through it, a type position, a re-export, a subclass,
    a prototype write or any other mention refuses the whole class); the class text uses `this` only
    as a plain access `this.name` / `this?.name` / `this.#name` to a member
