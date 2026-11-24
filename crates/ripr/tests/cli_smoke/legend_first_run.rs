@@ -148,20 +148,19 @@ fn fanout_human(
     let stderr = String::from_utf8_lossy(&output.stderr);
     // A midnight refusal can leave files in the first output directory.
     // Fanout requires a fresh destination, including when the first set is partial.
-    let retry_label;
-    let (output, label) = if !output.status.success()
+    let (output, destination) = if !output.status.success()
         && day_changed
         && stderr.lines().any(|line| line == FANOUT_DRIFT)
     {
-        retry_label = format!("{label}-retry");
-        (run(&retry_label)?.0, retry_label.as_str())
+        let retry_label = format!("{label}-retry");
+        (run(&retry_label)?.0, project.join(retry_label))
     } else {
-        (output, label)
+        (output, project.join(label))
     };
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
     }
-    Ok(fs::read_to_string(project.join(label).join("human.txt"))?)
+    Ok(fs::read_to_string(destination.join("human.txt"))?)
 }
 
 // Fanout members always carry the full legend and never consume the standalone
