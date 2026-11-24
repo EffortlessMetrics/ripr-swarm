@@ -604,23 +604,34 @@ fn reaches_seam(
             })
     };
     let is_input = |text: &str| inputs.iter().any(|(name, _)| unraw(name) == unraw(text));
-    // A pattern binding an input's name, or a macro handed that name, which
-    // may expand to a `let` of it.
+    // A pattern binding an input's name. A macro handed that name may also
+    // expand to a `let` of it, which `foreign_macro` refuses.
     let binds_input = |node: &SyntaxNode| {
         node.descendants()
             .filter_map(ast::IdentPat::cast)
             .filter_map(|ident| ident.name())
             .any(|bound| is_input(bound.text()))
-            || node
-                .descendants()
-                .filter_map(ast::MacroCall::cast)
-                .filter_map(|call| call.token_tree())
-                .any(|tree| {
-                    tree.syntax()
-                        .descendants_with_tokens()
-                        .filter_map(|element| element.into_token())
-                        .any(|token| token.kind() == SyntaxKind::IDENT && is_input(token.text()))
-                })
+    };
+    // `include!`, a procedural macro or any macro other than a standard one
+    // may read a copied value without spelling its name; so may a macro
+    // nested inside a standard one's arguments.
+    let foreign_macro = |node: &SyntaxNode| {
+        node.descendants()
+            .filter_map(ast::MacroCall::cast)
+            .any(|call| {
+                let standard = call
+                    .path()
+                    .filter(|path| path.qualifier().is_none())
+                    .and_then(|path| path.segment())
+                    .and_then(|segment| segment.name_ref())
+                    .is_some_and(|called| STANDARD_MACROS.contains(&unraw(called.text())));
+                !standard
+                    || call.token_tree().is_some_and(|tree| {
+                        tree.syntax()
+                            .descendants_with_tokens()
+                            .any(|inner| inner.kind() == SyntaxKind::BANG)
+                    })
+            })
     };
     let nodes = list
         .statements()
@@ -678,16 +689,15 @@ fn reaches_seam(
                     inner.text_range().end() <= comparison.syntax().text_range().start()
                 })
                 .any(|inner| {
-                    (ast::IdentPat::can_cast(inner.kind())
-                        || ast::MacroCall::can_cast(inner.kind()))
-                        && binds_input(&inner)
+                    (ast::IdentPat::can_cast(inner.kind()) && binds_input(&inner))
+                        || (ast::MacroCall::can_cast(inner.kind()) && foreign_macro(&inner))
                 });
             return !assignment
                 && !rebinds_before
                 && !ast::LetStmt::can_cast(node.kind())
                 && !names_copied(&node, Some((start, end)));
         }
-        if binds_input(&node) {
+        if binds_input(&node) || foreign_macro(&node) {
             return false;
         }
         if !names_copied(&node, None) {

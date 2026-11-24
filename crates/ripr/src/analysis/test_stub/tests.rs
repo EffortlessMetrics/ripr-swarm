@@ -3304,6 +3304,39 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             Some(("7", "computes")),
         ),
+        // An `include!` before the comparison may read a copied value
+        // without naming it.
+        (
+            module_for(
+                &owner.replace("    if amount < 0 {", "    include!(\"guard.rs\");\n    if amount < 0 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // So may one in the changed statement ahead of the comparison, or a
+        // macro nested inside a standard one's arguments.
+        (
+            module_for(
+                &owner.replace("    if rate >= 10_000 {", "    if include!(\"flag.rs\") && rate >= 10_000 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        (
+            module_for(
+                &owner.replace("    if amount < 0 {", "    debug_assert!(check!());\n    if amount < 0 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // A standard macro over a written input alone does not.
+        (
+            module_for(
+                &owner.replace("    if amount < 0 {", "    debug_assert!(rate > 0);\n    if amount < 0 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            Some(("7", "computes")),
+        ),
         // A standard derive does not.
         (
             module(

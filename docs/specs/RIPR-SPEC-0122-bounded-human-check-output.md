@@ -681,8 +681,10 @@ the expected value stays a `todo!()`. The values are copied only when:
   outside this check, as it is for any boundary stub): each earlier statement that names a copied
   parameter (including a `{name}` or `{:name$}` format capture) is an `if` without `else`
   whose condition evaluates to false with every integer literal in it
-  fitting each integer parameter it names, no earlier statement binds (or
-  hands a macro) the name of a written or copied input, and the comparison's own statement is not a
+  fitting each integer parameter it names, no earlier statement binds the
+  name of a written or copied input, nothing before the
+  comparison calls `include!` or a macro other than a standard one (which
+  may read a copied value without naming it), and the comparison's own statement is not a
   `let`, does not hold the comparison inside an assignment (a tail one included), a closure or an
   `async` block, and names a copied value only after the comparison;
 - nothing in the module declares, binds, imports or renames another item of
