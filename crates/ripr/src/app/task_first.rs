@@ -2539,6 +2539,29 @@ pub(crate) fn default_check_findings(
     super::gap_bound_repair::default_check_output(root, None, config).map(|output| output.findings)
 }
 
+/// An exact seam start still needs the same no-path veto as the editor and
+/// MCP when the current change binds an unreached finding to it.
+pub(crate) fn changed_seam_no_path_start_refusal(
+    root: &Path,
+    config: &crate::config::RiprConfig,
+    seam_id: &str,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<&'static str> {
+    let entry = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)?;
+    if entry.evidence.reach.state != crate::domain::StageState::No {
+        return None;
+    }
+    let files = live_check_diff_files(root, None)?;
+    if !seam_touches_change(entry, &files) {
+        return None;
+    }
+    let findings = default_check_findings(root, config).ok()?;
+    super::repair_card_handoff::bound_no_path_start_refusal(&findings, entry, classified)
+        .map(check_limited_reason)
+}
+
 /// The reading of [`check_reading_of_gripped_seam`] from check's findings,
 /// for a seam already known to be on the change.
 fn check_reading_from_findings(
