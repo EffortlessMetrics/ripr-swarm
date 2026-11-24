@@ -15,12 +15,34 @@ impl Drop for Scratch {
     }
 }
 
+/// Git reads these to find a repository other than the directory it runs
+/// in. A caller's shell or a hook can set them, and then `git init` in a
+/// scratch directory would act on the caller's repository. They are removed
+/// from each child, never from the test process's own environment.
+const GIT_REPOSITORY_ENV: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
+];
+
+/// `command` without the Git variables that name another repository.
+fn without_repository_env(mut command: Command) -> Command {
+    for name in GIT_REPOSITORY_ENV {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// A temp directory outside any Git work tree: a `TMPDIR` under the checkout
 /// (some runners set `TMPDIR=<repo>/target`) would make every "non-Git" root
 /// here a subdirectory of the repository running the tests.
 fn non_repository_temp_dir() -> PathBuf {
     let inside_repository = |dir: &Path| {
-        Command::new("git")
+        without_repository_env(Command::new("git"))
             .current_dir(dir)
             .args(["rev-parse", "--is-inside-work-tree"])
             .output()
@@ -46,7 +68,7 @@ fn scratch(label: &str) -> Result<Scratch, String> {
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<(), String> {
-    let status = Command::new("git")
+    let status = without_repository_env(Command::new("git"))
         .current_dir(root)
         .args(args)
         .status()
@@ -68,7 +90,7 @@ fn ts_project(label: &str) -> Result<Scratch, String> {
 }
 
 fn ripr(root: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
+    without_repository_env(Command::new(env!("CARGO_BIN_EXE_ripr")))
         .current_dir(root)
         .args(args)
         .output()
@@ -372,7 +394,7 @@ fn bare_repository_route_is_bound_to_the_repository_and_runs_from_an_unrelated_d
 
 /// `git worktree list --porcelain` in `root`.
 fn worktree_list(root: &Path) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = without_repository_env(Command::new("git"))
         .current_dir(root)
         .args(["worktree", "list", "--porcelain"])
         .output()
@@ -421,7 +443,7 @@ fn run_printed_work_tree_route(
     work_tree.0 = work_tree_root.clone();
     let mut words = words;
     words[4] = work_tree_root.display().to_string();
-    let output = Command::new(&words[0])
+    let output = without_repository_env(Command::new(&words[0]))
         .current_dir(caller)
         .args(&words[1..])
         .output()

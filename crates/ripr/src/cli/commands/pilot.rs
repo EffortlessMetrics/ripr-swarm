@@ -1166,7 +1166,7 @@ fn pilot_root_without_workspace(root: &Path) -> Option<String> {
         return Some(format!(
             "pilot root {} is a bare Git repository with no work tree, so there is no source to inspect and nothing was written. {}, then run `ripr pilot --root <path>`",
             root.display(),
-            output::doctor::bare_root_work_tree_route_or_plain(root)
+            crate::work_tree_route::bare_root_work_tree_route_or_plain(root)
         ));
     }
     Some(format!(

@@ -411,7 +411,7 @@ impl CheckBlocker {
             // it works from any directory and tells an empty repository apart.
             CheckBlocker::BareRepository => format!(
                 "ripr check needs checked-out source and this root is a bare Git repository: {}, then pass `--root <path>`",
-                crate::output::doctor::bare_root_work_tree_route_or_plain(root)
+                crate::work_tree_route::bare_root_work_tree_route_or_plain(root)
             ),
         }
     }

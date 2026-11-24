@@ -221,12 +221,12 @@ fn non_git_root_warning(root: &Path) -> Option<String> {
 }
 
 /// The refusal for `init` at a bare repository (#15297). The work-tree route
-/// is doctor's, bound to the repository and aware of an empty repository.
+/// has one owner, bound to the repository and aware of an empty repository.
 fn bare_root_refusal(root: &Path) -> String {
     format!(
         "ripr init: the root `{}` is a bare Git repository with no work tree, so there is no source to configure and nothing was written. {}, then run `ripr init --root <path>`.",
         output::path::human_path(root),
-        output::doctor::bare_root_work_tree_route_or_plain(root)
+        crate::work_tree_route::bare_root_work_tree_route_or_plain(root)
     )
 }
 
