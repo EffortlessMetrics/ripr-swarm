@@ -527,7 +527,9 @@ focused next action without reading the full repo report:
 - `why_now` reason and confidence;
 - when any seam is named, one top-level `value_basis` note saying
   `expression` and `arm_result` are read from the changed code, so a new test
-  asserts what that code does now instead of the pre-change value (#15361);
+  asserts what that code does now; that an input whose behavior did not
+  change keeps its value; and that `candidate_values` are inputs to try,
+  except on an error seam, where they name the error to expect (#15361);
 - RIPR stage evidence summary;
 - recommended test placement when available;
 - nearest strong test to imitate when available;

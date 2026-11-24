@@ -210,8 +210,8 @@ Loop (max 3 rounds per gap):
            Otherwise follow the printed `ripr explain ...` command as printed, then the
            `ripr context ...` it names, if any (JSON).
 3. WRITE   One focused test next to the related test. Pin what the changed code does now
-           (ripr reads the changed code, so assert its values, not the pre-change ones). Assert
-           exact values: every changed field, branch and boundary (below, equal, above). {advice}
+           (an input whose behavior did not change keeps its value). Assert exact values: every
+           changed field, branch and boundary (below, equal, above). {advice}
 4. VERIFY  Run {verify}; it must pass.
            Then run `ripr check --quiet --format agent` once on the same root, base and
            saved source (new files need `git add -N PATH`). The new test must be in the

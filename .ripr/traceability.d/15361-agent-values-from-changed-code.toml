@@ -1,0 +1,7 @@
+# Agent-facing surfaces name their values as read from the changed code
+# (#15361); docs/SPEC_FORMAT.md requires a PR to register its tests here.
+[[extend]]
+id = "RIPR-SPEC-0010"
+tests = [
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_names_seam_values_as_changed_behavior_to_pin",
+]

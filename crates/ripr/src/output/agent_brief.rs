@@ -25,8 +25,10 @@ const WORKFLOW_DIR: &str = "target/ripr/workflow";
 /// Says which side of the diff the seam values describe. In a real-agent
 /// trial an agent read `arm_result: "450"`, doubted the change and pinned the
 /// pre-change `400`, so its test failed on the changed code (#12078). Stated
-/// once per brief, only when it names a seam.
-pub(crate) const VALUE_BASIS_NOTE: &str = "`expression` and `arm_result` come from the changed code: assert what it does now, not the pre-change value. `candidate_values` are inputs. If the change looks wrong, report it.";
+/// once per brief, only when it names a seam. An input whose behavior the
+/// change left alone keeps its value, so that value is the one to assert; and
+/// an error seam's candidate is the error to expect, not an input to pass.
+pub(crate) const VALUE_BASIS_NOTE: &str = "`expression` and `arm_result` come from the changed code: assert what it does now; an input whose behavior did not change keeps its value. `candidate_values` are inputs to try, except on an error seam, where they name the error to expect. If the change looks wrong, report it.";
 
 #[derive(Clone, Copy)]
 enum WorkingSetEncoding {
@@ -895,7 +897,14 @@ mod tests {
         );
         assert_eq!(named["value_basis"], VALUE_BASIS_NOTE, "{named}");
         assert!(VALUE_BASIS_NOTE.contains("assert what it does now"));
-        assert!(VALUE_BASIS_NOTE.contains("not the pre-change value"));
+        // A change from `>` to `>=` leaves an input below the boundary with
+        // the value it had before, and a test must assert that value.
+        assert!(
+            VALUE_BASIS_NOTE.contains("an input whose behavior did not change keeps its value")
+        );
+        // An error seam's missing discriminator is the variant to expect,
+        // an output, so the note must not call every candidate an input.
+        assert!(VALUE_BASIS_NOTE.contains("the error to expect"));
 
         let empty = render(&no_seams)?;
         assert_eq!(

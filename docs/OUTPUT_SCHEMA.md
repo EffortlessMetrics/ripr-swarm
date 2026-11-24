@@ -19034,8 +19034,10 @@ Field contract:
 - `limits.hard_cap` — always `10`.
 - `value_basis` — optional top-level note, present only when `top_seams` is
   non-empty. It says `expression` and `arm_result` are read from the changed
-  code, so a new test asserts what that code does now rather than the
-  pre-change value, and that `candidate_values` are inputs to try (#15361).
+  code, so a new test asserts what that code does now (an input whose
+  behavior did not change keeps its value), and that `candidate_values` are
+  inputs to try, except on an error seam, where they name the error to
+  expect (#15361).
 - `top_seams[]` — ranked seam summaries, intentionally smaller than full agent
   seam packets.
 - `top_seams[].why_now.reason` — one of
