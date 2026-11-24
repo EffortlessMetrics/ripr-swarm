@@ -354,14 +354,10 @@ fn agreement_follows_python_strip_and_round() {
     };
     assert_eq!(variant_agrees(&unreachable, "1.5"), None);
     assert_eq!(variant_agrees(&round, "\"1.5\""), None);
-    // Scientific notation is the same digits at another scale.
-    assert_eq!(variant_agrees(&round, "1e3"), Some(true));
-    assert_eq!(variant_agrees(&round, "1.5E3"), Some(true));
-    assert_eq!(variant_agrees(&round, "1.25e1"), Some(true));
-    assert_eq!(variant_agrees(&round, "1.25e-1"), Some(false));
-    assert_eq!(variant_agrees(&round, "1e+3"), Some(true));
-    assert_eq!(variant_agrees(&coarse, "2.5e-5"), Some(true));
-    assert_eq!(variant_agrees(&round, "1e400"), None);
+    // A scientific spelling is not read: the argument reader passes plain
+    // decimal literals only, so the gate does not apply to one (#16221 review).
+    assert_eq!(variant_agrees(&round, "1e3"), None);
+    assert_eq!(variant_agrees(&round, "1.5E3"), None);
     assert_eq!(variant_agrees(&round, "1e5x"), None);
     assert_eq!(variant_agrees(&round, "1e"), None);
 }
@@ -402,17 +398,6 @@ def test_money():
 ",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
-    Ok(())
-}
-
-#[test]
-fn a_number_in_scientific_notation_is_read_like_its_digits() -> Result<(), String> {
-    // `round(1.0001e3, 2)` and `round(1.0001e3, 3)` both return `1000.1`, so
-    // the exact assertion passes either way (#16221 review).
-    let finding = classify_money(
-        "from src.text import money\n\n\ndef test_money():\n    assert money(1.0001e3) == 1000.1\n",
-    )?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     Ok(())
 }
 

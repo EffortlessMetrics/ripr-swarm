@@ -421,35 +421,21 @@ fn strip_discriminator(old: &str, new: &str) -> &'static str {
 const MAX_ROUND_DIGITS: usize = 15;
 const MAX_ROUND_COUNT: i32 = 20;
 const MAX_ROUND_SPELLING: usize = 48;
-/// Largest exponent, either sign, of a scientific spelling the reader reads.
-const MAX_ROUND_EXPONENT: u64 = 400;
 
 /// Whether `round(value, old)` and `round(value, new)` return the same
-/// number, read as exact decimal half-to-even rounding of the spelling, in
-/// plain or scientific notation. Python rounds a float by its binary value,
-/// which can break a decimal tie the other way; the read stays inside
-/// [`MAX_ROUND_DIGITS`], where the two roundings the spelling decides cannot
-/// silently coincide, and refuses anything else.
+/// number, read as exact decimal half-to-even rounding of a plain decimal
+/// spelling. Python rounds a float by its binary value, which can break a
+/// decimal tie the other way; the read stays inside [`MAX_ROUND_DIGITS`],
+/// where the two roundings the spelling decides cannot silently coincide, and
+/// refuses anything else. A scientific spelling is not a plain decimal, so
+/// it is refused; the argument reader passes plain decimals only.
 fn round_agrees(value: &str, old: i32, new: i32) -> Option<bool> {
     if old.unsigned_abs() > MAX_ROUND_COUNT as u32 || new.unsigned_abs() > MAX_ROUND_COUNT as u32 {
         return None;
     }
     let text = value.trim().replace('_', "");
     let unsigned = text.strip_prefix('-').unwrap_or(&text);
-    let (mantissa, exponent) = match unsigned.split_once(['e', 'E']) {
-        Some((mantissa, exponent)) => (mantissa, Some(exponent)),
-        None => (unsigned, None),
-    };
-    // `1.5e3` is the digits `15` at a scale of -2; a large exponent is not read.
-    let exponent = match exponent {
-        Some(spelling) if spelled_exponent(spelling) => spelling
-            .parse::<i64>()
-            .ok()
-            .filter(|exponent| exponent.unsigned_abs() <= MAX_ROUND_EXPONENT)?,
-        Some(_) => return None,
-        None => 0,
-    };
-    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
     if whole.is_empty() && fraction.is_empty()
         || whole.len() + fraction.len() > MAX_ROUND_SPELLING
         || !whole.chars().all(|ch| ch.is_ascii_digit())
@@ -472,26 +458,22 @@ fn round_agrees(value: &str, old: i32, new: i32) -> Option<bool> {
         return None;
     }
     // `round` treats both signs alike, so the magnitudes decide.
-    let scale = fraction.len() as i64 - exponent;
-    Some(round_half_even(&digits, scale, old) == round_half_even(&digits, scale, new))
-}
-
-/// An exponent as Python spells it: an optional sign and digits.
-fn spelled_exponent(exponent: &str) -> bool {
-    let digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
-    !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    Some(
+        round_half_even(&digits, fraction.len(), old)
+            == round_half_even(&digits, fraction.len(), new),
+    )
 }
 
 /// One exact `round(<digits> * 10^-scale, keep)` as `(digits, exponent)`:
 /// the value is `digits * 10^exponent`, rounded half to even. A `keep`
 /// below zero rounds to a multiple of `10^-keep`. Read by the sibling test
 /// module for the tie rule alone.
-pub(super) fn round_half_even(digits: &[u8], scale: i64, keep: i32) -> (Vec<u8>, i64) {
-    let int_len = digits.len() as i64 - scale;
+pub(super) fn round_half_even(digits: &[u8], scale: usize, keep: i32) -> (Vec<u8>, i64) {
+    let int_len = digits.len() as i64 - scale as i64;
     // The kept digits end at the `10^keep` place, index `int_len + keep`.
     let cut = int_len + keep as i64;
     if cut >= digits.len() as i64 {
-        return normalize_rounded(digits.to_vec(), -scale);
+        return normalize_rounded(digits.to_vec(), -(scale as i64));
     }
     let cut = usize::try_from(cut.max(0)).unwrap_or(usize::MAX);
     let mut kept = digits[..cut].to_vec();

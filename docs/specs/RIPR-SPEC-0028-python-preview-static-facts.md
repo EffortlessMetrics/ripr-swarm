@@ -2204,10 +2204,11 @@ flips the literal `reverse` flag alone on one `sorted(<parameter>)` or
 `<parameter>.sort()` call with no other argument (#16203), changes the result
 only for a string with whitespace on a side one version keeps, a number the
 two counts round differently (read as exact decimal half-to-even rounding
-of the spelling, in plain or scientific notation, within 15 significant
-digits, 48 mantissa digits, an exponent within ±400 and counts within ±20;
-the binary rounding of a `float` is not simulated, and a number beyond
-those bounds is not read), or a collection holding two different elements,
+of a plain decimal spelling, within 15 significant digits, a spelling of
+48 digits and counts within ±20; the binary rounding of a `float` is not
+simulated, and a number beyond those bounds, or in scientific notation,
+is not read, so the gate does not apply to it), or a collection holding
+two different elements,
 where two scalars agree only as Python compares them: an int spelling is the
 exact number and a float spelling is the nearest representable double, so
 above `2^53` `9007199254740993` and `9007199254740993.0` are unequal while
