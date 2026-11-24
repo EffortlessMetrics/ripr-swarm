@@ -816,8 +816,8 @@ developer knows (for example `assert_eq!(total(/* boundary input where a >= b
 */), /* expected */)`) is printed in human handoff output as
 `assertion shape: ...`, followed by a note to replace each `/* ... */` comment
 with a real value from the developer's test before using it, where the
-expected value is what the changed code produces now rather than the
-pre-change value (#15361). Any other
+expected value is what the changed code produces now; an input the change
+left alone keeps its value (#15361). Any other
 assertion text keeps its existing label and gets no note. The same fill-in note
 follows other human handoff lines that print the placeholder string under a
 different field name (`Focused proof intent`, Markdown `Assertion shape`,
