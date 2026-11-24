@@ -158,6 +158,24 @@ initialization-only. Each transport can supply exactly the same governed
 keys (six per the #2303 amendment, seven per the #1972 amendment); no
 transport can set anything else.
 
+A pushed value the push path ignores is disclosed (#15312). The push path
+stays lenient: a governed key with a wrong type or unknown literal falls back
+to its repository or default value. Each `workspace/didChangeConfiguration`
+that carries such a value, a payload that cannot carry a `ripr` section at
+all (a bare string, an array), or a non-object `ripr` key, produces one
+`window/logMessage` warning naming every ignored key, its accepted values and
+the value received. A non-object `ripr` key is reported as an ignored
+section; the flat settings beside it still apply and are still checked.
+Clients without the `riprEditor` integration also get the warning as
+`window/showMessage`. The push path retains a rejected value in its session
+layer until a push repairs it or clears it with `null`, so an invalid value
+that layer already holds is not named again, whatever else arrives in
+between; a changed but still invalid value is a new mistake and is named. A
+malformed payload changes no setting; a malformed section changes no setting
+itself, while flat settings beside it still apply. Neither is retained, so a
+verbatim repeat is suppressed only while consecutive notifications carry the
+same malformed shape.
+
 ### Cooperative git invocation deadline (#2303 amendment)
 
 The sixth governed key, `gitTimeoutMs` (non-negative integer, default

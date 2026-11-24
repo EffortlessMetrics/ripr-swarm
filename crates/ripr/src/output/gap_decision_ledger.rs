@@ -5880,6 +5880,10 @@ mod tests {
         // the diff did not change (or could not establish) weakly exposed;
         // each weak finding carries one orthogonal card, fourteen more in
         // total.
+        // #15357: a changed entry of a multi-line `return {` now names an
+        // exact key read, so two weak findings gain a repair card:
+        // `python_literal_value_inside_longer_number` (no strong oracle) and
+        // `python_multiline_literal_sibling_read` (orthogonal sibling read).
         // #15250: `assert check_balance(5) is False` is now a strong exact pin,
         // which a logging-only edit passes over, so the
         // `python_caplog_alias_in_literal` card moves from no-strong-oracle to
@@ -5904,7 +5908,7 @@ mod tests {
         // #16203: `python_connective_swap_no_exposed_credit` keeps an `and`/`or`
         // swap whose operands agree on every related call weakly exposed; its
         // card names a call where they differ and stays direct-aligned.
-        if (direct, no_strong, orthogonal, family_selection) != (29, 36, 49, 2) {
+        if (direct, no_strong, orthogonal, family_selection) != (29, 37, 50, 2) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
