@@ -3235,6 +3235,30 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // A width capture in a format string reads the copied value.
+        (
+            module_for(
+                &owner.replace("amount: i64", "amount: usize").replace(
+                    "    if amount < 0 {",
+                    "    if format!(\"{:amount$}\", \"\").len() > 3 {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // An attribute on the test module itself may rewrite it.
+        (
+            module("    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n")
+                .replace("#[cfg(test)]\nmod tests", "#[cfg(test)]\n#[rewrite]\nmod tests"),
+            None,
+        ),
+        // An import may replace `#[test]` itself.
+        (
+            module(
+                "    use some_crate::test;\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
         // A standard derive does not.
         (
             module(

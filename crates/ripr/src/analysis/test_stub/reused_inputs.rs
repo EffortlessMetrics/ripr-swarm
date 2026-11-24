@@ -17,7 +17,8 @@
 //!   or `assert_ne!`, with no `return` or `?` before it;
 //! - it sits in a `#[test]` function that is not `should_panic`, `ignore` or
 //!   a ripr stub and has only plain attributes, outside closures, `async`
-//!   blocks and `cfg`, and the module carries no attribute or derive macro;
+//!   blocks and `cfg`, and the module (inside or on it) carries no attribute
+//!   or derive macro;
 //! - nothing in the module declares, imports or renames another item or
 //!   binding of the owner's name;
 //! - the module calls only standard macros (`assert_eq!`, `vec!`,
@@ -150,7 +151,7 @@ pub(super) fn reused_inputs(
             _ => true,
         })
     });
-    if rebinds || wraps || reassignable || !standard_macros_only(&file, &in_scope) {
+    if rebinds || wraps || reassignable || !standard_macros_only(&file, &in_scope, (start, end)) {
         return None;
     }
     let (arguments, test) = file
@@ -228,10 +229,21 @@ pub(super) fn reused_inputs(
 /// replace. Any other macro (or `include!`) may emit a function of the
 /// owner's name, and a file-local `macro_rules!`, a `use` or `#[macro_use]`
 /// may replace `assert_eq!` with one that never type-checks its arguments.
-fn standard_macros_only(file: &SourceFile, in_scope: &impl Fn(&SyntaxNode) -> bool) -> bool {
+fn standard_macros_only(
+    file: &SourceFile,
+    in_scope: &impl Fn(&SyntaxNode) -> bool,
+    (scope_start, scope_end): (TextSize, TextSize),
+) -> bool {
     let standard = |name: &str| STANDARD_MACROS.contains(&unraw(name));
-    // An import or rename may also replace a standard derive.
-    let replaceable = |name: &str| standard(name) || STANDARD_DERIVES.contains(&unraw(name));
+    // An import or rename may also replace a standard derive or attribute
+    // such as `#[test]`.
+    let replaceable = |name: &str| {
+        let name = unraw(name);
+        standard(name)
+            || STANDARD_DERIVES.contains(&name)
+            || PLAIN_TEST_ATTRIBUTES.contains(&name)
+            || MODULE_ATTRIBUTES.contains(&name)
+    };
     let calls_standard = file
         .syntax()
         .descendants()
@@ -271,11 +283,27 @@ fn standard_macros_only(file: &SourceFile, in_scope: &impl Fn(&SyntaxNode) -> bo
                 .is_some_and(|attr_name| attr_name == "macro_use")
         })
     });
+    // The test module's own outer attributes sit outside its body, so read
+    // them from the innermost module whose body holds the whole scope.
+    let module_attributes = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::Module::cast)
+        .filter(|module| {
+            module.item_list().is_some_and(|items| {
+                let range = items.syntax().text_range();
+                range.start() < scope_start && scope_end <= range.end()
+            })
+        })
+        .max_by_key(|module| module.syntax().text_range().start())
+        .into_iter()
+        .flat_map(|module| module.attrs().collect::<Vec<_>>());
     let plain_attributes = file
         .syntax()
         .descendants()
         .filter(|node| in_scope(node))
         .filter_map(ast::Attr::cast)
+        .chain(module_attributes)
         .all(|attr| {
             let Some(meta) = attr.meta() else {
                 return false;
@@ -556,7 +584,11 @@ fn reaches_seam(
             .any(|token| {
                 copied.iter().any(|name| match token.kind() {
                     SyntaxKind::IDENT => unraw(name) == unraw(token.text()),
-                    SyntaxKind::STRING => token.text().contains(&format!("{{{}", unraw(name))),
+                    // `{name}` and the width or precision capture `{:name$}`.
+                    SyntaxKind::STRING => {
+                        token.text().contains(&format!("{{{}", unraw(name)))
+                            || token.text().contains(&format!("{}$", unraw(name)))
+                    }
                     _ => false,
                 })
             })

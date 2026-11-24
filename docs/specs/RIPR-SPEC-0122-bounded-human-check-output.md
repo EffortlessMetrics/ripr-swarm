@@ -679,7 +679,7 @@ the expected value stays a `todo!()`. The values are copied only when:
 - the copied values do not steer the owner away from the statement holding
   the changed comparison (an earlier guard on the written inputs alone is
   outside this check, as it is for any boundary stub): each earlier statement that names a copied
-  parameter (including a `{name}` format capture) is an `if` without `else`
+  parameter (including a `{name}` or `{:name$}` format capture) is an `if` without `else`
   whose condition evaluates to false, no earlier statement binds the name of
   a written or copied input, and the comparison's own statement is not a
   `let`, does not hold the comparison inside an assignment, a closure or an
@@ -690,9 +690,9 @@ the expected value stays a `todo!()`. The values are copied only when:
   the like), since another macro or `include!` may emit a function of the
   owner's name, and the file defines, imports or `#[macro_use]`s no macro of
   a standard macro's name;
-- the test module carries no attribute other than the plain ones, `cfg`,
-  `should_panic`, `ignore` and standard `derive`s (none imported or renamed
-  under a standard name), since an attribute or
+- the test module, on it or inside it, carries no attribute other than the plain ones, `cfg`,
+  `should_panic`, `ignore` and standard `derive`s (and no import or rename
+  takes a standard macro, derive or attribute name such as `test`), since an attribute or
   derive macro may emit a function of the owner's name; macros defined in
   another file (a crate-root `#[macro_use]` or `macro_rules!`) are not seen,
   and the type check above still keeps the stub compiling.
