@@ -694,7 +694,8 @@ the expected value stays a `todo!()`. The values are copied only when:
   `let`, does not hold the comparison inside an assignment (a tail one included), a closure or an
   `async` block, and names a copied value only after the comparison;
 - nothing in the module declares, binds, imports or renames another item of
-  the owner's name;
+  the owner's name (a local inside a test ripr wrote cannot reach another
+  test's call, so it does not count);
 - the module calls only standard macros (`assert_eq!`, `vec!`, `println!` and
   the like), since another macro or `include!` may emit a function of the
   owner's name, and the file defines, imports or `#[macro_use]`s no macro of

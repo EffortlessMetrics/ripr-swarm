@@ -3246,6 +3246,21 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // A local of the owner's name inside a written ripr stub cannot take
+        // another test's call, so a second write sees the same body.
+        (
+            module(
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n    #[test]\n    fn ripr_written() {\n        let tax = 1;\n        let _ = tax;\n        todo!(\"ripr: write the value\");\n    }\n",
+            ),
+            Some(("7", "computes")),
+        ),
+        // The same local in an authored test still refuses the copy.
+        (
+            module(
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n    #[test]\n    fn authored() {\n        let tax = 1;\n        let _ = tax;\n    }\n",
+            ),
+            None,
+        ),
         // An escaped brace still opens a capture of the copied value.
         (
             module_for(

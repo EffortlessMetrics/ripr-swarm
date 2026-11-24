@@ -37,7 +37,7 @@
 use super::StubScope;
 use super::expected_value::condition_value;
 use super::match_inputs::{parse_integer, unraw};
-use super::receiver::{literal_argument, proven_test_call, scope_shadows};
+use super::receiver::{is_ripr_stub, literal_argument, proven_test_call, scope_shadows};
 use crate::analysis::syntax::fn_signature::OwnerSignature;
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName};
@@ -140,12 +140,25 @@ pub(super) fn reused_inputs(
     let file = parse.tree();
     let owner = owner_fn(&file, seam_offset, name)?;
     // A `let`, parameter, `fn`, `const` or `static` of the owner's name in
-    // the module would take the call.
+    // the module would take the call. A local inside a written ripr stub
+    // cannot reach another test's call, and the stub binds `actual` itself,
+    // so skipping it keeps a second `--write` from seeing a changed body.
     let rebinds = file
         .syntax()
         .descendants()
         .filter(|node| in_scope(node))
         .filter_map(ast::Name::cast)
+        .filter(|bound| {
+            !(bound
+                .syntax()
+                .parent()
+                .is_some_and(|parent| ast::IdentPat::can_cast(parent.kind()))
+                && bound
+                    .syntax()
+                    .ancestors()
+                    .find_map(ast::Fn::cast)
+                    .is_some_and(|function| is_ripr_stub(&function)))
+        })
         .any(|bound| unraw(bound.text()) == unraw(name));
     // With `overflowing_literals` allowed, a literal may wrap, so neither a
     // copied value nor a guard's comparison reads as written.

@@ -407,7 +407,7 @@ fn mentions_ident(node: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
 
 /// A function ripr wrote: its body still holds a `ripr:` fill-in or the
 /// receiver comment ripr writes.
-fn is_ripr_stub(function: &ast::Fn) -> bool {
+pub(super) fn is_ripr_stub(function: &ast::Fn) -> bool {
     let text = function.syntax().text().to_string();
     text.contains("todo!(\"ripr:") || text.contains("// ripr: built ")
 }
