@@ -825,6 +825,29 @@ fn a_case_capture_that_rebinds_the_app_parameter_stops_the_chain() -> Result<(),
         "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case [base_app]:\n            return base_app{tail}"
     );
     assert_eq!(fixture_relation(&in_pattern)?, unidentified);
+    // `case` is a soft keyword: the capture needs no whitespace after it.
+    let grouped = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case(base_app):\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&grouped)?, unidentified);
+    let sequenced = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case[base_app]:\n            return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&sequenced)?, unidentified);
+    // A one-line body rebinds the parameter under a pattern that spells
+    // another name.
+    let one_line = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case _: base_app = rival\n    return base_app{tail}"
+    );
+    assert_eq!(fixture_relation(&one_line)?, unidentified);
+    // A one-line body that rebinds nothing: the parameter is still followed.
+    let one_line_kept = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case _: pass\n    return base_app{tail}"
+    );
+    assert_eq!(
+        fixture_relation(&one_line_kept)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
     // Without the capture the parameter is followed to the fixture behind it.
     let plain =
         format!("{head}@pytest.fixture\ndef items_app(base_app):\n    return base_app{tail}");

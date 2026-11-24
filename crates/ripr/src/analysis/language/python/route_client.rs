@@ -241,20 +241,26 @@ fn line_binds(line: &str, name: &str) -> bool {
                 return true;
             }
         }
-        // A `case` pattern captures every bare name it spells (`case app:`,
-        // `case [app]`, `case Point(app)`). A name in its guard is only a use,
-        // so the clause head is read as binding one name more than it may:
-        // that withholds.
-        "case" => {
-            let head = line
-                .get(..header_colon(line).unwrap_or(line.len()))
-                .unwrap_or(line);
+        // A `case` clause captures every bare name its pattern spells (`case
+        // app:`, `case [app]`, `case Point(app)`, and `case(app):`, since
+        // `case` is a soft keyword). A name in its guard is only a use, so the
+        // clause head is read as binding one name more than it may: that
+        // withholds. A one-line body binds like a statement of its own
+        // (`case _: app = rival`).
+        _ if opens_case_clause(first) => {
+            let colon = header_colon(line).unwrap_or(line.len());
+            let pattern = line.get(..colon).unwrap_or(line);
             // Split on what is not an identifier character: a capture in
             // brackets or braces, or a dotted name's last part, reads like a
             // bare one, which withholds.
-            return head
+            let captured = pattern
                 .split(|ch: char| !is_python_identifier_char(ch))
                 .any(|spelled| spelled == name);
+            if captured {
+                return true;
+            }
+            let body = line.get(colon + 1..).unwrap_or_default().trim();
+            return !body.is_empty() && line_binds(body, name);
         }
         _ => {}
     }
@@ -297,6 +303,15 @@ fn line_binds(line: &str, name: &str) -> bool {
         && line
             .split_once(':')
             .is_some_and(|(target, _)| target.trim() == name)
+}
+
+/// Whether a statement's first word opens a `case` clause. `case` is a soft
+/// keyword: followed by anything but an identifier character it is the clause
+/// (`case(app):`, `case[app]:`), and `cases = []` is an assignment.
+fn opens_case_clause(first: &str) -> bool {
+    first.strip_prefix("case").is_some_and(|rest| {
+        rest.is_empty() || rest.starts_with(|ch: char| !is_python_identifier_char(ch))
+    })
 }
 
 /// Byte offset of the colon that ends a compound statement's header.

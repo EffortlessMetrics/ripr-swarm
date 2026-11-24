@@ -161,6 +161,36 @@ fn a_one_line_compound_rebinding_withdraws_the_alias() {
 }
 
 #[test]
+fn a_case_capture_of_any_spelling_withdraws_the_alias() {
+    // `case` is a soft keyword: no whitespace is needed before the pattern.
+    for rebinding in [
+        "case api:",
+        "case [api]:",
+        "case Point(api):",
+        "case(api):",
+        "case[api]:",
+        "case _: api = other()",
+    ] {
+        let body = format!("api = client\n{rebinding}\n");
+        assert!(
+            !receivers(&body).contains(&"api".to_string()),
+            "{rebinding}"
+        );
+    }
+    // Another capture, a body that does not rebind, and names that only begin
+    // with `case`.
+    for statement in [
+        "case other:",
+        "case _: pass",
+        "cases = [api]",
+        "case_file = api",
+    ] {
+        let body = format!("api = client\n{statement}\n");
+        assert!(receivers(&body).contains(&"api".to_string()), "{statement}");
+    }
+}
+
+#[test]
 fn a_rebound_client_is_not_identified_by_one_branch() {
     let body = "client = TestClient(rival)\nif flag: client = TestClient(app)\n";
     assert_eq!(client_app_name(body, "client"), None);
