@@ -1,0 +1,9 @@
+# Edition 2015 implicit target discovery shutoff (#15877, #16051).
+[[extend]]
+id = "RIPR-SPEC-0153"
+tests = [
+  "crates/ripr/tests/disabled_target_discovery.rs::an_edition_2015_declared_bin_turns_off_bin_discovery",
+  "crates/ripr/tests/lib_test_false_credit.rs::edition_2015_declared_test_turns_off_test_discovery",
+  "crates/ripr/tests/disabled_target_discovery.rs::an_edition_2015_bin_prefers_the_inferred_layout_over_the_legacy_fallback",
+  "crates/ripr/tests/lib_test_false_credit.rs::a_test_in_an_undiscovered_bin_is_not_a_discriminator",
+]

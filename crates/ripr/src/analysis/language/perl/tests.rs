@@ -7,7 +7,7 @@
 use super::*;
 use crate::domain::RelatedTestMiss;
 
-fn complete_perl_actionability_context() -> PerlActionabilityContext {
+pub(super) fn complete_perl_actionability_context() -> PerlActionabilityContext {
     PerlActionabilityContext {
         receipt_command: Some(
             [
@@ -684,12 +684,24 @@ fn perl_related_test_linking_classifies_reachability_and_revealability() -> Resu
     Ok(())
 }
 
+pub(super) const RETURN_PACKET: &str = include_str!(
+    "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
+);
+
+pub(super) fn concrete_return_packet() -> Result<PerlFactPacket, String> {
+    let mut packet = consume(RETURN_PACKET)?;
+    let change = packet
+        .changes
+        .iter_mut()
+        .find(|change| change.change_id == "change:lib/My/App.pm:8:return")
+        .ok_or("missing return change")?;
+    change.missing_discriminator = Some("discounted amount".to_string());
+    Ok(packet)
+}
+
 #[test]
 fn perl_strict_actionability_requires_all_packet_and_context_fields() -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let context = complete_perl_actionability_context();
     let gap = packet
         .canonical_gap_identity_for_change("change:lib/My/App.pm:8:return")
@@ -707,7 +719,7 @@ fn perl_strict_actionability_requires_all_packet_and_context_fields() -> Result<
         "perl:lib/My/App.pm::My::App::discount"
     );
     assert_eq!(actionable.evidence_class, ExposureClass::WeaklyExposed);
-    assert_eq!(actionable.missing_discriminator, "return_value");
+    assert_eq!(actionable.missing_discriminator, "discounted amount");
     assert_eq!(actionable.repair_kind, "add_exact_return_assertion");
     assert_eq!(
         actionable.target_test_shape,
@@ -806,10 +818,7 @@ fn perl_strict_actionability_requires_all_packet_and_context_fields() -> Result<
 #[test]
 fn perl_strict_actionability_uses_selected_strict_evidence_for_gap_identity() -> Result<(), String>
 {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let mut packet = consume(fixture)?;
+    let mut packet = concrete_return_packet()?;
     packet.relations.insert(
         0,
         RelationFact {
@@ -856,10 +865,7 @@ fn perl_strict_actionability_uses_selected_strict_evidence_for_gap_identity() ->
 
 #[test]
 fn perl_strict_actionability_blocks_limitation_on_any_related_evidence() -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let mut packet = consume(fixture)?;
+    let mut packet = concrete_return_packet()?;
     let mut additional_relation = packet
         .relations
         .first()
@@ -888,10 +894,7 @@ fn perl_strict_actionability_blocks_limitation_on_any_related_evidence() -> Resu
 
 #[test]
 fn perl_repair_card_and_agent_packet_project_strict_actionability() -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let context = complete_perl_actionability_context();
     let card = packet
         .repair_card_for_change("change:lib/My/App.pm:8:return", &context)
@@ -909,12 +912,12 @@ fn perl_repair_card_and_agent_packet_project_strict_actionability() -> Result<()
     assert_eq!(card.changed_owner, "perl:lib/My/App.pm::My::App::discount");
     assert_eq!(card.evidence_class, "weakly_exposed");
     assert_eq!(card.repair_kind, "add_exact_return_assertion");
-    assert_eq!(card.missing_discriminator, "return_value");
+    assert_eq!(card.missing_discriminator, "discounted amount");
     assert_eq!(card.target_test_shape, "Test::More exact_return_assertion");
     assert_eq!(card.suggested_test_location, "t/app.t::discount_smoke");
     assert_eq!(
         card.suggested_assertion,
-        "assert the exact returned `return_value` value"
+        "assert the exact returned `discounted amount` value"
     );
     assert_eq!(card.verify_command, "prove t/app.t");
     assert_eq!(
@@ -997,10 +1000,7 @@ fn perl_repair_card_and_agent_packet_project_strict_actionability() -> Result<()
 #[test]
 fn perl_private_repair_card_and_agent_packet_json_preserve_internal_projection_boundary()
 -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let context = complete_perl_actionability_context();
     let card = packet
         .repair_card_for_change("change:lib/My/App.pm:8:return", &context)
@@ -1083,10 +1083,7 @@ fn perl_private_repair_card_and_agent_packet_json_preserve_internal_projection_b
 #[test]
 fn perl_repair_card_and_agent_packet_fail_closed_without_strict_actionability() -> Result<(), String>
 {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let mut missing_receipt = complete_perl_actionability_context();
     missing_receipt.receipt_command = None;
     assert_eq!(
@@ -1120,10 +1117,7 @@ fn perl_repair_card_and_agent_packet_fail_closed_without_strict_actionability() 
 
 #[test]
 fn perl_strict_actionability_fails_closed_for_missing_or_weak_fields() -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let context = complete_perl_actionability_context();
 
     let mut missing_receipt = context.clone();

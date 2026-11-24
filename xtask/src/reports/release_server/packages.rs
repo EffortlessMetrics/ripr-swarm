@@ -358,9 +358,17 @@ mod tests {
             header.set_size(bytes.len() as u64);
             header.set_mode(*mode);
             header.set_entry_type(tar::EntryType::Regular);
+            // Write the member name verbatim: `set_path`/`append_data` validate
+            // the path with host rules (a Windows host refuses `c:ripr`), which
+            // would make the hostile archives differ by host.
+            let raw = name.as_bytes();
+            let field = &mut header.as_old_mut().name;
+            if raw.len() > field.len() {
+                return Err(format!("tar member name {name} exceeds the header field"));
+            }
+            field[..raw.len()].copy_from_slice(raw);
             header.set_cksum();
-            tar.append_data(&mut header, name, *bytes)
-                .map_err(|e| e.to_string())?;
+            tar.append(&header, *bytes).map_err(|e| e.to_string())?;
         }
         tar.into_inner()
             .map_err(|e| e.to_string())?

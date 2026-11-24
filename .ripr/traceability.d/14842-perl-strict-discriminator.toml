@@ -1,0 +1,11 @@
+[[extend]]
+id = "RIPR-SPEC-0064"
+tests = [
+  "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_actionability_proptest_fixture_is_actionable",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/language/perl/actionability_proptest_tests.rs::perl_actionability_proptest_fixture_is_actionable",
+]

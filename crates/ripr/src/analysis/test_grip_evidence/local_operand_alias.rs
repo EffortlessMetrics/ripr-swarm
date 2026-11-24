@@ -7,6 +7,8 @@
 //! owner with N seams cost O(N x body) (#15189). The answer depends only on
 //! the body text, the parameters and the operand, so a per-thread memo
 //! keyed by that exact text answers repeat questions without rescanning.
+//! Whether a closure in the body binds the operand is the same kind of
+//! per-body question and is memoized the same way.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -30,7 +32,7 @@ pub(super) fn boundary_local_operand_parameter_index(
     parameters: &[String],
     operand: &str,
 ) -> Option<usize> {
-    if operand.is_empty() {
+    if operand.is_empty() || is_numeric_literal(operand) {
         return None;
     }
     let key = (operand.to_string(), parameters.to_vec());
@@ -49,13 +51,48 @@ pub(super) fn boundary_local_operand_parameter_index(
     answer
 }
 
+/// One owner body and the operand roots a closure there was already
+/// checked to bind.
+struct BodyClosureRoots {
+    body: String,
+    answers: HashMap<String, bool>,
+}
+
+thread_local! {
+    // As `LAST_BODY`: one body per thread, replaced by a different body.
+    static LAST_CLOSURE_BODY: Cell<Option<BodyClosureRoots>> = const { Cell::new(None) };
+}
+
+/// Whether a closure in the owner `body` binds `operand_root`, memoized by
+/// the exact body and root: every seam of an `a == N` chain asks it about
+/// the same `a` (#15189). `scan` is the uncached reading of `body`.
+pub(super) fn body_closure_binds_operand_root(
+    body: &str,
+    operand_root: &str,
+    scan: impl FnOnce(&str) -> bool,
+) -> bool {
+    let mut entry = LAST_CLOSURE_BODY
+        .with(Cell::take)
+        .filter(|entry| entry.body == body)
+        .unwrap_or_else(|| BodyClosureRoots {
+            body: body.to_string(),
+            answers: HashMap::new(),
+        });
+    let answer = *entry
+        .answers
+        .entry(operand_root.to_string())
+        .or_insert_with(|| scan(body));
+    LAST_CLOSURE_BODY.with(|cell| cell.set(Some(entry)));
+    answer
+}
+
 /// The uncached reading: the first parameter `operand` aliases in `body`.
 fn scan_local_operand_parameter_index(
     body: &str,
     parameters: &[String],
     operand: &str,
 ) -> Option<usize> {
-    if operand.is_empty() {
+    if operand.is_empty() || is_numeric_literal(operand) {
         return None;
     }
     for (index, parameter) in parameters.iter().enumerate() {
@@ -67,6 +104,20 @@ fn scan_local_operand_parameter_index(
         }
     }
     None
+}
+
+/// Whether `operand` is a numeric literal (`17`, `-1`, `0x1F`, `2u8`). A
+/// literal is never a local, so it aliases no parameter. Each arm of an
+/// `a == 0 .. else if a == N` chain compares a different literal, so
+/// without this every arm was a fresh memo key and a full body scan
+/// (#15189); a `Some(17)` literal pattern is also no alias.
+pub(in crate::analysis) fn is_numeric_literal(operand: &str) -> bool {
+    let operand = operand.trim();
+    operand
+        .strip_prefix('-')
+        .unwrap_or(operand)
+        .trim_start()
+        .starts_with(|ch: char| ch.is_ascii_digit())
 }
 
 fn body_contains_wrapped_local_alias(

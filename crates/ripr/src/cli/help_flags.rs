@@ -55,6 +55,10 @@ fn closed_values(path: &str, flag: &str) -> Vec<String> {
             .into_iter()
             .map(str::to_string)
             .collect(),
+        ("outcome", "--format") => super::commands::OUTCOME_FORMAT_NAMES
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
         // Mirrors `parse_pilot_format`.
         ("pilot", "--format") => vec!["human".to_string(), "json".to_string()],
         // Mirrors `parse_init_ci`.

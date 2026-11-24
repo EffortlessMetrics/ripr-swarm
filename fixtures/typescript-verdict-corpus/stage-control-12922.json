@@ -1,0 +1,24 @@
+{
+  "issue": 12922,
+  "source_candidate": "0a899b0f613fcf102e0673461d609c8acb5b3fdb",
+  "source_path": "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "source_blob": "5b574c50091ae60cbe77d477ed581f84402ebbaf",
+  "original_sha256": "5ab2aaaf3f0410d1468cf52493bd412aa965a2018d48787e671fce3e9f4f11e9",
+  "faulted_sha256": "0cd1c6fbad544e6a4d1e2a5f066a7815642ecaff4e837c0bbcc7b272aafeee00",
+  "fault": "In classify_resolved_owner, change only the unresolved_assertions_only ladder arm from StaticUnknown to Exposed. No other class arm changes.",
+  "command": "cargo test -j1 -p ripr --lib unemitted_stage_unknown -- --nocapture",
+  "positive": {
+    "exit": 0,
+    "tests_passed": 4,
+    "artifact_sha256": "67471e86876438d9510a4fa4439a62acb50b69fc1a78f502e95af69bbda8a143",
+    "output": "\ntest analysis::language::python::unemitted_stage_unknown_tests::credited_unrelated_and_weak_inputs_never_reach_an_unemitted_class ... ok\ntest analysis::language::python::unemitted_stage_unknown_tests::unknown_stage_inputs_read_static_unknown_never_exposed_or_an_unemitted_class ... ok\ntest analysis::language::typescript::tests::unemitted_stage_unknown_tests::the_awaited_control_is_exposed_so_the_sweep_can_tell_the_classes_apart ... ok\ntest analysis::language::typescript::tests::unemitted_stage_unknown_tests::unknown_stage_inputs_read_static_unknown_never_exposed_or_propagation_unknown ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 18196 filtered out; finished in 0.03s\n\n"
+  },
+  "negative": {
+    "exit": 101,
+    "tests_passed": 3,
+    "tests_failed": 1,
+    "artifact_sha256": "aefb202c216711949d807fc4842cf0d6f98f0202c7a31c18891054c99e457091",
+    "output": "\ntest analysis::language::python::unemitted_stage_unknown_tests::unknown_stage_inputs_read_static_unknown_never_exposed_or_an_unemitted_class ... ok\ntest analysis::language::python::unemitted_stage_unknown_tests::credited_unrelated_and_weak_inputs_never_reach_an_unemitted_class ... ok\n\nthread 'analysis::language::typescript::tests::unemitted_stage_unknown_tests::unknown_stage_inputs_read_static_unknown_never_exposed_or_propagation_unknown' (6397) panicked at crates/ripr/src/analysis/language/typescript/tests/unemitted_stage_unknown_tests.rs:46:9:\nassertion `left == right` failed: floating-resolves\n  left: Exposed\n right: StaticUnknown\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\ntest analysis::language::typescript::tests::unemitted_stage_unknown_tests::the_awaited_control_is_exposed_so_the_sweep_can_tell_the_classes_apart ... ok\ntest analysis::language::typescript::tests::unemitted_stage_unknown_tests::unknown_stage_inputs_read_static_unknown_never_exposed_or_propagation_unknown ... FAILED\n\nfailures:\n\nfailures:\n    analysis::language::typescript::tests::unemitted_stage_unknown_tests::unknown_stage_inputs_read_static_unknown_never_exposed_or_propagation_unknown\n\ntest result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 18196 filtered out; finished in 0.01s\n\nerror: test failed, to rerun pass `-p ripr --lib`\n"
+  },
+  "restored": true
+}

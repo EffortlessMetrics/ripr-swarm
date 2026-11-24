@@ -232,6 +232,29 @@ Other applicable spec/document gates remain necessary. The precommit gate
 table, required hosted policy, advisory source-of-truth workflow and support
 claims are unchanged.
 
+### Release-note CLI inputs to the scoped docs gate
+
+The revision-bound docs gate compares committed release-note command paths and
+flags using the public guide contract's parser. Changed lines containing a ripr command prefix
+and their shell continuations also require the candidate CLI contract, including
+bare commands and bracketed examples outside the flag parser. Surrounding prose
+can change without widening this check. A changed-list invocation lacks the two
+committed inputs and widens for release notes. The protected docs gate runs the
+full precommit table and its Markdown tests.
+
+### Gemini context pointer parity
+
+The root `GEMINI.md` is a regular file containing only the relative import
+`@./AGENTS.md`, terminated by LF or CRLF. `check-agent-skills` requires that
+pointer, refuses a workspace `.gemini/settings.json` or `.gemini/skills` path,
+and retains the existing validation of the shared `.agents/skills` inventory.
+The policy preflight receipt binds the exact pointer bytes and the presence of
+the competing paths. An empty competing skill directory changes that identity,
+as does switching the otherwise valid pointer between LF and CRLF.
+
+This is a checkout-level structural check. Gemini CLI activation and behavior
+require their own runtime evidence under [#14255](https://github.com/EffortlessMetrics/ripr-swarm/issues/14255).
+
 ## Non-Goals
 
 - No runtime analyzer behavior.

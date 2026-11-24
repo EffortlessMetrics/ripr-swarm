@@ -68,8 +68,6 @@ Fail-closed rules (a miss keeps the finding reported):
 
 - `#[mutants::skip] mod name;` is not followed into the module's own file.
 - `const` and `static` item scopes.
-- `explain --format agent` and `explain --from <artifact>` (the artifact
-  records no opt-outs).
 - LSP (#14136), MCP (#14138) and repo-scope (#14139) surfaces.
 
 ## Acceptance Examples
@@ -85,7 +83,13 @@ Fail-closed rules (a miss keeps the finding reported):
 6. `#[cfg_attr(test, doc = r#"mutants::skip"#)]` on an impl withholds
    nothing.
 7. `ripr explain` on a withheld finding starts with the `Withheld:` line; an
-   ordinary finding prints none.
+   ordinary finding prints none. Agent output gives the stable reason and owner
+   in a `stop=` record. Artifact replay uses the producing run’s opt-out
+   for the selected finding, even when the current source attribute differs.
+8. `ripr context` on a withheld finding, fresh or replayed from an artifact,
+   keeps the probe and evidence, adds `owner_mutants_skip` to
+   `stop_reasons` and leaves `recommended_next_step` empty; an ordinary
+   finding's packet is unchanged (#14133).
 
 ## Test Mapping
 
@@ -102,7 +106,10 @@ Fail-closed rules (a miss keeps the finding reported):
 - `crates/ripr/tests/mutants_skip_owner_opt_out.rs::raw_string_doc_on_impl_mentioning_mutants_skip_does_not_withhold`
   - example 6.
 - `crates/ripr/tests/mutants_skip_owner_opt_out.rs::explain_states_owner_opt_out_withholding`
+- `crates/ripr/tests/mutants_skip_owner_opt_out.rs::agent_and_replay_explain_the_recorded_owner_opt_out`
   - example 7.
+- `crates/ripr/tests/mutants_skip_owner_opt_out.rs::context_followed_from_explain_keeps_the_owner_opt_out_stop`
+  - example 8.
 - `crates/ripr/src/analysis/syntax/ra/owner_scopes.rs::tests::reads_impl_trait_module_and_file_scopes_innermost_first`,
   `::inner_attributes_are_rewritten_to_outer_form` and
   `::unparsable_source_and_ambiguous_owner_yield_nothing` - scope order,
@@ -116,6 +123,8 @@ Fail-closed rules (a miss keeps the finding reported):
   decision and shared-id rule.
 - `crates/ripr/src/output/human.rs::render_owner_opt_out_explain_line` and
   `crates/ripr/src/output/json/report.rs` - disclosure.
+- `crates/ripr/src/output/json/context_packet.rs::render_selected_context_packet`
+  - the context packet's stop for a withheld finding.
 
 ## Metrics
 

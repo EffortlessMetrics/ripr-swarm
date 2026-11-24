@@ -45,10 +45,9 @@ impl Subject {
         Ok(Self(root))
     }
 
-    /// Runs `ripr check` and returns the TypeScript preview advisory's
-    /// `(enabled, analyzed)` flags. The advisory is required to exist for the
-    /// changed file, so a failed run or an unparsed report cannot pass.
-    fn typescript_advisory(&self) -> Result<(bool, bool), String> {
+    /// Runs `ripr check --format json` on the subject's diff and parses the
+    /// report. A failed run or an unparsed report is an error.
+    fn check_report(&self) -> Result<serde_json::Value, String> {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--quiet", "--format", "json", "--root"])
             .arg(&self.0)
@@ -62,8 +61,14 @@ impl Subject {
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-        let report: serde_json::Value =
-            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
+    }
+
+    /// Runs `ripr check` and returns the TypeScript preview advisory's
+    /// `(enabled, analyzed)` flags. The advisory is required to exist for the
+    /// changed file, so a failed run or an unparsed report cannot pass.
+    fn typescript_advisory(&self) -> Result<(bool, bool), String> {
+        let report = self.check_report()?;
         let advisory = report["preview_languages"]
             .as_array()
             .and_then(|all| all.iter().find(|entry| entry["language"] == "typescript"))
@@ -143,6 +148,73 @@ fn package_json_with_javascript_beside_a_rust_project_enables_typescript() -> Re
     )?;
     if subject.typescript_advisory()? != (true, true) {
         return Err("JavaScript beside a Rust project must enable typescript".to_string());
+    }
+    Ok(())
+}
+
+const PRICING_DENO_TEST: &str = "import { assertEquals } from \"jsr:@std/assert\";\nimport { discountRate } from \"./pricing.ts\";\n\nDeno.test(\"pro tier gets a fifth off\", () => {\n  assertEquals(discountRate(\"pro\"), 0.2);\n});\n";
+
+impl Subject {
+    /// The related tests linked to the first finding of `ripr check`.
+    fn related_test_names(&self) -> Result<Vec<String>, String> {
+        let report = self.check_report()?;
+        Ok(report["findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|finding| finding["related_tests"].as_array().into_iter().flatten())
+            .filter_map(|test| test["name"].as_str().map(str::to_string))
+            .collect())
+    }
+}
+
+/// #15623: a Deno project (`deno.json`, no `package.json`) is a TypeScript
+/// project, so zero-config `check` analyzes it as `ripr init` would.
+#[test]
+fn deno_json_enables_typescript_and_links_the_deno_test() -> Result<(), String> {
+    let subject = Subject::create(
+        &[
+            ("deno.json", "{}"),
+            ("pricing.ts", PRICING_TS),
+            ("pricing.test.ts", PRICING_DENO_TEST),
+        ],
+        "pricing.ts",
+    )?;
+    if subject.typescript_advisory()? != (true, true) {
+        return Err("deno.json must enable and run the typescript adapter".to_string());
+    }
+    // #15622: the `Deno.test` registration is the related test.
+    let related = subject.related_test_names()?;
+    if !related
+        .iter()
+        .any(|name| name == "pro tier gets a fifth off")
+    {
+        return Err(format!(
+            "Deno.test must link as a related test: {related:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn deno_jsonc_enables_typescript_without_ripr_toml() -> Result<(), String> {
+    let subject = Subject::create(
+        &[("deno.jsonc", "{}\n"), ("pricing.ts", PRICING_TS)],
+        "pricing.ts",
+    )?;
+    if subject.typescript_advisory()? != (true, true) {
+        return Err("deno.jsonc must enable and run the typescript adapter".to_string());
+    }
+    Ok(())
+}
+
+/// The same flat layout without a marker stays off: the marker, not the
+/// layout, is what enables the adapter.
+#[test]
+fn flat_typescript_without_deno_json_stays_off() -> Result<(), String> {
+    let subject = Subject::create(&[("pricing.ts", PRICING_TS)], "pricing.ts")?;
+    if subject.typescript_advisory()? != (false, false) {
+        return Err("flat .ts without a marker must not enable typescript".to_string());
     }
     Ok(())
 }
