@@ -187,10 +187,10 @@ fn function_reference_to_a_synchronous_array_callback_is_a_call() {
         let source = format!(
             "function cmp(a: any, b: any) {{\n  return a < b ? -1 : 1;\n}}\nexport function order(keys: any[]) {{\n  return keys.{method}(cmp);\n}}\n"
         );
-        assert_eq!(entry_names(&source, "cmp"), ["order"], "{method}");
+        assert_eq!(call_entry_names(&source, "cmp"), ["order"], "{method}");
     }
     let with_initial = "function add(a: number, b: number) {\n  return a + b;\n}\nexport function sum(values: number[]) {\n  return values.reduce(add, 0);\n}\n";
-    assert_eq!(entry_names(with_initial, "add"), ["sum"]);
+    assert_eq!(call_entry_names(with_initial, "add"), ["sum"]);
 }
 
 #[test]

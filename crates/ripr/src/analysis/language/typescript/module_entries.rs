@@ -336,11 +336,15 @@ pub(crate) fn module_entries_and_outbound<'a>(
         .copied()
         .chain(bindings.keys().copied())
         .collect();
+    // A name the module ever reassigns may hold some other value: a
+    // reference to it (`keys.sort(compare)`) is no call edge, and no closure
+    // edge targets it.
+    let reassigned = reassigned_names(statements);
     let mut callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     let mut import_callees: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for (name, node) in &nodes {
         let (top_level, imported): (BTreeSet<&str>, BTreeSet<&str>) =
-            node_callees(node, &nodes, &names, &values)
+            node_callees(node, &nodes, &names, &values, &reassigned)
                 .into_iter()
                 .partition(|callee| nodes.contains_key(callee) || values.contains(callee));
         callees.insert(*name, top_level);
@@ -362,7 +366,7 @@ pub(crate) fn module_entries_and_outbound<'a>(
             }],
             ..ModuleNode::default()
         };
-        let top_level: BTreeSet<&str> = node_callees(&node, &nodes, &names, &values)
+        let top_level: BTreeSet<&str> = node_callees(&node, &nodes, &names, &values, &reassigned)
             .into_iter()
             .filter(|callee| *callee != *name)
             .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
@@ -382,7 +386,7 @@ pub(crate) fn module_entries_and_outbound<'a>(
             }],
             ..ModuleNode::default()
         };
-        let mut edges: BTreeSet<&str> = node_callees(&node, &nodes, &names, &values)
+        let mut edges: BTreeSet<&str> = node_callees(&node, &nodes, &names, &values, &reassigned)
             .into_iter()
             .filter(|callee| nodes.contains_key(callee) || values.contains(callee))
             .filter(|callee| !declares_member_named(method.text, callee))
@@ -412,7 +416,6 @@ pub(crate) fn module_entries_and_outbound<'a>(
     // Closure edges (#13592): a reference to another top-level declaration
     // that the bare-call graph does not already record. A name the module
     // ever reassigns may hold some other value, so it is never a target.
-    let reassigned = reassigned_names(statements);
     let closure_callees: BTreeMap<&str, BTreeSet<&str>> = nodes
         .iter()
         .map(|(name, node)| {
@@ -1071,6 +1074,7 @@ fn node_callees<'n, 'a>(
     nodes: &BTreeMap<&'a str, ModuleNode<'a>>,
     names: &std::collections::HashSet<&'n str>,
     values: &BTreeSet<&'n str>,
+    reassigned: &std::collections::HashSet<&str>,
 ) -> BTreeSet<&'n str> {
     let texts: Vec<&CallText<'_>> = match node.factory {
         Some(factory) => nodes
@@ -1118,7 +1122,10 @@ fn node_callees<'n, 'a>(
             if !checked.insert(name) {
                 continue;
             }
-            if text_calls_top_level(text, name, nodes.contains_key(name)) {
+            // Only a declaration of this module the module never reassigns
+            // is run by a reference passed to a synchronous array method.
+            let stable_here = nodes.contains_key(name) && !reassigned.contains(name);
+            if text_calls_top_level(text, name, stable_here) {
                 callees.insert(name);
             }
         }

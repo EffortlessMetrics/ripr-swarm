@@ -216,6 +216,12 @@ fn method_an_instance_member_may_replace_is_no_node() {
             "accessor",
             "  get order(): any {\n    return (k: string[]) => k;\n  }\n",
         ),
+        // A quoted key names the same property at runtime.
+        ("quoted field", "  \"order\" = (k: string[]) => k;\n"),
+        (
+            "bracket constructor assignment",
+            "  constructor() {\n    (this as any)[\"order\"] = (k: string[]) => k;\n  }\n",
+        ),
     ] {
         let source = SRC.replacen(
             "  describe(keys: string[]): string {",
@@ -238,6 +244,21 @@ fn method_an_instance_member_may_replace_is_no_node() {
         entry_hops(&assigned, "compareKeys").is_empty(),
         "member assigned"
     );
+}
+
+#[test]
+fn a_reference_the_module_reassigns_is_no_call() {
+    assert_eq!(
+        entry_hops(SRC, "compareKeys"),
+        [("serialize".to_string(), 3)],
+        "twin"
+    );
+    // A setter replaces the comparator: `keys.sort(compareKeys)` may run the
+    // replacement, so the reference is no edge.
+    let reassigned = format!(
+        "{SRC}export function configure(): void {{\n  compareKeys = (a: string, b: string) => 0;\n}}\n"
+    );
+    assert!(entry_hops(&reassigned, "compareKeys").is_empty());
 }
 
 #[test]

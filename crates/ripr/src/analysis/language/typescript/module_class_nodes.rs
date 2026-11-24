@@ -64,6 +64,10 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
     // Every member name, so a method that shares its name with a field, an
     // accessor, a static or an overload implementation is no node.
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    // Names of members keyed by a string, number or private name: never a
+    // node themselves, but a quoted `"write" = ...` field still replaces
+    // `write` on every instance.
+    let mut other_keys: Vec<String> = Vec::new();
     let mut methods = Vec::new();
     for element in &class.body.body {
         let (key, computed) = match element {
@@ -77,6 +81,9 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
             return None;
         }
         let PropertyKey::StaticIdentifier(name) = key else {
+            if let Some(name) = key.static_name() {
+                other_keys.push(name.to_string());
+            }
             continue;
         };
         let name = name.name.as_str();
@@ -101,7 +108,9 @@ pub(super) fn module_class<'a>(class: &'a Class<'a>, source: &'a str) -> Option<
         }
         *counts.entry(name).or_default() += 1;
     }
-    methods.retain(|(name, _)| counts.get(name) == Some(&1));
+    methods.retain(|(name, _)| {
+        counts.get(name) == Some(&1) && !other_keys.iter().any(|other| other == name)
+    });
     Some(ModuleClass {
         name: id.name.as_str(),
         decl_start: id.span.start as usize,
@@ -139,6 +148,7 @@ pub(super) fn method_nodes<'s>(
             // may replace the method.
             if rebinds_this_member(class.text, method)
                 || super::class_entries::assigns_member_named(masked, method)
+                || mentions_literal_key(source, method)
             {
                 continue;
             }
@@ -151,6 +161,21 @@ pub(super) fn method_nodes<'s>(
         }
     }
     nodes
+}
+
+/// `["NAME"]`, `['NAME']` or `` [`NAME`] `` anywhere in the module: a
+/// bracket access with the method's name as a literal key can write the
+/// member (`this["write"] = ...`), and masked text cannot tell a read from a
+/// write there, so any such mention refuses the method.
+fn mentions_literal_key(source: &str, name: &str) -> bool {
+    ['"', '\'', '`'].iter().any(|quote| {
+        source
+            .match_indices(&format!("{quote}{name}{quote}"))
+            .any(|(idx, _)| {
+                source[..idx].trim_end().ends_with('[')
+                    && source[idx + name.len() + 2..].trim_start().starts_with(']')
+            })
+    })
 }
 
 /// `new NAME(` somewhere in `masked`.
