@@ -945,8 +945,10 @@ pub(super) fn inert_tool_fixture(test: &PythonTest, fixture: &str) -> bool {
 }
 
 /// Whether the test's signature takes `fixture` as a parameter pytest
-/// injects: a positional or keyword parameter without a default. pytest
-/// leaves `account=FakeAccount(100)` alone, so the default is what runs.
+/// injects: a required positional-or-keyword or keyword-only parameter. The
+/// fixture argument reader skips positional-only parameters for a test as it
+/// does for a fixture, and it leaves `account=FakeAccount(100)` alone, so the
+/// default is what runs.
 pub(super) fn injected_parameter(test: &PythonTest, fixture: &str) -> bool {
     let Ok(Mod::Module(module)) = parse(&test.body_text, Mode::Module, "<python-test-signature>")
     else {
@@ -957,9 +959,8 @@ pub(super) fn injected_parameter(test: &PythonTest, fixture: &str) -> bool {
         Some(Stmt::AsyncFunctionDef(function)) => &function.args,
         _ => return false,
     };
-    args.posonlyargs
+    args.args
         .iter()
-        .chain(&args.args)
         .chain(&args.kwonlyargs)
         .any(|arg| arg.def.arg.as_str() == fixture && arg.default.is_none())
 }

@@ -2151,7 +2151,10 @@ to the requesting fixture's file and its conftest chain. A dependency the
 test directly parametrizes is supplied by pytest rather than by its
 fixture, a parameter with a default is never injected, and pytest's fixture
 argument reader skips a positional-only parameter, so any of the three ends
-the chain. Every `return` or `yield` of a supplying fixture counts under
+the chain. The same reader decides whether a test itself takes a fixture as a
+parameter: a positional-only parameter of a test is not a fixture request, so
+a fixture does not resolve a limit for such a test. Every `return` or `yield`
+of a supplying fixture counts under
 any spacing Python allows, including a bare exit and an exit whose value
 starts with punctuation (`return[other]`, `yield+x`); only a name that starts
 with the keyword (`returns = ...`) is not an exit. An exit that does not
@@ -2167,6 +2170,7 @@ Tests: `route_identity_tests.rs::a_nested_fixture_client_over_the_owners_app_is_
 `route_identity_tests.rs::a_directly_parametrized_app_dependency_is_not_followed_to_its_fixture`,
 `route_identity_tests.rs::a_defaulted_app_parameter_is_not_a_fixture_request`,
 `route_identity_tests.rs::a_positional_only_app_parameter_is_not_a_fixture_request`,
+`literal_fixture_tests.rs::a_positional_only_test_parameter_is_not_a_fixture_request`,
 `route_identity_tests.rs::an_exit_whose_value_starts_with_punctuation_fails_the_chain_closed` and
 `route_identity_tests.rs::an_exit_the_reader_cannot_use_fails_the_chain_closed`.
 

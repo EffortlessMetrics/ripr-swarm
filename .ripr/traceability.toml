@@ -4695,6 +4695,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/route_identity_tests.rs::a_defaulted_app_parameter_is_not_a_fixture_request",
   "crates/ripr/src/analysis/language/python/route_identity_tests.rs::a_positional_only_app_parameter_is_not_a_fixture_request",
   "crates/ripr/src/analysis/language/python/route_identity_tests.rs::an_exit_whose_value_starts_with_punctuation_fails_the_chain_closed",
+  "crates/ripr/src/analysis/language/python/literal_fixture_tests.rs::a_positional_only_test_parameter_is_not_a_fixture_request",
   "crates/ripr/src/analysis/language/python/route_identity_tests.rs::an_exit_the_reader_cannot_use_fails_the_chain_closed",
 ]
 fixtures = [
