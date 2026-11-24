@@ -801,6 +801,39 @@ fn an_owner_modules_reexport_of_its_imported_app_is_its_own_app() -> Result<(), 
     Ok(())
 }
 
+/// #15868 review: a list target binds each name in it, as an assignment, a
+/// `for` target and a `del`; the chain does not follow a parameter a list
+/// target rebound. A list built from the parameter binds nothing.
+#[test]
+fn a_list_target_that_rebinds_the_app_parameter_stops_the_chain() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    let head = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other_app\n\n@pytest.fixture\ndef base_app():\n    return app\n\n@pytest.fixture\ndef rival():\n    return other_app\n\n"
+    );
+    let tail = "\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n";
+    for rebinding in [
+        "[base_app] = [rival]",
+        "[base_app, other] = [rival, 1]",
+        "for [base_app] in [rival]:\n        pass",
+        "del [base_app]",
+        "other, [base_app] = pair",
+    ] {
+        let source = format!(
+            "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    {rebinding}\n    return base_app{tail}"
+        );
+        assert_eq!(fixture_relation(&source)?, unidentified, "{rebinding}");
+    }
+    // A list built from the parameter is a use, not a rebinding.
+    let used = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    items = [base_app]\n    return base_app{tail}"
+    );
+    assert_eq!(
+        fixture_relation(&used)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    Ok(())
+}
+
 #[test]
 fn a_case_capture_that_rebinds_the_app_parameter_stops_the_chain() -> Result<(), String> {
     let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
@@ -846,6 +879,15 @@ fn a_case_capture_that_rebinds_the_app_parameter_stops_the_chain() -> Result<(),
     );
     assert_eq!(
         fixture_relation(&one_line_kept)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    // A dotted name's root is not a capture: the pattern compares against
+    // an attribute, and the parameter is still followed.
+    let dotted = format!(
+        "{head}@pytest.fixture\ndef items_app(base_app, rival):\n    match rival:\n        case base_app.endpoint:\n            return base_app{tail}"
+    );
+    assert_eq!(
+        fixture_relation(&dotted)?,
         Some(PythonRelationKind::ApiClientRouteCall)
     );
     // Without the capture the parameter is followed to the fixture behind it.

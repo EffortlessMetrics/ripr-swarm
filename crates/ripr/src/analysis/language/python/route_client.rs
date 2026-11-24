@@ -217,8 +217,110 @@ fn bare_names(region: &str) -> Vec<String> {
     names
 }
 
+/// Whether `targets`, the targets of an assignment, a `for` clause or a `del`,
+/// bind `name`: its bare names, and inside a list target (`[a, b] = values`,
+/// `first, [a, b] = pair`) the names at any depth, because the list's
+/// brackets are the target and not a subscript. The root of an attribute or
+/// a subscript store stays unread; a name used as a subscript inside the
+/// target is read as bound, and so is a name in brackets that are no target
+/// (`[api][0] = 1`, `del [api][0]`), which withholds.
+fn targets_bind(targets: &str, name: &str) -> bool {
+    if bare_names(targets).iter().any(|bound| bound == name) {
+        return true;
+    }
+    list_targets(targets)
+        .iter()
+        .any(|list| list_target_binds(list, name))
+}
+
+/// The list targets in `targets`: each bracket group that no name, attribute
+/// or closing bracket opens onto (`[a, b] = values`, `first, [a, b] = pair`).
+/// A bracket group that follows a name is a subscript (`d[api]`), whose
+/// store binds nothing.
+fn list_targets(targets: &str) -> Vec<&str> {
+    let mut lists = Vec::new();
+    let mut depth = 0usize;
+    let mut open: Option<(usize, usize)> = None;
+    let mut previous = ' ';
+    for (at, ch) in targets.char_indices() {
+        if ch.is_whitespace() {
+            continue;
+        }
+        let subscript = matches!(previous, '.' | ')' | ']') || is_python_identifier_char(previous);
+        match ch {
+            '[' => {
+                if !subscript && open.is_none() {
+                    open = Some((at, depth));
+                }
+                depth += 1;
+            }
+            ']' => {
+                depth = depth.saturating_sub(1);
+                if let Some((from, at_depth)) = open
+                    && depth == at_depth
+                {
+                    lists.push(targets.get(from..at + 1).unwrap_or_default());
+                    open = None;
+                }
+            }
+            _ => {}
+        }
+        previous = ch;
+    }
+    lists
+}
+
+fn list_target_binds(target: &str, name: &str) -> bool {
+    let chars: Vec<char> = target.chars().collect();
+    let mut start = None;
+    for index in 0..=chars.len() {
+        if index < chars.len() && is_python_identifier_char(chars[index]) {
+            if start.is_none() {
+                start = Some(index);
+            }
+            continue;
+        }
+        if let Some(start) = start.take() {
+            let before = chars[..start].iter().rev().find(|ch| !ch.is_whitespace());
+            let after = chars[index..].iter().find(|ch| !ch.is_whitespace());
+            let accessed = matches!(before, Some('.')) || matches!(after, Some('.' | '['));
+            if !accessed && chars[start..index].iter().collect::<String>() == name {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether a `case` pattern spells `name` as a capture. Every identifier
+/// run is read, a capture in brackets or braces and the last part of a
+/// dotted name included, and a name in a guard too: the pattern is read as
+/// capturing one name more than it may, which withholds. The root of a
+/// dotted name is not read: `case app.client:` compares against an
+/// attribute and binds nothing.
+fn spells_capture(pattern: &str, name: &str) -> bool {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut start = None;
+    for index in 0..=chars.len() {
+        if index < chars.len() && is_python_identifier_char(chars[index]) {
+            if start.is_none() {
+                start = Some(index);
+            }
+            continue;
+        }
+        if let Some(start) = start.take()
+            && chars[index..].first() != Some(&'.')
+            && chars[start..index].iter().collect::<String>() == name
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether `line` (one logical statement) binds `name`: assignment targets
-/// (plain, augmented, annotated, chained, tuple), `for` targets, `as` names,
+/// (plain, augmented, annotated, chained, tuple, list), `for` targets, `del`
+/// targets, `as` names,
 /// walrus, `def`/`class`/`import` names and function parameters, a `case`
 /// capture, and the body of a one-line compound statement
 /// (`if flag: api = other()`).
@@ -229,14 +331,20 @@ fn line_binds(line: &str, name: &str) -> bool {
     let first = first.trim_end_matches(':');
     match first {
         "def" => return def_binds(line, name),
-        "class" | "import" | "from" | "del" => {
+        "class" | "import" | "from" => {
             return bare_names(line).iter().any(|bound| bound == name);
+        }
+        // `del`, then its targets: `del api`, `del [api]`, `del(api)` and
+        // `del[api]` all unbind `api`.
+        "del" => return targets_bind(line.get(3..).unwrap_or_default(), name),
+        first if first.starts_with("del[") || first.starts_with("del(") => {
+            return targets_bind(line.get(3..).unwrap_or_default(), name);
         }
         "for" => {
             if let Some((targets, _)) = line
                 .strip_prefix("for ")
                 .and_then(|rest| rest.split_once(" in "))
-                && bare_names(targets).iter().any(|bound| bound == name)
+                && targets_bind(targets, name)
             {
                 return true;
             }
@@ -250,12 +358,7 @@ fn line_binds(line: &str, name: &str) -> bool {
         _ if opens_case_clause(first) => {
             let colon = header_colon(line).unwrap_or(line.len());
             let pattern = line.get(..colon).unwrap_or(line);
-            // Split on what is not an identifier character: a capture in
-            // brackets or braces, or a dotted name's last part, reads like a
-            // bare one, which withholds.
-            let captured = pattern
-                .split(|ch: char| !is_python_identifier_char(ch))
-                .any(|spelled| spelled == name);
+            let captured = spells_capture(pattern, name);
             if captured {
                 return true;
             }
@@ -293,7 +396,7 @@ fn line_binds(line: &str, name: &str) -> bool {
         let segment = line.get(start..at).unwrap_or_default();
         // `name: Type = value` binds `name`; cut the annotation.
         let target = segment.split(':').next().unwrap_or(segment);
-        if bare_names(target).iter().any(|bound| bound == name) {
+        if targets_bind(target, name) {
             return true;
         }
         start = at + 1;
@@ -314,13 +417,31 @@ fn opens_case_clause(first: &str) -> bool {
     })
 }
 
-/// Byte offset of the colon that ends a compound statement's header.
+/// Byte offset of the colon that ends a compound statement's header. A colon
+/// inside brackets does not end it, nor the one that ends the parameters of a
+/// `lambda` written in the header itself (`if lambda x: x: api = other()`),
+/// nor a walrus's. A `lambda` inside brackets ends its parameters there.
 fn header_colon(line: &str) -> Option<usize> {
     let mut depth = 0usize;
+    let mut lambdas = 0usize;
+    let mut word = String::new();
+    let mut after_dot = false;
     for (idx, ch) in line.char_indices() {
+        if is_python_identifier_char(ch) {
+            word.push(ch);
+            continue;
+        }
+        if !word.is_empty() {
+            if depth == 0 && !after_dot && word == "lambda" {
+                lambdas += 1;
+            }
+            word.clear();
+        }
+        after_dot = ch == '.';
         match ch {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 && lambdas > 0 => lambdas -= 1,
             ':' if depth == 0
                 && line
                     .get(idx + 1..)
