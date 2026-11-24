@@ -3350,6 +3350,24 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // An unsuffixed literal compared with another literal is an `i32`
+        // even beside a typed parameter, and wraps under an allowance set
+        // outside this file.
+        (
+            module_for(
+                &owner.replace("    if amount < 0 {", "    if amount > 0 && 4_294_967_295 == -1 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // The same shape with an `i32`-sized literal stays evaluable.
+        (
+            module_for(
+                &owner.replace("    if amount < 0 {", "    if amount > 0 && 5 == -1 {"),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            Some(("7", "computes")),
+        ),
         // A local type of a primitive's name changes what the stub's `let`
         // annotation means.
         (

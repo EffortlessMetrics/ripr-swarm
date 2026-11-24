@@ -788,8 +788,9 @@ fn reaches_seam(
             .filter_map(|element| element.into_token())
             .filter(|token| token.kind() == SyntaxKind::INT_NUMBER)
             .collect::<Vec<_>>();
-        // A suffixed literal types its comparison too; with none of either,
-        // an integer literal is an `i32`.
+        // A suffixed literal types its comparison too. An unsuffixed one
+        // may sit in a comparison with no typed operand, where it is an
+        // `i32`, so it must fit `i32` as well.
         let mut in_play: Vec<&str> = named;
         in_play.extend(literals.iter().filter_map(|literal| {
             INTEGER_TYPES
@@ -797,7 +798,12 @@ fn reaches_seam(
                 .find(|suffix| literal.text().ends_with(*suffix))
                 .copied()
         }));
-        if in_play.is_empty() {
+        let unsuffixed = literals.iter().any(|literal| {
+            !INTEGER_TYPES
+                .iter()
+                .any(|suffix| literal.text().ends_with(*suffix))
+        });
+        if in_play.is_empty() || unsuffixed {
             in_play.push("i32");
         }
         let literals_fit = literals.iter().all(|literal| {

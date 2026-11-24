@@ -687,7 +687,7 @@ the expected value stays a `todo!()`. The values are copied only when:
   parameter (including a `{name}` or `{:name$}` format capture) is an `if` without `else`
   whose condition evaluates to false with every integer literal in it
   fitting each integer type in play (a parameter it names or a literal's
-  suffix, else `i32`), no earlier statement binds the
+  suffix, plus `i32` when a literal is unsuffixed), no earlier statement binds the
   name of a written or copied input, nothing before the
   comparison calls `include!` or a macro other than a standard one (which
   may read a copied value without naming it), and the comparison's own statement is not a
