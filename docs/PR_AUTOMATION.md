@@ -495,17 +495,25 @@ the pinned `cargo fmt` makes without `--all`. It differs in batching, in
 reading an empty `CARGO` or `RUSTFMT` as unset, in reporting a failure as its
 own exit status, and in refusing a program path that is not UTF-8. It reads
 the metadata through the `cargo` that `CARGO` names, otherwise the first one
-on `PATH`, offline first; it runs `RUSTFMT` when that is set and otherwise the
-`rustfmt` beside that `cargo`, never a `rustfmt` found on `PATH` on its own;
-it formats every workspace member when started from the workspace root, only
-the member under the invocation directory when started inside one, the one
-package of a single-package workspace from any directory, and refuses from
-anywhere else in a workspace of more; it hands every target to rustfmt once,
-grouped by its edition; it passes no config, so `rustfmt` finds the nearest
-`rustfmt.toml` for each file; and it runs every batch before it reports the
-first failure, so one `--check` shows every diff, except that it stops at a
-formatter it cannot start, as `cargo fmt` does. The hosted workflow keeps
-its explicit `cargo fmt --check` step.
+on `PATH`, offline first, and a reply that parses but lacks a workspace root,
+a package's targets or an edition is asked for again as a failed reply; it
+runs `RUSTFMT` when that is set and otherwise the `rustfmt` beside the
+`cargo-fmt` that `cargo fmt` runs, which cargo finds in its home `bin`
+directory unless `PATH` already holds that directory and then along `PATH`,
+never a `rustfmt` found on `PATH` on its own and never one tied to the
+`cargo` that answered the metadata; it formats every workspace member when
+started from the workspace root, only the member under the invocation
+directory when started inside one, the one package of a single-package
+workspace from any directory, and refuses from anywhere else in a workspace
+of more; it hands every target to rustfmt once, grouped by its edition; it
+passes no config, so `rustfmt` finds the nearest `rustfmt.toml` for each
+file; and it runs every batch before it reports the first failure, so one
+`--check` shows every diff, except that it stops at a formatter it cannot
+start, as `cargo fmt` does. Before the first batch starts it measures every
+batch's Windows command line, the formatter's path quoted and the terminating
+NUL included, and refuses the step with nothing formatted when one is over
+the 32,767 UTF-16 code units `CreateProcess` takes; it applies that limit on
+every host. The hosted workflow keeps its explicit `cargo fmt --check` step.
 
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,

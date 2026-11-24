@@ -21,11 +21,16 @@
 //!   to run an empty `CARGO` and fail; this step reads an empty value as
 //!   unset.
 //! - Which formatter: `RUSTFMT` when it is set and not empty, else the
-//!   `rustfmt` beside that `cargo`, as cargo-fmt runs its own toolchain
-//!   sibling. Never a `rustfmt` found on `PATH` on its own, and never one
-//!   beside another toolchain's `cargo`: a caller can have pinned `cargo` and
-//!   another formatter first on `PATH`. cargo-fmt would try to run an empty
-//!   `RUSTFMT` and fail; this step reads an empty value as unset.
+//!   `rustfmt` beside the `cargo-fmt` that `cargo fmt` runs. Cargo finds an
+//!   external subcommand in the `bin` directory of its home (`CARGO_HOME`)
+//!   when `PATH` does not already hold that directory, then along `PATH`;
+//!   it does not look beside `CARGO`. cargo-fmt then runs the `rustfmt` beside
+//!   its own executable. So the formatter is read apart from the `cargo` that
+//!   answers the metadata: with `CARGO` naming another toolchain's `cargo`,
+//!   `cargo fmt` and this step still start one formatter. With no `cargo-fmt`
+//!   there is none to run and the step says so. Never a `rustfmt` found on
+//!   `PATH` on its own. cargo-fmt would try to run an empty `RUSTFMT` and
+//!   fail; this step reads an empty value as unset.
 //! - Which packages: `cargo metadata --no-deps`, read from the invocation
 //!   directory. Every member when that is the workspace root, otherwise the
 //!   member whose manifest is the invocation directory's `Cargo.toml`. In a
@@ -42,6 +47,21 @@
 //!   the diffs. A failure is the step's own exit status, where cargo-fmt
 //!   returns rustfmt's; and a formatter that stops without an exit code (a
 //!   signal, on Unix) is a failure here, where cargo-fmt reports success.
+//! - The metadata: read as a document that holds what the plan reads, a
+//!   workspace root and packages whose targets each name a path and an
+//!   edition. A reply that parses and lacks one of these fails its question,
+//!   as it fails cargo-fmt's typed reader, so the question is asked once more
+//!   without `--offline`.
+//! - What it refuses to start: a run whose Windows command line, the
+//!   formatter's path quoted and the terminating NUL included, is longer than
+//!   `CreateProcess` takes (32,767 UTF-16 code units). Every run is measured
+//!   before the first starts, so a target root too long to pass fails the
+//!   step with nothing formatted, where a batch that cannot start after other
+//!   batches have written would leave the workspace half formatted. The limit
+//!   is applied on every host, so one checkout formats everywhere or nowhere.
+//!   The line is the one the runner's `Command` writes for a program that is
+//!   an executable; a batch-file formatter goes through `cmd.exe`, whose own
+//!   shorter limit is not measured.
 //! - What it cannot start: a `CARGO` or `RUSTFMT` that is not UTF-8. The
 //!   runner names a program as UTF-8, so the step refuses the path by name;
 //!   cargo-fmt runs it.
@@ -98,18 +118,33 @@ impl RustfmtInvocation {
 /// group runs under `cargo fmt`; the first failure is what a failed step
 /// reports, with how many batches failed.
 pub(crate) fn run(step: FormatStep<'_>) -> Result<(), String> {
-    let cargo = serving_cargo(
-        std::env::var_os("CARGO").as_deref(),
-        std::env::var_os("PATH").as_deref(),
-    );
+    let path = std::env::var_os("PATH");
+    let path = path.as_deref();
+    let cargo = serving_cargo(std::env::var_os("CARGO").as_deref(), path);
     let cargo = cargo.as_deref().unwrap_or(Path::new("cargo")).as_os_str();
+    let home_bin = cargo_home_bin()?;
     let FormatStep {
         check,
         envs,
         diagnostics,
     } = step;
-    let (program, plan) = prepare(check, envs, cargo, std::env::var_os("RUSTFMT").as_deref())?;
-    run_all(&program, &plan, envs, diagnostics)
+    let (program, plan) = prepare(
+        check,
+        envs,
+        cargo,
+        std::env::var_os("RUSTFMT").as_deref(),
+        path,
+        &home_bin,
+    )?;
+    run_plan(&program, &plan, envs, diagnostics)
+}
+
+/// The `bin` directory of cargo's home, where cargo looks for an external
+/// subcommand before it looks on `PATH`.
+fn cargo_home_bin() -> Result<PathBuf, String> {
+    home::cargo_home()
+        .map(|home| home.join("bin"))
+        .map_err(|err| format!("the cargo home cannot be read (CARGO_HOME, HOME): {err}"))
 }
 
 /// The formatter to run and the runs it is given. The metadata is read
@@ -120,9 +155,11 @@ fn prepare(
     envs: &[(&str, &str)],
     cargo: &OsStr,
     rustfmt: Option<&OsStr>,
+    path: Option<&OsStr>,
+    home_bin: &Path,
 ) -> Result<(String, Vec<RustfmtInvocation>), String> {
     let plan = plan_with(check, envs, cargo)?;
-    let program = formatter(rustfmt, Some(cargo))?;
+    let program = formatter(rustfmt, path, home_bin)?;
     Ok((
         utf8_program(&program, "the formatter to run")?.to_owned(),
         plan,
@@ -138,6 +175,101 @@ fn utf8_program<'a>(program: &'a Path, what: &str) -> Result<&'a str, String> {
             program.display()
         )
     })
+}
+
+/// Runs every invocation, after [`preflight`] has read that each can start.
+fn run_plan(
+    program: &str,
+    plan: &[RustfmtInvocation],
+    envs: &[(&str, &str)],
+    diagnostics: Option<&mut Vec<CommandDiagnostic>>,
+) -> Result<(), String> {
+    preflight(program, plan)?;
+    run_all(program, plan, envs, diagnostics)
+}
+
+/// Whether every run can be started on Windows, read before the first one
+/// starts. A batch that cannot be started after other batches have written
+/// would leave the workspace half formatted, so one that cannot be started
+/// fails the step with nothing run.
+fn preflight(program: &str, plan: &[RustfmtInvocation]) -> Result<(), String> {
+    let mut refused = Vec::new();
+    for (index, invocation) in plan.iter().enumerate() {
+        let units = windows_command_line_units(program, &invocation.argv);
+        if units > WINDOWS_COMMAND_LINE_LIMIT {
+            refused.push(format!(
+                "batch {} of {} takes {units} UTF-16 code units",
+                index + 1,
+                plan.len()
+            ));
+        }
+    }
+    if refused.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "the formatter cannot be started on Windows: {} (CreateProcess takes at most \
+         {WINDOWS_COMMAND_LINE_LIMIT}, the terminating NUL included; a target root is too long \
+         to pass to rustfmt); no batch was run",
+        refused.join("; ")
+    ))
+}
+
+/// UTF-16 code units `CreateProcess` takes in one command line at most, the
+/// terminating NUL included.
+pub(crate) const WINDOWS_COMMAND_LINE_LIMIT: usize = 32_767;
+
+/// The command line the runner's `Command` hands `CreateProcess` for one
+/// program and its arguments, without the terminating NUL: the program in
+/// quotes; each argument after a space, in quotes when it is empty or holds a
+/// space or a tab, with a backslash run before a quote doubled and one more
+/// added, and a trailing backslash run doubled before the closing quote. These
+/// are the rules of the standard library this workspace builds with
+/// (`library/std/src/sys/args/windows.rs`, `append_arg`).
+pub(crate) fn windows_command_line(program: &str, arguments: &[String]) -> String {
+    fn append(command: &mut String, argument: &str) {
+        let quote = argument.is_empty() || argument.contains([' ', '\t']);
+        if quote {
+            command.push('"');
+        }
+        let mut backslashes = 0;
+        for ch in argument.chars() {
+            if ch == '\\' {
+                backslashes += 1;
+                command.push(ch);
+                continue;
+            }
+            if ch == '"' {
+                // Two backslashes for each one before the quote, and one more.
+                command.extend(std::iter::repeat_n('\\', backslashes + 1));
+            }
+            backslashes = 0;
+            command.push(ch);
+        }
+        if quote {
+            // The trailing run is doubled before the closing quote.
+            command.extend(std::iter::repeat_n('\\', backslashes));
+            command.push('"');
+        }
+    }
+    let mut command = String::new();
+    command.push('"');
+    command.push_str(program);
+    command.push('"');
+    for argument in arguments {
+        command.push(' ');
+        append(&mut command, argument);
+    }
+    command
+}
+
+/// UTF-16 code units the command line of one run takes on Windows, the
+/// terminating NUL included.
+pub(crate) fn windows_command_line_units(program: &str, arguments: &[String]) -> usize {
+    windows_command_line(program, arguments)
+        .encode_utf16()
+        .count()
+        + 1
 }
 
 /// Runs every invocation before reporting the first failure. Stopping at the
@@ -216,14 +348,61 @@ fn read_metadata(cargo: &OsStr, envs: &[(&str, &str)]) -> Result<Value, String> 
     let program = utf8_program(Path::new(cargo), "the cargo that serves this step")?;
     read_metadata_through(program, &mut |offline| {
         run::run_output_owned_with_envs(program, &metadata_arguments(offline), envs)
-            .and_then(|output| metadata_document(&output))
+            .and_then(|output| read_document(&output))
     })
+}
+
+/// The document in a `cargo metadata --no-deps` reply, once it is one this
+/// step can plan from.
+pub(crate) fn read_document(output: &str) -> Result<Value, String> {
+    metadata_document(output).and_then(|document| checked_metadata(&document).map(|()| document))
 }
 
 /// The document in a `cargo metadata --no-deps` reply.
 fn metadata_document(output: &str) -> Result<Value, String> {
     serde_json::from_str(output)
         .map_err(|err| format!("cargo metadata --no-deps printed no JSON document: {err}"))
+}
+
+/// The failure of a target that reports no edition, of its own or of its
+/// package.
+fn missing_edition(src_path: &str) -> String {
+    format!("cargo metadata --no-deps reported no edition for target {src_path}")
+}
+
+/// Whether the document holds what the plan reads: a workspace root, and
+/// packages whose targets each name a path and an edition of their own or of
+/// their package. Read inside each question, as cargo-fmt's typed reader
+/// reads the reply.
+pub(crate) fn checked_metadata(document: &Value) -> Result<(), String> {
+    let reported = |what: &str| format!("cargo metadata --no-deps reported no {what}");
+    document["workspace_root"]
+        .as_str()
+        .filter(|root| !root.is_empty())
+        .ok_or_else(|| reported("workspace root"))?;
+    for package in document["packages"]
+        .as_array()
+        .ok_or_else(|| reported("package list"))?
+    {
+        let package_edition = package["edition"].as_str().unwrap_or_default();
+        for target in package["targets"]
+            .as_array()
+            .ok_or_else(|| reported("target list"))?
+        {
+            let src_path = target["src_path"]
+                .as_str()
+                .filter(|path| !path.is_empty())
+                .ok_or_else(|| reported("target path"))?;
+            let edition = target["edition"]
+                .as_str()
+                .filter(|edition| !edition.is_empty())
+                .or_else(|| (!package_edition.is_empty()).then_some(package_edition));
+            if edition.is_none() {
+                return Err(missing_edition(src_path));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// [`read_metadata`] over one way of asking `cargo` for its metadata. `attempt`
@@ -255,30 +434,76 @@ fn metadata_arguments(offline: bool) -> Vec<String> {
 }
 
 /// The formatter `cargo fmt` runs: `RUSTFMT` when it is set and not empty,
-/// else the `rustfmt` beside `cargo`, the `cargo` that serves the step, as
-/// cargo-fmt runs its own toolchain sibling. `Err` names the remedy when
-/// neither is there.
-pub(crate) fn formatter(rustfmt: Option<&OsStr>, cargo: Option<&OsStr>) -> Result<PathBuf, String> {
+/// else the `rustfmt` beside the `cargo-fmt` that cargo would run
+/// ([`cargo_fmt`]), as cargo-fmt runs the `rustfmt` beside its own
+/// executable. `Err` names the remedy when there is none.
+pub(crate) fn formatter(
+    rustfmt: Option<&OsStr>,
+    path: Option<&OsStr>,
+    home_bin: &Path,
+) -> Result<PathBuf, String> {
     if let Some(rustfmt) = rustfmt.filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(rustfmt));
     }
-    let Some(cargo) = cargo.filter(|value| !value.is_empty()) else {
-        return Err(
-            "no cargo serves this step (CARGO is unset and PATH names none); run it through \
-             cargo, or set RUSTFMT to the formatter to run"
-                .to_string(),
-        );
+    let Some(cargo_fmt) = cargo_fmt(path, home_bin) else {
+        return Err(format!(
+            "no cargo-fmt is in {} or on PATH, so `cargo fmt` has no formatter to run; install \
+             the rustfmt component for the toolchain, or set RUSTFMT to the formatter to run",
+            home_bin.display()
+        ));
     };
-    let suffix = if cfg!(windows) { ".exe" } else { "" };
-    let sibling = Path::new(cargo).with_file_name(format!("rustfmt{suffix}"));
-    if sibling.is_file() {
+    let sibling = cargo_fmt.with_file_name(format!("rustfmt{}", exe_suffix()));
+    if is_executable(&sibling) {
         Ok(sibling)
     } else {
         Err(format!(
-            "no rustfmt sits beside the cargo that serves this step ({}); install the rustfmt \
-             component for that toolchain, or set RUSTFMT to the formatter to run",
-            Path::new(cargo).display()
+            "no rustfmt sits beside the cargo-fmt that `cargo fmt` runs ({}); install the \
+             rustfmt component for that toolchain, or set RUSTFMT to the formatter to run",
+            cargo_fmt.display()
         ))
+    }
+}
+
+/// The `cargo-fmt` that `cargo fmt` runs, found as cargo finds an external
+/// subcommand (`src/bin/cargo/main.rs`, `search_directories`): in the `bin`
+/// directory of its home when `PATH` does not already hold that directory,
+/// then along `PATH`; the first executable one. `None` when there is none.
+fn cargo_fmt(path: Option<&OsStr>, home_bin: &Path) -> Option<PathBuf> {
+    let mut directories: Vec<PathBuf> = path
+        .map(|path| std::env::split_paths(path).collect())
+        .unwrap_or_default();
+    if !directories.iter().any(|directory| directory == home_bin) {
+        directories.insert(0, home_bin.to_path_buf());
+    }
+    let name = format!("cargo-fmt{}", exe_suffix());
+    directories
+        .into_iter()
+        .map(|directory| directory.join(&name))
+        .find(|candidate| is_executable(candidate))
+}
+
+/// The suffix cargo gives an external subcommand's file on this host.
+fn exe_suffix() -> &'static str {
+    if cfg!(windows) { ".exe" } else { "" }
+}
+
+/// Whether cargo may run `path` as an external subcommand: a file, which on
+/// Unix also carries a permission bit to run.
+fn is_executable(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
     }
 }
 
@@ -319,7 +544,7 @@ fn invocations(
                 .as_str()
                 .filter(|edition| !edition.is_empty())
                 .or_else(|| (!package_edition.is_empty()).then_some(package_edition))
-                .ok_or_else(|| format!("target {src_path} reports no edition"))?;
+                .ok_or_else(|| missing_edition(src_path))?;
             by_path
                 .entry(canonical_or_keep(Path::new(src_path)))
                 .or_insert(edition);

@@ -4,9 +4,11 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::{
-    COMMAND_LINE_BUDGET, RustfmtInvocation, argument_length, batch, canonical_or_keep,
-    command_line_length, formatter, invocations, metadata_arguments, metadata_document, prepare,
-    read_metadata, read_metadata_through, run_all, serving_cargo, utf8_program,
+    COMMAND_LINE_BUDGET, RustfmtInvocation, WINDOWS_COMMAND_LINE_LIMIT, argument_length, batch,
+    canonical_or_keep, cargo_fmt, cargo_home_bin, checked_metadata, command_line_length, formatter,
+    invocations, metadata_arguments, metadata_document, preflight, prepare, read_document,
+    read_metadata, read_metadata_through, run_all, run_plan, serving_cargo, utf8_program,
+    windows_command_line, windows_command_line_units,
 };
 
 /// The `cargo` a test asks for metadata, found as the step finds it.
@@ -459,7 +461,9 @@ fn a_target_whose_package_reports_no_edition_is_refused() {
     });
     assert_eq!(
         invocations(&document, true, Path::new("/repo")),
-        Err("target /repo/odd/src/lib.rs reports no edition".to_string())
+        Err("cargo metadata --no-deps reported no edition for target \
+             /repo/odd/src/lib.rs"
+            .to_string())
     );
 }
 
@@ -482,7 +486,7 @@ fn no_config_path_is_passed_so_rustfmt_finds_each_files_nearest_config() -> Resu
 /// `PATH`. A different `rustfmt` earlier on `PATH`, or a later directory's
 /// toolchain, must not be picked up.
 #[test]
-fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), String> {
+fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo_fmt() -> Result<(), String> {
     fn named(name: &str) -> String {
         if cfg!(windows) {
             format!("{name}.exe")
@@ -502,55 +506,73 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), St
     let other = root.join("other-toolchain");
     let shadow = root.join("shadow");
     let bare = root.join("bare-cargo");
-    for directory in [&toolchain, &other, &shadow, &bare] {
+    // A metadata wrapper: a `rustfmt` beside `cargo` and no `cargo-fmt`, as
+    // when `CARGO` names another toolchain's cargo.
+    let wrapper = root.join("metadata-wrapper");
+    // A toolchain without its rustfmt component: `cargo-fmt`, and no `rustfmt`.
+    let broken = root.join("broken-toolchain");
+    let home_bin = root.join("cargo-home").join("bin");
+    let no_home_bin = root.join("no-home-bin");
+    for directory in [
+        &toolchain,
+        &other,
+        &shadow,
+        &bare,
+        &wrapper,
+        &broken,
+        &home_bin,
+        &no_home_bin,
+    ] {
         std::fs::create_dir_all(directory).map_err(|err| err.to_string())?;
     }
-    for file in [
-        toolchain.join(named("cargo")),
-        toolchain.join(named("rustfmt")),
-        other.join(named("cargo")),
-        other.join(named("rustfmt")),
-        shadow.join(named("rustfmt")),
-        bare.join(named("cargo")),
-    ] {
-        std::fs::write(&file, "").map_err(|err| err.to_string())?;
-    }
+    // A toolchain has `cargo-fmt` and `rustfmt` beside `cargo`. On Unix cargo
+    // runs a subcommand file only when it carries a permission bit.
+    let files = |directory: &Path, names: &[&str]| -> Result<(), String> {
+        for name in names {
+            let file = directory.join(named(name));
+            std::fs::write(&file, "").map_err(|err| err.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))
+                    .map_err(|err| err.to_string())?;
+            }
+        }
+        Ok(())
+    };
+    files(&toolchain, &["cargo", "cargo-fmt", "rustfmt"])?;
+    files(&other, &["cargo", "cargo-fmt", "rustfmt"])?;
+    files(&shadow, &["rustfmt"])?;
+    files(&bare, &["cargo"])?;
+    files(&wrapper, &["cargo", "rustfmt"])?;
+    files(&broken, &["cargo", "cargo-fmt"])?;
+    files(&home_bin, &["cargo-fmt", "rustfmt"])?;
     let os = |path: &Path| path.to_string_lossy().into_owned();
     let cargo = |directory: &Path| directory.join(named("cargo")).into_os_string();
-    let missing = |directory: &Path| {
-        Err(format!(
-            "no rustfmt sits beside the cargo that serves this step ({}); install the rustfmt \
-             component for that toolchain, or set RUSTFMT to the formatter to run",
-            directory.join(named("cargo")).display()
-        ))
+    let joined = |directories: &[&Path]| -> Result<std::ffi::OsString, String> {
+        std::env::join_paths(directories.iter().map(|directory| os(directory)))
+            .map_err(|err| err.to_string())
     };
+    let run = |path: &std::ffi::OsStr| formatter(None, Some(path), &no_home_bin);
 
-    // PATH-shadowing control: the shadowing rustfmt comes first on PATH, and
-    // the first cargo's own rustfmt is still the one run.
-    let path = std::env::join_paths([os(&shadow), os(&toolchain), os(&other), os(&bare)])
-        .map_err(|err| err.to_string())?;
+    // PATH-shadowing control: the shadowing rustfmt comes first on PATH and
+    // is not run; cargo finds `toolchain`'s cargo-fmt there, and runs the
+    // rustfmt beside that one.
+    let path = joined(&[&shadow, &toolchain, &other, &bare])?;
     assert_eq!(
         serving_cargo(None, Some(path.as_os_str())),
         Some(toolchain.join(named("cargo")))
     );
     assert_eq!(
-        formatter(
-            None,
-            serving_cargo(None, Some(path.as_os_str()))
-                .as_deref()
-                .map(Path::as_os_str)
-        ),
-        Ok(toolchain.join(named("rustfmt")))
+        cargo_fmt(Some(path.as_os_str()), &no_home_bin),
+        Some(toolchain.join(named("cargo-fmt")))
     );
+    assert_eq!(run(path.as_os_str()), Ok(toolchain.join(named("rustfmt"))));
 
-    // CARGO names the cargo that serves the step, wherever it sits on PATH.
+    // CARGO names the cargo that answers the metadata.
     assert_eq!(
         serving_cargo(Some(&cargo(&other)), Some(path.as_os_str())),
         Some(other.join(named("cargo")))
-    );
-    assert_eq!(
-        formatter(None, Some(&cargo(&other))),
-        Ok(other.join(named("rustfmt")))
     );
     // An empty CARGO names none, so PATH decides.
     assert_eq!(
@@ -558,32 +580,82 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), St
         Some(toolchain.join(named("cargo")))
     );
 
-    // The first cargo on PATH has no rustfmt beside it: its formatter is
-    // missing, and no later toolchain's is borrowed.
-    let bare_first =
-        std::env::join_paths([os(&bare), os(&toolchain)]).map_err(|err| err.to_string())?;
+    // Split toolchain: a metadata wrapper with a `rustfmt` of its own and no
+    // `cargo-fmt` comes first on PATH. `cargo fmt` finds no cargo-fmt in it,
+    // looks on, and runs the rustfmt beside the cargo-fmt it finds; the
+    // wrapper's rustfmt is not borrowed.
+    let split = joined(&[&wrapper, &toolchain])?;
     assert_eq!(
-        formatter(
-            None,
-            serving_cargo(None, Some(bare_first.as_os_str()))
-                .as_deref()
-                .map(Path::as_os_str)
-        ),
-        missing(&bare)
+        run(split.as_os_str()),
+        Ok(toolchain.join(named("rustfmt"))),
+        "the formatter is the one beside the cargo-fmt cargo fmt runs"
     );
-    // Nor is one borrowed beside a CARGO that has none.
-    assert_eq!(formatter(None, Some(&cargo(&bare))), missing(&bare));
+
+    // The first cargo on PATH has no cargo-fmt beside it: cargo looks on and
+    // runs the first toolchain's that has one.
+    let bare_first = joined(&[&bare, &toolchain])?;
+    assert_eq!(
+        run(bare_first.as_os_str()),
+        Ok(toolchain.join(named("rustfmt")))
+    );
+
+    // Cargo looks in its home's `bin` directory before PATH, unless PATH
+    // already holds that directory: then PATH's order decides.
+    let other_only = joined(&[&other])?;
+    assert_eq!(
+        formatter(None, Some(other_only.as_os_str()), &home_bin),
+        Ok(home_bin.join(named("rustfmt")))
+    );
+    let other_then_home = joined(&[&other, &home_bin])?;
+    assert_eq!(
+        formatter(None, Some(other_then_home.as_os_str()), &home_bin),
+        Ok(other.join(named("rustfmt")))
+    );
+    // A home without a `bin` that holds cargo-fmt leaves it to PATH.
+    assert_eq!(
+        formatter(None, Some(other_only.as_os_str()), &no_home_bin),
+        Ok(other.join(named("rustfmt")))
+    );
+
+    // No cargo-fmt anywhere: `cargo fmt` has no subcommand to run, and the
+    // remedy names the override. With no PATH at all, the same.
+    for none in [joined(&[&shadow, &bare])?, std::ffi::OsString::new()] {
+        assert_eq!(cargo_fmt(Some(&none), &no_home_bin), None);
+        let Err(error) = run(&none) else {
+            return Err("no cargo-fmt anywhere must not name a formatter".to_owned());
+        };
+        assert!(
+            error.contains("no cargo-fmt") && error.contains("set RUSTFMT"),
+            "the remedy names the override: {error}"
+        );
+    }
+
+    // A cargo-fmt with no rustfmt beside it: that toolchain's formatter is
+    // missing, and no later toolchain's is borrowed.
+    let broken_only = joined(&[&broken])?;
+    let Err(error) = run(broken_only.as_os_str()) else {
+        return Err("a cargo-fmt with no rustfmt must not name a formatter".to_owned());
+    };
+    assert!(
+        error.contains("no rustfmt sits beside the cargo-fmt") && error.contains("set RUSTFMT"),
+        "the remedy names the override: {error}"
+    );
 
     // RUSTFMT names the formatter outright; an empty RUSTFMT is read as unset.
     assert_eq!(
         formatter(
             Some(std::ffi::OsStr::new("/opt/other/rustfmt")),
-            Some(&cargo(&toolchain))
+            Some(broken_only.as_os_str()),
+            &no_home_bin
         ),
         Ok(PathBuf::from("/opt/other/rustfmt"))
     );
     assert_eq!(
-        formatter(Some(std::ffi::OsStr::new("")), Some(&cargo(&toolchain))),
+        formatter(
+            Some(std::ffi::OsStr::new("")),
+            Some(path.as_os_str()),
+            &no_home_bin
+        ),
         Ok(toolchain.join(named("rustfmt")))
     );
 
@@ -593,8 +665,7 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), St
         let loose = root.join("loose-cargo");
         std::fs::create_dir_all(&loose).map_err(|err| err.to_string())?;
         std::fs::write(loose.join("cargo"), "").map_err(|err| err.to_string())?;
-        let loose_first = std::env::join_paths([os(&loose), os(&toolchain), os(&other), os(&bare)])
-            .map_err(|err| err.to_string())?;
+        let loose_first = joined(&[&loose, &toolchain, &other, &bare])?;
         assert_eq!(
             serving_cargo(None, Some(loose_first.as_os_str())),
             Some(toolchain.join(named("cargo")))
@@ -603,14 +674,205 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), St
 
     // No cargo at all serves the step and no RUSTFMT is set.
     assert_eq!(serving_cargo(None, None), None);
-    let Err(error) = formatter(None, None) else {
-        return Err("no cargo and no RUSTFMT must not name a formatter".to_owned());
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// The command line the runner's `Command` hands Windows, by the standard
+/// library's rules: the program in quotes, an argument in quotes when it is
+/// empty or holds a space or a tab, a backslash run before a quote doubled
+/// with one more added, and a trailing run doubled before the closing quote.
+#[test]
+fn the_windows_command_line_follows_the_standard_librarys_rules() {
+    let words = |list: &[&str]| {
+        list.iter()
+            .map(|word| (*word).to_owned())
+            .collect::<Vec<_>>()
+    };
+    // The program is always quoted; a plain argument is not.
+    assert_eq!(
+        windows_command_line("/t/rustfmt.exe", &words(&["--edition", "2024"])),
+        "\"/t/rustfmt.exe\" --edition 2024"
+    );
+    assert_eq!(
+        windows_command_line("/t o/rustfmt.exe", &[]),
+        "\"/t o/rustfmt.exe\""
+    );
+    // An argument is quoted when it is empty or holds a space or a tab.
+    assert_eq!(windows_command_line("r", &words(&[""])), "\"r\" \"\"");
+    assert_eq!(
+        windows_command_line("r", &words(&["two words"])),
+        "\"r\" \"two words\""
+    );
+    assert_eq!(
+        windows_command_line("r", &words(&["a\tb"])),
+        "\"r\" \"a\tb\""
+    );
+    // A backslash run before a quote is doubled, with one more added.
+    assert_eq!(windows_command_line("r", &words(&["a\"b"])), "\"r\" a\\\"b");
+    assert_eq!(
+        windows_command_line("r", &words(&["a\\\"b"])),
+        "\"r\" a\\\\\\\"b"
+    );
+    assert_eq!(
+        windows_command_line("r", &words(&["a\\\\\"b"])),
+        "\"r\" a\\\\\\\\\\\"b"
+    );
+    // A trailing backslash run is doubled before a closing quote, and left
+    // alone in an argument that is not quoted.
+    assert_eq!(
+        windows_command_line("r", &words(&["x y\\"])),
+        "\"r\" \"x y\\\\\""
+    );
+    assert_eq!(windows_command_line("r", &words(&["x\\"])), "\"r\" x\\");
+    // The units are UTF-16 code units, the terminating NUL included.
+    assert_eq!(
+        windows_command_line_units("r", &words(&["ab"])),
+        "\"r\" ab".encode_utf16().count() + 1
+    );
+    assert_eq!(
+        windows_command_line_units("r", &words(&["\u{1F600}"])),
+        4 + 2 + 1
+    );
+}
+
+/// One run of `head` followed by the roots named.
+fn planned(head: &[String], roots: &[&str]) -> RustfmtInvocation {
+    let mut argv = head.to_vec();
+    argv.extend(roots.iter().map(|root| (*root).to_owned()));
+    RustfmtInvocation {
+        argv,
+        root_count: roots.len(),
+    }
+}
+
+/// Windows `CreateProcess` refuses a command line over 32,767 UTF-16 code
+/// units, the terminating NUL included. A run that would be refused there
+/// fails the step before any batch starts, so nothing is left half formatted.
+/// A single root over the batching budget and inside the limit still runs,
+/// alone.
+#[test]
+fn a_run_windows_cannot_start_is_refused_before_any_batch_runs() -> Result<(), String> {
+    // A formatter that cannot start is looked for in the process working
+    // directory, which other tests in this process move.
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
+    let head = ["--edition", "2024"].map(String::from);
+    // A formatter path with a space is quoted on the command line.
+    let program = "/t o/rustfmt.exe";
+    let units = |root: &str| {
+        windows_command_line_units(program, &[head.to_vec(), vec![root.to_owned()]].concat())
+    };
+    // Two adjacent command lines, the last one over the limit by one unit.
+    let mut root = "x".repeat(32_000);
+    while units(&root) < WINDOWS_COMMAND_LINE_LIMIT {
+        root.push('x');
+    }
+    assert_eq!(units(&root), WINDOWS_COMMAND_LINE_LIMIT);
+    root.push('x');
+    assert_eq!(units(&root), WINDOWS_COMMAND_LINE_LIMIT + 1);
+    // Over the batching budget and inside the limit: legal, and alone.
+    let long_root = "x".repeat(COMMAND_LINE_BUDGET + 50);
+    let long = planned(&head, &[long_root.as_str()]);
+    assert!(command_line_length(&long.argv) > COMMAND_LINE_BUDGET);
+    assert!(windows_command_line_units(program, &long.argv) <= WINDOWS_COMMAND_LINE_LIMIT);
+    let short = planned(&head, &["short.rs"]);
+    assert_eq!(preflight(program, &[short.clone(), long.clone()]), Ok(()));
+    // One unit over the limit: refused, and the refusal names the batch.
+    let over = planned(&head, &[root.as_str()]);
+    let Err(error) = preflight(program, &[short.clone(), over.clone()]) else {
+        return Err("a run Windows cannot start must be refused".to_owned());
     };
     assert!(
-        error.contains("set RUSTFMT"),
-        "the remedy names the override: {error}"
+        error.contains("batch 2 of 2 takes 32768 UTF-16 code units")
+            && error.contains(&format!("at most {WINDOWS_COMMAND_LINE_LIMIT}"))
+            && error.contains("no batch was run"),
+        "{error}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    // Nothing starts. With a formatter that cannot start, a legal plan
+    // reports the formatter, which shows the first batch was started. A
+    // refused plan reports the refusal and starts none.
+    let mut diagnostics = Vec::new();
+    let Err(error) = run_plan(
+        "ripr-no-such-formatter",
+        &[short.clone(), long.clone()],
+        &[],
+        Some(&mut diagnostics),
+    ) else {
+        return Err("a formatter that cannot start must fail the step".to_owned());
+    };
+    assert!(
+        error.starts_with("failed to run ripr-no-such-formatter:"),
+        "{error}"
+    );
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    let mut diagnostics = Vec::new();
+    let Err(error) = run_plan(
+        "ripr-no-such-formatter",
+        &[short.clone(), over],
+        &[],
+        Some(&mut diagnostics),
+    ) else {
+        return Err("a run Windows cannot start must fail the step".to_owned());
+    };
+    assert!(
+        error.starts_with("the formatter cannot be started on Windows:"),
+        "{error}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "no batch was started: {diagnostics:?}"
+    );
+    Ok(())
+}
+
+/// A reply that parses and still lacks what the plan reads fails its
+/// question, as it fails cargo-fmt's typed reader, so the question is asked
+/// once more without `--offline`.
+#[test]
+fn a_document_that_lacks_what_the_plan_reads_fails_its_question() -> Result<(), String> {
+    let document = r#"{"workspace_root":"/repo","packages":[{"name":"a","edition":"2024","manifest_path":"/repo/a/Cargo.toml","targets":[{"kind":["lib"],"src_path":"/repo/a/src/lib.rs"}]}]}"#;
+    assert_eq!(checked_metadata(&read_document(document)?), Ok(()));
+    for malformed in [
+        "{}",
+        "[1]",
+        r#"{"workspace_root":"/repo","packages":{}}"#,
+        r#"{"workspace_root":"/repo","packages":[{"manifest_path":"/repo/a/Cargo.toml"}]}"#,
+        r#"{"workspace_root":"/repo","packages":[{"edition":"2024","manifest_path":"/repo/a/Cargo.toml","targets":[{"kind":["lib"]}]}]}"#,
+        r#"{"workspace_root":"/repo","packages":[{"manifest_path":"/repo/a/Cargo.toml","targets":[{"kind":["lib"],"src_path":"/repo/a/src/lib.rs"}]}]}"#,
+    ] {
+        let Err(problem) = read_document(malformed) else {
+            return Err(format!(
+                "a reply that lacks a field must fail its question: {malformed}"
+            ));
+        };
+        assert!(
+            problem.starts_with("cargo metadata --no-deps reported no"),
+            "{problem}"
+        );
+        // The offline reply is malformed: the same question is asked once
+        // more, online, and the online reply is read.
+        let mut asked = Vec::new();
+        let retried = read_metadata_through("cargo", &mut |offline| {
+            asked.push(offline);
+            read_document(if offline { malformed } else { document })
+        })?;
+        assert_eq!(asked, [true, false], "{malformed}");
+        assert_eq!(retried["workspace_root"], "/repo");
+        // Both malformed: the failure names both.
+        let mut asked = Vec::new();
+        let Err(error) = read_metadata_through("cargo", &mut |offline| {
+            asked.push(offline);
+            read_document(malformed)
+        }) else {
+            return Err("two malformed replies must not read a document".to_owned());
+        };
+        assert_eq!(asked, [true, false]);
+        assert!(
+            error.contains("failed offline (cargo metadata --no-deps reported no")
+                && error.contains("without --offline (cargo metadata --no-deps reported no"),
+            "{error}"
+        );
+    }
     Ok(())
 }
 
@@ -623,7 +885,14 @@ fn a_cargo_that_names_nothing_fails_as_a_cargo_not_as_a_missing_rustfmt() -> Res
         .join(format!("ripr-no-such-cargo-{}", std::process::id()))
         .join("cargo")
         .into_os_string();
-    let Err(error) = prepare(true, &[], &missing, None) else {
+    let Err(error) = prepare(
+        true,
+        &[],
+        &missing,
+        None,
+        None,
+        Path::new("/no-cargo-home/bin"),
+    ) else {
         return Err("a cargo that names nothing must not plan anything".to_owned());
     };
     assert!(
@@ -631,8 +900,8 @@ fn a_cargo_that_names_nothing_fails_as_a_cargo_not_as_a_missing_rustfmt() -> Res
         "{error}"
     );
     assert!(
-        !error.contains("no rustfmt sits beside"),
-        "the failure named a rustfmt remedy: {error}"
+        !error.contains("no cargo-fmt") && !error.contains("no rustfmt sits beside"),
+        "the failure named a formatter remedy: {error}"
     );
     Ok(())
 }
@@ -850,7 +1119,11 @@ fn from_a_member_directory_only_that_member_is_rewritten() -> Result<(), String>
         invocations(&document, false, &workspace_root.join("alpha").join("src")).is_err(),
         "below a member's manifest there is nothing to format"
     );
-    let program = formatter(None, Some(&serving_cargo_for_test()))?;
+    let program = formatter(
+        None,
+        std::env::var_os("PATH").as_deref(),
+        &cargo_home_bin()?,
+    )?;
     for invocation in &plan {
         let args = invocation
             .argv
