@@ -1,0 +1,17 @@
+[[extend]]
+id = "RIPR-SPEC-0011"
+tests = [
+  "crates/ripr/tests/repair_check_recommended_start.rs::an_unreferenced_new_function_starts_on_every_surface",
+  "crates/ripr/tests/repair_check_recommended_start.rs::a_called_but_unreached_new_function_refuses_with_the_no_path_reason",
+  "crates/ripr/tests/repair_check_recommended_start.rs::an_inline_proposal_starts_from_checks_repair_line",
+  "crates/ripr/src/app/gap_bound_repair.rs::tests::an_unreferenced_no_path_owner_is_not_static_limited",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::an_unreferenced_function_fact_does_not_open_a_seam_that_fails_the_flip",
+]
+code = [
+  "crates/ripr/src/app/gap_bound_repair.rs::finding_is_static_limited",
+  "crates/ripr/src/app/repair_card_handoff.rs::assemble_repair_card",
+  "crates/ripr/src/app/repair_card_handoff.rs::bound_finding_is_unreferenced_new_function",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0011-llm-work-loop.md",
+]

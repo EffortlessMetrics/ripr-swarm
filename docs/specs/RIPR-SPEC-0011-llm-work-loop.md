@@ -839,6 +839,23 @@ reaches the changed code and points to `ripr check` for the detail and a stub
 command when it can draft one, instead of the unknown wording ("cannot tell
 from reading the code").
 
+## Amendment (#15926, decision): an unreferenced new function is a repair start
+
+A `no_static_path` finding whose owner nothing in the workspace calls
+(`Finding::is_unreferenced_no_static_path`, RIPR-SPEC-0219: reach `no`, the
+`(unreferenced in workspace)` marker, and no named static limit) is a
+test-side gap, not a static limit: ripr knows no test reaches it, and the work
+is writing that test. Check's human triage already reads it so (#14919). The
+repair route now agrees: `gap_bound_repair::finding_is_static_limited` exempts
+it, so when its seam passes the shared repair-packet flip with an admitted test
+target (an existing file or a producer-owned proposal), `ripr check` prints its
+`ripr repair <id>` line, bare `ripr repair` starts it, `ripr pilot` prints the
+same start, and the repair card's next action runs the route. The card reads
+the seam flip for this finding instead of the check witness, which names no fix
+site for a function no test calls. A no-path finding whose owner other
+workspace code calls, any unknown class, and any named static limitation stay
+no-start, with the refusal reasons above.
+
 ## Amendment (#12867): no start whose handoff card cannot be produced
 
 A start publishes an attempt and then renders the handoff card, which names the
@@ -871,7 +888,9 @@ before; a proposal without an identity or one the evidence does not hold keeps
 the no-target text. `ripr check` and `ripr repair` read the same gate; a
 `no path` (static-limited) finding keeps the F3 rule (#12888) and prints no
 runnable repair line even where bare `ripr repair <id>` starts the
-proposal-only seam, so the F3 silence is unchanged. Starting does not create the
+proposal-only seam, so the F3 silence is unchanged (superseded for a function
+nothing in the workspace calls by the #15926 decision above, where check prints
+the start). Starting does not create the
 proposed file, generate a test body or grant production-source permission.
 
 ## Amendment (#13203 A): an attempt binds the proposal it follows
