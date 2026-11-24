@@ -684,7 +684,7 @@ the expected value stays a `todo!()`. The values are copied only when:
 - the copied values do not steer the owner away from the statement holding
   the changed comparison (an earlier guard on the written inputs alone is
   outside this check, as it is for any boundary stub): each earlier statement that names a copied
-  parameter (including a `{name}` or `{:name$}` format capture) is an `if` without `else`
+  parameter (including a `{name}` or `{:name$}` format capture, read after escapes are decoded) is an `if` without `else`
   whose condition evaluates to false with every integer literal in it
   fitting each integer type in play (a parameter it names or a literal's
   suffix, plus `i32` when a literal is unsuffixed), no earlier statement binds the

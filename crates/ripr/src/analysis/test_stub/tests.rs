@@ -3246,6 +3246,28 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // An escaped brace still opens a capture of the copied value.
+        (
+            module_for(
+                &owner.replace(
+                    "    if amount < 0 {",
+                    "    if format!(\"\\x7bamount}\") == \"7\" {",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
+        // An escaped brace before another name is no capture of it.
+        (
+            module_for(
+                &owner.replace(
+                    "    if amount < 0 {",
+                    "    if amount == 8 {\n        let _ = \"\\x7bnote}\";",
+                ),
+                "    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            Some(("7", "computes")),
+        ),
         // An attribute on the test module itself may rewrite it.
         (
             module("    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n")

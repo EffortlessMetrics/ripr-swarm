@@ -7,8 +7,7 @@
 //! copies those literals for the parameters the boundary leaves open:
 //!
 //! - the owner is a free function (no receiver, not in an `impl` or trait),
-//!   and the stub goes into an existing inline test module, where an existing
-//!   test has already compiled the same call;
+//!   and the stub goes into an existing inline test module;
 //! - the call is the first one in that module, in source order, through the
 //!   owner's bare name with exactly one literal argument per parameter
 //!   (`5`, `-3`, `"w"`, `true`, `1.5`), authored at the top level of the
@@ -42,7 +41,7 @@ use super::receiver::{literal_argument, proven_test_call, scope_shadows};
 use crate::analysis::syntax::fn_signature::OwnerSignature;
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName};
-use ra_ap_syntax::{AstNode, SourceFile, SyntaxKind, SyntaxNode, TextSize};
+use ra_ap_syntax::{AstNode, AstToken, SourceFile, SyntaxKind, SyntaxNode, TextSize};
 
 /// The assertion macros whose asserted operands are evaluated on every pass.
 const ASSERTIONS: [&str; 3] = ["assert", "assert_eq", "assert_ne"];
@@ -647,10 +646,14 @@ fn reaches_seam(
                 copied.iter().any(|name| match token.kind() {
                     SyntaxKind::IDENT => unraw(name) == unraw(token.text()),
                     // `{name}` and the width or precision capture `{:name$}`.
-                    SyntaxKind::STRING => {
-                        token.text().contains(&format!("{{{}", unraw(name)))
-                            || token.text().contains(&format!("{}$", unraw(name)))
-                    }
+                    // Read the decoded text, since an escape such as `\x7b`
+                    // spells `{`; a string that does not decode counts.
+                    SyntaxKind::STRING => ast::String::cast(token.clone())
+                        .and_then(|string| string.value().ok().map(|text| text.into_owned()))
+                        .is_none_or(|text| {
+                            text.contains(&format!("{{{}", unraw(name)))
+                                || text.contains(&format!("{}$", unraw(name)))
+                        }),
                     _ => false,
                 })
             })
