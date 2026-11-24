@@ -407,7 +407,12 @@ impl CheckBlocker {
             CheckBlocker::GitMissing => format!(
                 "ripr check needs Git to read the change and Git was not found on PATH: install Git, or check a saved patch with `ripr check --root {shown} --diff PATH`"
             ),
-            CheckBlocker::BareRepository => "ripr check needs checked-out source and this root is a bare Git repository: run `git worktree add <path>` (or `git clone`), then pass `--root <path>`".to_string(),
+            // #15297 review: the route names the bare repository's own path, so
+            // it works from any directory and tells an empty repository apart.
+            CheckBlocker::BareRepository => format!(
+                "ripr check needs checked-out source and this root is a bare Git repository: {}, then pass `--root <path>`",
+                crate::output::doctor::bare_root_work_tree_route_or_plain(root)
+            ),
         }
     }
 }

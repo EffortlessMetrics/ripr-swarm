@@ -5821,12 +5821,20 @@ fn check_blockers_withhold_the_refused_check_and_name_a_working_route() {
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
     for (blocker, expected) in [
-        (CheckBlocker::NotWorkTree, ["git -C", "--diff PATH"]),
+        (
+            CheckBlocker::NotWorkTree,
+            ["git -C", "commit the files there", "--diff PATH"],
+        ),
+        // #15297 review: the bare-repository route names the repository's own
+        // path, so it runs from any directory.
         (
             CheckBlocker::BareRepository,
-            ["git worktree add", "--root <path>"],
+            ["--git-dir=", "worktree add", "--root <path>"],
         ),
-        (CheckBlocker::GitMissing, ["install Git", "--diff PATH"]),
+        (
+            CheckBlocker::GitMissing,
+            ["install Git", "saved patch", "--diff PATH"],
+        ),
     ] {
         let routes = PilotLanguageRoutes::from_discovered(
             Path::new("."),

@@ -220,11 +220,13 @@ fn non_git_root_warning(root: &Path) -> Option<String> {
     non_git_root_warning_for_probe(root, output::doctor::work_tree_probe(root))
 }
 
-/// The refusal for `init` at a bare repository (#15297).
+/// The refusal for `init` at a bare repository (#15297). The work-tree route
+/// is doctor's, bound to the repository and aware of an empty repository.
 fn bare_root_refusal(root: &Path) -> String {
     format!(
-        "ripr init: the root `{}` is a bare Git repository with no work tree, so there is no source to configure and nothing was written. Check out a work tree (`git worktree add <path>` or `git clone`), then run `ripr init --root <path>`.",
-        output::path::human_path(root)
+        "ripr init: the root `{}` is a bare Git repository with no work tree, so there is no source to configure and nothing was written. {}, then run `ripr init --root <path>`.",
+        output::path::human_path(root),
+        output::doctor::bare_root_work_tree_route_or_plain(root)
     )
 }
 
@@ -1868,9 +1870,19 @@ mod tests {
 
     #[test]
     fn bare_root_refusal_names_a_work_tree_not_git_init() {
+        // A root Git cannot read (it does not exist) names both routes and
+        // claims neither state; the bound and empty-aware wording is pinned in
+        // `output::doctor` and in `tests/non_git_root_routes.rs`.
         let refusal = bare_root_refusal(Path::new("repo.git"));
         assert!(refusal.contains("bare Git repository"), "{refusal}");
-        assert!(refusal.contains("git worktree add"), "{refusal}");
+        assert!(refusal.contains("--git-dir="), "{refusal}");
+        assert!(refusal.contains("worktree add"), "{refusal}");
+        assert!(refusal.contains("git clone"), "{refusal}");
+        // It offers a clone if the repository is empty; it does not say so.
+        assert!(
+            !refusal.contains("This bare repository has no commits yet"),
+            "{refusal}"
+        );
         assert!(refusal.contains("nothing was written"), "{refusal}");
         assert!(!refusal.contains("run `git init`"), "{refusal}");
     }

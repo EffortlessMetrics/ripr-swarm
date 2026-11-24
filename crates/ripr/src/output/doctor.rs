@@ -101,9 +101,9 @@ const BARE_REPOSITORY_EVIDENCE_MARK: &str = "is a bare Git repository with no wo
 fn bare_repository_evidence(root: &Path) -> String {
     format!(
         "{} {BARE_REPOSITORY_EVIDENCE_MARK}; ripr reads checked-out \
-         source. Check out a work tree (`git worktree add <path>` or `git clone`), then pass \
-         `--root <path>`.",
-        human_path(root)
+         source. {}, then pass `--root <path>`.",
+        human_path(root),
+        bare_root_work_tree_route_or_plain(root)
     )
 }
 
@@ -365,11 +365,10 @@ impl DoctorFirstCommand {
                 "- Recommended first command: correct or restore the ref metadata and its read access using the Git check above, then rerun `ripr doctor`"
                     .to_string(),
             ],
-            Self::BareRepository => vec![
-                "- Recommended first command: check out a work tree from this bare repository \
-                 (`git worktree add <path>` or `git clone`), then run `ripr doctor --root <path>`"
-                    .to_string(),
-            ],
+            Self::BareRepository => vec![format!(
+                "- Recommended first command: {}, then run `ripr doctor --root <path>`",
+                bare_root_work_tree_route_or_plain(root)
+            )],
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
                 // Whole-repository pilot exploration is a runnable command
@@ -1506,10 +1505,12 @@ impl DoctorRootPath {
 /// the git-environment states recommend a command instead, so they bind no
 /// recovery (the selector never invents one). Pure and infallible: the
 /// canonical projection and the renderer's defensive fallback share it, so
-/// the two can never disagree on the mapping.
+/// the two can never disagree on the mapping. `root` only binds the bare
+/// repository's work-tree route to that repository (#15297 review).
 pub(crate) fn doctor_recovery_for_first_command(
     first: DoctorFirstCommand,
     report: &DoctorReport,
+    root: &Path,
 ) -> Option<NextActionDoctorRecovery> {
     let (check_name, recovery_route) = match first {
         DoctorFirstCommand::MissingRoot => (
@@ -1551,7 +1552,10 @@ pub(crate) fn doctor_recovery_for_first_command(
         // so the only next step is the work-tree recovery.
         DoctorFirstCommand::BareRepository => (
             "git_repository".to_string(),
-            "check out a work tree (`git worktree add <path>` or `git clone`), then rerun `ripr doctor --root <path>`".to_string(),
+            format!(
+                "{}, then rerun `ripr doctor --root <path>`",
+                bare_root_work_tree_route_or_plain(root)
+            ),
         ),
         DoctorFirstCommand::OutsideGit
         | DoctorFirstCommand::UnbornHead
@@ -1576,7 +1580,7 @@ pub(crate) fn canonical_next_action_for_doctor(
     first: DoctorFirstCommand,
     root: &Path,
 ) -> Result<Option<CanonicalNextActionV1>, String> {
-    let Some(recovery) = doctor_recovery_for_first_command(first, report) else {
+    let Some(recovery) = doctor_recovery_for_first_command(first, report, root) else {
         return Ok(None);
     };
     let root_display = absolute_doctor_root_display(root)?;
@@ -1641,7 +1645,7 @@ pub(crate) fn safe_next_action_recovery_line(
             _ => return None,
         },
         Ok(None) => return None,
-        Err(_) => doctor_recovery_for_first_command(first, report)?.check_name,
+        Err(_) => doctor_recovery_for_first_command(first, report, root)?.check_name,
     };
     Some(match check_name.as_str() {
         "root_directory" => {
@@ -1797,6 +1801,110 @@ pub(crate) fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
         WorkTreeProbe::Bare
     } else {
         WorkTreeProbe::Outside
+    })
+}
+
+/// What Git says about the commit a bare repository can check out.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum BareHead {
+    /// `HEAD` names a commit, which a new work tree checks out.
+    Resolves,
+    /// `HEAD` names nothing and no branch exists: the repository has no commit.
+    Empty,
+    /// `HEAD` names a branch with no commit while another branch has one,
+    /// which is the first such branch Git lists.
+    Headless(String),
+    /// Git did not answer, so none of the above can be claimed.
+    Unconfirmed,
+}
+
+fn bare_head(root: &Path) -> BareHead {
+    let resolved = crate::git::run_git_output_with_deadline(
+        root,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        Some(DOCTOR_TOOL_TIMEOUT),
+    );
+    match resolved {
+        Ok(output) if output.status.success() => return BareHead::Resolves,
+        // Exit 1 is Git's own "no such revision"; 128 (not a repository, a
+        // refused repository) claims nothing.
+        Ok(output) if output.status.code() == Some(1) => {}
+        Ok(_) | Err(_) => return BareHead::Unconfirmed,
+    }
+    // `HEAD` names nothing. That is an empty repository only when no branch
+    // has a commit: a bare repository can hold pushed branches while `HEAD`
+    // still names the branch it was created with.
+    let branches = crate::git::run_git_output_with_deadline(
+        root,
+        &[
+            "for-each-ref",
+            "--count=1",
+            "--format=%(refname:short)",
+            "refs/heads",
+        ],
+        Some(DOCTOR_TOOL_TIMEOUT),
+    );
+    match branches {
+        Ok(output) if output.status.success() => {
+            let first = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if first.is_empty() {
+                BareHead::Empty
+            } else {
+                BareHead::Headless(first)
+            }
+        }
+        Ok(_) | Err(_) => BareHead::Unconfirmed,
+    }
+}
+
+/// The route from a bare repository root to a work tree (#15297 review). The
+/// commands name the repository's physical path, so they work from any
+/// directory: a bare `git worktree add <path>` would act on whatever
+/// repository the caller stands in. A repository whose `HEAD` resolves lends
+/// a work tree through `--git-dir`; one with no commit has nothing to check
+/// out, so the route is a clone, a first commit and a push; one whose `HEAD`
+/// names an unborn branch is asked for a branch that has a commit. `<path>`
+/// is the new work-tree directory the user chooses. `Err` when the root
+/// cannot be bound to one shell argument.
+pub(crate) fn bare_root_work_tree_route(root: &Path) -> Result<String, String> {
+    use crate::agent::loop_commands::shell_arg;
+    let bound = match root.canonicalize() {
+        Ok(resolved) => doctor_command_root_display(root, &resolved)?,
+        Err(_) => absolute_doctor_root_display(root)?,
+    };
+    let repository = shell_arg(&bound);
+    let add = format!("git --git-dir={} worktree add <path>", shell_arg(&bound));
+    require_single_line_command(&add)?;
+    match bare_head(root) {
+        BareHead::Resolves => Ok(format!(
+            "Check out a work tree from it with `{add}` (`<path>` is the new work-tree \
+             directory; the command works from any directory)"
+        )),
+        BareHead::Empty => Ok(format!(
+            "This bare repository has no commits yet, so there is nothing to check out: \
+             clone it with `git clone {repository} <path>`, make the first commit there and \
+             push it"
+        )),
+        BareHead::Headless(branch) => Ok(format!(
+            "This bare repository's `HEAD` names a branch with no commit, so a new work tree \
+             has nothing to check out until `HEAD` does: check out a branch that has one with \
+             `{add} {}` (`<path>` is the new work-tree directory; the command works from any \
+             directory)",
+            shell_arg(&branch)
+        )),
+        BareHead::Unconfirmed => Ok(format!(
+            "Check out a work tree from it with `{add}` (`<path>` is the new work-tree \
+             directory), or, if it has no commits yet, clone it with `git clone {repository} \
+             <path>` and make the first commit there"
+        )),
+    }
+}
+
+/// [`bare_root_work_tree_route`] for a caller that prints a line, not a
+/// `Result`: when the root cannot be bound, the route names no command.
+pub(crate) fn bare_root_work_tree_route_or_plain(root: &Path) -> String {
+    bare_root_work_tree_route(root).unwrap_or_else(|error| {
+        format!("Check out a work tree from it ({error}), then use that work tree's root")
     })
 }
 
@@ -3038,10 +3146,17 @@ mod tests {
         {
             Some(check) if check.status == DoctorStatus::Fail.into() => {
                 let evidence = check.evidence.as_deref().unwrap_or_default();
-                for expected in ["bare Git repository", "git worktree add"] {
+                // #15297 review: an empty bare repository has nothing to check
+                // out, so its route is a clone and a first commit.
+                for expected in ["bare Git repository", "has no commits yet", "git clone"] {
                     if !evidence.contains(expected) {
                         failures.push(format!("`{evidence}` does not say `{expected}`"));
                     }
+                }
+                if evidence.contains("worktree add") {
+                    failures.push(format!(
+                        "`{evidence}` offers a work tree from a repository with no commit"
+                    ));
                 }
                 if evidence.contains("ripr pilot") {
                     failures.push(format!("`{evidence}` names pilot for a bare repository"));
@@ -7190,7 +7305,7 @@ mod tests {
             DoctorFirstCommand::NoDefaultBase,
         ] {
             assert!(canonical_next_action_for_doctor(&healthy, runnable, root)?.is_none());
-            assert!(doctor_recovery_for_first_command(runnable, &healthy).is_none());
+            assert!(doctor_recovery_for_first_command(runnable, &healthy, root).is_none());
             assert_eq!(
                 safe_next_action_recovery_line(&healthy, runnable, root),
                 None
@@ -7271,7 +7386,8 @@ mod tests {
         assert_eq!(first, DoctorFirstCommand::FailedPrerequisites);
         assert_eq!(first.command_line(), None);
         assert_eq!(
-            doctor_recovery_for_first_command(first, &refused).map(|recovery| recovery.check_name),
+            doctor_recovery_for_first_command(first, &refused, Path::new("."))
+                .map(|recovery| recovery.check_name),
             Some(OUTPUT_LOCATION_CHECK.to_string())
         );
 
@@ -7316,7 +7432,7 @@ mod tests {
             let first = DoctorFirstCommand::resolve_for_report(&report, || false);
             assert_eq!(first, DoctorFirstCommand::FailedPrerequisites, "{name}");
             assert_eq!(
-                doctor_recovery_for_first_command(first, &report)
+                doctor_recovery_for_first_command(first, &report, Path::new("."))
                     .map(|recovery| recovery.check_name),
                 Some(OUTPUT_LOCATION_CHECK.to_string()),
                 "{name}"
@@ -7363,6 +7479,128 @@ mod tests {
             "{evidence}"
         );
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    /// #15297 review: the work-tree route names the bare repository's own
+    /// path, so it does not depend on the caller's directory, and it tells a
+    /// repository without a commit apart from one with a commit.
+    #[test]
+    fn bare_root_work_tree_route_is_bound_and_knows_an_empty_repository() -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+        let create = |label: &str| -> Result<std::path::PathBuf, String> {
+            let dir = unique_test_dir(label);
+            std::fs::create_dir_all(&dir).map_err(|error| format!("create {label}: {error}"))?;
+            Ok(dir)
+        };
+        let bound = |root: &std::path::Path| -> Result<String, String> {
+            let resolved = std::fs::canonicalize(root)
+                .map_err(|error| format!("resolve {}: {error}", root.display()))?;
+            Ok(shell_arg(&human_path(&resolved)))
+        };
+
+        // A bare repository with no commit: nothing to check out.
+        let empty = create("bare-route-empty")?;
+        git_in(&empty, &["init", "--bare", "-b", "main", "."])?;
+        assert_eq!(bare_head(&empty), BareHead::Empty);
+        let route = bare_root_work_tree_route(&empty)?;
+        assert!(route.contains("has no commits yet"), "{route}");
+        assert!(
+            route.contains(&format!("`git clone {} <path>`", bound(&empty)?)),
+            "{route}"
+        );
+        assert!(!route.contains("worktree add"), "{route}");
+
+        // The same repository after a commit is pushed: a work tree through
+        // `--git-dir`, named with the repository's own path.
+        let seed = create("bare-route-seed")?;
+        git_in(&seed, &["init", "-q", "-b", "main", "."])?;
+        git_in(
+            &seed,
+            &[
+                "-c",
+                "user.email=ripr@example.invalid",
+                "-c",
+                "user.name=ripr tests",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "base",
+            ],
+        )?;
+        git_in(&seed, &["push", "-q", &empty.display().to_string(), "main"])?;
+        assert_eq!(bare_head(&empty), BareHead::Resolves);
+        let route = bare_root_work_tree_route(&empty)?;
+        assert!(
+            route.contains(&format!(
+                "`git --git-dir={} worktree add <path>`",
+                bound(&empty)?
+            )),
+            "{route}"
+        );
+        assert!(route.contains("from any directory"), "{route}");
+        assert!(!route.contains("has no commits yet"), "{route}");
+        assert!(!route.contains("git clone"), "{route}");
+
+        // A bare repository whose `HEAD` still names the branch it was created
+        // with, while a pushed branch holds the commit: not empty, and the
+        // work tree needs that branch named.
+        let misdirected = create("bare-route-misdirected")?;
+        git_in(&misdirected, &["init", "--bare", "-b", "main", "."])?;
+        git_in(
+            &seed,
+            &[
+                "push",
+                "-q",
+                &misdirected.display().to_string(),
+                "main:refs/heads/feature",
+            ],
+        )?;
+        assert_eq!(
+            bare_head(&misdirected),
+            BareHead::Headless("feature".to_owned())
+        );
+        let route = bare_root_work_tree_route(&misdirected)?;
+        assert!(
+            route.contains(&format!(
+                "`git --git-dir={} worktree add <path> feature`",
+                bound(&misdirected)?
+            )),
+            "{route}"
+        );
+        assert!(route.contains("from any directory"), "{route}");
+        assert!(!route.contains("has no commits yet"), "{route}");
+        assert!(!route.contains("git clone"), "{route}");
+
+        // Git refused the directory (an unreadable gitfile): the route names
+        // both commands and claims neither state.
+        let refused = create("bare-route-refused")?;
+        std::fs::write(refused.join(".git"), "not a gitfile\n")
+            .map_err(|error| format!("write fixture gitfile: {error}"))?;
+        assert_eq!(bare_head(&refused), BareHead::Unconfirmed);
+        let route = bare_root_work_tree_route(&refused)?;
+        assert!(route.contains("worktree add"), "{route}");
+        assert!(route.contains("git clone"), "{route}");
+        assert!(
+            !route.contains("This bare repository has no commits yet"),
+            "{route}"
+        );
+        assert!(!route.contains("names a branch with no commit"), "{route}");
+
+        // A spaced path stays one shell argument in the command.
+        let spaced = create("bare route spaced")?;
+        git_in(&spaced, &["init", "--bare", "-q", "."])?;
+        let route = bare_root_work_tree_route(&spaced)?;
+        assert!(
+            route.contains(&format!("`git clone {} <path>`", bound(&spaced)?)),
+            "{route}"
+        );
+        assert!(bound(&spaced)?.starts_with('"'), "a spaced path is quoted");
+
+        for dir in [empty, seed, misdirected, refused, spaced] {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
         Ok(())
     }
 }

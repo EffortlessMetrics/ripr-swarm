@@ -1116,12 +1116,13 @@ pub(crate) fn not_a_work_tree_message(root: &Path) -> String {
 
 /// The refusal for a bare repository: it is a repository, but it has no
 /// checked-out source for the analysis to read, so the next action is a
-/// work tree, not "run inside a repository" (#14104).
+/// work tree, not "run inside a repository" (#14104). The work-tree route is
+/// doctor's: bound to the repository, and aware of an empty repository.
 pub(crate) fn bare_repository_message(root: &Path) -> String {
     format!(
         "This root is a bare Git repository with no work tree (the analysis did not run). \
-         Check out a work tree from it (`git worktree add <path>` or `git clone`), then pass \
-         `--root <path>` to that work tree. Root: `{}`",
+         {}, then pass `--root <path>` to that work tree. Root: `{}`",
+        crate::output::doctor::bare_root_work_tree_route_or_plain(root),
         root.display(),
     )
 }
