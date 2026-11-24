@@ -39,8 +39,10 @@ class InstalledWheelIdentity(unittest.TestCase):
         wheels.mkdir(parents=True)
         self.producer_file = wheels / "wheel-native-receipt-x86_64-pc-windows-msvc.json"
 
-    def verify(self):
-        self.identity_file.write_text(json.dumps(self.identity), encoding="utf-8")
+    def verify(self, *, identity_bytes=None):
+        if identity_bytes is None:
+            identity_bytes = json.dumps(self.identity).encode()
+        self.identity_file.write_bytes(identity_bytes)
         self.producer_file.write_text(json.dumps(self.producer), encoding="utf-8")
         package = {"download_info": self.download, "metadata": self.metadata}
         (self.root / "pip-report.json").write_text(json.dumps({"install": [package]}), encoding="utf-8")
@@ -69,6 +71,12 @@ class InstalledWheelIdentity(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "expected win_amd64"):
             self.verify()
 
+    def test_wrong_wheel_basename_with_same_tag_refuses(self):
+        self.download["url"] = self.download["url"].replace("ripr_rs-", "other-")
+        with self.assertRaisesRegex(ValueError, "expected win_amd64 wheel ripr_rs-"):
+            self.verify()
+        self.assertFalse((self.root / "installed-wheel-identity.json").exists())
+
     def test_same_executable_in_alternate_wheel_refuses(self):
         self.download["archive_info"]["hashes"]["sha256"] = "e" * 64
         with self.assertRaisesRegex(ValueError, "pip wheel SHA-256"):
@@ -80,8 +88,21 @@ class InstalledWheelIdentity(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "distribution name or version"):
                     self.verify()
 
-    def test_other_source_tree_and_reserialized_payload_refuse(self):
-        for field in ("source_tree", "payload_identity_sha256"):
-            with self.subTest(field=field), patch.dict(self.producer, {field: "different"}):
-                with self.assertRaisesRegex(ValueError, "does not match the qualified payload"):
-                    self.verify()
+    def test_other_source_tree_refuses(self):
+        self.producer["source_tree"] = "d" * 40
+        with self.assertRaisesRegex(ValueError, "does not match the qualified payload"):
+            self.verify()
+
+    def test_payload_identity_digest_binds_raw_bytes_not_reserialized_json(self):
+        pretty = (json.dumps(self.identity, indent=2) + "\n").encode()
+        self.assertEqual(json.loads(pretty), self.identity)
+        self.assertNotEqual(pretty, json.dumps(self.identity).encode())
+        receipt = self.root / "installed-wheel-identity.json"
+
+        with self.assertRaisesRegex(ValueError, "does not match the qualified payload"):
+            self.verify(identity_bytes=pretty)
+        self.assertFalse(receipt.exists())
+
+        self.producer["payload_identity_sha256"] = hashlib.sha256(pretty).hexdigest()
+        self.assertEqual(self.verify(identity_bytes=pretty), self.binary)
+        self.assertTrue(receipt.is_file())
