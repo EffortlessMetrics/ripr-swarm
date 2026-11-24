@@ -19036,8 +19036,8 @@ Field contract:
   non-empty. It says `expression` and `arm_result` are read from the changed
   code, so a new test asserts what that code does now (an input whose
   behavior did not change keeps its value), and that `candidate_values` are
-  candidates for the test, inputs to try or values to assert, not all of one
-  kind (#15361). The published schema does not declare this property: its
+  inputs or values to assert, not all of one kind (#15361). The published
+  schema does not declare this property: its
   root object accepts extra properties, and a newly declared property with a
   constraint counts as a breaking change under the schema-compatibility
   check unless the schema version is bumped. Declaring it belongs with that

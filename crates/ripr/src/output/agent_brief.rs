@@ -30,8 +30,10 @@ const WORKFLOW_DIR: &str = "target/ripr/workflow";
 /// `candidate_values` mix missing-discriminator records with values observed
 /// in existing tests without recording which is which, so the note calls
 /// them candidates and does not promise that all are inputs or all are
-/// expected values.
-pub(crate) const VALUE_BASIS_NOTE: &str = "`expression` and `arm_result` come from the changed code: assert what it does now; an input whose behavior did not change keeps its value. `candidate_values` are candidates for the test, inputs to try or values to assert; they are not all of one kind. If the change looks wrong, report it.";
+/// expected values. Every byte is spent against the brief's ceiling
+/// (`agent_brief_states_workflow_commands_once`): the note says these three
+/// things and nothing else.
+pub(crate) const VALUE_BASIS_NOTE: &str = "`expression`/`arm_result`: changed code, so assert what it does now; an input the change left alone keeps its value. `candidate_values`: inputs or values to assert, not all of one kind.";
 
 #[derive(Clone, Copy)]
 enum WorkingSetEncoding {
@@ -903,14 +905,19 @@ mod tests {
         // A change from `>` to `>=` leaves an input below the boundary with
         // the value it had before, and a test must assert that value.
         assert!(
-            VALUE_BASIS_NOTE.contains("an input whose behavior did not change keeps its value")
+            VALUE_BASIS_NOTE.contains("an input the change left alone keeps its value")
         );
         // Candidate values mix missing-discriminator records (an expected
         // value on an error seam) with inputs observed in existing tests, and
         // the producer does not record which is which, so the note must not
         // call them all inputs nor all expected values.
+        assert!(
+            VALUE_BASIS_NOTE.contains("`candidate_values`: inputs or values to assert"),
+            "{VALUE_BASIS_NOTE}"
+        );
         assert!(VALUE_BASIS_NOTE.contains("not all of one kind"));
         assert!(!VALUE_BASIS_NOTE.contains("are inputs"));
+        assert!(!VALUE_BASIS_NOTE.contains("are expected values"));
 
         let empty = render(&no_seams)?;
         assert_eq!(
