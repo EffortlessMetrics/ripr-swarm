@@ -3123,13 +3123,8 @@ fn run_git_diff_bytes(
             format!("refusing to diff `{range}`: a revision range cannot start with `-`").into(),
         );
     }
-    // `diff.orderFile=/dev/null` neutralizes ambient file ordering (#5325):
-    // a dangling user orderfile otherwise aborts the diff before any
-    // analysis runs, and a live one only reorders output the parser does
-    // not need ordered. An empty value is NOT an off switch — git fails
-    // reading orderfile `''` — while /dev/null holds no patterns on any
-    // platform git runs (verified on git-for-Windows 2.47.1, which maps it
-    // to NUL; the hostile-config test pins the behavior everywhere it runs).
+    // The shared runner neutralizes ambient diff.orderFile with the
+    // platform's null device (#5325, #9375).
     // `diff.renames=true` pins git's own default (#14193). With an ambient
     // `diff.renames=false` a renamed and edited file arrives as a deletion
     // plus a whole new file, so every line of it is read as added and probed
@@ -3148,8 +3143,6 @@ fn run_git_diff_bytes(
     let mut args: Vec<&str> = vec![
         "-c",
         "core.quotePath=true",
-        "-c",
-        "diff.orderFile=/dev/null",
         "-c",
         "diff.renames=true",
         "-c",

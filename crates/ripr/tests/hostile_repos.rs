@@ -1489,7 +1489,7 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
         ("core.pager", "/bin/false"),
         ("log.showSignature", "true"),
         // #5325: a dangling orderfile must not abort the run; the diff
-        // invocation pins `diff.orderFile=/dev/null`.
+        // runner pins diff.orderFile to the platform's null device.
         ("diff.orderFile", "/nonexistent-ripr-orderfile"),
     ];
     for (key, value) in settings {
@@ -1572,6 +1572,56 @@ fn user_git_configuration_does_not_change_the_result() -> Result<(), String> {
             plain_run.code, ordered_run.code, plain_run.stdout, ordered_run.stdout
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn shared_diff_uses_one_platform_orderfile_pin() -> Result<(), String> {
+    let scratch = Scratch::new("orderfile-argv")?;
+    let root = plain(&scratch, "r")?;
+    git(
+        &root,
+        &["config", "--local", "diff.orderFile", "missing-orderfile"],
+    )?;
+    let Err(raw) = fixture_git_output(&root, &["diff", "main...HEAD"]) else {
+        return Err("raw git diff accepted the dangling orderfile".into());
+    };
+    assert!(raw.contains("failed to read orderfile"), "{raw}");
+
+    let trace = scratch.path.join("git-trace.jsonl");
+    let trace_path = trace.to_str().ok_or("trace path is not UTF-8")?;
+    let ran = ripr(&root, &["check"], &[("GIT_TRACE2_EVENT", trace_path)])?;
+    assert_found_change(&ran, "check with dangling diff.orderFile")?;
+
+    let expected = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let mut saw_shared_diff = false;
+    let trace = fs::read_to_string(trace).map_err(|err| format!("read Git trace: {err}"))?;
+    for line in trace.lines() {
+        let event: serde_json::Value =
+            serde_json::from_str(line).map_err(|err| format!("parse Git trace: {err}"))?;
+        let Some(argv) = event["argv"]
+            .as_array()
+            .filter(|_| event["event"] == "start")
+        else {
+            continue;
+        };
+        if !argv.iter().any(|arg| arg == "diff")
+            || !argv.iter().any(|arg| arg == "--inter-hunk-context=0")
+        {
+            continue;
+        }
+        saw_shared_diff = true;
+        let pins: Vec<_> = argv
+            .windows(2)
+            .filter(|pair| pair[0] == "-c")
+            .filter_map(|pair| pair[1].as_str()?.strip_prefix("diff.orderFile="))
+            .collect();
+        assert_eq!(pins, [expected], "shared git diff argv: {argv:?}");
+    }
+    assert!(
+        saw_shared_diff,
+        "Git trace omitted the shared analysis diff"
+    );
     Ok(())
 }
 
