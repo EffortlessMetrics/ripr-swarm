@@ -3246,6 +3246,14 @@ fn boundary_stub_copies_other_inputs_from_an_existing_test() -> Result<(), Strin
             ),
             None,
         ),
+        // A local type of a written input's primitive name changes how a
+        // guard on it compares.
+        (
+            module(
+                "    #[allow(non_camel_case_types)]\n    type u32 = u8;\n    #[test]\n    fn computes() {\n        assert_eq!(tax(7, 825), Ok(7));\n    }\n",
+            ),
+            None,
+        ),
         // A local of the owner's name inside a written ripr stub cannot take
         // another test's call, so a second write sees the same body.
         (

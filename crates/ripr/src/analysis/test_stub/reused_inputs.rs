@@ -289,7 +289,15 @@ pub(super) fn reused_inputs(
                 .zip(&signature.params)
                 .map(|(binding, param)| (binding.clone(), param.ty.trim().to_string()))
                 .collect();
-            if !reaches_seam(&file, &owner, seam_offset, &copied, &inputs, &typed) {
+            // A guard is evaluated with each parameter read as the primitive
+            // its type names, written inputs included, so a local type of a
+            // primitive's name anywhere in the file declines the copy.
+            if signature
+                .params
+                .iter()
+                .any(|param| type_shadowed(&param.ty))
+                || !reaches_seam(&file, &owner, seam_offset, &copied, &inputs, &typed)
+            {
                 return None;
             }
             Some((values, test))

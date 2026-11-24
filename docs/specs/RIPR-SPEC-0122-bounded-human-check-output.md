@@ -680,7 +680,8 @@ the expected value stays a `todo!()`. The values are copied only when:
   in-range integer literal for an integer type, a float literal for `f32` or
   `f64` that stays finite, `true`/`false`, a char literal, a string literal for `&str`, a byte
   string for `&[u8]` (an alias or any other type takes no copy), and no name
-  the file declares or imports shadows that primitive type;
+  the file declares or imports shadows that primitive type, or the primitive
+  of any other parameter, since a guard reads each parameter as its primitive;
 - the copied values do not steer the owner away from the statement holding
   the changed comparison (an earlier guard on the written inputs alone is
   outside this check, as it is for any boundary stub): each earlier statement that names a copied
