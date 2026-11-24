@@ -199,6 +199,14 @@ fn class_that_may_be_replaced_or_aliased_is_not_followed() {
             "Serializer.prototype.order = function (k: string[]) {\n  return k;\n};\n",
         ),
         ("alias", "const Alias = Serializer;\n"),
+        (
+            "prototype alias",
+            "const proto = Serializer.prototype;\nObject.assign(proto, { order: (k: string[]) => k });\n",
+        ),
+        (
+            "bracket-called mutator",
+            "Object[\"assign\"](Serializer.prototype, { order: (k: string[]) => k });\n",
+        ),
         ("re-export", "export { Serializer };\n"),
         (
             "type position",

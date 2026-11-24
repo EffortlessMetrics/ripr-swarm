@@ -20,8 +20,8 @@
 //!
 //! Fail-closed. A class is followed only when it is a top-level declaration
 //! with no `extends`, no decorator, no computed member and no `return` in its
-//! constructor, its name is declared once and never written, aliased, exported or used as anything but
-//! `new Class(...)` in the module, and the calling scope mentions the name
+//! constructor, its name is declared once and every other mention of it in the
+//! module is a construction `new Class(...)`, and the calling scope mentions the name
 //! only as a construction, and the class uses `this` only as a plain access
 //! (`this.name`, `this?.name`, `this.#name`) to a member it declares or a field
 //! it assigns as `this.name = ...`, calls `this.name(...)` only for an instance
@@ -200,6 +200,7 @@ pub(super) fn method_nodes<'s>(
         if !declared_once
             || taken(class.name)
             || !constructs(masked, class.name)
+            || !only_constructed(masked, class.name, class.decl_start)
             || !every_construction_calls_a_method(masked, class.name, &callable)
             || !never_mutated_in_module(source, masked, class.name, Some(class.decl_start), None)
             || this_escapes(class.text, &class.members, &callable)
@@ -377,6 +378,21 @@ fn mentions_literal_key(source: &str, name: &str) -> bool {
                 source[..idx].trim_end().ends_with('[')
                     && source[idx + name.len() + 2..].trim_start().starts_with(']')
             })
+    })
+}
+
+/// Whether every mention of `name` in `masked` other than its declaration is
+/// a construction `new NAME(`. A value read such as `NAME.prototype` can be
+/// aliased (`const p = NAME.prototype; Object.assign(p, o)`) or passed to a
+/// mutating call the value-read allowlist cannot see, and a type position
+/// shares the spelling, so any other mention refuses the class.
+fn only_constructed(masked: &str, name: &str, decl_start: usize) -> bool {
+    masked.match_indices(name).all(|(idx, _)| {
+        let before = masked[..idx].trim_end();
+        idx == decl_start
+            || !bounded(masked, idx, name)
+            || (before.ends_with('.') && !before.ends_with("..."))
+            || is_construction_at(masked, idx, name)
     })
 }
 
