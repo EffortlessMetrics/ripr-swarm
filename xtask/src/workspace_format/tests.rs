@@ -352,6 +352,9 @@ fn a_path_two_targets_name_runs_once_under_the_first_targets_edition() -> Result
 /// one `--check` run shows every diff. A failed batch hides no later batch.
 #[test]
 fn every_batch_runs_before_the_first_failure_is_reported() -> Result<(), String> {
+    // `cargo` and `rustfmt` start in the process working directory, which
+    // other tests in this process move.
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     fn batch_of(argument: &str) -> RustfmtInvocation {
         RustfmtInvocation {
             argv: vec![argument.to_owned()],
@@ -754,6 +757,9 @@ fn metadata_is_asked_for_offline_first_and_retried_without_it() -> Result<(), St
 /// cargo-fmt stops there: no later batch is started against it.
 #[test]
 fn a_formatter_that_cannot_start_stops_the_step() -> Result<(), String> {
+    // `cargo` and `rustfmt` start in the process working directory, which
+    // other tests in this process move.
+    let _cwd_guard = crate::acquire_test_cwd_read_guard();
     fn invocation(argument: &str) -> RustfmtInvocation {
         RustfmtInvocation {
             argv: vec![argument.to_owned()],
