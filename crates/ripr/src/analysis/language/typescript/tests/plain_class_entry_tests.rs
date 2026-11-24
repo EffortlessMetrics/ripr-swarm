@@ -212,6 +212,14 @@ fn class_that_may_be_replaced_or_aliased_is_not_followed() {
             "export const other = { Serializer: 1 }.Serializer;\n",
         ),
         (
+            "escaped name",
+            "Object.assign(Serializ\\u0065r.prototype, { order: (k: string[]) => k });\n",
+        ),
+        (
+            "dynamic code",
+            "export function patch(): void {\n  eval(\"0\");\n}\n",
+        ),
+        (
             "bracket-called mutator",
             "Object[\"assign\"](Serializer.prototype, { order: (k: string[]) => k });\n",
         ),

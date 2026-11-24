@@ -299,6 +299,12 @@ pub(crate) fn module_entries_and_outbound<'a>(
     let mut method_nodes_of_classes = Vec::new();
     if !values.is_empty() || !classes.is_empty() {
         let masked_source = byte_preserving_mask(source, &ts_mask_literals_and_comments(source));
+        // Dynamic code (`eval`, `Function(...)`) or an identifier spelled with
+        // a unicode escape can write any value or class under a spelling the
+        // text scan cannot see, so the module follows none of them.
+        if runs_dynamic_or_escaped_code(&masked_source) {
+            values.clear();
+        }
         values.retain(|name| {
             never_mutated_in_module(
                 source,
@@ -308,7 +314,12 @@ pub(crate) fn module_entries_and_outbound<'a>(
                 built.get(name).and_then(|value| value.shadow.as_ref()),
             )
         });
-        method_nodes_of_classes = method_nodes(&classes, source, &masked_source, |name| {
+        let classes: &[ModuleClass<'_>] = if runs_dynamic_or_escaped_code(&masked_source) {
+            &[]
+        } else {
+            &classes
+        };
+        method_nodes_of_classes = method_nodes(classes, source, &masked_source, |name| {
             nodes.contains_key(name)
                 || decl_starts.contains_key(name)
                 || imports.iter().any(|import| import.local == name)
@@ -984,6 +995,24 @@ fn built_value<'a>(
         text: span_text(source, span),
         shadow: declares_name.then_some(span.start as usize..span.end as usize),
     })
+}
+
+/// `eval`, `Function` as a word, or a `\\` in code (outside comments and
+/// literals, so a unicode-escaped identifier) anywhere in `masked`.
+fn runs_dynamic_or_escaped_code(masked: &str) -> bool {
+    masked.contains('\\')
+        || ["eval", "Function"].iter().any(|word| {
+            masked.match_indices(word).any(|(idx, _)| {
+                !masked[..idx]
+                    .chars()
+                    .next_back()
+                    .is_some_and(is_javascript_identifier_char)
+                    && !masked[idx + word.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_javascript_identifier_char)
+            })
+        })
 }
 
 /// `name(...) {` or `name(...): T {` in `text`: a method or shorthand member

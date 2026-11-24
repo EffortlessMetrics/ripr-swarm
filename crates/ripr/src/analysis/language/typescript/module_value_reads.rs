@@ -170,7 +170,7 @@ fn no_write_shape(
         }
         let before = source[..idx].trim_end();
         let after = &source[idx + name.len()..];
-        if before.ends_with('.') && !before.ends_with("...") {
+        if is_member_dot(before) {
             // `other.NAME` is another binding.
             return true;
         }
@@ -243,6 +243,16 @@ fn bounded(text: &str, idx: usize, name: &str) -> bool {
     before_ok && after_ok
 }
 
+/// Whether `before` (trimmed text ahead of a mention) ends in a member-access
+/// `.`: `other.NAME` names another binding. Not after a digit, where the `.`
+/// may close a numeric literal and a line break leaves the binding itself
+/// (`1.\nNAME.prototype.m = f`), and not a spread `...`.
+fn is_member_dot(before: &str) -> bool {
+    before.strip_suffix('.').is_some_and(|rest| {
+        !rest.ends_with("..") && !rest.ends_with(|ch: char| ch.is_ascii_digit())
+    })
+}
+
 fn classify(text: &str, idx: usize, name: &str) -> Mention {
     if !bounded(text, idx, name) {
         return Mention::Absent;
@@ -252,7 +262,7 @@ fn classify(text: &str, idx: usize, name: &str) -> Mention {
     if before.ends_with("...") {
         return Mention::Other;
     }
-    if before.ends_with('.') {
+    if is_member_dot(before) {
         return Mention::Absent;
     }
     let after = &text[idx + name.len()..];

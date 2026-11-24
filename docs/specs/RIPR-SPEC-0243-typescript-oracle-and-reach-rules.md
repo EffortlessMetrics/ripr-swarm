@@ -1081,6 +1081,12 @@ Candidates come from the first non-empty tier:
    (`["write"]`) appears anywhere in the module, even as a read. Limits: an instance kept in a
    variable (`const s = new X(); s.method()`) refuses the whole class, and neither
    is a class expression, a static method, an accessor or a constructor body.
+   A module whose code (outside comments and literals) names `eval` or
+   `Function`, or holds a `\` (an identifier spelled with a unicode escape),
+   follows no module value, built value or class, since either can write one
+   under a spelling the scan cannot see; and a mention after `.` reads as
+   another binding only when the `.` does not follow a digit, which may end a
+   numeric literal before a line break (`1.\nX.prototype.m = f`).
    **Cross-module continuation (#13592).** The same chain continues across an
    import: an exported function of module X that bare-calls a binding it
    imported from module Y reaches the owner Y declares (or the owner Y's own

@@ -158,6 +158,15 @@ fn module_level_write_to_the_built_value_disables_it() {
         ("prototype write", "Serializer.prototype.late = () => 2;\n"),
         ("alias", "const Alias = Serializer;\n"),
         ("re-export", "export { Serializer };\n"),
+        (
+            "write after a numeric literal",
+            "export const ratio = 1.\nSerializer.prototype.serialize = () => \"\";\n",
+        ),
+        (
+            "escaped name",
+            "Serializ\\u0065r.prototype.serialize = () => \"\";\n",
+        ),
+        ("dynamic code", "eval(\"0\");\n"),
     ] {
         let source = format!("{SRC}{tail}");
         assert!(entry_names(&source, "Serializer").is_empty(), "{label}");
