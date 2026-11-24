@@ -263,6 +263,33 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     );
 
     let summary = fs::read_to_string(base.join("step-summary.md"))?;
+    assert!(
+        summary.len() < 4096 && summary.lines().count() <= 32,
+        "{summary}"
+    );
+    assert_eq!(summary.matches(repair_command).count(), 1, "{summary}");
+    for name in [
+        "ripr/reports/start-here.md",
+        "ripr/reports/index.md",
+        "ripr/review/comments.json",
+    ] {
+        assert!(summary.contains(name), "{summary}");
+    }
+    assert!(
+        !summary.contains("<details") && !summary.lines().any(|line| line.starts_with("# ")),
+        "{summary}"
+    );
+    // The preview reads the event as the step does. A runner's own
+    // `GITHUB_EVENT_NAME` must not reach it: under `merge_group` the queue
+    // runs this test, and the renderer would print the non-pull-request page.
+    let preview = replay::ripr_with_env(
+        &root,
+        &["reports", "ci-summary", "--full", "--root", "."],
+        &CI_PACKET_WINDOW_ENV,
+        &[("GITHUB_EVENT_NAME", "pull_request")],
+    )?;
+    assert!(preview.status.success());
+    let summary = String::from_utf8(preview.stdout)?;
     let first_block = summary
         .split("#### First-run status\n")
         .nth(1)
@@ -3590,8 +3617,14 @@ fn generated_summary_prints_repository_relative_commands() -> Result<(), Box<dyn
         format!("- Verify after the test edit: `{verify}`\n- Receipt after verify: `{receipt}`\n"),
     )?;
 
-    // The generated step runs this command from the checkout root.
-    let run = replay::ripr(&root, &["reports", "ci-summary", "--root", "."])?;
+    // The generated step runs this command from the checkout root, on a pull
+    // request event of its own rather than the runner's.
+    let run = replay::ripr_with_env(
+        &root,
+        &["reports", "ci-summary", "--root", ".", "--full"],
+        &CI_PACKET_WINDOW_ENV,
+        &[("GITHUB_EVENT_NAME", "pull_request")],
+    )?;
     assert!(
         run.status.success(),
         "summary command failed: {}",
