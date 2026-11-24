@@ -184,6 +184,8 @@ fn fanout_members_keep_the_full_legend_and_record_no_first_run() -> TestResult {
 #[test]
 fn fanout_legend_retries_only_midnight_drift_with_a_fresh_destination() -> TestResult {
     let (project, _cleanup) = workspace("legend-fanout-midnight")?;
+    let success = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&project), &["--version"])?;
+    assert!(success.status.success());
     for (label, day_changed, diagnostic, expected_attempts) in [
         ("midnight", true, FANOUT_DRIFT, 2),
         ("same-day", false, FANOUT_DRIFT, 1),
@@ -205,7 +207,12 @@ fn fanout_legend_retries_only_midnight_drift_with_a_fresh_destination() -> TestR
                 output.stderr = format!("{diagnostic}\n").into_bytes();
                 Ok((output, day_changed))
             } else {
-                run_fanout(&project, destination)
+                // The simulated refusal already spent the retry. Keep the
+                // simulated success independent of the real fanout clock.
+                let destination = project.join(destination);
+                fs::create_dir(&destination)?;
+                fs::write(destination.join("human.txt"), LEGEND)?;
+                Ok((success.clone(), false))
             }
         });
         assert_eq!(attempts, expected_attempts, "{label}");
