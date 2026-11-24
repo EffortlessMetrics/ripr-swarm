@@ -44,9 +44,6 @@
         "type": "object"
       }
     },
-    "value_basis": {
-      "type": "string"
-    },
     "next": {
       "type": "object"
     },
