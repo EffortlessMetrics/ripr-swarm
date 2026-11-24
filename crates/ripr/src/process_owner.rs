@@ -35,7 +35,9 @@
 //! and reaps the direct child even on panic unwinding. Unix MCP attempts opt
 //! into process-group containment through their captured cancellation token.
 //! Other callers retain their prepared process-group configuration. Group
-//! cleanup precedes the OS reap, which releases PID custody.
+//! cleanup precedes the OS reap, which releases PID custody. On Darwin a
+//! group whose leader exited and which answers `EPERM` is reported settled;
+//! that does not prove no member remains (see [`OwnedProcess::terminate_tree`]).
 
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus};
 use std::time::{Duration, Instant};
@@ -236,6 +238,10 @@ pub struct OwnedProcess {
     /// signaling a group that reused the number (#9895 review).
     #[cfg(all(unix, not(windows)))]
     group_settled: bool,
+    /// The group was settled on Darwin's `EPERM` for an exited leader, so
+    /// no signal was delivered; reports must not say one was (#16104).
+    #[cfg(all(unix, not(windows)))]
+    group_settled_without_signal: bool,
     #[cfg(target_os = "linux")]
     group_cleanup_error: Option<String>,
     #[cfg(target_os = "linux")]
@@ -357,6 +363,7 @@ impl OwnedProcess {
             group_owned,
             custody_lost: false,
             group_settled: false,
+            group_settled_without_signal: false,
             #[cfg(target_os = "linux")]
             group_cleanup_error: None,
             #[cfg(target_os = "linux")]
@@ -557,10 +564,12 @@ impl OwnedProcess {
                 {
                     self.test_group_kills += 1;
                 }
+                let mut refused = false;
                 let signalled =
                     match rustix::process::kill_process_group(pid, rustix::process::Signal::KILL) {
                         Ok(()) => Ok(()),
                         Err(error) => {
+                            refused = error == rustix::io::Errno::PERM;
                             // Re-observe only for EPERM: the leader may have
                             // exited between the first observation and the
                             // signal. Other answers keep their old meaning.
@@ -581,6 +590,7 @@ impl OwnedProcess {
                                 Some(Instant::now() + FALLBACK_REAP_BUDGET);
                         }
                         self.group_settled = true;
+                        self.group_settled_without_signal = refused;
                         return Ok(());
                     }
                     Err(error) => return Err(error.into()),
@@ -597,7 +607,7 @@ impl OwnedProcess {
     /// grandchildren. On Darwin an exited leader whose group answers `EPERM`
     /// is reported settled; that answer does not rule out a live member that
     /// changed to a user id this owner may not signal (see
-    /// [`group_signal_outcome`]), so `Ok` there is not proof that no member
+    /// `group_signal_outcome`), so `Ok` there is not proof that no member
     /// remains. Per the PID-custody contract, that group signal is always
     /// issued BEFORE the primary is reaped: an unreaped leader pins its pgid, so the
     /// signal can only reach this owner's tree; after the reap the number
@@ -641,6 +651,12 @@ impl OwnedProcess {
             }
             return if self.reap_within(FALLBACK_REAP_BUDGET) {
                 Ok(())
+            } else if self.group_settled_without_signal {
+                Err(
+                    "owned group answered EPERM after its leader exited, so no signal was \
+                     delivered, and the primary reap exceeded its budget"
+                        .to_string(),
+                )
             } else {
                 Err("owned group was signalled but primary reap exceeded its budget".to_string())
             };
@@ -685,7 +701,9 @@ impl OwnedProcess {
     /// child but cannot certify that every descendant stopped, so the
     /// caller always receives the `incomplete tree cleanup` error carrying
     /// the fallback evidence — never a plain termination failure and never
-    /// an `Ok` that would imply confirmed containment.
+    /// an `Ok` from this fallback. A successful group settlement is a
+    /// different path; [`OwnedProcess::terminate_tree`] says what its `Ok`
+    /// does and does not establish on Darwin.
     fn failed_termination_fallback(&mut self, termination_err: String) -> String {
         let fallback_kill = self.kill().map_err(|err| err.to_string());
         let reaped = match &fallback_kill {
@@ -2043,6 +2061,55 @@ mod tests {
         assert!(!refusal_diagnostic(owned.try_wait())?.is_empty());
         assert!(owned.terminate_tree().is_err());
         assert_eq!(owned.test_group_kills, 1, "no signal after leader reap");
+        Ok(())
+    }
+
+    /// The kernel premise behind `ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM`, read
+    /// from the real kernel rather than the classifier table (#16104): a
+    /// group whose only member is our exited, unreaped leader answers
+    /// `SIGKILL` with `EPERM` on Darwin and with success on Linux.
+    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[test]
+    fn kernel_answers_a_zombie_only_group_signal_as_the_constant_says() -> Result<(), String> {
+        use std::os::unix::process::CommandExt as _;
+        let mut command = Command::new("sh");
+        command.args(["-c", "exit 0"]).process_group(0);
+        let mut child = command.spawn().map_err(|error| error.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !observe_unreaped_exit(&child).map_err(|error| error.to_string())? {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("fixture leader did not exit".to_string());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let pid = checked_child_pid(&child).map_err(|error| error.to_string())?;
+        // The leader is unreaped, so the pgid cannot have been recycled.
+        let answer = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+        child.wait().map_err(|error| error.to_string())?;
+        if ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM {
+            assert_eq!(answer, Err(rustix::io::Errno::PERM));
+        } else {
+            assert_eq!(answer, Ok(()));
+        }
+        Ok(())
+    }
+
+    /// On the Darwin settle-without-signal path the owner records that no
+    /// signal was delivered; everywhere else a settled exited group was
+    /// signalled (#16104).
+    #[cfg(any(target_os = "linux", target_vendor = "apple"))]
+    #[test]
+    fn exited_childless_group_records_whether_a_signal_was_delivered() -> Result<(), String> {
+        let mut owned = successful_group_command()?;
+        let status = owned.wait().map_err(|error| error.to_string())?;
+        assert_eq!(status.code(), Some(7));
+        assert!(owned.group_settled);
+        assert_eq!(
+            owned.group_settled_without_signal,
+            ZOMBIE_ONLY_GROUP_SIGNAL_IS_EPERM
+        );
         Ok(())
     }
 
