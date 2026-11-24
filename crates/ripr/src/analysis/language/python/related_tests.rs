@@ -3228,14 +3228,12 @@ fn client_app_source(
     // recorded) cannot apply because the test is a module-level function.
     let root = super::route_client::client_root(&test.body_text, receiver);
     if test.qualified_name != test.name
+        || !super::fixtures::injected_parameter(test, &root)
         || !super::route_client::is_unrebound_parameter(&test.body_text, &root)
     {
         return None;
     }
-    let def = test
-        .fixture_defs
-        .iter()
-        .find(|def| def.name == root && test.fixtures.contains(&root))?;
+    let def = test.fixture_defs.iter().find(|def| def.name == root)?;
     let app = super::route_client::fixture_client_app_name(&def.body_text)?;
     // The fixture's own local bindings are not module imports.
     if super::route_client::rebinds_name(&def.body_text, &app) {

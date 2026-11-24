@@ -708,7 +708,9 @@ pub(super) fn fixture_returned_name(fixture_body: &str) -> Option<String> {
 
 /// The `return`/`yield` statement a line ends in, so that a one-line compound
 /// suite (`if flag: return TestClient(other_app)`) counts as an exit of the
-/// fixture rather than being skipped.
+/// fixture rather than being skipped. The keyword follows a colon, whitespace
+/// or an opening parenthesis: Python allows `x = (yield other)`, and skips
+/// no other way into a statement (#14141 review).
 fn exit_statement(line: &str) -> &str {
     if exit_value(line).is_some() {
         return line;
@@ -720,7 +722,7 @@ fn exit_statement(line: &str) -> &str {
                 let before_ok = line[..*at]
                     .chars()
                     .next_back()
-                    .is_some_and(|before| before == ':' || before.is_whitespace());
+                    .is_some_and(|before| before == ':' || before == '(' || before.is_whitespace());
                 // An identifier character after the word makes it a name
                 // (`returns = ...`), not an exit; anything else is the start
                 // of the exit's value, punctuation included.

@@ -2152,12 +2152,14 @@ test directly parametrizes is supplied by pytest rather than by its
 fixture, a parameter with a default is never injected, and pytest's fixture
 argument reader skips a positional-only parameter, so any of the three ends
 the chain. The same reader decides whether a test itself takes a fixture as a
-parameter: a positional-only parameter of a test is not a fixture request, so
-a fixture does not resolve a limit for such a test. Every `return` or `yield`
+parameter: a positional-only or defaulted parameter of a test is not a fixture
+request, so a fixture does not resolve a limit for such a test and the
+route-client chain is not walked for it. Every `return` or `yield`
 of a supplying fixture counts under
 any spacing Python allows, including a bare exit and an exit whose value
-starts with punctuation (`return[other]`, `yield+x`); only a name that starts
-with the keyword (`returns = ...`) is not an exit. An exit that does not
+starts with punctuation (`return[other]`, `yield+x`) and a parenthesized yield
+(`held = (yield other)`); only a name that starts with the keyword
+(`returns = ...`) is not an exit. An exit that does not
 return the same plain name, a rebound, cyclic or over-cap link, or an
 unresolved dependency leaves the application unidentified and earns no
 oracle credit.

@@ -308,7 +308,14 @@ fn a_different_symbol_from_the_owners_own_module_does_not_relate() -> Result<(),
 /// The relation of `tests/test_items.py` to the `items` owner in `app/a.py`
 /// when the client comes from a `tests/conftest.py` fixture.
 fn fixture_relation(conftest: &str) -> Result<Option<PythonRelationKind>, String> {
-    let test = "def test_items(client):\n    assert client.get(\"/items\").json() == []\n";
+    fixture_relation_for(
+        conftest,
+        "def test_items(client):\n    assert client.get(\"/items\").json() == []\n",
+    )
+}
+
+/// [`fixture_relation`] with the test module's source named.
+fn fixture_relation_for(conftest: &str, test: &str) -> Result<Option<PythonRelationKind>, String> {
     let (owners, tests) = super::fixtures_tests::workspace(&[
         ("app/a.py", OWN_APP),
         ("tests/conftest.py", conftest),
@@ -652,6 +659,52 @@ fn an_exit_whose_value_starts_with_punctuation_fails_the_chain_closed() -> Resul
         fixture_relation(&named)?,
         Some(PythonRelationKind::ApiClientRouteCall),
         "a name that starts with the keyword is not an exit"
+    );
+    Ok(())
+}
+
+/// #14141 review: Python allows a parenthesized `yield`, `held = (yield
+/// other)`. An exit reader that looked for the keyword only after a colon or
+/// whitespace skipped it, so a later plain `yield app` read as the only exit.
+#[test]
+fn a_parenthesized_yield_counts_as_an_exit() -> Result<(), String> {
+    let unidentified = Some(PythonRelationKind::ApiClientRouteUnidentifiedApp);
+    let assigned = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        held = (yield other)\n    yield app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&assigned)?, unidentified);
+    let bare = format!(
+        "{CLIENT_IMPORTS}from app.a import app\nfrom app.b import other\n\n@pytest.fixture\ndef items_app(request):\n    if request.param:\n        (yield other)\n    yield app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    assert_eq!(fixture_relation(&bare)?, unidentified);
+    Ok(())
+}
+
+/// #14141 review: pytest injects a fixture only into a required
+/// positional-or-keyword or keyword-only parameter of the test. A test
+/// declared with the client positional-only, or with a client of its own as
+/// the default, takes no fixture, so the chain is not walked for it.
+#[test]
+fn a_test_parameter_pytest_does_not_inject_does_not_start_the_chain() -> Result<(), String> {
+    let conftest = format!(
+        "{CLIENT_IMPORTS}from app.a import app\n\n@pytest.fixture\ndef items_app():\n    return app\n\n@pytest.fixture\ndef client(items_app):\n    return TestClient(items_app)\n"
+    );
+    // Control: the ordinary parameter is injected and the chain is walked.
+    assert_eq!(
+        fixture_relation(&conftest)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    let positional_only =
+        "def test_items(client, /):\n    assert client.get(\"/items\").json() == []\n";
+    assert_ne!(
+        fixture_relation_for(&conftest, positional_only)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
+    );
+    // A client the test supplies itself: the fixture is never requested.
+    let defaulted = "from starlette.testclient import TestClient\nfrom app.b import other\n\n\ndef test_items(client=TestClient(other)):\n    assert client.get(\"/items\").json() == []\n";
+    assert_ne!(
+        fixture_relation_for(&conftest, defaulted)?,
+        Some(PythonRelationKind::ApiClientRouteCall)
     );
     Ok(())
 }
