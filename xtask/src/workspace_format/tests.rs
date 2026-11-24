@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 
 use super::{
     COMMAND_LINE_BUDGET, RustfmtInvocation, argument_length, batch, canonical_or_keep,
-    command_line_length, formatter, invocations, metadata_arguments, read_metadata,
-    read_metadata_through, run_all, serving_cargo,
+    command_line_length, formatter, invocations, metadata_arguments, metadata_document, prepare,
+    read_metadata, read_metadata_through, run_all, serving_cargo, utf8_program,
 };
 
 /// The `cargo` a test asks for metadata, found as the step finds it.
@@ -24,6 +24,26 @@ fn workspace_root_of(document: &Value) -> Result<PathBuf, String> {
         .as_str()
         .map(PathBuf::from)
         .ok_or_else(|| "cargo metadata reports no workspace root".to_string())
+}
+
+/// A path `cargo metadata` reports, without the verbatim prefix a canonical
+/// path carries on Windows.
+fn without_verbatim_prefix(path: &str) -> &str {
+    path.strip_prefix(r"\\?\").unwrap_or(path)
+}
+
+/// The directory of the manifest of the package called `name`.
+fn package_directory(document: &Value, name: &str) -> Result<PathBuf, String> {
+    document["packages"]
+        .as_array()
+        .ok_or_else(|| "cargo metadata reports no packages".to_string())?
+        .iter()
+        .find(|entry| entry["name"].as_str() == Some(name))
+        .and_then(|entry| entry["manifest_path"].as_str())
+        .map(Path::new)
+        .and_then(Path::parent)
+        .map(|directory| PathBuf::from(without_verbatim_prefix(&directory.to_string_lossy())))
+        .ok_or_else(|| format!("cargo metadata reports no package {name}"))
 }
 
 /// One workspace package as `cargo metadata --no-deps` reports it. Each
@@ -564,6 +584,20 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), St
         Ok(toolchain.join(named("rustfmt")))
     );
 
+    // On Windows an extensionless `cargo` is never the cargo a bare `cargo`
+    // starts, so a directory holding only that one is passed over.
+    if cfg!(windows) {
+        let loose = root.join("loose-cargo");
+        std::fs::create_dir_all(&loose).map_err(|err| err.to_string())?;
+        std::fs::write(loose.join("cargo"), "").map_err(|err| err.to_string())?;
+        let loose_first = std::env::join_paths([os(&loose), os(&toolchain), os(&other), os(&bare)])
+            .map_err(|err| err.to_string())?;
+        assert_eq!(
+            serving_cargo(None, Some(loose_first.as_os_str())),
+            Some(toolchain.join(named("cargo")))
+        );
+    }
+
     // No cargo at all serves the step and no RUSTFMT is set.
     assert_eq!(serving_cargo(None, None), None);
     let Err(error) = formatter(None, None) else {
@@ -574,6 +608,57 @@ fn the_formatter_is_rustfmt_env_else_the_rustfmt_beside_cargo() -> Result<(), St
         "the remedy names the override: {error}"
     );
     let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// The metadata is read before the formatter is chosen, as cargo-fmt reads
+/// it: a `CARGO` that names nothing fails as a cargo that cannot be started,
+/// and the failure does not send the reader after a rustfmt.
+#[test]
+fn a_cargo_that_names_nothing_fails_as_a_cargo_not_as_a_missing_rustfmt() -> Result<(), String> {
+    let missing = std::env::temp_dir()
+        .join(format!("ripr-no-such-cargo-{}", std::process::id()))
+        .join("cargo")
+        .into_os_string();
+    let Err(error) = prepare(true, &[], &missing, None) else {
+        return Err("a cargo that names nothing must not plan anything".to_owned());
+    };
+    assert!(
+        error.contains("metadata --no-deps failed offline") && error.contains("ripr-no-such-cargo"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("no rustfmt sits beside"),
+        "the failure named a rustfmt remedy: {error}"
+    );
+    Ok(())
+}
+
+/// A program path that is not UTF-8 cannot be named to the runner, which
+/// takes UTF-8; it is refused by name and not started under a lossy spelling.
+#[test]
+fn a_program_path_that_is_not_utf8_is_refused_by_name() -> Result<(), String> {
+    #[cfg(windows)]
+    let path = {
+        use std::os::windows::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_wide(&[0xD800]))
+    };
+    #[cfg(not(windows))]
+    let path = {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(vec![b'c', 0xFF]))
+    };
+    assert_eq!(
+        utf8_program(Path::new("/usr/bin/cargo"), "the cargo")?,
+        "/usr/bin/cargo"
+    );
+    let Err(error) = utf8_program(&path, "the formatter to run") else {
+        return Err("a path that is not UTF-8 must be refused".to_owned());
+    };
+    assert!(
+        error.starts_with("the formatter to run is not a UTF-8 path"),
+        "{error}"
+    );
     Ok(())
 }
 
@@ -606,7 +691,7 @@ fn metadata_is_asked_for_offline_first_and_retried_without_it() -> Result<(), St
     let mut asked = Vec::new();
     let answered = read_metadata_through("cargo", &mut |offline| {
         asked.push(offline);
-        Ok(document.to_owned())
+        metadata_document(document)
     })?;
     assert_eq!(asked, [true]);
     assert_eq!(answered["workspace_root"], "/repo");
@@ -618,7 +703,7 @@ fn metadata_is_asked_for_offline_first_and_retried_without_it() -> Result<(), St
         if offline {
             Err("needs the index".to_owned())
         } else {
-            Ok(document.to_owned())
+            metadata_document(document)
         }
     })?;
     assert_eq!(asked, [true, false]);
@@ -639,13 +724,27 @@ fn metadata_is_asked_for_offline_first_and_retried_without_it() -> Result<(), St
         "{error}"
     );
 
-    // Output that is not a document is refused.
-    let Err(error) = read_metadata_through("cargo", &mut |_| Ok("not a document".to_owned()))
-    else {
-        return Err("text that is not JSON must not read as a document".to_owned());
+    // A reply that is not a document fails its question, as it fails
+    // cargo-fmt's, so the question is asked once more online.
+    let mut asked = Vec::new();
+    let retried = read_metadata_through("cargo", &mut |offline| {
+        asked.push(offline);
+        metadata_document(if offline { "not a document" } else { document })
+    })?;
+    assert_eq!(asked, [true, false]);
+    assert_eq!(retried["workspace_root"], "/repo");
+    let mut asked = Vec::new();
+    let Err(error) = read_metadata_through("cargo", &mut |offline| {
+        asked.push(offline);
+        metadata_document("not a document")
+    }) else {
+        return Err("two replies that are not documents must not read a document".to_owned());
     };
+    assert_eq!(asked, [true, false]);
     assert!(
-        error.starts_with("cargo metadata --no-deps printed no JSON document"),
+        error.contains("failed offline (cargo metadata --no-deps printed no JSON document")
+            && error
+                .contains("without --offline (cargo metadata --no-deps printed no JSON document"),
         "{error}"
     );
     Ok(())
@@ -832,14 +931,19 @@ fn the_plan_lists_the_roots_cargo_fmt_lists() -> Result<(), String> {
     let planned = plan
         .iter()
         .flat_map(|invocation| roots_of(invocation).iter().cloned())
-        .map(|path| path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned())
+        .map(|path| without_verbatim_prefix(&path).to_owned())
         .collect::<BTreeSet<_>>();
     assert!(
         planned.len() > 400,
         "this workspace is the large one: {}",
         planned.len()
     );
+    let mut attributed = BTreeSet::new();
     for package in ["ripr", "ripr-contract", "xtask", "repo-policy"] {
+        // A root belongs to the package whose manifest directory holds it. A
+        // path component equal to the package's name would not do: in a
+        // checkout directory named `ripr`, every root has one.
+        let directory = package_directory(&document, package)?;
         let output = crate::run::capture_output(
             "cargo",
             &["fmt", "-p", package, "--check", "-v"],
@@ -856,7 +960,7 @@ fn the_plan_lists_the_roots_cargo_fmt_lists() -> Result<(), String> {
                 // file without the verbatim prefix.
                 Some(quoted.replace("\\\\", "\\"))
             })
-            .map(|path| path.strip_prefix(r"\\?\").unwrap_or(&path).to_owned())
+            .map(|path| without_verbatim_prefix(&path).to_owned())
             .collect::<BTreeSet<_>>();
         assert!(
             !listed.is_empty(),
@@ -864,14 +968,20 @@ fn the_plan_lists_the_roots_cargo_fmt_lists() -> Result<(), String> {
         );
         let in_package = planned
             .iter()
-            .filter(|root| {
-                Path::new(root)
-                    .components()
-                    .any(|component| component.as_os_str() == package)
-            })
+            .filter(|root| Path::new(root).starts_with(&directory))
             .cloned()
             .collect::<BTreeSet<_>>();
+        assert!(
+            !in_package.is_empty(),
+            "the plan holds no root under {}",
+            directory.display()
+        );
         assert_eq!(in_package, listed, "roots of {package}");
+        attributed.extend(in_package);
     }
+    assert_eq!(
+        attributed, planned,
+        "every planned root is under one of the four manifests"
+    );
     Ok(())
 }

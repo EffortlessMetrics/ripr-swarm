@@ -491,16 +491,21 @@ is the `cargo fmt` obligation run as bounded `rustfmt` batches. `cargo fmt`
 passes every root on one command line, which Windows caps at 32,767
 characters; this workspace's 491 roots pass that, and the step failed with
 os error 206 before rustfmt started (#12004). The step makes the decisions
-the pinned `cargo fmt` makes without `--all`, and differs only in batching:
-it runs `RUSTFMT` when that is set and otherwise the `rustfmt` beside the
-`cargo` on `PATH`, never a `rustfmt` found on `PATH` on its own; it formats
-every workspace member when started from the workspace root, only the member
-under the invocation directory when started inside one, and refuses from
-anywhere else; it hands every target to rustfmt once, grouped by its
-edition; it passes no config, so `rustfmt` finds the nearest `rustfmt.toml`
-for each file; and it runs every batch before it reports the first failure,
-so one `--check` shows every diff. The hosted workflow keeps its explicit
-`cargo fmt --check` step.
+the pinned `cargo fmt` makes without `--all`. It differs in batching, in
+reading an empty `CARGO` or `RUSTFMT` as unset, in reporting a failure as its
+own exit status, and in refusing a program path that is not UTF-8. It reads
+the metadata through the `cargo` that `CARGO` names, otherwise the first one
+on `PATH`, offline first; it runs `RUSTFMT` when that is set and otherwise the
+`rustfmt` beside that `cargo`, never a `rustfmt` found on `PATH` on its own;
+it formats every workspace member when started from the workspace root, only
+the member under the invocation directory when started inside one, the one
+package of a single-package workspace from any directory, and refuses from
+anywhere else in a workspace of more; it hands every target to rustfmt once,
+grouped by its edition; it passes no config, so `rustfmt` finds the nearest
+`rustfmt.toml` for each file; and it runs every batch before it reports the
+first failure, so one `--check` shows every diff, except that it stops at a
+formatter it cannot start, as `cargo fmt` does. The hosted workflow keeps
+its explicit `cargo fmt --check` step.
 
 Local `precommit` also runs `goldens check` when the diff against
 `origin/main` touches output-surface code (`crates/ripr/src/output/`,

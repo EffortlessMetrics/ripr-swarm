@@ -4,9 +4,10 @@
 //! line. Windows caps a command line at 32,767 characters, and this workspace
 //! has outgrown that (#12004): the workspace has 491 roots, about 33,500
 //! characters, so `cargo fmt --check` fails with os error 206 before rustfmt
-//! starts. This owner makes the same decisions as the pinned `cargo fmt`
-//! (rustfmt 1.95.0, `src/cargo-fmt/src/main.rs`) and differs only in running
-//! rustfmt over bounded batches. rustfmt formats each root and the modules it
+//! starts. This owner makes the decisions the pinned `cargo fmt` (rustfmt
+//! 1.95.0, `src/cargo-fmt/src/main.rs`) makes without `--all`. It differs in
+//! running rustfmt over bounded batches, and where a bullet below says so.
+//! rustfmt formats each root and the modules it
 //! declares, so a batch boundary only changes how often a shared module is
 //! visited.
 //!
@@ -15,7 +16,10 @@
 //! - Which cargo reads the metadata: the `CARGO` environment variable names
 //!   the `cargo` that started this step, as it names cargo-fmt's; otherwise
 //!   the first `cargo` on `PATH`. The metadata is asked for offline first and
-//!   once more without `--offline` when that fails, as cargo-fmt asks.
+//!   once more without `--offline` when that fails, as cargo-fmt asks, and a
+//!   reply that is not a document fails the question too. cargo-fmt would try
+//!   to run an empty `CARGO` and fail; this step reads an empty value as
+//!   unset.
 //! - Which formatter: `RUSTFMT` when it is set and not empty, else the
 //!   `rustfmt` beside that `cargo`, as cargo-fmt runs its own toolchain
 //!   sibling. Never a `rustfmt` found on `PATH` on its own, and never one
@@ -24,8 +28,10 @@
 //!   `RUSTFMT` and fail; this step reads an empty value as unset.
 //! - Which packages: `cargo metadata --no-deps`, read from the invocation
 //!   directory. Every member when that is the workspace root, otherwise the
-//!   member whose manifest is the invocation directory's `Cargo.toml`; from
-//!   any other directory there is nothing to format and the step refuses.
+//!   member whose manifest is the invocation directory's `Cargo.toml`. In a
+//!   workspace of one package that package is formatted from any directory,
+//!   as cargo-fmt formats it; in a workspace of more, any other directory
+//!   has nothing to format and the step refuses.
 //! - Which targets: every target, deduplicated by path, the first target that
 //!   names a path deciding its edition, grouped by edition.
 //! - Which config: none is passed, so rustfmt discovers the nearest
@@ -33,7 +39,12 @@
 //! - When it stops: at a formatter that cannot be started, as cargo-fmt stops
 //!   there; otherwise never early. Every edition group runs and the first
 //!   failure is what a failed step reports, so a `--check` run shows all of
-//!   the diffs.
+//!   the diffs. A failure is the step's own exit status, where cargo-fmt
+//!   returns rustfmt's; and a formatter that stops without an exit code (a
+//!   signal, on Unix) is a failure here, where cargo-fmt reports success.
+//! - What it cannot start: a `CARGO` or `RUSTFMT` that is not UTF-8. The
+//!   runner names a program as UTF-8, so the step refuses the path by name;
+//!   cargo-fmt runs it.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -92,18 +103,41 @@ pub(crate) fn run(step: FormatStep<'_>) -> Result<(), String> {
         std::env::var_os("PATH").as_deref(),
     );
     let cargo = cargo.as_deref().unwrap_or(Path::new("cargo")).as_os_str();
-    let program = formatter(std::env::var_os("RUSTFMT").as_deref(), Some(cargo))?;
     let FormatStep {
         check,
         envs,
         diagnostics,
     } = step;
-    run_all(
-        &program.to_string_lossy(),
-        &plan_with(check, envs, cargo)?,
-        envs,
-        diagnostics,
-    )
+    let (program, plan) = prepare(check, envs, cargo, std::env::var_os("RUSTFMT").as_deref())?;
+    run_all(&program, &plan, envs, diagnostics)
+}
+
+/// The formatter to run and the runs it is given. The metadata is read
+/// first, as cargo-fmt reads it, so a `CARGO` that names nothing fails as a
+/// cargo that cannot be started and not as a missing rustfmt.
+fn prepare(
+    check: bool,
+    envs: &[(&str, &str)],
+    cargo: &OsStr,
+    rustfmt: Option<&OsStr>,
+) -> Result<(String, Vec<RustfmtInvocation>), String> {
+    let plan = plan_with(check, envs, cargo)?;
+    let program = formatter(rustfmt, Some(cargo))?;
+    Ok((
+        utf8_program(&program, "the formatter to run")?.to_owned(),
+        plan,
+    ))
+}
+
+/// How the runner names a program: its path, which the runner takes as UTF-8.
+/// A path that is not UTF-8 is refused by name.
+fn utf8_program<'a>(program: &'a Path, what: &str) -> Result<&'a str, String> {
+    program.to_str().ok_or_else(|| {
+        format!(
+            "{what} is not a UTF-8 path ({}), which this step cannot start",
+            program.display()
+        )
+    })
 }
 
 /// Runs every invocation before reporting the first failure. Stopping at the
@@ -162,50 +196,53 @@ fn plan_with(
 
 /// The `cargo` that serves this step: `CARGO` names it when cargo started
 /// this process, as it names cargo-fmt's; otherwise it is the first `cargo`
-/// on `PATH`, the one a bare `cargo` would run. `None` when neither answers.
+/// on `PATH`, the one a bare `cargo` starts. `None` when neither answers. On
+/// Windows that is `cargo.exe`: the system appends `.exe` to a name that has
+/// no extension, so an extensionless `cargo` there is never the one started.
 fn serving_cargo(cargo: Option<&OsStr>, path: Option<&OsStr>) -> Option<PathBuf> {
     if let Some(cargo) = cargo.filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(cargo));
     }
-    let suffix = if cfg!(windows) { ".exe" } else { "" };
-    std::env::split_paths(path?).find_map(|directory| {
-        [
-            directory.join("cargo"),
-            directory.join(format!("cargo{suffix}")),
-        ]
-        .into_iter()
+    let name = if cfg!(windows) { "cargo.exe" } else { "cargo" };
+    std::env::split_paths(path?)
+        .map(|directory| directory.join(name))
         .find(|candidate| candidate.is_file())
-    })
 }
 
 /// `cargo metadata --no-deps` as cargo-fmt reads it: from the invocation
 /// directory, which decides the workspace and, with it, the packages; offline
 /// first, and once more without `--offline` when that fails.
 fn read_metadata(cargo: &OsStr, envs: &[(&str, &str)]) -> Result<Value, String> {
-    let program = cargo.to_string_lossy().into_owned();
-    read_metadata_through(&program, &mut |offline| {
-        run::run_output_owned_with_envs(&program, &metadata_arguments(offline), envs)
+    let program = utf8_program(Path::new(cargo), "the cargo that serves this step")?;
+    read_metadata_through(program, &mut |offline| {
+        run::run_output_owned_with_envs(program, &metadata_arguments(offline), envs)
+            .and_then(|output| metadata_document(&output))
     })
+}
+
+/// The document in a `cargo metadata --no-deps` reply.
+fn metadata_document(output: &str) -> Result<Value, String> {
+    serde_json::from_str(output)
+        .map_err(|err| format!("cargo metadata --no-deps printed no JSON document: {err}"))
 }
 
 /// [`read_metadata`] over one way of asking `cargo` for its metadata. `attempt`
 /// says whether to ask offline; it is asked without `--offline` only when the
-/// offline question fails, as cargo-fmt asks.
+/// offline question fails, as cargo-fmt asks, and a question whose reply is
+/// not a document fails like one the cargo could not answer.
 fn read_metadata_through(
     cargo: &str,
-    attempt: &mut impl FnMut(bool) -> Result<String, String>,
+    attempt: &mut impl FnMut(bool) -> Result<Value, String>,
 ) -> Result<Value, String> {
-    let metadata = match attempt(true) {
-        Ok(metadata) => metadata,
+    match attempt(true) {
+        Ok(metadata) => Ok(metadata),
         Err(offline_failure) => attempt(false).map_err(|failure| {
             format!(
                 "{cargo} metadata --no-deps failed offline ({offline_failure}) and again \
                  without --offline ({failure})"
             )
-        })?,
-    };
-    serde_json::from_str(&metadata)
-        .map_err(|err| format!("{cargo} metadata --no-deps printed no JSON document: {err}"))
+        }),
+    }
 }
 
 fn metadata_arguments(offline: bool) -> Vec<String> {
